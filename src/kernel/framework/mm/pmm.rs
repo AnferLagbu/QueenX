@@ -7,7 +7,8 @@
 //! - 阶数 0–9 (4 KB – 2 MB 连续块).
 //! - Buddy 元数据建立前使用早期 (线性) 分配器.
 //! - 保留位图用于 reserved 页跟踪和统计.
-//! - 双向链表的侵入式空闲链表 (prev/next 存放在空闲页内).
+//! - 双向链表的索引式空闲链表 (prev/next 存独立 FREE_LINKS 数组,
+//!   16 字节/页, 哨兵 = u64::MAX; 链表关系与物理页内容解耦, host 可测).
 //! - Buddy 合并使用按页的阶数元数据, 实现 O(1) 伙伴检查.
 //!
 //! # 安全
@@ -33,6 +34,9 @@ const MAX_EARLY_ALLOCS: usize = 256;
 const MAX_BUDDY_ORDER: u8 = 9;
 /// `buddy_meta` 中的哨兵值: 页面已分配 / 不是空闲链表头
 const BUDDY_ALLOCATED: u8 = 0xFF;
+/// 索引式空闲链表哨兵值: 表示链表头/尾 (无前驱或后继).
+/// 不能用 0 — pfn 0 是合法物理页号.
+const SENTINEL: u64 = u64::MAX;
 
 /// 物理 RAM 基地址
 /// `x86_64`: 0 (multiboot 给出的物理内存从 0 开始)
@@ -60,11 +64,6 @@ fn page_to_phys(page: u64) -> u64 {
     RAM_BASE + page * PAGE_SIZE
 }
 
-#[inline(always)]
-fn pfn_to_virt(pfn: u64) -> *mut u8 {
-    (page_to_phys(pfn) + KERNEL_BASE) as *mut u8
-}
-
 /// 将页数向上取整到 2 的幂 → 对应 buddy 阶数
 ///
 /// T2-2: 策略已提取到 `pmm_trait::PmmPolicy`, 本函数保留为内部快捷路径
@@ -86,13 +85,13 @@ impl EarlyAlloc {
     }
 }
 
-// ---- 侵入式双向空闲链表节点, 存放在空闲页内 ----
-// SAFETY: 仅在 PMM 锁保护下访问; 每个空闲页提供 4096 字节
-// 存储空间, 我们用前 16 字节存放 prev/next 指针.
+// ---- 索引式双向空闲链表节点, 存于独立 FREE_LINKS 数组 (16 字节/项) ----
+// H-01 (2026-09-06): 由侵入式 (FreeNode 存物理页内) 改为索引式,
+// prev/next 存相邻空闲块头 pfn, 链表关系与物理页内容解耦, host 可测.
 #[repr(C)]
-pub(crate) struct FreeNode {
-    prev: *mut Self,
-    next: *mut Self,
+pub(crate) struct FreeIndex {
+    prev: u64,
+    next: u64,
 }
 
 // === E3: unsafe 集中化 — 裸指针子模块 ===
@@ -101,25 +100,25 @@ pub(crate) struct FreeNode {
 // 封装在这里.  外层 `PhysicalMemoryManager` 方法只调用
 // safe 包装器, 使 buddy 分配算法本身保持 safe Rust.
 pub(crate) mod raw {
-    use super::{AtomicU32, FreeNode, MAX_BUDDY_ORDER, NonNull, Ordering};
+    use super::{AtomicU32, FreeIndex, MAX_BUDDY_ORDER, NonNull, Ordering};
 
-    // ---- FreeNode safe 包装器 ----
-    // SAFETY 不变式: 指针指向物理 RAM 内空闲页中的合法 FreeNode,
-    // 且 PMM 锁已持有.
-    #[derive(Clone, Copy)]
-    pub struct FreeNodeRef(*mut FreeNode);
+    // ---- FREE_LINKS 索引式链表 safe 包装器 ----
+    // SAFETY 不变式: links 指针在 init_bitmap 后有效; idx < total_pages
+    pub struct FreeIndexRef {
+        ptr: *mut FreeIndex,
+    }
 
-    impl FreeNodeRef {
+    impl FreeIndexRef {
         /// # Safety
-        /// - `ptr` 必须指向空闲页内合法的 `FreeNode`
+        /// - `ptr` 必须指向合法的 `FREE_LINKS` 数组
         /// - 使用期间必须持有 PMM 锁
         #[inline(always)]
         #[expect(
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub unsafe fn new_unchecked(ptr: *mut FreeNode) -> Self {
-            Self(ptr)
+        pub unsafe fn new_unchecked(ptr: *mut FreeIndex) -> Self {
+            Self { ptr }
         }
 
         #[inline(always)]
@@ -127,9 +126,9 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub fn prev(&self) -> *mut FreeNode {
-            // SAFETY: FreeNodeRef 由 new_unchecked 保证指针有效, 读 prev 链指针 (PMM 锁持有)
-            unsafe { (*self.0).prev }
+        pub fn read_prev(&self, idx: usize) -> u64 {
+            // SAFETY: 调用方保证 idx < total_pages; 读 FREE_LINKS[idx].prev (PMM 锁持有)
+            unsafe { (*self.ptr.add(idx)).prev }
         }
 
         #[inline(always)]
@@ -137,9 +136,9 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub fn next(&self) -> *mut FreeNode {
-            // SAFETY: FreeNodeRef 由 new_unchecked 保证指针有效, 读 next 链指针 (PMM 锁持有)
-            unsafe { (*self.0).next }
+        pub fn read_next(&self, idx: usize) -> u64 {
+            // SAFETY: 调用方保证 idx < total_pages; 读 FREE_LINKS[idx].next (PMM 锁持有)
+            unsafe { (*self.ptr.add(idx)).next }
         }
 
         #[inline(always)]
@@ -147,10 +146,10 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub fn set_prev(&self, p: *mut FreeNode) {
-            // SAFETY: FreeNodeRef 由 new_unchecked 保证指针有效, 写 prev 链指针 (PMM 锁持有)
+        pub fn set_prev(&self, idx: usize, p: u64) {
+            // SAFETY: 调用方保证 idx < total_pages; 写 FREE_LINKS[idx].prev (PMM 锁持有)
             unsafe {
-                (*self.0).prev = p;
+                (*self.ptr.add(idx)).prev = p;
             }
         }
 
@@ -159,10 +158,10 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub fn set_next(&self, p: *mut FreeNode) {
-            // SAFETY: FreeNodeRef 由 new_unchecked 保证指针有效, 写 next 链指针 (PMM 锁持有)
+        pub fn set_next(&self, idx: usize, p: u64) {
+            // SAFETY: 调用方保证 idx < total_pages; 写 FREE_LINKS[idx].next (PMM 锁持有)
             unsafe {
-                (*self.0).next = p;
+                (*self.ptr.add(idx)).next = p;
             }
         }
     }
@@ -295,8 +294,9 @@ pub(crate) mod raw {
 
     // ---- Buddy heads safe 包装器 ----
     // SAFETY 不变式: buddy_heads 仅在 PMM 锁保护下访问
+    // H-01 (2026-09-06): 链表头改存 pfn (u64), 哨兵 = SENTINEL
     pub struct HeadsRef {
-        ptr: *mut [*mut FreeNode; MAX_BUDDY_ORDER as usize + 1],
+        ptr: *mut [u64; MAX_BUDDY_ORDER as usize + 1],
     }
 
     impl HeadsRef {
@@ -308,9 +308,7 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub unsafe fn new_unchecked(
-            ptr: *mut [*mut FreeNode; MAX_BUDDY_ORDER as usize + 1],
-        ) -> Self {
+        pub unsafe fn new_unchecked(ptr: *mut [u64; MAX_BUDDY_ORDER as usize + 1]) -> Self {
             Self { ptr }
         }
 
@@ -319,7 +317,7 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub fn head(&self, order: u8) -> *mut FreeNode {
+        pub fn head(&self, order: u8) -> u64 {
             // SAFETY: order <= MAX_BUDDY_ORDER, ptr valid under lock
             unsafe { (*self.ptr)[order as usize] }
         }
@@ -329,10 +327,10 @@ pub(crate) mod raw {
             clippy::inline_always,
             reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
         )]
-        pub fn set_head(&self, order: u8, node: *mut FreeNode) {
+        pub fn set_head(&self, order: u8, pfn: u64) {
             // SAFETY: order <= MAX_BUDDY_ORDER, ptr 持锁时合法
             unsafe {
-                (*self.ptr)[order as usize] = node;
+                (*self.ptr)[order as usize] = pfn;
             }
         }
     }
@@ -364,7 +362,7 @@ pub(crate) mod raw {
     }
 }
 
-use raw::{BitmapRef, FreeNodeRef, HeadsRef, MetaRef};
+use raw::{BitmapRef, FreeIndexRef, HeadsRef, MetaRef};
 
 /// 物理内存管理器 — Buddy 分配器
 ///
@@ -394,8 +392,12 @@ pub struct PhysicalMemoryManager {
     // ---- Buddy 分配器 ----
     /// 按页阶数元数据: 0xFF = 已分配, 0..9 = 空闲块头阶数
     buddy_meta: Cell<Option<NonNull<u8>>>,
-    /// 双向链表空闲块头, 每个阶数一个
-    buddy_heads: UnsafeCell<[*mut FreeNode; MAX_BUDDY_ORDER as usize + 1]>,
+    /// H-02 (2026-09-06): 索引式空闲链表关系数组 FREE_LINKS (长度 = total_pages,
+    /// 16 字节/项), 由 init_bitmap 分配; 哨兵 = SENTINEL (u64::MAX).
+    /// 存放方式与 buddy_meta 相同: Cell<Option<NonNull<u8>>> 存裸字节指针 (VA).
+    buddy_links: Cell<Option<NonNull<u8>>>,
+    /// 索引式双向链表空闲块头 (存块头 pfn), 每个阶数一个; 空链表头 = SENTINEL
+    buddy_heads: UnsafeCell<[u64; MAX_BUDDY_ORDER as usize + 1]>,
     /// B05-55: reserve 摘除块的暂存 (待位图置位后压回, 防止合并吞掉 reserve 区)
     buddy_reserve_deferred: UnsafeCell<alloc::vec::Vec<(u64, u64, u64, u64)>>,
 }
@@ -427,7 +429,8 @@ impl PhysicalMemoryManager {
             total_frees: AtomicU64::new(0),
             failed_allocs: AtomicU64::new(0),
             buddy_meta: Cell::new(None),
-            buddy_heads: UnsafeCell::new([core::ptr::null_mut(); MAX_BUDDY_ORDER as usize + 1]),
+            buddy_links: Cell::new(None),
+            buddy_heads: UnsafeCell::new([SENTINEL; MAX_BUDDY_ORDER as usize + 1]),
             buddy_reserve_deferred: UnsafeCell::new(alloc::vec::Vec::new()),
         }
     }
@@ -543,6 +546,42 @@ impl PhysicalMemoryManager {
             buddy_meta_virt
         );
 
+        // ---- FREE_LINKS 索引式链表布局 (位于 buddy 元数据之后, 页对齐) ----
+        // H-02 (2026-09-06): 每个空闲块头项 16 字节 (prev/next 各 8 字节, 存 pfn),
+        // 长度 = total_pages, 与 buddy_meta 同法从 early 区分配.
+        let free_links_bytes = total_pages * 16;
+        let free_links_phys =
+            (buddy_meta_phys + buddy_meta_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let free_links_virt = free_links_phys + KERNEL_BASE;
+        let free_links_pages = free_links_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+
+        // 将 early_current 推过 FREE_LINKS
+        self.early_current.store(
+            free_links_phys + free_links_pages * PAGE_SIZE + PAGE_SIZE,
+            Ordering::Relaxed,
+        );
+
+        // SAFETY: free_links_virt = free_links_phys + KERNEL_BASE — 合法的内核 VA.
+        // 0xFF 字节填充 → 每个 u64 字段 = u64::MAX = SENTINEL, 即预置链表空态.
+        unsafe {
+            raw::fill_memory(free_links_virt as *mut u8, 0xFF, free_links_bytes);
+        }
+
+        // H-02: 同 buddy_meta, 用 addr_of! + write_volatile 防 LTO 字段错位.
+        // SAFETY: 单线程启动期, 无并发写.
+        let links_nn = core::ptr::NonNull::new(free_links_virt as *mut u8);
+        unsafe {
+            let links_ptr: *mut Option<core::ptr::NonNull<u8>> =
+                core::ptr::addr_of!(self.buddy_links) as *const _ as *mut _;
+            core::ptr::write_volatile(links_ptr, links_nn);
+        }
+        klog_pmm!(
+            "[PMM] FREE_LINKS: {} B at 0x{:X} ({} pages)",
+            free_links_bytes,
+            free_links_virt,
+            free_links_pages
+        );
+
         // ---- 在 bitmap 中标记 reserved 区 ----
         let kernel_end_val = self.kernel_end.get();
         let kernel_pages = phys_to_page(kernel_end_val + PAGE_SIZE - 1) as usize;
@@ -565,6 +604,12 @@ impl PhysicalMemoryManager {
         // 标记 buddy-meta 页已用
         let bm_start_page = phys_to_page(buddy_meta_phys) as usize;
         for i in bm_start_page..(bm_start_page + buddy_meta_pages as usize).min(total_pages) {
+            self.set_bit(i);
+        }
+
+        // 标记 FREE_LINKS 页已用 (H-02)
+        let fl_start_page = phys_to_page(free_links_phys) as usize;
+        for i in fl_start_page..(fl_start_page + free_links_pages as usize).min(total_pages) {
             self.set_bit(i);
         }
 
@@ -1096,9 +1141,29 @@ impl PhysicalMemoryManager {
         // 用 core::ptr::addr_of! 获取真实字段地址, 防 LTO 错位.
         // UnsafeCell<T> 是 repr(transparent), 地址 = T 地址.
         let field_addr = core::ptr::addr_of!(self.buddy_heads) as *const u8;
-        let heads_ptr: *mut [*mut FreeNode; MAX_BUDDY_ORDER as usize + 1] = field_addr as *mut _;
+        let heads_ptr: *mut [u64; MAX_BUDDY_ORDER as usize + 1] = field_addr as *mut _;
         // SAFETY: buddy_heads 在 PMM 锁保护下访问; init_bitmap 之后稳定.
         unsafe { HeadsRef::new_unchecked(heads_ptr) }
+    }
+
+    #[inline]
+    #[expect(
+        clippy::ptr_as_ptr,
+        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
+    )]
+    fn buddy_links_ref(&self) -> Option<FreeIndexRef> {
+        // H-02 (2026-09-06): 同 buddy_meta_ref 的 LTO 修复模式 —
+        // addr_of! 取真实字段地址 + volatile read, 防 LTO 字段错位.
+        let links_field_ptr = core::ptr::addr_of!(self.buddy_links);
+        // SAFETY: 指针操作在有效范围内, 调用方保证指针有效性
+        let buddy_links: Option<core::ptr::NonNull<u8>> = unsafe {
+            core::ptr::read_volatile(links_field_ptr as *const Option<core::ptr::NonNull<u8>>)
+        };
+        buddy_links.map(|n| {
+            // SAFETY: buddy_links 在 init_bitmap 中设置一次, 此后只读;
+            // 所有 buddy 操作都持有 PMM 锁.
+            unsafe { FreeIndexRef::new_unchecked(n.as_ptr().cast()) }
+        })
     }
 
     /// 尝试将 `order` 处释放的 `pfn` 与其上方的 buddy 合并.
@@ -1159,57 +1224,29 @@ impl PhysicalMemoryManager {
         (pfn, order)
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
     /// 从双向链表中移除一个空闲块.
+    ///
+    /// H-01 (2026-09-06): 索引式 — FREE_LINKS[pfn] 读写 prev/next (存 pfn),
+    /// 不再解引用物理页内节点, 不依赖 KERNEL_BASE/物理地址换算.
     fn buddy_list_remove(&self, pfn: u64, order: u8) {
         let heads = self.buddy_heads_ref();
-        let node = pfn_to_virt(pfn) as *mut FreeNode;
-        // 防御性: 校验 node 是否在物理 RAM 范围内
-        let node_phys = (node as u64).wrapping_sub(KERNEL_BASE);
-        let mem_size = self.mem_size.get();
-        #[allow(clippy::absurd_extreme_comparisons)]
-        if node_phys < RAM_BASE || node_phys >= RAM_BASE + mem_size {
-            klog_pmm!(
-                "[PMM] Corrupt remove node at order {}: pfn=0x{:X} virt=0x{:X}",
-                order,
-                pfn,
-                node as u64
-            );
+        let Some(links) = self.buddy_links_ref() else {
             return;
-        }
-        // SAFETY: node is inside a valid free page, PMM lock held
-        let n = unsafe { FreeNodeRef::new_unchecked(node) };
-        let prev = n.prev();
-        let next = n.next();
-        if prev.is_null() {
+        };
+        // 前置断言: pfn 越界 = FREE_LINKS 越界访问
+        debug_assert!(pfn < self.info.get().total_pages);
+        let prev = links.read_prev(pfn as usize);
+        let next = links.read_next(pfn as usize);
+        if prev == SENTINEL {
             heads.set_head(order, next);
         } else {
-            // SAFETY: prev is a valid FreeNode in the list
-            let p = unsafe { FreeNodeRef::new_unchecked(prev) };
-            p.set_next(next);
+            links.set_next(prev as usize, next);
         }
-        if !next.is_null() {
-            // SAFETY: next is a valid FreeNode in the list
-            let nx = unsafe { FreeNodeRef::new_unchecked(next) };
-            nx.set_prev(prev);
+        if next != SENTINEL {
+            links.set_prev(next as usize, prev);
         }
     }
 
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐); 当前优先 expect"
-    )]
     /// 将一个块压入空闲链表头.
     ///
     /// # 链表/位图同步 (B05-55)
@@ -1218,6 +1255,8 @@ impl PhysicalMemoryManager {
     /// 伙伴时只清除原块位图, 伙伴页位图可能残留 =1 (历史分配未同步),
     /// 若不清除则链表含"在位页" → 二次分配 → 页表/内核数据被覆盖.
     /// 伙伴必须满足 meta=order (空闲) 才会被合并, 故 push 块不含 reserve 区.
+    ///
+    /// H-01 (2026-09-06): 索引式 — 写 FREE_LINKS[pfn].prev/next (存 pfn).
     fn buddy_list_push(&self, pfn: u64, order: u8) {
         // 强制位图同步: 链表是空闲权威, push 即声明这些页 free
         let npages = 1u64 << u64::from(order);
@@ -1225,45 +1264,38 @@ impl PhysicalMemoryManager {
             self.clear_bit(pfn as usize + i);
         }
         let heads = self.buddy_heads_ref();
-        let node = pfn_to_virt(pfn) as *mut FreeNode;
-        // SAFETY: 空闲页未被使用, 我们拥有其前 16 字节, PMM 锁已持有
-        let n = unsafe { FreeNodeRef::new_unchecked(node) };
+        let Some(links) = self.buddy_links_ref() else {
+            return;
+        };
+        // 前置断言: pfn 越界 = FREE_LINKS 越界访问
+        debug_assert!(pfn < self.info.get().total_pages);
         let old_head = heads.head(order);
-        n.set_prev(core::ptr::null_mut());
-        n.set_next(old_head);
-        if !old_head.is_null() {
-            // SAFETY: old_head 是链表中合法的 FreeNode
-            let oh = unsafe { FreeNodeRef::new_unchecked(old_head) };
-            oh.set_prev(node);
+        links.set_prev(pfn as usize, SENTINEL);
+        links.set_next(pfn as usize, old_head);
+        if old_head != SENTINEL {
+            links.set_prev(old_head as usize, pfn);
         }
-        heads.set_head(order, node);
+        heads.set_head(order, pfn);
     }
 
     /// 从空闲链表头弹出一个块, 返回 pfn.
+    ///
+    /// H-01 (2026-09-06): 索引式 — 读 FREE_LINKS[head].next (存 pfn).
     fn buddy_list_pop(&self, order: u8) -> Option<u64> {
         let heads = self.buddy_heads_ref();
-        let node = heads.head(order);
-        if node.is_null() {
+        let pfn = heads.head(order);
+        if pfn == SENTINEL {
             return None;
         }
-
-        // 防御性: 校验 node 是否在物理 RAM 范围内
-        let node_phys = (node as u64).wrapping_sub(KERNEL_BASE);
-        let mem_size = self.mem_size.get();
-        #[allow(clippy::absurd_extreme_comparisons)]
-        if node_phys < RAM_BASE || node_phys >= RAM_BASE + mem_size {
+        // 前置断言: 索引式链表要求 pfn < total_pages (越界 = OOB 访问)
+        debug_assert!(pfn < self.info.get().total_pages);
+        let Some(links) = self.buddy_links_ref() else {
             return None;
-        }
-
-        let pfn = phys_to_page(node_phys);
-        // SAFETY: node is a valid free page, PMM lock held
-        let n = unsafe { FreeNodeRef::new_unchecked(node) };
-        let next = n.next();
+        };
+        let next = links.read_next(pfn as usize);
         heads.set_head(order, next);
-        if !next.is_null() {
-            // SAFETY: next is a valid FreeNode in the list
-            let nx = unsafe { FreeNodeRef::new_unchecked(next) };
-            nx.set_prev(core::ptr::null_mut());
+        if next != SENTINEL {
+            links.set_prev(next as usize, SENTINEL);
         }
         Some(pfn)
     }
@@ -1322,7 +1354,11 @@ impl PhysicalMemoryManager {
     fn buddy_reserve_pfn_range(&self, start_pfn: u64, npages: u64) {
         let end_pfn = start_pfn + npages;
         let meta = self.buddy_meta_ref();
-        let mem_size = self.mem_size.get();
+        // H-03 (2026-09-06): 索引式遍历 — FREE_LINKS 已由 init_bitmap 分配,
+        // 直接以 pfn 读写链表关系, 不再做物理地址校验 / 解引用物理页.
+        let Some(links) = self.buddy_links_ref() else {
+            return;
+        };
 
         // SAFETY: buddy_reserve_deferred 仅在持有 PMM 锁时访问 (本函数内独占)
         let deferred: &mut alloc::vec::Vec<(u64, u64, u64, u64)> =
@@ -1332,34 +1368,25 @@ impl PhysicalMemoryManager {
         // 逐阶遍历空闲链表, 摘除与预留范围重叠的块
         for order in 0..=MAX_BUDDY_ORDER {
             let heads = self.buddy_heads_ref();
-            let mut node = heads.head(order);
-            while !node.is_null() {
-                let node_phys = (node as u64).wrapping_sub(KERNEL_BASE);
-                // 防御: 校验 node 是否在物理 RAM 范围内
-                #[allow(clippy::absurd_extreme_comparisons)]
-                if node_phys < RAM_BASE || node_phys >= RAM_BASE + mem_size {
-                    break;
-                }
-                // SAFETY: node 是链表中合法的 FreeNode, PMM 锁持有
-                let n = unsafe { FreeNodeRef::new_unchecked(node) };
-                let next = n.next();
-
-                let block_pfn = phys_to_page(node_phys);
+            let mut cur = heads.head(order);
+            while cur != SENTINEL {
+                // H-03: 先存 next 再可能 remove (remove 会改写链表关系)
+                let next = links.read_next(cur as usize);
                 let block_size = 1u64 << order;
-                if block_pfn < end_pfn && block_pfn + block_size > start_pfn {
+                if cur < end_pfn && cur + block_size > start_pfn {
                     // 重叠: 整块摘除, 元数据整块标记为已分配 (防止后续错误合并)
-                    self.buddy_list_remove(block_pfn, order);
+                    self.buddy_list_remove(cur, order);
                     if let Some(ref m) = meta {
                         for i in 0..block_size {
-                            m.write((block_pfn + i) as usize, BUDDY_ALLOCATED);
+                            m.write((cur + i) as usize, BUDDY_ALLOCATED);
                         }
                     }
                     // 不重叠部分暂不压回: 待位图置位后再压回,
                     // 使 buddy_free_insert_range 的合并不会吞掉 reserve 区
                     // (否则合并块覆盖 [start,end) → 压回后置位图 → 链表含在位页 → 二次分配)
-                    deferred.push((block_pfn, start_pfn, end_pfn, block_size));
+                    deferred.push((cur, start_pfn, end_pfn, block_size));
                 }
-                node = next;
+                cur = next;
             }
         }
 
@@ -1399,7 +1426,7 @@ impl PhysicalMemoryManager {
         for o in order..=MAX_BUDDY_ORDER {
             let heads = self.buddy_heads_ref();
             let h = heads.head(o);
-            if !h.is_null() {
+            if h != SENTINEL {
                 avail_order = Some(o);
                 break;
             }
