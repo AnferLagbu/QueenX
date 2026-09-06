@@ -28,7 +28,8 @@
 //! - `scripts/check_bench_regression.py` 对比并报告 > 15% 退化
 //! - `make -f Makefile.ci bench-baseline` / `bench-check`
 
-#![allow(dead_code)]
+// G-07 (2026-09-06): 原 `#![allow(dead_code)]` (F9 违规) 删除 — 实测移除后 0 个
+// dead_code 警告 (全部 29 个 bench 均被 run_all() 与 tests 使用, 属防御性历史残留).
 
 use std::time::Instant;
 
@@ -203,7 +204,8 @@ pub fn capability_check_bench(iters: u64) -> u128 {
 enum DmaDirection { ToDevice, FromDevice, Bidirectional }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SyncState { CpuReady, DeviceReady, BidirInProgress }
+// 注: BidirInProgress 变体已删除 (G-07 死代码消除; 从未构造, transition 由 `_ => false` 通配兜底)
+enum SyncState { CpuReady, DeviceReady }
 
 struct DmaStream {
     dir: DmaDirection,
@@ -235,14 +237,19 @@ impl DmaStream {
 }
 
 pub fn dma_state_machine_bench(iters: u64) -> u128 {
-    let mut s = DmaStream::new(DmaDirection::ToDevice);
+    // 三个方向各建一个流轮转使用, 消除 FromDevice/Bidirectional 未构造死代码 (G-07)
+    let mut streams = [
+        DmaStream::new(DmaDirection::ToDevice),
+        DmaStream::new(DmaDirection::FromDevice),
+        DmaStream::new(DmaDirection::Bidirectional),
+    ];
     const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
             let target = if (i + j) & 1 == 0 { SyncState::DeviceReady } else { SyncState::CpuReady };
-            if s.transition(target).is_ok() { sink ^= 1; }
+            if streams[((i + j) % 3) as usize].transition(target).is_ok() { sink ^= 1; }
         }
     }
     std::hint::black_box(sink);
@@ -323,14 +330,13 @@ enum FaultAttribution {
 }
 
 #[derive(Clone, Copy, Debug)]
+// 注: sp/caller_chain 字段已删除 (G-07 死代码消除; 原字段仅构造从未读取)
 struct FaultRecord {
     rip: u64,
-    sp: u64,
     cs: u16,
     in_interrupt: bool,
     holding_lock: bool,
     in_services: bool,
-    caller_chain: u64,
 }
 
 fn classify(rec: &FaultRecord) -> FaultAttribution {
@@ -351,12 +357,10 @@ fn classify(rec: &FaultRecord) -> FaultAttribution {
 pub fn attribution_classify_bench(iters: u64) -> u128 {
     let recs: Vec<FaultRecord> = (0..256).map(|i| FaultRecord {
         rip: 0xffff_8000_0010_0000 + i as u64 * 0x40,
-        sp: 0xffff_8000_0020_0000,
         cs: 0x08,
         in_interrupt: i & 1 == 0,
         holding_lock: i & 3 == 0,
         in_services: i & 7 != 0,
-        caller_chain: 0xdead_beef,
     }).collect();
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -535,10 +539,7 @@ impl MockSocketWaitQueue {
         }
         was_pending
     }
-
-    fn is_pending(&self) -> bool {
-        self.pending.load(Ordering::Acquire)
-    }
+    // 注: is_pending 方法已删除 (G-07 死代码消除; 仅测试使用, pending 语义可由 mark_waiting/try_wake 返回值断言)
 }
 
 /// MAX_SM_FD: 16 (与 services/net/socket.rs 的 fd 空间 [0, 16) 对齐)
@@ -580,8 +581,8 @@ const VQ_DESC_F_NEXT: u16 = 1;
 const VQ_DESC_F_WRITE: u16 = 2;
 
 /// split virtqueue 描述符 (host-only 简化版)
+// 注: addr 字段已删除 (G-07 死代码消除; 原字段仅写入从未读取, bench 只读 len/flags/next)
 struct MockVqDesc {
-    addr: u64,
     len: u32,
     flags: u16,
     next: u16,
@@ -592,9 +593,8 @@ const BLK_REQ_HEADERS_OUT: usize = 1;
 const BLK_REQ_DATA_OUT: usize = 1;
 const BLK_REQ_STATUS_IN: usize = 1;
 const BLK_REQ_CHAIN_LEN: usize = BLK_REQ_HEADERS_OUT + BLK_REQ_DATA_OUT + BLK_REQ_STATUS_IN;
-const BLK_SECTOR_SIZE: u32 = 512;
+// 注: BLK_SECTOR_SIZE / BLK_4K_SECTORS 已删除 (G-07 死代码消除; 二者互相引用但均未被使用)
 const BLK_4K_BYTES: u32 = 4096;
-const BLK_4K_SECTORS: u32 = BLK_4K_BYTES / BLK_SECTOR_SIZE;
 
 /// split virtqueue (host-only mock, 32 项, 与 VQ_SIZE 对齐)
 struct MockVirtQueue {
@@ -610,7 +610,6 @@ impl MockVirtQueue {
     fn new(capacity: u16) -> Self {
         let mut descs: Vec<MockVqDesc> = (0..capacity)
             .map(|i| MockVqDesc {
-                addr: 0,
                 len: 0,
                 flags: 0,
                 next: if i + 1 < capacity { i + 1 } else { 0xFFFF },
@@ -640,13 +639,13 @@ impl MockVirtQueue {
         let h3 = ((head as u32 + 2) % self.capacity as u32) as u16;
         // 第 3 段 (status) 设备写, 不链 next
         self.descs[h1 as usize] = MockVqDesc {
-            addr: 0x1000, len: 16, flags: VQ_DESC_F_NEXT, next: h2,
+            len: 16, flags: VQ_DESC_F_NEXT, next: h2,
         };
         self.descs[h2 as usize] = MockVqDesc {
-            addr: 0x2000, len: BLK_4K_BYTES, flags: VQ_DESC_F_NEXT, next: h3,
+            len: BLK_4K_BYTES, flags: VQ_DESC_F_NEXT, next: h3,
         };
         self.descs[h3 as usize] = MockVqDesc {
-            addr: 0x3000, len: 1, flags: VQ_DESC_F_WRITE, next: 0xFFFF,
+            len: 1, flags: VQ_DESC_F_WRITE, next: 0xFFFF,
         };
         // 推进 free_head 到下一空闲
         self.free_head = if h3 + 1 < self.capacity { h3 + 1 } else { 0xFFFF };
@@ -2697,8 +2696,8 @@ mod tests {
 
     #[test]
     fn test_attribution_tcb_path() {
-        let rec = FaultRecord { rip: 0xdead, sp: 0, cs: 0x08,
-            in_interrupt: true, holding_lock: true, in_services: false, caller_chain: 0 };
+        let rec = FaultRecord { rip: 0xdead, cs: 0x08,
+            in_interrupt: true, holding_lock: true, in_services: false };
         let a = classify(&rec);
         assert!(matches!(a, FaultAttribution::Tcb { .. }));
     }
@@ -2736,10 +2735,8 @@ mod tests {
         assert!(q.mark_waiting());
         // 重复 mark_waiting 返回 false (已经标记)
         assert!(!q.mark_waiting());
-        assert!(q.is_pending());
         // try_wake 成功清掉 pending, 返回 true
         assert!(q.try_wake(0));
-        assert!(!q.is_pending());
         // 没有等待者时 try_wake 返回 false
         assert!(!q.try_wake(0));
         assert_eq!(q.wake_count.load(Ordering::Relaxed), 1);

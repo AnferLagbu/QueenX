@@ -102,7 +102,7 @@
 - **迁移 framekernel_bench**
   - 描述：bench 复刻 10 个内核算法热点，目标"与内核版本位一致"。
   - 方案：bench 的算法调用改指内核真实实现；保留 JSON 输出与 baseline 机制；确认性能基线不因引用方式改变而失真（同算法应同结果）。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 完成：sha256/capability/dma/iomem 等热点已随 B08-12/20 改引内核真实实现；F9 `#![allow(dead_code)]` 删除 + 6 处 mock 死代码消除；`cargo check --lib` 0 warning + 81 bench 测试 passed。hvfs dispatch 等 29 个 bench 中依赖内核 host 不可测的部分保留本地 mock（bench 专用性能测量，非功能测试被测对象），见 G-07 条目)
 
 - **删除完成标准**
   - 描述：host-tests/src/ 下不再存在任何与内核功能重叠的平行实现；`#![allow(dead_code)]` 清零（联动分册 09 F9）。

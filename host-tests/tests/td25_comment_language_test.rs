@@ -11,8 +11,7 @@
 //! 8. 真实 audit 脚本在最小 fixture 上零违规通过
 //!
 //! 通过子进程调用 audit_comment_language.py, 验证 end-to-end 行为.
-
-#![allow(dead_code)]
+//! 原 `#![allow(dead_code)]` (F9 违规) 删除 — 实测移除后 0 个 dead_code 警告 (防御性残留).
 
 use std::fs;
 use std::io::Write;
