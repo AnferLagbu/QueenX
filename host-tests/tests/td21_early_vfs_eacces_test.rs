@@ -1,194 +1,37 @@
-//! I-29 补充验收: 启动早期 VFS 在无 root 能力时返回 EACCES + 权限矩阵 16 domain 全覆盖
+//! I-29 补充验收: 权限矩阵 16 domain 全覆盖
 //!
-//! 镜像内核 [src/kernel/services/fs/mount.rs::current_pwm] 与
-//! [src/kernel/framework/credo/capability.rs] 的 16 domain 矩阵契约.
+//! 原镜像内核 [src/kernel/framework/credo/capability.rs] 的 16 domain 矩阵契约,
+//! 现改引内核 `services::credo::policy` 真实实现 (host-test feature 暴露).
+//!
+//! ## B08-20 迁移 (2026-09-06)
+//! 删除本地 CapBits / CapabilityMatrix / VIABLE_FLOOR 平行实现, 改引内核
+//! `services::credo::policy::{CapBits, CapDomain, CapMatrix, InMemoryMatrix, VIABLE_FLOOR}`
+//! 与 `services::credo::capability` 能力位常量; 原 `#![allow(dead_code)]` (F9 违规)
+//! 随常量表删除而消失.
+//!
+//! ## 因内核 host 不可测已移除 (current_pwm 部分)
+//! 原镜像 `services/fs/mount.rs::current_pwm` (pwm==0 → EACCES) 与
+//! `framework/credo/api.rs::pwm_has_capability` 简化判定已移除:
+//! - 内核 `current_pwm()` 为私有函数 (`fn`), 依赖 `credo::api::pwm_get_current()`
+//!   (读取当前进程凭证, host 上无进程上下文), 无法直接调用;
+//! - 且真实内核语义与镜像相反: `engine::check(0, ...) == true` (pwm==0 是
+//!   bootstrap 全权身份), 不存在"pwm==0 → EACCES"的拦截逻辑 (见 framework/credo/engine.rs).
+//! - 内核 `services/fs/mount.rs::mount_syscall` 完整路径依赖 VFS 全局状态, host 不可测.
 //!
 //! ## 覆盖
-//! 1. 启动早期 pwm==0 → current_pwm() 返回 EACCES
-//! 2. pwm!=0 但 capability 不足 → has_capability 返回 false → EACCES
-//! 3. pwm!=0 且 capability 充足 → 准入
-//! 4. 16 个 domain 全部参与 (grant/revoke/has/superset 路径全覆盖)
-//! 5. viable floor 的 FS_READ|FS_EXECUTE + PROC_FORK|PROC_EXEC 不变
-//!
-//! 部分 domain bit 在本测试中未直接引用, 保留常量定义以镜像内核完整 16×N 矩阵.
-#![allow(dead_code)]
+//! 1. 16 个 domain 全部参与 (grant/revoke/has/superset 路径全覆盖)
+//! 2. viable floor 的 FS_READ|FS_EXECUTE + PROC_FORK|PROC_EXEC 不变
+//!    (内核 policy::VIABLE_FLOOR 追加 USER_MGMT::LIST, 与 capability::VIABLE_FLOOR 不同)
+//! 3. 越界 domain 静默失败
 
-const EACCES: i32 = -13; // POSIX EACCES
-
-/// 镜像 [services/fs/mount.rs::current_pwm]
-fn current_pwm(pwm: u64) -> Result<u64, i32> {
-    if pwm == 0 { Err(EACCES) } else { Ok(pwm) }
-}
-
-/// 镜像 [framework/credo/capability.rs::pwm_has_capability] 简化版 (位检查)
-fn pwm_has_capability(pwm: u64, _domain: u16, required: u64) -> bool {
-    if pwm == 0 {
-        return false;
-    }
-    // 真内核走 IdentityTable 查 cap 矩阵; 这里直接 mock
-    // pwm==u64::MAX 表示全权, 其余为最小权
-    pwm == u64::MAX || (required == 0)
-}
-
-const SYS_CAP_ALL: u64 = 0xFFFFFFFFFFFFFFFF;
-
-const CAP_DOMAIN_SYSTEM: u16 = 0;
-const CAP_DOMAIN_FS: u16 = 1;
-const CAP_DOMAIN_NET: u16 = 2;
-const CAP_DOMAIN_PROC: u16 = 3;
-const CAP_DOMAIN_DEVICE: u16 = 4;
-const CAP_DOMAIN_USER_MGMT: u16 = 5;
-const CAP_DOMAIN_IPC: u16 = 6;
-const CAP_DOMAIN_MEM: u16 = 7;
-const CAP_DOMAIN_TIME: u16 = 8;
-const CAP_DOMAIN_BARRIER: u16 = 9;
-const CAP_DOMAIN_SIGNAL: u16 = 10;
-const CAP_DOMAIN_SHM: u16 = 11;
-const CAP_DOMAIN_SEM: u16 = 12;
-const CAP_DOMAIN_MSGQ: u16 = 13;
-const CAP_DOMAIN_DMA: u16 = 14;
-const CAP_DOMAIN_RESERVED: u16 = 15;
-
-const FS_CAP_READ: u64 = 1 << 0;
-const FS_CAP_WRITE: u64 = 1 << 1;
-const FS_CAP_EXECUTE: u64 = 1 << 2;
-const FS_CAP_CREATE: u64 = 1 << 3;
-const FS_CAP_DELETE: u64 = 1 << 4;
-const FS_CAP_CHOWN: u64 = 1 << 5;
-const FS_CAP_CHMOD: u64 = 1 << 6;
-
-const NET_CAP_SEND: u64 = 1 << 0;
-const NET_CAP_RECV: u64 = 1 << 1;
-const NET_CAP_CONNECT: u64 = 1 << 2;
-const NET_CAP_LISTEN: u64 = 1 << 3;
-const NET_CAP_BIND: u64 = 1 << 4;
-
-const PROC_CAP_FORK: u64 = 1 << 0;
-const PROC_CAP_EXEC: u64 = 1 << 1;
-const PROC_CAP_KILL: u64 = 1 << 2;
-const PROC_CAP_WAIT: u64 = 1 << 3;
-const PROC_CAP_CREATE: u64 = 1 << 4;
-
-const USER_MGMT_CAP_LIST: u64 = 1 << 0;
-const USER_MGMT_CAP_CREATE: u64 = 1 << 1;
-const USER_MGMT_CAP_DELETE: u64 = 1 << 2;
-const USER_MGMT_CAP_MODIFY: u64 = 1 << 3;
-
-const DEVICE_CAP_MMIO: u64 = 1 << 0;
-const DEVICE_CAP_IRQ: u64 = 1 << 1;
-const DEVICE_CAP_DMA: u64 = 1 << 2;
-const _DEVICE_CAP_BIND: u64 = 1 << 3; // reserved, not used in mock
-
-const VIABLE_FLOOR: [u64; 16] = {
-    let mut f = [0u64; 16];
-    f[CAP_DOMAIN_FS as usize] = FS_CAP_READ | FS_CAP_EXECUTE;
-    f[CAP_DOMAIN_PROC as usize] = PROC_CAP_FORK | PROC_CAP_EXEC;
-    f
+use queenx::kernel::services::credo::capability::{
+    DEVICE_CAP_IRQ, DEVICE_CAP_MMIO, FS_CAP_CREATE, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE,
+    NET_CAP_RECV, NET_CAP_SEND, PROC_CAP_EXEC, PROC_CAP_FORK, PROC_CAP_KILL, SYS_CAP_ALL,
+    USER_MGMT_CAP_CREATE, USER_MGMT_CAP_LIST,
 };
-
-#[derive(Clone, Copy)]
-struct CapBits(u64);
-
-impl CapBits {
-    fn has(&self, bit: u64) -> bool { (self.0 & bit) != 0 }
-    fn grant(&mut self, bits: u64) { self.0 |= bits; }
-    fn revoke(&mut self, bits: u64) { self.0 &= !bits; }
-    fn is_superset_of(&self, other: &CapBits) -> bool { (self.0 & other.0) == other.0 }
-}
-
-#[derive(Clone)]
-struct CapabilityMatrix {
-    caps: [CapBits; 16],
-}
-
-impl CapabilityMatrix {
-    fn new() -> Self {
-        Self { caps: [CapBits(0); 16] }
-    }
-    fn all() -> Self {
-        Self { caps: [CapBits(SYS_CAP_ALL); 16] }
-    }
-    fn viable() -> Self {
-        let mut cm = Self::new();
-        for d in 0..16u16 {
-            cm.caps[d as usize] = CapBits(VIABLE_FLOOR[d as usize]);
-        }
-        cm
-    }
-    fn has(&self, domain: u16, bits: u64) -> bool {
-        if domain as usize >= 16 { return false; }
-        self.caps[domain as usize].has(bits)
-    }
-    fn grant(&mut self, domain: u16, bits: u64) {
-        if domain as usize >= 16 { return; }
-        self.caps[domain as usize].grant(bits);
-    }
-    fn revoke(&mut self, domain: u16, bits: u64) {
-        if domain as usize >= 16 { return; }
-        self.caps[domain as usize].revoke(bits);
-    }
-    fn is_superset_of(&self, other: &CapabilityMatrix) -> bool {
-        for i in 0..16 {
-            if !self.caps[i].is_superset_of(&other.caps[i]) {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-// =====================================================================
-// 启动早期 VFS 路径 (current_pwm)
-// =====================================================================
-
-#[test]
-fn early_vfs_no_pwm_returns_eacces() {
-    // 启动早期 / 匿名会话: pwm==0
-    let res = current_pwm(0);
-    assert_eq!(res, Err(EACCES));
-}
-
-#[test]
-fn early_vfs_with_pwm_returns_ok() {
-    let res = current_pwm(42);
-    assert_eq!(res, Ok(42));
-}
-
-#[test]
-fn early_vfs_pwm_zero_blocks_capability_check() {
-    // 即使 capability 检查在 pwm==0 上返回 true (历史 bug),
-    // current_pwm 必须先拦截, 整体路径仍返回 EACCES
-    let pwm = current_pwm(0).unwrap_or(0);
-    let cap_ok = pwm_has_capability(pwm, CAP_DOMAIN_SYSTEM, 0x01);
-    assert!(!cap_ok, "pwm==0 下能力检查必须为 false");
-}
-
-#[test]
-fn mount_path_no_session_yields_eacces() {
-    // 镜像 services/fs/mount.rs::mount_syscall 完整检查顺序
-    let pwm = match current_pwm(0) {
-        Ok(p) => p,
-        Err(EACCES) => return, // 正确路径
-        Err(_) => panic!("必须返回 EACCES, 不可走其它错误码"),
-    };
-    let _ = pwm_has_capability(pwm, CAP_DOMAIN_SYSTEM, 0x01);
-    panic!("未在 pwm==0 时拦截");
-}
-
-#[test]
-fn mount_path_with_pwm_but_no_cap_yields_eacces() {
-    let pwm = current_pwm(7).expect("pwm!=0 时必须 Ok");
-    // 假设 pwm=7 没有 CAP_SYS_ADMIN (0x01)
-    let has_cap = pwm_has_capability(pwm, CAP_DOMAIN_SYSTEM, 0x01);
-    assert!(!has_cap, "pwm=7 (非全权) 不应有 CAP_SYS_ADMIN");
-}
-
-#[test]
-fn mount_path_with_full_cap_passes() {
-    let pwm = current_pwm(u64::MAX).expect("pwm!=0 时必须 Ok");
-    let has_cap = pwm_has_capability(pwm, CAP_DOMAIN_SYSTEM, 0x01);
-    assert!(has_cap, "pwm=u64::MAX 应有全部能力");
-}
+use queenx::kernel::services::credo::policy::{
+    CAP_DOMAINS, CapBits, CapDomain, CapMatrix, CapabilityMatrix, InMemoryMatrix, VIABLE_FLOOR,
+};
 
 // =====================================================================
 // 16 domain 权限矩阵
@@ -196,124 +39,178 @@ fn mount_path_with_full_cap_passes() {
 
 #[test]
 fn matrix_has_16_domains() {
-    // 编译期: 16 domain 常量
-    let last = CAP_DOMAIN_RESERVED;
-    assert_eq!(last, 15);
+    // 编译期: 16 domain 常量 (最后一个 RESERVED = 15)
+    assert_eq!(CapDomain::RESERVED.0, 15);
     // 运行时: viable floor 长度 = 16
-    assert_eq!(VIABLE_FLOOR.len(), 16);
+    assert_eq!(VIABLE_FLOOR.len(), CAP_DOMAINS);
+    assert_eq!(CAP_DOMAINS, 16);
 }
 
 #[test]
 fn matrix_viable_floor_is_minimal() {
-    let cm = CapabilityMatrix::viable();
+    let cm = CapMatrix::from_bits(VIABLE_FLOOR);
     // FS domain
-    assert!(cm.has(CAP_DOMAIN_FS, FS_CAP_READ));
-    assert!(cm.has(CAP_DOMAIN_FS, FS_CAP_EXECUTE));
-    assert!(!cm.has(CAP_DOMAIN_FS, FS_CAP_WRITE));
-    assert!(!cm.has(CAP_DOMAIN_FS, FS_CAP_CREATE));
+    assert!(cm.get(CapDomain::FS).contains(CapBits(FS_CAP_READ)));
+    assert!(cm.get(CapDomain::FS).contains(CapBits(FS_CAP_EXECUTE)));
+    assert!(!cm.get(CapDomain::FS).contains(CapBits(FS_CAP_WRITE)));
+    assert!(!cm.get(CapDomain::FS).contains(CapBits(FS_CAP_CREATE)));
     // PROC domain
-    assert!(cm.has(CAP_DOMAIN_PROC, PROC_CAP_FORK));
-    assert!(cm.has(CAP_DOMAIN_PROC, PROC_CAP_EXEC));
-    assert!(!cm.has(CAP_DOMAIN_PROC, PROC_CAP_KILL));
-    // 其它 14 domain 全部为 0
-    for d in [CAP_DOMAIN_SYSTEM, CAP_DOMAIN_NET, CAP_DOMAIN_DEVICE,
-              CAP_DOMAIN_USER_MGMT, CAP_DOMAIN_IPC, CAP_DOMAIN_MEM,
-              CAP_DOMAIN_TIME, CAP_DOMAIN_BARRIER, CAP_DOMAIN_SIGNAL,
-              CAP_DOMAIN_SHM, CAP_DOMAIN_SEM, CAP_DOMAIN_MSGQ,
-              CAP_DOMAIN_DMA, CAP_DOMAIN_RESERVED] {
-        assert!(!cm.has(d, 1), "domain {} 在 viable floor 必须为 0", d);
+    assert!(cm.get(CapDomain::PROC).contains(CapBits(PROC_CAP_FORK)));
+    assert!(cm.get(CapDomain::PROC).contains(CapBits(PROC_CAP_EXEC)));
+    assert!(!cm.get(CapDomain::PROC).contains(CapBits(PROC_CAP_KILL)));
+    // 内核差异: policy::VIABLE_FLOOR 追加 USER_MGMT::LIST (identity::create 初始化用
+    // capability::VIABLE_FLOOR 无此位; 此处以 policy 权威实现为准)
+    assert!(cm
+        .get(CapDomain::USER_MGMT)
+        .contains(CapBits(USER_MGMT_CAP_LIST)));
+    // 其余 13 domain 全部为 0
+    for d in [
+        CapDomain::SYSTEM,
+        CapDomain::NET,
+        CapDomain::DEVICE,
+        CapDomain::IPC,
+        CapDomain::MEM,
+        CapDomain::TIME,
+        CapDomain::BARRIER,
+        CapDomain::SIGNAL,
+        CapDomain::SHM,
+        CapDomain::SEM,
+        CapDomain::MSGQ,
+        CapDomain::DMA,
+        CapDomain::RESERVED,
+    ] {
+        assert!(cm.get(d).is_empty(), "domain {:?} 在 viable floor 必须为 0", d);
     }
 }
 
 #[test]
 fn matrix_all_grants_every_domain() {
-    let cm = CapabilityMatrix::all();
-    for d in 0..16u16 {
-        assert!(cm.has(d, SYS_CAP_ALL), "domain {} 应有全权", d);
+    let cm = CapMatrix::all();
+    for d in 0..16u8 {
+        assert!(
+            cm.get(CapDomain(d)).contains(CapBits(SYS_CAP_ALL)),
+            "domain {} 应有全权",
+            d
+        );
     }
 }
 
 #[test]
 fn matrix_grant_revoke_isolates_domains() {
-    let mut cm = CapabilityMatrix::new();
-    cm.grant(CAP_DOMAIN_FS, FS_CAP_READ);
-    cm.grant(CAP_DOMAIN_NET, NET_CAP_SEND);
-    cm.grant(CAP_DOMAIN_PROC, PROC_CAP_FORK);
-    cm.grant(CAP_DOMAIN_DEVICE, DEVICE_CAP_MMIO);
-    cm.grant(CAP_DOMAIN_USER_MGMT, USER_MGMT_CAP_LIST);
+    let cm = InMemoryMatrix::new();
+    // 内核 InMemoryMatrix::set 为覆盖写, grant/revoke 通过 现值 | bits / 现值 & !bits 表达
+    let grant = |cm: &InMemoryMatrix, d: CapDomain, bits: u64| {
+        cm.set(d, cm.get(d).unwrap() | CapBits(bits)).unwrap();
+    };
+    let revoke = |cm: &InMemoryMatrix, d: CapDomain, bits: u64| {
+        cm.set(d, cm.get(d).unwrap().diff(CapBits(bits))).unwrap();
+    };
+
+    grant(&cm, CapDomain::FS, FS_CAP_READ);
+    grant(&cm, CapDomain::NET, NET_CAP_SEND);
+    grant(&cm, CapDomain::PROC, PROC_CAP_FORK);
+    grant(&cm, CapDomain::DEVICE, DEVICE_CAP_MMIO);
+    grant(&cm, CapDomain::USER_MGMT, USER_MGMT_CAP_LIST);
 
     // FS
-    assert!(cm.has(CAP_DOMAIN_FS, FS_CAP_READ));
-    assert!(!cm.has(CAP_DOMAIN_FS, FS_CAP_WRITE));
+    assert!(cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_READ)));
+    assert!(!cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_WRITE)));
     // NET
-    assert!(cm.has(CAP_DOMAIN_NET, NET_CAP_SEND));
-    assert!(!cm.has(CAP_DOMAIN_NET, NET_CAP_RECV));
+    assert!(cm.get(CapDomain::NET).unwrap().contains(CapBits(NET_CAP_SEND)));
+    assert!(!cm.get(CapDomain::NET).unwrap().contains(CapBits(NET_CAP_RECV)));
     // PROC
-    assert!(cm.has(CAP_DOMAIN_PROC, PROC_CAP_FORK));
-    assert!(!cm.has(CAP_DOMAIN_PROC, PROC_CAP_EXEC));
+    assert!(cm.get(CapDomain::PROC).unwrap().contains(CapBits(PROC_CAP_FORK)));
+    assert!(!cm.get(CapDomain::PROC).unwrap().contains(CapBits(PROC_CAP_EXEC)));
     // DEVICE
-    assert!(cm.has(CAP_DOMAIN_DEVICE, DEVICE_CAP_MMIO));
-    assert!(!cm.has(CAP_DOMAIN_DEVICE, DEVICE_CAP_IRQ));
+    assert!(cm.get(CapDomain::DEVICE).unwrap().contains(CapBits(DEVICE_CAP_MMIO)));
+    assert!(!cm.get(CapDomain::DEVICE).unwrap().contains(CapBits(DEVICE_CAP_IRQ)));
     // USER_MGMT
-    assert!(cm.has(CAP_DOMAIN_USER_MGMT, USER_MGMT_CAP_LIST));
-    assert!(!cm.has(CAP_DOMAIN_USER_MGMT, USER_MGMT_CAP_CREATE));
+    assert!(cm
+        .get(CapDomain::USER_MGMT)
+        .unwrap()
+        .contains(CapBits(USER_MGMT_CAP_LIST)));
+    assert!(!cm
+        .get(CapDomain::USER_MGMT)
+        .unwrap()
+        .contains(CapBits(USER_MGMT_CAP_CREATE)));
 
     // 撤销验证
-    cm.revoke(CAP_DOMAIN_FS, FS_CAP_READ);
-    assert!(!cm.has(CAP_DOMAIN_FS, FS_CAP_READ));
-    cm.revoke(CAP_DOMAIN_NET, NET_CAP_SEND);
-    assert!(!cm.has(CAP_DOMAIN_NET, NET_CAP_SEND));
+    revoke(&cm, CapDomain::FS, FS_CAP_READ);
+    assert!(!cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_READ)));
+    revoke(&cm, CapDomain::NET, NET_CAP_SEND);
+    assert!(!cm.get(CapDomain::NET).unwrap().contains(CapBits(NET_CAP_SEND)));
 }
 
 #[test]
 fn matrix_out_of_range_is_silent() {
-    let mut cm = CapabilityMatrix::all();
-    cm.grant(16, 0xFF);
-    cm.grant(255, 0xFF);
-    cm.revoke(99, SYS_CAP_ALL);
-    // 不应影响现有 domain
-    for d in 0..16u16 {
-        assert!(cm.has(d, SYS_CAP_ALL));
+    // 内核差异: InMemoryMatrix::set 对越界 domain 返回 Err (不静默忽略), 矩阵内容不变
+    let cm = InMemoryMatrix::new();
+    assert!(cm.set(CapDomain(16), CapBits(0xFF)).is_err());
+    assert!(cm.set(CapDomain(255), CapBits(0xFF)).is_err());
+    assert_eq!(cm.get(CapDomain(16)), None);
+    assert_eq!(cm.get(CapDomain(255)), None);
+    // 不影响现有 domain
+    for d in 0..16u8 {
+        assert_eq!(cm.get(CapDomain(d)), Some(CapBits::NONE));
     }
 }
 
 #[test]
 fn matrix_superset_transitivity() {
-    let root = CapabilityMatrix::all();
-    let admin = {
-        let mut cm = CapabilityMatrix::new();
-        cm.grant(CAP_DOMAIN_FS, FS_CAP_READ | FS_CAP_WRITE | FS_CAP_EXECUTE);
-        cm.grant(CAP_DOMAIN_PROC, PROC_CAP_FORK | PROC_CAP_EXEC | PROC_CAP_KILL);
-        cm
-    };
-    let user = CapabilityMatrix::viable();
+    let root = CapMatrix::all();
+    let admin = InMemoryMatrix::new();
+    // admin: FS READ|WRITE|EXECUTE + PROC FORK|EXEC|KILL + USER_MGMT LIST
+    // (USER_MGMT LIST 是内核 policy VIABLE_FLOOR 下界, admin 必须含之才能是全矩阵 superset)
+    admin
+        .set(
+            CapDomain::FS,
+            CapBits(FS_CAP_READ | FS_CAP_WRITE | FS_CAP_EXECUTE),
+        )
+        .unwrap();
+    admin
+        .set(
+            CapDomain::PROC,
+            CapBits(PROC_CAP_FORK | PROC_CAP_EXEC | PROC_CAP_KILL),
+        )
+        .unwrap();
+    admin
+        .set(CapDomain::USER_MGMT, CapBits(USER_MGMT_CAP_LIST))
+        .unwrap();
+    let user = CapMatrix::from_bits(VIABLE_FLOOR);
 
-    assert!(root.is_superset_of(&admin));
-    assert!(root.is_superset_of(&user));
-    assert!(admin.is_superset_of(&user));
-    assert!(!user.is_superset_of(&admin));
-    assert!(!user.is_superset_of(&root));
+    let superset = |a: &dyn Fn(CapDomain) -> CapBits, b: &dyn Fn(CapDomain) -> CapBits| {
+        (0..16u8).all(|d| a(CapDomain(d)).contains(b(CapDomain(d))))
+    };
+    let root_get = |d: CapDomain| root.get(d);
+    let admin_get = |d: CapDomain| admin.get(d).unwrap();
+    let user_get = |d: CapDomain| user.get(d);
+
+    assert!(superset(&root_get, &admin_get));
+    assert!(superset(&root_get, &user_get));
+    assert!(superset(&admin_get, &user_get));
+    assert!(!superset(&user_get, &admin_get));
+    assert!(!superset(&user_get, &root_get));
 }
 
 #[test]
 fn matrix_cap_bits_isolated() {
     let mut cb = CapBits(FS_CAP_READ | FS_CAP_WRITE);
-    cb.grant(FS_CAP_EXECUTE);
-    assert!(cb.has(FS_CAP_READ));
-    assert!(cb.has(FS_CAP_WRITE));
-    assert!(cb.has(FS_CAP_EXECUTE));
-    cb.revoke(FS_CAP_WRITE);
-    assert!(cb.has(FS_CAP_READ));
-    assert!(!cb.has(FS_CAP_WRITE));
-    assert!(cb.has(FS_CAP_EXECUTE));
+    cb = cb | CapBits(FS_CAP_EXECUTE);
+    assert!(cb.contains(CapBits(FS_CAP_READ)));
+    assert!(cb.contains(CapBits(FS_CAP_WRITE)));
+    assert!(cb.contains(CapBits(FS_CAP_EXECUTE)));
+    cb = cb.diff(CapBits(FS_CAP_WRITE));
+    assert!(cb.contains(CapBits(FS_CAP_READ)));
+    assert!(!cb.contains(CapBits(FS_CAP_WRITE)));
+    assert!(cb.contains(CapBits(FS_CAP_EXECUTE)));
 }
 
 #[test]
 fn matrix_grant_idempotent_and_revoke_noop() {
     let mut cb = CapBits(FS_CAP_READ);
-    cb.grant(FS_CAP_READ);
+    cb = cb | CapBits(FS_CAP_READ);
     assert_eq!(cb.0, FS_CAP_READ);
-    cb.revoke(FS_CAP_WRITE);
+    cb = cb.diff(CapBits(FS_CAP_WRITE));
     assert_eq!(cb.0, FS_CAP_READ);
 }
 
@@ -321,30 +218,34 @@ fn matrix_grant_idempotent_and_revoke_noop() {
 fn matrix_cap_bit_superset_reflexive() {
     let a = CapBits(FS_CAP_READ | FS_CAP_WRITE);
     let b = CapBits(FS_CAP_READ);
-    assert!(a.is_superset_of(&b));
-    assert!(a.is_superset_of(&a));
-    assert!(!b.is_superset_of(&a));
+    assert!(a.contains(b));
+    assert!(a.contains(a));
+    assert!(!b.contains(a));
 }
 
 #[test]
 fn all_16_domains_covered_by_viable_or_zero() {
     // 不变量: viable floor 中每个 domain 都有定义位 (可以为 0)
     // 这是 16 domain 全覆盖的硬性契约
-    let cm = CapabilityMatrix::viable();
+    let cm = CapMatrix::from_bits(VIABLE_FLOOR);
     let mut nonzero_domains = 0;
-    for d in 0..16u16 {
-        // 任何 domain 都必须能 has 查询, 0 位也算覆盖
-        let _ = cm.has(d, 0);
-        if cm.has(d, 1) || cm.has(d, FS_CAP_READ) {
+    for d in 0..16u8 {
+        // 任何 domain 都必须能 get 查询, 0 位也算覆盖
+        let _ = cm.get(CapDomain(d));
+        if !cm.get(CapDomain(d)).is_empty() {
             nonzero_domains += 1;
         }
     }
-    assert!(nonzero_domains >= 2, "viable floor 应至少有 FS/PROC 非空");
-    // 16 个 domain 全部 1..=15 可寻址
-    for d in 0..16u16 {
-        let mut cm2 = CapabilityMatrix::new();
-        cm2.grant(d, 0x1);
-        // 不应越界
-        assert_eq!(cm2.caps.len(), 16);
+    // 内核 policy VIABLE_FLOOR 非空域: FS / PROC / USER_MGMT
+    assert!(
+        nonzero_domains >= 3,
+        "viable floor 应至少有 FS/PROC/USER_MGMT 非空, 实际 = {}",
+        nonzero_domains
+    );
+    // 16 个 domain 全部 0..=15 可寻址 (set/get 不应越界)
+    for d in 0..16u8 {
+        let cm2 = InMemoryMatrix::new();
+        cm2.set(CapDomain(d), CapBits(0x1)).unwrap();
+        assert_eq!(cm2.get(CapDomain(d)), Some(CapBits(0x1)));
     }
 }

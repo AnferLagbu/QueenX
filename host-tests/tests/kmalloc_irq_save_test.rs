@@ -4,123 +4,72 @@
 //! 1. kmalloc.rs::acquire_lock/release_lock 签名变更为 (无) -> IrqSaveFlags / (&flags) -> ()
 //! 2. kmalloc_slab.rs::slab_lock/slab_unlock 同上
 //! 3. 源码静态扫描确认调用点一致 (let flags = self.acquire_lock(); ... self.release_lock(&flags);)
-//! 4. 模拟中断嵌套: 持锁期间 irq disabled 状态下 ISR 不会自旋死锁
+//! 4. 中断安全锁配对契约: lock_irqsave 返回 flags, unlock_irqrestore 接 flags
 //!
-//! 主机端测试: 镜像内核锁接口的最小化版本, 验证 (acquire 返回 flag, release 接 flag) 的
-//! 配对契约. 内核 `src/kernel/framework/mm/kmalloc.rs` 是该契约权威实现.
+//! ## B08-20 迁移 (2026-09-06)
+//! 删除本地 `IrqSaveFlags` / `IRQ_DISABLED` / `disable_interrupts` /
+//! `restore_interrupts` / `acquire_lock` / `release_lock` / `MockHeap` 平行镜像,
+//! 改引内核真实源码 `queenx::kernel::framework::sync::{SpinLock, IrqSpinLock,
+//! IrqSaveFlags, disable_interrupts, restore_interrupts}`.
+//! 内核 `disable_interrupts`/`restore_interrupts` 在 host-test 下为桩 (no-op,
+//! B08-14 前置: host 无中断语义, 原子自旋仍正确互斥); `SpinLock`/`IrqSpinLock`
+//! 的原子自旋在 host 多线程下仍正确互斥.
+//!
+//! ## 与原镜像的差异 (以内核为权威)
+//! 原镜像用全局 `IRQ_DISABLED: AtomicBool` 模拟"持锁期间 IRQ disabled"状态;
+//! 内核 host-test 桩下 `disable_interrupts` 为 no-op, 无可观察的 disabled 状态.
+//! 故改为验证锁**配对契约** (lock_irqsave 返回 flags / is_locked 翻转 /
+//! IrqSpinLock RAII guard Drop 自动释放), 该契约即 kmalloc 临界区的实际保障.
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
-/// 镜像内核 IrqSaveFlags (仅 8 字节对齐的 u64 包装, host 端测试不需要真实 RFLAGS 内容)
-#[derive(Debug, Clone, Copy)]
-#[repr(transparent)]
-struct IrqSaveFlags(u64);
-
-/// 镜像 spinlock 模块: host 端用 AtomicBool 模拟"中断已禁用"标记
-static IRQ_DISABLED: AtomicBool = AtomicBool::new(false);
-
-#[inline(always)]
-fn disable_interrupts() -> IrqSaveFlags {
-    let prev = IRQ_DISABLED.swap(true, Ordering::Acquire);
-    IrqSaveFlags(if prev { 1 } else { 0 })
-}
-
-#[inline(always)]
-fn restore_interrupts(flags: &IrqSaveFlags) {
-    // flags.0 == 1 表示先前已禁用 (P1-I-28 不动前态)
-    IRQ_DISABLED.store(flags.0 == 1, Ordering::Release);
-}
-
-#[inline(always)]
-fn acquire_lock(lock: &AtomicBool) -> IrqSaveFlags {
-    let flags = disable_interrupts();
-    while lock
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        core::hint::spin_loop();
-    }
-    flags
-}
-
-#[inline(always)]
-fn release_lock(lock: &AtomicBool, flags: &IrqSaveFlags) {
-    lock.store(false, Ordering::Release);
-    restore_interrupts(flags);
-}
-
-/// 模拟内核 kmalloc / slab 的锁调用
-struct MockHeap {
-    lock: AtomicBool,
-}
-
-impl MockHeap {
-    fn allocate(&self, size: usize) -> Option<usize> {
-        if size == 0 { return None; }
-        let flags = acquire_lock(&self.lock);
-        // 模拟分配逻辑
-        let ptr = size;
-        release_lock(&self.lock, &flags);
-        Some(ptr)
-    }
-}
+use queenx::kernel::framework::sync::{
+    IrqSaveFlags, IrqSpinLock, SpinLock, disable_interrupts, restore_interrupts,
+};
 
 #[test]
 fn lock_acquire_release_paired_with_flags() {
-    // 基础: acquire 必返 flags, release 必接 flags
-    let heap = MockHeap { lock: AtomicBool::new(false) };
-    let _ = heap.allocate(64);
-    assert!(!heap.lock.load(Ordering::Acquire), "释放后 lock 必为 false");
+    // 基础: acquire (lock_irqsave) 必返 flags, release (unlock_irqrestore) 必接 flags
+    let mut lock = SpinLock::new();
+    let flags: IrqSaveFlags = lock.lock_irqsave();
+    assert!(lock.is_locked(), "持锁期间 is_locked 必须为 true");
+    lock.unlock_irqrestore(&flags);
+    assert!(!lock.is_locked(), "释放后 lock 必为 false");
 }
 
 #[test]
-fn irq_disabled_during_critical_section() {
-    // P1-I-28 验收: 持锁期间 IRQ 必为 disabled
-    let lock = AtomicBool::new(false);
-    let flags = acquire_lock(&lock);
-    assert!(
-        IRQ_DISABLED.load(Ordering::Acquire),
-        "P1-I-28: 持锁期间 IRQ 必须 disabled"
-    );
-    release_lock(&lock, &flags);
-    assert!(
-        !IRQ_DISABLED.load(Ordering::Acquire),
-        "P1-I-28: 释放后 IRQ 必恢复 (此处先前 IRQ=enabled, 故恢复 enabled)"
-    );
+fn irq_spinlock_guards_critical_section() {
+    // P1-I-28: IrqSpinLock 是 kmalloc_slab SLAB_CACHES 的锁类型,
+    // RAII guard 持锁期间屏蔽中断, Drop 自动释放.
+    let data = IrqSpinLock::new(0u32);
+    data.with_mut(|v| *v += 1);
+    assert_eq!(*data.lock(), 1, "with_mut 内自增必须对后续 lock 可见");
+    assert_eq!(*data.lock(), 1, "guard Drop 后锁已释放, 可再次获取");
 }
 
 #[test]
-fn nested_critical_section_preserves_irq_state() {
-    // P1-I-28 验收: 嵌套临界区不会破坏先前 IRQ 状态
-    // 模拟外层 IRQ=enabled 时进入临界区
-    IRQ_DISABLED.store(false, Ordering::Release);
-    let lock = AtomicBool::new(false);
-
-    let flags1 = acquire_lock(&lock);
-    assert!(IRQ_DISABLED.load(Ordering::Acquire));
-
-    // 模拟"内层"也调用 acquire — 必须能正确嵌套 (flags1 持有, flags2 重新获取)
-    // 真实内核不可重入同锁, 但本测试验证 flags 传递的正确性
-    release_lock(&lock, &flags1);
-    assert!(!IRQ_DISABLED.load(Ordering::Acquire), "释放后 IRQ 必恢复");
+fn nested_critical_section_with_distinct_locks() {
+    // P1-I-28: 嵌套临界区验证. 内核自旋锁不可重入同锁 (会死锁), 但不同锁可嵌套;
+    // 每层各自保存/恢复 flags, 互不干扰.
+    let mut outer = SpinLock::new();
+    let mut inner = SpinLock::new();
+    let flags1 = outer.lock_irqsave();
+    assert!(outer.is_locked());
+    let flags2 = inner.lock_irqsave();
+    assert!(inner.is_locked());
+    inner.unlock_irqrestore(&flags2);
+    assert!(!inner.is_locked());
+    outer.unlock_irqrestore(&flags1);
+    assert!(!outer.is_locked());
 }
 
 #[test]
-fn irq_disabled_prior_state_preserved() {
-    // P1-I-28 验收: 若进入临界区前 IRQ 已被禁用, 释放后必须仍禁用 (不能错误开启)
-    IRQ_DISABLED.store(true, Ordering::Release);
-    let lock = AtomicBool::new(false);
-
-    let flags = acquire_lock(&lock);
-    assert!(IRQ_DISABLED.load(Ordering::Acquire));
-    release_lock(&lock, &flags);
-    assert!(
-        IRQ_DISABLED.load(Ordering::Acquire),
-        "P1-I-28: 释放后 IRQ 必须保持先前状态 (此处先前 IRQ=disabled, 故仍 disabled)"
-    );
-
-    // 恢复初始态
-    IRQ_DISABLED.store(false, Ordering::Release);
+fn irq_disable_restore_host_stub_pairing() {
+    // P1-I-28: disable_interrupts/restore_interrupts 配对契约.
+    // host-test 下为 no-op (B08-14): disable 返回 IrqSaveFlags(0), restore 无操作,
+    // 但调用配对不 panic, 保证裸机/宿主两套实现同一调用面.
+    let flags = disable_interrupts();
+    restore_interrupts(&flags);
+    let flags2 = disable_interrupts();
+    restore_interrupts(&flags2);
 }
 
 #[test]

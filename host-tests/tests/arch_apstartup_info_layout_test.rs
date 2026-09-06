@@ -2,6 +2,15 @@
 //!
 //! 追踪: P1.A + DECISION-050.
 //!
+//! ## B08-21 布局校验保留 (F-1 规则 3, 跨语言 ABI)
+//!
+//! 本文件为**布局/常量镜像**: `framework::arch::x86_64::smp_init::ApStartupInfo`
+//! (`#[repr(C, packed)]`) 与 `trampoline.asm` 之间的字节级一致性契约. 属跨语言
+//! ABI 契约 (Rust ↔ 汇编), 内核 .asm 无法在 host 引用, 按 B08-20/21 消并工程
+//! F-1 处置规则 3 保留本镜像并标注覆盖: 不做算法消并 (无平行算法), 仅重放
+//! 编译期布局断言, 任何一端修改字段触发双方不一致 (Rust 编译期断言 + 本测试
+//! 运行期断言).
+//!
 //! ## 测试目的
 //!
 //! `framework::arch::x86_64::smp_init::ApStartupInfo` (`#[repr(C, packed)]`) 与

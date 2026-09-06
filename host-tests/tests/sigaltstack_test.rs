@@ -8,128 +8,20 @@
 //! 4. 替代栈容量不足时, 回退到主栈
 //! 5. sigreturn 时清除 SS_ONSTACK 标记 (允许下一次信号再次落回替代栈)
 //!
-//! host-test 镜像 Process 的 sigaltstack 字段语义, 验证内核源码
-//! 静态契约 (I-45 关键点). 真实投递由 QEMU 集成测试覆盖.
-
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-
-/// 镜像 Process 中 sigaltstack 相关字段语义
-struct MockSigaltstack {
-    addr: AtomicU64,
-    size: AtomicU64,
-    flags: AtomicU32,
-}
-
-const SS_ONSTACK: u32 = 1;
-const SS_DISABLE: u32 = 2;
-
-/// 镜像 SIGNAL_FRAME_TOTAL_SIZE
-const FRAME_TOTAL: u64 = 8 + 256 + 8; // 返回地址 + SignalFrame 假设 256B + trampoline 8B
-
-/// 镜像 do_signal_deliver 的关键决策 (主栈 vs 替代栈)
-fn pick_frame_rsp(
-    ss: &MockSigaltstack,
-    user_rsp: u64,
-    total: u64,
-) -> (u64, bool, &'static str) {
-    let ss_addr = ss.addr.load(Ordering::Acquire);
-    let ss_size = ss.size.load(Ordering::Acquire);
-    let ss_flags = ss.flags.load(Ordering::Acquire);
-    let use_alternate = ss_addr != 0
-        && ss_size >= total
-        && (ss_flags & SS_DISABLE) == 0
-        && (ss_flags & SS_ONSTACK) == 0;
-    if use_alternate {
-        (ss_addr + ss_size - total, true, "alternate")
-    } else if user_rsp >= total {
-        (user_rsp - total, false, "main")
-    } else {
-        // 栈溢出, 默认动作
-        (0, false, "overflow")
-    }
-}
-
-fn make_ss(addr: u64, size: u64, flags: u32) -> MockSigaltstack {
-    MockSigaltstack {
-        addr: AtomicU64::new(addr),
-        size: AtomicU64::new(size),
-        flags: AtomicU32::new(flags),
-    }
-}
-
-#[test]
-fn alternate_stack_used_when_configured() {
-    // P1-I-45 主验收: 注册替代栈后, 信号帧写到替代栈顶部
-    let ss = make_ss(0x7fff_0000_0000, 4096, 0);
-    let (rsp, used_alt, src) = pick_frame_rsp(&ss, 0x1000, FRAME_TOTAL);
-    assert!(used_alt, "P1-I-45: 注册替代栈后必须使用替代栈");
-    assert_eq!(src, "alternate");
-    assert_eq!(rsp, 0x7fff_0000_0000 + 4096 - FRAME_TOTAL);
-}
-
-#[test]
-fn main_stack_used_when_sigaltstack_unset() {
-    // P1-I-45 验收: 进程未注册 sigaltstack 时, 使用主栈
-    let ss = make_ss(0, 0, 0);
-    let (_rsp, used_alt, src) = pick_frame_rsp(&ss, 0x8000, FRAME_TOTAL);
-    assert!(!used_alt);
-    assert_eq!(src, "main");
-}
-
-#[test]
-fn main_stack_used_when_already_on_alternate() {
-    // P1-I-45 验收: 已经在替代栈上时 (SS_ONSTACK 已置位), 投递回退到主栈
-    // 防止信号重入时无限在替代栈顶累积
-    let ss = make_ss(0x7fff_0000_0000, 4096, SS_ONSTACK);
-    let (_rsp, used_alt, src) = pick_frame_rsp(&ss, 0x8000, FRAME_TOTAL);
-    assert!(!used_alt, "P1-I-45: SS_ONSTACK 已置位时回退主栈, 避免重入无限");
-    assert_eq!(src, "main");
-}
-
-#[test]
-fn main_stack_used_when_disabled() {
-    // P1-I-45 验收: SS_DISABLE 显式禁用替代栈, 投递回退主栈
-    let ss = make_ss(0x7fff_0000_0000, 4096, SS_DISABLE);
-    let (_rsp, used_alt, src) = pick_frame_rsp(&ss, 0x8000, FRAME_TOTAL);
-    assert!(!used_alt, "P1-I-45: SS_DISABLE 时回退主栈");
-    assert_eq!(src, "main");
-}
-
-#[test]
-fn main_stack_used_when_alternate_too_small() {
-    // P1-I-45 验收: 替代栈容量不足时, 回退主栈
-    let ss = make_ss(0x7fff_0000_0000, 16 /* < FRAME_TOTAL */, 0);
-    let (_rsp, used_alt, src) = pick_frame_rsp(&ss, 0x8000, FRAME_TOTAL);
-    assert!(!used_alt, "P1-I-45: 替代栈不足时回退主栈");
-    assert_eq!(src, "main");
-}
-
-#[test]
-fn onstack_flag_set_on_alternate() {
-    // P1-I-45 验收: 进入替代栈后必须置位 SS_ONSTACK, 防重入
-    let ss = make_ss(0x7fff_0000_0000, 4096, 0);
-    let (_rsp, used_alt, _) = pick_frame_rsp(&ss, 0x1000, FRAME_TOTAL);
-    assert!(used_alt);
-    // 内核 commit: 投递成功后置位 SS_ONSTACK
-    let flags = ss.flags.load(Ordering::Acquire);
-    ss.flags.store(flags | SS_ONSTACK, Ordering::Release);
-
-    let next_flags = ss.flags.load(Ordering::Acquire);
-    assert_eq!(next_flags & SS_ONSTACK, SS_ONSTACK);
-}
-
-#[test]
-fn onstack_flag_cleared_on_sigreturn() {
-    // P1-I-45 验收: sigreturn 时必须清 SS_ONSTACK
-    let ss = make_ss(0x7fff_0000_0000, 4096, SS_ONSTACK);
-    // 模拟 sys_rt_sigreturn: 仅清 SS_ONSTACK, 保留 SS_DISABLE
-    let flags = ss.flags.load(Ordering::Acquire);
-    ss.flags.store(flags & !SS_ONSTACK, Ordering::Release);
-
-    let after = ss.flags.load(Ordering::Acquire);
-    assert_eq!(after & SS_ONSTACK, 0, "P1-I-45: sigreturn 必清 SS_ONSTACK");
-    assert_eq!(after & SS_DISABLE, 0, "P1-I-45: 保留 SS_DISABLE 位");
-}
+//! ## B08-20 处置 (2026-09-06): 算法镜像移除, 静态契约保留
+//!
+//! 原 `pick_frame_rsp` 镜像 `do_signal_deliver` 的 use_alternate 决策
+//! (framework/proc/signal.rs:552-567). 评估结论: **该决策 host 不可直接测** —
+//! 它内联于 `do_signal_deliver` 函数体, 依赖全局 PROCESS_TABLE (当前进程
+//! `sigaltstack_*` 字段) + `InterruptFrame` 指针 + `do_signal_default_action`
+//! (可能终止进程), 无法在 host 环境以函数形式调用.
+//!
+//! 按 B08-20/21 消并规则: 本地 `MockSigaltstack` / `pick_frame_rsp` / `make_ss`
+//! 平行实现与对应用例已删除. **保留**已有效的 include_str 静态契约 (源码文本
+//! 扫描, 验证 signal.rs 实现替代栈字段读取/决策/sigreturn 清位), 真实投递
+//! 语义由 QEMU 集成测试覆盖.
+//!
+//! 待内核将 use_alternate 决策提炼为 pub 纯函数后可恢复 host 侧算法验证 (记录待办).
 
 #[test]
 fn source_signal_uses_sigaltstack() {

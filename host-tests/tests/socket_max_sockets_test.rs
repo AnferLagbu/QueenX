@@ -1,112 +1,58 @@
 //! Socket 容量配置测试 (I-47)
 //!
-//! 验证 G_MAX_SOCKETS 运行时调参语义:
-//! 1. 默认初始值 1024 (≤ MAX_SOCKETS)
-//! 2. set_max_sockets(0) 拒绝 (返回当前值)
-//! 3. set_max_sockets(n > MAX_SOCKETS) 截断为 MAX_SOCKETS
-//! 4. get_max_sockets 读取最新设置
+//! ## B08-20 迁移 (2026-09-06)
+//! 删除本地 `MAX_SOCKETS` / `DEFAULT_MAX_SOCKETS` 常量与 `configure_max_sockets` /
+//! `get_max_sockets` / `set_max_sockets` (参数化 `&AtomicUsize`) 平行实现,
+//! 改引内核真实源码 `queenx::kernel::framework::net::init` (net/init/sockets.rs):
+//! - `MAX_SOCKETS` (pub const 256) / `configure_max_sockets` / `get_max_sockets` /
+//!   `set_max_sockets` (pub, 操作全局 `G_MAX_SOCKETS` AtomicUsize, host 无硬件依赖)
+//! - `DEFAULT_MAX_SOCKETS` (1024) 为内核私有常量, 测试侧不再镜像 (行为经
+//!   `configure_max_sockets` 生效值 = MAX_SOCKETS 验证: 1024 > 256 截断).
 //!
-//! 主机端镜像内核 `init.rs::configure_max_sockets / set_max_sockets / get_max_sockets` 行为.
+//! 内核实现操作**全局** `G_MAX_SOCKETS` (非参数化), 测试在并行线程间共享 →
+//! 全部调参用例合并为单个顺序测试函数避免互踩.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use queenx::kernel::framework::net::init::{
+    MAX_SOCKETS, configure_max_sockets, get_max_sockets, set_max_sockets,
+};
 
-const MAX_SOCKETS: usize = 256;
-const DEFAULT_MAX_SOCKETS: usize = 1024;
-
-// 注意: 本测试不使用共享 static G_MAX_SOCKETS — 各 #[test] 默认并行执行,
-// 共享可变全局状态会导致测试间互相覆盖 (flaky). 全部辅助函数参数化接收
-// `&AtomicUsize`, 每个测试函数内局部声明独立实例.
-
-/// 镜像内核 `configure_max_sockets` 行为
-fn configure_max_sockets(g: &AtomicUsize) {
-    let initial = if DEFAULT_MAX_SOCKETS > MAX_SOCKETS {
-        MAX_SOCKETS
-    } else if DEFAULT_MAX_SOCKETS == 0 {
-        1
-    } else {
-        DEFAULT_MAX_SOCKETS
-    };
-    g.store(initial, Ordering::Release);
-}
-
-fn get_max_sockets(g: &AtomicUsize) -> usize {
-    let v = g.load(Ordering::Acquire);
-    if v == 0 {
-        1
-    } else {
-        v
-    }
-}
-
-fn set_max_sockets(g: &AtomicUsize, n: usize) -> usize {
-    let target = if n == 0 {
-        return get_max_sockets(g);
-    } else if n > MAX_SOCKETS {
-        MAX_SOCKETS
-    } else {
-        n
-    };
-    g.store(target, Ordering::Release);
-    target
-}
-
+/// 内核配置/调参语义 (顺序执行, 共享全局 G_MAX_SOCKETS)
 #[test]
-fn test_configure_clamps_to_max() {
-    // 每测试独立实例, 消除并行共享状态 (修复 flaky)
-    let g = AtomicUsize::new(0);
-    configure_max_sockets(&g);
-    // DEFAULT 1024 > MAX 256 → 截断为 256
-    assert_eq!(get_max_sockets(&g), MAX_SOCKETS);
-}
+fn max_sockets_config_semantics() {
+    // 默认值 1024 > 上限 256 → configure 截断为 MAX_SOCKETS
+    configure_max_sockets();
+    assert_eq!(get_max_sockets(), MAX_SOCKETS, "DEFAULT(1024) > MAX(256) 应截断为 MAX");
 
-#[test]
-fn test_set_max_sockets_zero_rejected() {
-    let g = AtomicUsize::new(0);
-    configure_max_sockets(&g);
-    let current = get_max_sockets(&g);
-    // 0 应被拒绝, 返回当前值
-    assert_eq!(set_max_sockets(&g, 0), current);
-    assert_eq!(get_max_sockets(&g), current);
-}
+    // set(0) 拒绝, 返回当前值, 状态不变
+    let current = get_max_sockets();
+    assert_eq!(set_max_sockets(0), current, "0 应被拒绝并返回当前值");
+    assert_eq!(get_max_sockets(), current);
 
-#[test]
-fn test_set_max_sockets_clamps_overflow() {
-    let g = AtomicUsize::new(0);
-    configure_max_sockets(&g);
-    // n > MAX 应截断
-    let result = set_max_sockets(&g, MAX_SOCKETS * 10);
-    assert_eq!(result, MAX_SOCKETS);
-    assert_eq!(get_max_sockets(&g), MAX_SOCKETS);
-}
+    // set(n > MAX) 截断为 MAX
+    assert_eq!(set_max_sockets(MAX_SOCKETS * 10), MAX_SOCKETS);
+    assert_eq!(get_max_sockets(), MAX_SOCKETS);
 
-#[test]
-fn test_set_max_sockets_within_range() {
-    let g = AtomicUsize::new(0);
-    configure_max_sockets(&g);
-    assert_eq!(set_max_sockets(&g, 64), 64);
-    assert_eq!(get_max_sockets(&g), 64);
-    assert_eq!(set_max_sockets(&g, 128), 128);
-    assert_eq!(get_max_sockets(&g), 128);
-}
+    // set 合法区间内生效
+    assert_eq!(set_max_sockets(64), 64);
+    assert_eq!(get_max_sockets(), 64);
+    assert_eq!(set_max_sockets(128), 128);
+    assert_eq!(get_max_sockets(), 128);
 
-#[test]
-fn test_set_max_sockets_to_one() {
-    let g = AtomicUsize::new(0);
-    configure_max_sockets(&g);
     // 边界: 1
-    assert_eq!(set_max_sockets(&g, 1), 1);
-    assert_eq!(get_max_sockets(&g), 1);
+    assert_eq!(set_max_sockets(1), 1);
+    assert_eq!(get_max_sockets(), 1);
+
+    // 边界: 恰好 MAX / MAX+1
+    assert_eq!(set_max_sockets(MAX_SOCKETS), MAX_SOCKETS);
+    assert_eq!(get_max_sockets(), MAX_SOCKETS);
+    assert_eq!(set_max_sockets(MAX_SOCKETS + 1), MAX_SOCKETS);
+    assert_eq!(get_max_sockets(), MAX_SOCKETS);
 }
 
+/// 内核 MAX_SOCKETS 编译期常量 = 256
 #[test]
-fn test_set_max_sockets_exact_boundary() {
-    let g = AtomicUsize::new(0);
-    configure_max_sockets(&g);
-    // 边界: 恰好 MAX
-    assert_eq!(set_max_sockets(&g, MAX_SOCKETS), MAX_SOCKETS);
-    assert_eq!(get_max_sockets(&g), MAX_SOCKETS);
-    // 边界: MAX+1 → MAX
-    assert_eq!(set_max_sockets(&g, MAX_SOCKETS + 1), MAX_SOCKETS);
+fn max_sockets_const_is_256() {
+    assert_eq!(MAX_SOCKETS, 256, "内核 net/init/sockets.rs MAX_SOCKETS = 256");
 }
 
 #[test]
@@ -124,6 +70,5 @@ fn test_old_hardcoded_limit_was_8() {
     // 修复后默认 256 (32x), 编译期可调.
     // 本测试仅作回归记录, 不在运行时检查.
     const OLD_MAX_SOCKETS: usize = 8;
-    const NEW_MAX_SOCKETS: usize = 256;
-    assert!(NEW_MAX_SOCKETS >= OLD_MAX_SOCKETS * 8); // 至少 8 倍
+    assert!(MAX_SOCKETS >= OLD_MAX_SOCKETS * 8); // 至少 8 倍
 }

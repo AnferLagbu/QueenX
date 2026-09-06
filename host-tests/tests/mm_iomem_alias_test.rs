@@ -1,260 +1,208 @@
 //! mm: IoMem 别名检测集成测试
 //!
 //! 追踪: I-25
-//! SPDX-License-Identifier: Apache-2.0
 //!
-//! 复刻 `src/kernel/framework/iomem.rs` 中的 `AliasRegistry` 逻辑,
-//! 在 host 端进行集成测试, 验证:
-//! 1. 区间重叠检测的边界条件 (前/后/包含/完全相同)
-//! 2. 大量非冲突区间注册的性能和正确性
-//! 3. 满 (64 项) 时返回错误
-//! 4. unregister 后的碎片化注册
-//! 5. saturating_add 溢出场景的健壮性
+//! ## B08-20 迁移 (2026-09-06)
+//! 删除本地 `Entry` / `AliasRegistry` (Vec 版) / `MAX_MMIO_MAPPINGS` 平行实现,
+//! 以及 `#![allow(dead_code)]` (F9 违规), 改引内核真实源码:
+//! - `queenx::kernel::framework::iomem::IoMem` (pub 安全代理, 内部驱动全局
+//!   `ALIAS_REGISTRY` — 内核 `AliasRegistry` 为私有结构, host 经 `IoMem` 公共
+//!   API 间接验证其固定数组 `[(u64,usize,&'static str); MAX_MMIO_MAPPINGS]` 语义)
+//! - `queenx::kernel::framework::constants::limits::MAX_MMIO_MAPPINGS` (64)
+//! - `queenx::kernel::framework::mm::PhysAddr`
 //!
-//! ## 与单元测试的分工
-//! 原 `src/iomem_alias.rs` 内联 `#[cfg(test)] mod tests` 共 16 个测试用例,
-//! 合并入本文件作为集成测试, 避免双重编译.
+//! 内核 `IoMem::new` 为 `unsafe fn`, SAFETY 契约要求 phys 指向有效 MMIO 区域;
+//! 本测试仅验证别名注册表算法, **从不**对返回句柄做读/写, 因此伪造 phys 地址
+//! 不会被解引用, 满足 SAFETY 前提 (仅构造 + Drop 释放注册项).
 //!
-//! 注: 完整验证还需 QEMU 端运行, 见 `scripts/qemu_boot_test.sh`。
-//! 这里主要覆盖 AliasRegistry 算法的集成场景.
+//! ## 与镜像的差异 (以内核为权威)
+//! - 内核容量/冲突判定在 `AliasRegistry` 内 (固定数组, 无 Vec 扩容);
+//!   对齐/零长/溢出校验在 `IoMem::new`.
+//! - **溢出语义漂移**: 镜像用 `saturating_add` (溢出钳到 u64::MAX 仍注册成功),
+//!   内核用 `checked_add` **拒绝** `phys+len` 溢出 (B03-22 修复) → 断言已同步为 Err.
+//! - 无 count/capacity 访问器: 容量行为经 "注册 64 项成功 + 第 65 项失败" 验证.
+//!
+//! ## 因内核 host 不可测已移除
+//! - `test_unregister_not_found`: 内核 `unregister` 为私有方法且 Drop 路径静默
+//!   忽略缺失项, host 无公共 API 可构造该场景, 移除.
+//!
+//! 注: 完整验证还需 QEMU 端运行, 见 `scripts/qemu_boot_test.sh`.
 
-#![allow(dead_code)]
+use queenx::kernel::framework::constants::limits::MAX_MMIO_MAPPINGS;
+use queenx::kernel::framework::iomem::IoMem;
+use queenx::kernel::framework::mm::PhysAddr;
 
-const MAX_MMIO_MAPPINGS: usize = 64;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Entry {
-    phys: u64,
-    len: usize,
-    name: &'static str,
-}
-
-struct AliasRegistry {
-    entries: Vec<Entry>,
-    capacity: usize,
-}
-
-impl AliasRegistry {
-    fn new() -> Self {
-        Self { entries: Vec::with_capacity(MAX_MMIO_MAPPINGS), capacity: MAX_MMIO_MAPPINGS }
+/// 内核注册表为全局 `ALIAS_REGISTRY` (各测试并行共享), 本文件全部注册表用例
+/// 合并为单个顺序测试函数, 且每个小节用独立作用域让 `IoMem` Drop 及时释放,
+/// 保证容量用例 (需 64 槽全空) 不被其他小节占用干扰.
+#[test]
+fn alias_registry_semantics() {
+    // ── 基本注册 ──
+    {
+        // SAFETY: 仅测试注册表算法, 返回句柄不做读写, 伪造 phys 不被解引用
+        let m1 = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
+        // SAFETY: 同上
+        let m2 = unsafe { IoMem::new(PhysAddr(0x2000), 0x100, "dev2") };
+        assert!(m1.is_ok());
+        assert!(m2.is_ok());
     }
 
-    fn check_conflict(&self, phys: u64, len: usize) -> Option<&'static str> {
-        let end = phys.saturating_add(len as u64);
-        for e in &self.entries {
-            let existing_end = e.phys.saturating_add(e.len as u64);
-            // 标准区间重叠判定: [a, b) ∩ [c, d) ≠ ∅ ⇔ a < d && c < b
-            if phys < existing_end && end > e.phys {
-                return Some(e.name);
-            }
+    // ── 4 字节对齐检查 (IoMem::new 层) ──
+    {
+        // SAFETY: 同前, 伪造 phys 不被解引用
+        let r = unsafe { IoMem::new(PhysAddr(0x1001), 0x100, "dev") };
+        assert!(r.is_err(), "phys 非 4 字节对齐必须拒绝");
+    }
+
+    // ── 零长度检查 (IoMem::new 层) ──
+    {
+        // SAFETY: 同前
+        let r = unsafe { IoMem::new(PhysAddr(0x1000), 0, "dev") };
+        assert!(r.is_err(), "零长度 MMIO 区域必须拒绝");
+    }
+
+    // ── 区间重叠: 完全相同 / 左重叠 / 右重叠 / 完全包含 ──
+    {
+        // SAFETY: 同前, 仅构造句柄不读写
+        let m1 = unsafe { IoMem::new(PhysAddr(0x1000), 0x1000, "dev1") };
+        assert!(m1.is_ok());
+        // 完全相同
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0x1000), 0x1000, "dev2") }.is_err());
+        // 完全包含 (内部区间)
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0x1100), 0x100, "dev3") }.is_err());
+        // 到内部结尾
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0x1F00), 0x100, "dev4") }.is_err());
+    }
+    {
+        // SAFETY: 同前
+        let m1 = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
+        assert!(m1.is_ok());
+        // 左重叠 (新区间左边界在 dev1 内部)
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0x1080), 0x100, "dev2") }.is_err());
+        // 右重叠 (新区间右边界覆盖 dev1 左边界)
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0x0F80), 0x100, "dev3") }.is_err());
+    }
+
+    // ── 紧邻 (touching) 不冲突 ──
+    {
+        // SAFETY: 同前
+        let a = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
+        // SAFETY: 同前
+        let b = unsafe { IoMem::new(PhysAddr(0x1100), 0x100, "dev2") };
+        // SAFETY: 同前
+        let c = unsafe { IoMem::new(PhysAddr(0x1200), 0x100, "dev3") };
+        assert!(a.is_ok() && b.is_ok() && c.is_ok(), "紧邻区间不重叠应可注册");
+    }
+
+    // ── unregister 后重新注册 (Drop 释放) ──
+    {
+        let m = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
+        assert!(m.is_ok());
+        drop(m); // IoMem Drop → ALIAS_REGISTRY.unregister
+        // 释放后重新注册同物理地址
+        // SAFETY: 同前
+        let revived = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1-revived") };
+        assert!(revived.is_ok(), "unregister 后应可重新注册");
+        // 释放后再注册重叠区间 (模拟 test_unregister_then_register_overlap)
+        drop(revived);
+        // SAFETY: 同前
+        let n1 = unsafe { IoMem::new(PhysAddr(0x1000), 0x200, "dev1") };
+        assert!(n1.is_ok());
+        // SAFETY: 同前
+        let n2 = unsafe { IoMem::new(PhysAddr(0x1200), 0x200, "dev2") };
+        assert!(n2.is_ok());
+        drop(n1);
+        // 0x1100-0x1200 与 dev2 (0x1200-0x1400) 紧邻不重叠
+        // SAFETY: 同前
+        let n3 = unsafe { IoMem::new(PhysAddr(0x1100), 0x100, "dev3") };
+        assert!(n3.is_ok(), "释放后紧邻 dev2 的区间应可注册");
+    }
+
+    // ── 容量: 64 项满 + 第 65 项失败 ──
+    {
+        let mut held = Vec::new();
+        for i in 0..MAX_MMIO_MAPPINGS {
+            let phys = 0x100000u64 + (i as u64) * 0x1000;
+            // SAFETY: 仅构造句柄不读写, 伪造 phys 不被解引用
+            let m = unsafe { IoMem::new(PhysAddr(phys), 0x100, "dev") };
+            assert!(m.is_ok(), "第 {} 项注册应成功", i);
+            held.push(m.expect("刚确认 Ok"));
         }
-        None
+        // 65 项 → 容量满
+        let phys65 = 0x100000u64 + MAX_MMIO_MAPPINGS as u64 * 0x1000;
+        // SAFETY: 同前
+        let full = unsafe { IoMem::new(PhysAddr(phys65), 0x100, "dev") };
+        assert_eq!(full.err(), Some("MMIO alias registry full"), "满容量后必须拒绝");
+        // held 出作用域 Drop → 全部 unregister
     }
 
-    fn register(&mut self, phys: u64, len: usize, name: &'static str) -> Result<(), &'static str> {
-        if self.entries.len() >= self.capacity {
-            return Err("MMIO alias registry full");
+    // ── 释放一半后再注册 (碎片化复用) ──
+    {
+        let mut held = Vec::new();
+        for i in 0..MAX_MMIO_MAPPINGS {
+            let phys = 0x1_0000_0000u64 + (i as u64) * 0x10_0000;
+            // SAFETY: 同前
+            let m = unsafe { IoMem::new(PhysAddr(phys), 0x1000, "dev") };
+            assert!(m.is_ok(), "stress 注册 i={}", i);
+            held.push(m.expect("刚确认 Ok"));
         }
-        if phys & 0x3 != 0 {
-            return Err("phys not 4-byte aligned");
+        // 释放奇数项 (1,3,5,...,63): 逆序 swap_remove, 只移除原始奇数下标元素
+        for i in (1..MAX_MMIO_MAPPINGS).step_by(2).rev() {
+            drop(held.swap_remove(i));
         }
-        if len == 0 {
-            return Err("zero-length MMIO region");
+        assert_eq!(held.len(), MAX_MMIO_MAPPINGS / 2, "应保留 32 个偶数项");
+        // 空出 32 槽, 重新注册 32 个新区间
+        for i in 0..32 {
+            let phys = 0x2_0000_0000u64 + (i as u64) * 0x10_0000;
+            // SAFETY: 同前
+            let m = unsafe { IoMem::new(PhysAddr(phys), 0x1000, "new-dev") };
+            assert!(m.is_ok(), "复用槽位注册 i={}", i);
         }
-        if let Some(_conflict) = self.check_conflict(phys, len) {
-            return Err("MMIO region overlaps existing region");
-        }
-        self.entries.push(Entry { phys, len, name });
-        Ok(())
     }
 
-    fn unregister(&mut self, phys: u64) -> Result<(), &'static str> {
-        let pos = self.entries.iter().position(|e| e.phys == phys).ok_or("not found")?;
-        self.entries.swap_remove(pos);
-        Ok(())
+    // ── PCI BAR 模拟场景 ──
+    {
+        // SAFETY: 同前
+        let e1000 = unsafe { IoMem::new(PhysAddr(0xFEB_C0000), 128 * 1024, "e1000-bar0") };
+        // SAFETY: 同前
+        let ahci = unsafe { IoMem::new(PhysAddr(0xFEB_E0000), 8 * 1024, "ahci-bar5") };
+        // SAFETY: 同前
+        let xhci = unsafe { IoMem::new(PhysAddr(0xFEB_F0000), 1024 * 1024, "xhci-bar0") };
+        assert!(e1000.is_ok() && ahci.is_ok() && xhci.is_ok());
+        // 重叠尝试: e1000 BAR0 内部
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0xFEB_C1000), 0x100, "fake-e1000") }.is_err());
+        // ahci BAR5 内部
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0xFEB_E0800), 0x100, "fake-ahci") }.is_err());
+        // xhci BAR0 内部
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0xFEB_F1000), 0x100, "fake-xhci") }.is_err());
+        // 与 ahci-bar5 (0xFEB_E0000..0xFEB_F0000) 重叠 → Err
+        // SAFETY: 同前
+        assert!(unsafe { IoMem::new(PhysAddr(0xFEB_E0000), 0x100, "ahci-revived") }.is_err());
     }
 
-    fn count(&self) -> usize {
-        self.entries.len()
+    // ── 溢出: 内核 checked_add 拒绝 phys+len 溢出 (B03-22, 与镜像 saturating 漂移) ──
+    {
+        // phys 接近 u64::MAX, len 导致 end 溢出 u64 → IoMem::new 拒绝
+        // SAFETY: 同前, 该路径在注册前即返回 Err, 无句柄产生
+        let r = unsafe { IoMem::new(PhysAddr(0xFFFF_FFFF_FFFE_0000), 0x20000, "dev") };
+        assert!(r.is_err(), "phys+len 溢出 u64 必须拒绝 (内核 checked_add 语义)");
+        // 不溢出的小区间仍可注册 (注册表当前为空)
+        // SAFETY: 同前
+        let ok = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "before-overflow") };
+        assert!(ok.is_ok());
     }
-
-    fn capacity(&self) -> usize {
-        self.capacity
-    }
 }
 
+/// 内核 MAX_MMIO_MAPPINGS 常量 = 64 (与 iomem.rs AliasRegistry 固定数组容量一致)
 #[test]
-fn test_register_basic() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "dev1").is_ok());
-    assert!(r.register(0x2000, 0x100, "dev2").is_ok());
-    assert_eq!(r.count(), 2);
-}
-
-#[test]
-fn test_alignment_check() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1001, 0x100, "dev").is_err());
-}
-
-#[test]
-fn test_zero_length() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0, "dev").is_err());
-}
-
-#[test]
-fn test_exact_overlap() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "dev1").is_ok());
-    assert!(r.register(0x1000, 0x100, "dev2").is_err());
-}
-
-#[test]
-fn test_left_overlap() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "dev1").is_ok());
-    // 新区间左边界在 dev1 内部
-    assert!(r.register(0x1080, 0x100, "dev2").is_err());
-}
-
-#[test]
-fn test_right_overlap() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "dev1").is_ok());
-    // 新区间右边界覆盖 dev1 左边界
-    assert!(r.register(0x0F80, 0x100, "dev2").is_err());
-}
-
-#[test]
-fn test_complete_containment() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x1000, "dev1").is_ok());
-    // 完全包含
-    assert!(r.register(0x1100, 0x100, "dev2").is_err());
-    // 从内部开头
-    assert!(r.register(0x1000, 0x100, "dev3").is_err());
-    // 到内部结尾
-    assert!(r.register(0x1F00, 0x100, "dev4").is_err());
-}
-
-#[test]
-fn test_touching_is_ok() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "dev1").is_ok());
-    // 紧邻但不重叠 (上一个 end == 下一个 phys)
-    assert!(r.register(0x1100, 0x100, "dev2").is_ok());
-    assert!(r.register(0x1200, 0x100, "dev3").is_ok());
-    assert_eq!(r.count(), 3);
-}
-
-#[test]
-fn test_unregister_and_reuse() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "dev1").is_ok());
-    assert!(r.unregister(0x1000).is_ok());
-    // 释放后可以重新注册
-    assert!(r.register(0x1000, 0x100, "dev1-revived").is_ok());
-    assert_eq!(r.count(), 1);
-}
-
-#[test]
-fn test_unregister_not_found() {
-    let mut r = AliasRegistry::new();
-    assert!(r.unregister(0x1000).is_err());
-}
-
-#[test]
-fn test_unregister_then_register_overlap() {
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x200, "dev1").is_ok());
-    assert!(r.register(0x1200, 0x200, "dev2").is_ok());
-    // 释放 dev1 后, 0x1000-0x1200 不再被占用
-    assert!(r.unregister(0x1000).is_ok());
-    // 0x1100-0x1200 与 dev2 (0x1200-0x1400) 紧邻不重叠
-    assert!(r.register(0x1100, 0x100, "dev3").is_ok());
-    assert_eq!(r.count(), 2);
-}
-
-#[test]
-fn test_capacity_full() {
-    let mut r = AliasRegistry::new();
-    // 注册 64 个不重叠的 4KB 区间
-    for i in 0..MAX_MMIO_MAPPINGS {
-        let phys = 0x100000 + (i as u64) * 0x1000;
-        assert!(r.register(phys, 0x100, "dev").is_ok(), "i={}", i);
-    }
-    assert_eq!(r.count(), 64);
-    // 65 个应该失败
-    let phys = 0x100000 + 64 * 0x1000;
-    assert!(r.register(phys, 0x100, "dev").is_err());
-}
-
-#[test]
-fn test_pci_bar_simulation() {
-    // 模拟真实 PCI BAR 场景: e1000 BAR0 (128KB) + ahci BAR5 (8KB) + xhci BAR0 (1MB)
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0xFEB_C0000, 128 * 1024, "e1000-bar0").is_ok());
-    assert!(r.register(0xFEB_E0000, 8 * 1024, "ahci-bar5").is_ok());
-    assert!(r.register(0xFEB_F0000, 1024 * 1024, "xhci-bar0").is_ok());
-    // 重叠尝试 (在 e1000 BAR0 内部)
-    assert!(r.register(0xFEB_C1000, 0x100, "fake-e1000").is_err());
-    // 在 ahci BAR5 内部 (offset 0x800)
-    assert!(r.register(0xFEB_E0800, 0x100, "fake-ahci").is_err());
-    // 在 xhci BAR0 内部
-    assert!(r.register(0xFEB_F1000, 0x100, "fake-xhci").is_err());
-    // 紧邻 e1000 BAR0 末尾 (e1000 ends at 0xFEBDFFFF, next starts at 0xFEBE0000)
-    assert!(r.register(0xFEB_E0000, 0x100, "ahci-revived").is_err());
-    assert_eq!(r.count(), 3);
-}
-
-#[test]
-fn test_stress_non_overlapping() {
-    // 压力测试: 1000 个不重叠区间 (受容量限制只能 64, 然后 unregister 一半再继续)
-    let mut r = AliasRegistry::new();
-    for i in 0..64 {
-        let phys = 0x1_0000_0000 + (i as u64) * 0x10_0000;
-        assert!(r.register(phys, 0x1000, "dev").is_ok());
-    }
-    // 容量满
-    assert!(r.register(0xFFFF_FFFF_FFFF_FFFF, 0x1000, "dev").is_err());
-    // unregister 奇数项
-    for i in (1..64).step_by(2) {
-        let phys = 0x1_0000_0000 + (i as u64) * 0x10_0000;
-        assert!(r.unregister(phys).is_ok());
-    }
-    // 释放出 32 个空位, 重新注册 32 个新区间
-    for i in 0..32 {
-        let phys = 0x2_0000_0000 + (i as u64) * 0x10_0000;
-        assert!(r.register(phys, 0x1000, "new-dev").is_ok());
-    }
-    assert_eq!(r.count(), 64);
-}
-
-#[test]
-fn test_saturating_add_overflow() {
-    // 极端 phys 接近 u64::MAX 时, 应使用 saturating_add 避免 panic
-    let mut r = AliasRegistry::new();
-    // phys = 0xFFFFFFFFFFFE0000 (4 字节对齐, 接近 u64::MAX), len = 0x20000
-    // end = saturating_add = u64::MAX (saturate 不会 panic)
-    let phys: u64 = 0xFFFF_FFFF_FFFE_0000;
-    let res = r.register(phys, 0x20000, "dev");
-    assert!(res.is_ok(), "register near u64::MAX must not panic: {:?}", res);
-    // 区间结束地址溢出时, 任何 phys > e.phys 都被认为冲突 (因为 existing_end = u64::MAX)
-    assert!(r.register(phys + 0x1000, 0x100, "after-overflow").is_err());
-    // phys < e.phys 的区间仍然可以注册 (因为 end > e.phys 为 false)
-    assert!(r.register(0x1000, 0x100, "before-overflow").is_ok());
-}
-
-#[test]
-fn test_aligned_4byte_boundaries() {
-    // PCI BAR 要求 4 字节对齐
-    let mut r = AliasRegistry::new();
-    assert!(r.register(0x1000, 0x100, "ok").is_ok());
-    assert!(r.register(0x1100, 0x100, "ok").is_ok());
-    assert!(r.register(0x1202, 0x100, "unaligned").is_err());
-    assert!(r.register(0x1206, 0x100, "unaligned").is_err());
-    assert!(r.register(0x120A, 0x100, "unaligned").is_err());
-    // 4 字节对齐的应该 OK
-    assert!(r.register(0x1204, 0x100, "aligned").is_ok());
+fn max_mmio_mappings_is_64() {
+    assert_eq!(MAX_MMIO_MAPPINGS, 64, "内核 constants::limits::MAX_MMIO_MAPPINGS = 64");
 }

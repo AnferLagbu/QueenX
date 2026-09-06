@@ -1,125 +1,35 @@
 //! P0-I-26 / B13-FL-01: Demand Paging 模型语义测试
 //!
-//! 验证 handle_user_page_fault 的 fallthrough 路径:
-//! - 没有 VMA 覆盖的地址 → SignalSegv (不再隐式分配 RWX 零页)
-//! - 有 VMA 覆盖 + 写入只读 VMA → 应被识别为 COW 候选, 不得直接赋写权限
-//! - 有 VMA 覆盖 + guard VMA → SignalSegv
+//! ## B08-20 迁移 (2026-09-06)
+//! 删除本地 `PfResult` / `PageFaultInfo` / `PageFlags` / `Vma` / `VmaType` /
+//! `decide_fallthrough` 平行实现, 改引内核真实类型:
+//! - `queenx::kernel::framework::mm::page_fault::{PfResult, PageFaultInfo}`
+//! - `queenx::kernel::framework::mm::PageFlags` (bitflags, NX = 1<<63)
+//! - `queenx::kernel::framework::mm::{Vma, VmaType}`
 //!
-//! 不链接 queenx (host-tests 是 mock 层), 通过复刻 PfResult / Vma 模型
-//! 验证 demand paging 行为正确性.
+//! ## 因内核 mm 层 host 不可测已移除 (handle_user_page_fault fallthrough)
+//! 原镜像的 fallthrough 决策测试 (no_vma_returns_sigsegv / guard_vma_returns_sigsegv /
+//! readonly_vma_write_triggers_cow / writable_vma_uses_vma_flags / decide_fallthrough)
+//! 已移除: 内核 `handle_user_page_fault`/`handle_page_fault` 依赖
+//! `read_user_cr3_asm()` (链接 isr.asm 的 `USER_CR3_SAVE` 汇编符号, host 无此符号),
+//! 以及 `vmm::get_vmm()` / `pmm::get_pmm()` / `swap` / `cow` / `get_current_mm()`
+//! 等 MMU/全局状态, host 无法构造页表上下文, 不可调用. 保留纯类型级测试:
+//! `PfResult` / `PageFaultInfo::from_error_code` / `PageFlags` / `Vma` 字段语义 /
+//! `is_guard` (内核语义 = `vma_type == VmaType::Guard`) / 栈扩展区间.
+//!
+//! ## 与镜像的差异 (以内核为权威)
+//! - 内核 `VmaType` 有 8 个变体 (Anonymous/FileBacked/Stack/Heap/Vdso/Vsvar/Guard/Device),
+//!   原镜像仅 3 个.
+//! - 内核 `Vma::is_guard()` = `vma_type == VmaType::Guard`; 原镜像误判为 "无 USER 位".
+//! - 内核 `PageFlags::NX = 1<<63`; 原镜像误作 `NO_EXEC = 0x08`.
 
-/// 镜像 queenx PfResult (mm/page_fault.rs)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum PfResult {
-    Fixed = 0,
-    SignalSegv = 1,
-    SignalBus = 2,
-    Oom = 3,
-    Unhandled = 4,
-}
+use queenx::kernel::framework::constants::limits::USER_ADDR_MAX;
+use queenx::kernel::framework::mm::page_fault::{PageFaultInfo, PfResult};
+use queenx::kernel::framework::mm::{PageFlags, Vma, VmaType};
 
-/// 镜像 queenx PageFaultInfo::from_error_code
-#[derive(Debug, Clone, Copy)]
-struct PageFaultInfo {
-    fault_addr: u64,
-    present: bool,
-    write: bool,
-    user: bool,
-    reserved: bool,
-    instruction: bool,
-}
-
-impl PageFaultInfo {
-    fn from_error_code(fault_addr: u64, error_code: u64) -> Self {
-        Self {
-            fault_addr,
-            present: error_code & 0x01 != 0,
-            write: error_code & 0x02 != 0,
-            user: error_code & 0x04 != 0,
-            reserved: error_code & 0x08 != 0,
-            instruction: error_code & 0x10 != 0,
-        }
-    }
-}
-
-/// 镜像 queenx PageFlags
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PageFlags {
-    bits: u32,
-}
-
-impl PageFlags {
-    const PRESENT: Self = Self { bits: 0x01 };
-    const WRITABLE: Self = Self { bits: 0x02 };
-    const USER: Self = Self { bits: 0x04 };
-    const NO_EXEC: Self = Self { bits: 0x08 };
-
-    fn contains(&self, other: Self) -> bool {
-        self.bits & other.bits == other.bits
-    }
-}
-
-impl core::ops::BitOr for PageFlags {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self {
-        Self { bits: self.bits | rhs.bits }
-    }
-}
-
-/// 镜像 queenx VmaType
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-enum VmaType {
-    Anonymous = 0,
-    FileBacked = 1,
-    Stack = 2,
-}
-
-/// 镜像 queenx Vma (最小字段集)
-#[derive(Debug, Clone)]
-struct Vma {
-    start: usize,
-    end: usize,
-    flags: PageFlags,
-    vma_type: VmaType,
-    inode_id: u32,
-    shared: bool,
-    file_pwm: u64,
-    offset: u64,
-}
-
-impl Vma {
-    fn is_guard(&self) -> bool {
-        // 简化: 没有 USER 的 Vma 视为 guard
-        !self.flags.contains(PageFlags::USER)
-    }
-}
-
-/// 镜像 queenx handle_user_page_fault 的 fallthrough 决策:
-/// 返回 (PfResult, 期望的页 flags)
-fn decide_fallthrough(info: &PageFaultInfo, vma: Option<&Vma>) -> (PfResult, Option<PageFlags>) {
-    if info.reserved {
-        return (PfResult::SignalBus, None);
-    }
-    // 模拟: 没有 VMA 覆盖 → SignalSegv (P0-I-26 / B13-FL-01 修复)
-    let vma = match vma {
-        Some(v) => v,
-        None => return (PfResult::SignalSegv, None),
-    };
-    if vma.is_guard() {
-        return (PfResult::SignalSegv, None);
-    }
-    // 写入只读 VMA → 需 COW, 不得直接赋写权限
-    if info.write && !vma.flags.contains(PageFlags::WRITABLE) {
-        // 简化模型: 决策为 "需要走 COW 路径", 标记为 Fixed
-        // 实际框架层会调用 cow_handle_fault, 本测试只验证"不会
-        // 静默映射为 WRITABLE"
-        return (PfResult::Fixed, Some(vma.flags | PageFlags::PRESENT));
-    }
-    // 普通匿名页: 用 VMA flags (严禁硬编码 WRITABLE)
-    (PfResult::Fixed, Some(vma.flags | PageFlags::PRESENT))
-}
+// =============================================================================
+// 类型级测试
+// =============================================================================
 
 #[test]
 fn pf_result_enum_values() {
@@ -151,85 +61,20 @@ fn pf_info_reserved_bit_detection() {
 }
 
 #[test]
-fn no_vma_returns_sigsegv() {
-    // 任意用户地址, 没有 VMA 覆盖 → 拒绝, 不再隐式分配 RWX
-    let info = PageFaultInfo::from_error_code(0xDEAD_BEEF, 0x06);
-    let (result, flags) = decide_fallthrough(&info, None);
-    assert_eq!(result, PfResult::SignalSegv);
-    assert!(flags.is_none(), "无 VMA 不应映射任何页");
-}
-
-#[test]
-fn guard_vma_returns_sigsegv() {
-    // guard VMA (无 USER 位) → SIGSEGV
-    let vma = Vma {
-        start: 0x7000,
-        end: 0x8000,
-        flags: PageFlags { bits: 0 }, // 0 flags = guard
-        vma_type: VmaType::Stack,
-        inode_id: 0,
-        shared: false,
-        file_pwm: 0,
-        offset: 0,
-    };
-    let info = PageFaultInfo::from_error_code(0x7500, 0x06);
-    let (result, _) = decide_fallthrough(&info, Some(&vma));
-    assert_eq!(result, PfResult::SignalSegv);
-}
-
-#[test]
-fn readonly_vma_write_triggers_cow_not_silent_writable() {
-    // 只读 mmap 写入 → 识别为 COW 候选, 新映射保留只读
-    let readonly = PageFlags::PRESENT | PageFlags::USER;
-    let vma = Vma {
-        start: 0x1000_0000,
-        end: 0x1001_0000,
-        flags: readonly,
-        vma_type: VmaType::FileBacked,
-        inode_id: 42,
-        shared: false,
-        file_pwm: 0xCAFE,
-        offset: 0,
-    };
-    let info = PageFaultInfo::from_error_code(0x1000_0500, 0x07); // write + user + present
-    let (result, flags) = decide_fallthrough(&info, Some(&vma));
-    assert_eq!(result, PfResult::Fixed);
-    let flags = flags.expect("应返回映射 flags");
-    // 关键断言: B13-FL-01 修复后, 只读 VMA 写缺页不得静默升级为 WRITABLE
-    assert!(
-        !flags.contains(PageFlags::WRITABLE),
-        "只读 VMA 写缺页必须走 COW, 不得静默映射为 WRITABLE"
-    );
-}
-
-#[test]
-fn writable_vma_uses_vma_flags() {
-    // 匿名可写 VMA → 使用 VMA 自身的 flags (PRESENT|USER|WRITABLE), 不硬编码
-    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-    let vma = Vma {
-        start: 0x2000_0000,
-        end: 0x2001_0000,
-        flags,
-        vma_type: VmaType::Anonymous,
-        inode_id: 0,
-        shared: false,
-        file_pwm: 0,
-        offset: 0,
-    };
-    let info = PageFaultInfo::from_error_code(0x2000_0500, 0x06);
-    let (result, mapped_flags) = decide_fallthrough(&info, Some(&vma));
-    assert_eq!(result, PfResult::Fixed);
-    let mapped = mapped_flags.expect("应返回映射 flags");
-    assert!(mapped.contains(PageFlags::PRESENT));
-    assert!(mapped.contains(PageFlags::WRITABLE));
-    assert!(mapped.contains(PageFlags::USER));
+fn pf_info_not_present() {
+    let info = PageFaultInfo::from_error_code(0x1000, 0x00);
+    assert!(!info.present);
+    assert!(!info.write);
+    assert!(!info.user);
 }
 
 #[test]
 fn stack_region_detected() {
-    // 验证 USER_STACK_TOP - 4096 落在栈扩展候选区间
-    const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_F000;
-    const USER_STACK_DEFAULT_SIZE: u64 = 0x0080_0000;
+    // 验证内核 USER_STACK_TOP (= constants::limits::USER_ADDR_MAX) 下 4096
+    // 落在栈扩展候选区间; 区间下界 = USER_STACK_TOP - USER_STACK_DEFAULT_SIZE.
+    // USER_STACK_DEFAULT_SIZE = 0x0080_0000 为 page_fault.rs 私有常量, 测试侧镜像.
+    const USER_STACK_TOP: u64 = USER_ADDR_MAX;
+    const USER_STACK_DEFAULT_SIZE: u64 = 0x0080_0000; // 与内核 page_fault.rs:67 同步
     let inside = (USER_STACK_TOP - 4096) as usize;
     let outside = (USER_STACK_TOP - USER_STACK_DEFAULT_SIZE - 4096) as usize;
     assert!((USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&(inside as u64)));
@@ -237,30 +82,31 @@ fn stack_region_detected() {
 }
 
 #[test]
-fn page_flags_no_exec_bit_distinct() {
-    // 镜像内核 PTE NX 位: 验证 NO_EXEC 与其他标志位不冲突
-    let nx = PageFlags::NO_EXEC;
+fn page_flags_nx_bit_distinct() {
+    // 内核 PTE NX 位 = 1<<63; 与其他低 12 位标志不冲突
+    let nx = PageFlags::NX;
     assert!(!nx.contains(PageFlags::PRESENT), "NX 与 PRESENT 不冲突");
     assert!(!nx.contains(PageFlags::WRITABLE), "NX 与 WRITABLE 不冲突");
     assert!(!nx.contains(PageFlags::USER), "NX 与 USER 不冲突");
-    let combined = PageFlags::PRESENT | PageFlags::USER | PageFlags::NO_EXEC;
-    assert!(combined.contains(PageFlags::NO_EXEC), "组合位含 NX");
+    let combined = PageFlags::PRESENT | PageFlags::USER | PageFlags::NX;
+    assert!(combined.contains(PageFlags::NX), "组合位含 NX");
     assert!(combined.contains(PageFlags::PRESENT), "组合位含 PRESENT");
+    assert!(combined.contains(PageFlags::USER), "组合位含 USER");
 }
 
 #[test]
 fn vma_file_backed_fields_roundtrip() {
-    // 验证 Vma 的 file_backed 字段 (start/end/offset/inode_id/shared/file_pwm/vma_type) 语义
-    let vma = Vma {
-        start: 0x1000,
-        end: 0x2000,
-        flags: PageFlags::PRESENT | PageFlags::USER,
-        vma_type: VmaType::FileBacked,
-        inode_id: 42,
-        shared: true,
-        file_pwm: 0xCAFE,
-        offset: 0x100,
-    };
+    // 内核 Vma::file_backed 构造器保留文件后端语义字段
+    let vma = Vma::file_backed(
+        0x1000,
+        0x2000,
+        PageFlags::PRESENT | PageFlags::USER,
+        0x100,
+        42,
+        0xCAFE,
+        true,
+        Some(0),
+    );
     assert_eq!(vma.start, 0x1000, "start 保留映射起始地址");
     assert_eq!(vma.end, 0x2000, "end 保留映射结束地址");
     assert_eq!(vma.end - vma.start, 0x1000, "end - start = 映射长度 4KB");
@@ -269,25 +115,59 @@ fn vma_file_backed_fields_roundtrip() {
     assert!(vma.shared, "shared 标记共享映射");
     assert_eq!(vma.file_pwm, 0xCAFE, "file_pwm 保留进程凭证");
     assert_eq!(vma.offset, 0x100, "offset 保留文件内偏移");
-    assert!(!vma.is_guard(), "有 USER 位不是 guard");
+    assert!(!vma.is_guard(), "FileBacked 不是 guard");
 }
 
 #[test]
 fn vma_anonymous_fields_defaults() {
-    // 验证 Vma 的匿名映射字段语义 (inode_id=0/shared=false/file_pwm=0/offset=0)
-    let vma = Vma {
-        start: 0x2000,
-        end: 0x3000,
-        flags: PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
-        vma_type: VmaType::Anonymous,
-        inode_id: 0,
-        shared: false,
-        file_pwm: 0,
-        offset: 0,
-    };
+    // 内核 Vma::new 构造器: 匿名映射默认字段语义
+    let vma = Vma::new(
+        0x2000,
+        0x3000,
+        PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
+        VmaType::Anonymous,
+    );
     assert_eq!(vma.vma_type, VmaType::Anonymous, "vma_type 语义: Anonymous");
     assert_eq!(vma.inode_id, 0, "匿名映射 inode_id = 0");
     assert!(!vma.shared, "匿名映射默认非共享");
     assert_eq!(vma.file_pwm, 0, "匿名映射 file_pwm = 0");
     assert_eq!(vma.offset, 0, "匿名映射 offset = 0");
+    assert_eq!(vma.mount_idx, None, "匿名映射 mount_idx = None");
+}
+
+#[test]
+fn vma_guard_semantics_is_type_based() {
+    // 内核 is_guard 语义: vma_type == VmaType::Guard (而非 "无 USER 位")
+    let guard = Vma::new(0x7000, 0x8000, PageFlags::PRESENT, VmaType::Guard);
+    assert!(guard.is_guard(), "Guard 类型 VMA 必须 is_guard");
+    // 即使带 USER 位, Guard 类型仍判 guard (类型权威)
+    let guard_with_user = Vma::new(
+        0x7000,
+        0x8000,
+        PageFlags::PRESENT | PageFlags::USER,
+        VmaType::Guard,
+    );
+    assert!(guard_with_user.is_guard(), "Guard 类型以类型为准");
+    let stack = Vma::new(
+        0x8000,
+        0x9000,
+        PageFlags::PRESENT | PageFlags::USER,
+        VmaType::Stack,
+    );
+    assert!(!stack.is_guard(), "Stack 类型不是 guard");
+    // 无 USER 位但类型非 Guard 也不是 guard (内核语义与旧镜像相反)
+    let no_user_anon = Vma::new(0x9000, 0xA000, PageFlags::PRESENT, VmaType::Anonymous);
+    assert!(!no_user_anon.is_guard(), "内核以类型判定, 不以 USER 位");
+}
+
+#[test]
+fn vma_type_has_all_kernel_variants() {
+    // 内核 VmaType 8 变体可区分
+    assert_ne!(VmaType::Anonymous, VmaType::FileBacked);
+    assert_ne!(VmaType::Stack, VmaType::Guard);
+    assert_eq!(VmaType::from_u8(0), VmaType::Anonymous);
+    assert_eq!(VmaType::from_u8(2), VmaType::Stack);
+    assert_eq!(VmaType::from_u8(6), VmaType::Guard);
+    // 非法值回退 Guard (内核语义)
+    assert_eq!(VmaType::from_u8(200), VmaType::Guard);
 }

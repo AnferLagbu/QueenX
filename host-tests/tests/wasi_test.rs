@@ -5,87 +5,105 @@
 //! - WasiContext 参数/环境变量
 //! - WASI 权限/文件类型/filestat 结构
 //! - WASI errno 值与 POSIX 对齐
+//!
+//! ## B08-20 迁移 (2026-09-06)
+//! WasiFdTable 行为与 WasiContext 已改引内核 `services::wasm::wasi::fd_table` /
+//! `services::wasm::wasi::WasiContext` 真实实现, 删除本地 Vec<Option<u32>> 平行实现.
+//! WASI ABI 常量 (rights 位 / filestat / iovec 布局) 为 preview1 外部规范,
+//! 非内核平行实现, 保留本地标注 (内核无对应导出结构).
+//! WASI errno 对齐改为直接验证内核 `WasiErrno` 枚举判别值.
 
 // ============================================================================
-// WasiFdTable 行为测试
+// WasiFdTable 行为测试 (改引内核真实实现)
 // ============================================================================
+
+use queenx::kernel::services::wasm::wasi::fd_table::{WasiFdEntry, WasiFdTable};
+use queenx::kernel::services::wasm::wasi::{WasiContext, WasiErrno, WasiFileType, WasiRights};
+
+fn entry(inner_fd: i32) -> WasiFdEntry {
+    WasiFdEntry {
+        file_type: WasiFileType::RegularFile,
+        rights: WasiRights::FILE,
+        inner_fd,
+        path: None,
+    }
+}
 
 #[test]
 fn test_fd_table_create() {
-    let fds: Vec<Option<u32>> = vec![None; 16];
-    // fd 0-2 保留 (stdin/stdout/stderr)
-    assert!(fds[0].is_none());
-    assert!(fds[1].is_none());
-    assert!(fds[2].is_none());
+    let mut table = WasiFdTable::new(16);
+    // fd 0-2 保留 (stdin/stdout/stderr): 未分配 → get 返回 Badf
+    assert!(table.get(0).is_err());
+    assert!(table.get(1).is_err());
+    assert!(table.get(2).is_err());
+    // fd < 3 的 close 同样拒绝
+    assert!(table.close(0).is_err());
+    assert!(table.close(2).is_err());
 }
 
 #[test]
 fn test_fd_table_alloc_close() {
-    let mut fds: Vec<Option<u32>> = vec![None; 16];
-
-    // 分配 fd 3
-    fds[3] = Some(10);
-    assert_eq!(fds[3], Some(10));
-
+    let mut table = WasiFdTable::new(16);
+    // 分配 fd 3 (从 3 起找空槽)
+    let fd = table.alloc(entry(10)).unwrap();
+    assert_eq!(fd, 3);
+    assert_eq!(table.get(3).unwrap().inner_fd, 10);
     // 关闭 fd 3
-    let closed = fds[3].take();
-    assert_eq!(closed, Some(10));
-    assert!(fds[3].is_none());
+    let closed = table.close(3).unwrap();
+    assert_eq!(closed.inner_fd, 10);
+    assert!(table.get(3).is_err());
 }
 
 #[test]
 fn test_fd_table_overflow() {
-    let max_fds = 5;
-    let mut fds: Vec<Option<u32>> = vec![None; max_fds];
-
-    fds[3] = Some(10);
-    fds[4] = Some(20);
-
-    let mut allocated = false;
-    for (i, slot) in fds.iter_mut().enumerate().skip(3).take(max_fds - 3) {
-        if slot.is_none() {
-            *slot = Some(30);
-            allocated = true;
-            let _ = i; // i 仅用于调试, 不在断言中使用
-            break;
-        }
-    }
-    assert!(!allocated, "should not allocate when full");
+    let mut table = WasiFdTable::new(5);
+    // 填满 fd 3, 4
+    table.alloc(entry(10)).unwrap();
+    table.alloc(entry(20)).unwrap();
+    // 无空槽 → alloc 返回 Badf
+    assert!(table.alloc(entry(30)).is_err());
+    // 重复 close 空槽也返回 Badf
+    assert!(table.close(5).is_err());
 }
 
 #[test]
 fn test_fd_table_renumber() {
-    let mut fds: Vec<Option<u32>> = vec![None; 16];
-    fds[3] = Some(10);
-
-    let entry = fds[3].take();
-    fds[10] = entry;
-
-    assert!(fds[3].is_none());
-    assert_eq!(fds[10], Some(10));
+    let mut table = WasiFdTable::new(16);
+    table.alloc(entry(10)).unwrap(); // fd 3
+    table.renumber(3, 10).unwrap();
+    assert!(table.get(3).is_err());
+    assert_eq!(table.get(10).unwrap().inner_fd, 10);
+    // 越界 renumber 返回 Badf
+    assert!(table.renumber(10, 20).is_err());
+    // 未分配 from 重编号也返回 Badf
+    assert!(table.renumber(7, 8).is_err());
 }
 
 // ============================================================================
-// WasiContext 测试
+// WasiContext 测试 (改引内核真实实现)
 // ============================================================================
 
 #[test]
 fn test_context_args() {
-    let args: Vec<String> = vec!["test_program".into(), "--verbose".into()];
-    let env: Vec<(String, String)> = vec![("HOME".into(), "/root".into())];
+    let mut ctx = WasiContext::new();
+    ctx.args.push("test_program".into());
+    ctx.args.push("--verbose".into());
+    ctx.env.push(("HOME".into(), "/root".into()));
 
-    assert_eq!(args.len(), 2);
-    assert_eq!(env.len(), 1);
-    assert_eq!(args[0], "test_program");
-    assert_eq!(env[0].0, "HOME");
+    assert_eq!(ctx.args.len(), 2);
+    assert_eq!(ctx.env.len(), 1);
+    assert_eq!(ctx.args[0], "test_program");
+    assert_eq!(ctx.env[0].0, "HOME");
 }
 
 // ============================================================================
-// WASI 权限测试
+// WASI 权限测试 (preview1 外部规范, 保留标注)
 // ============================================================================
 
 #[test]
 fn test_wasi_rights() {
+    // SIMPLIFIED: WASI preview1 外部规范定义的 right 位 (非内核平行实现),
+    // 内核无对应导出常量; 保留本地常量以锚定 ABI 位.
     const RIGHT_FD_READ: u64 = 1 << 6;
     const RIGHT_FD_WRITE: u64 = 1 << 7;
     const RIGHT_PATH_OPEN: u64 = 1 << 10;
@@ -97,33 +115,12 @@ fn test_wasi_rights() {
 }
 
 // ============================================================================
-// WASI filestat 结构测试
+// WASI filestat 结构测试 (preview1 外部规范, 保留标注)
 // ============================================================================
 
 #[test]
-fn test_filestat_structure() {
-    struct Filestat {
-        dev: u64,
-        ino: u64,
-        filetype: u8,
-        nlink: u64,
-        size: u64,
-        atim: u64,
-        mtim: u64,
-        ctim: u64,
-    }
-
-    let stat = Filestat {
-        dev: 1, ino: 42, filetype: 4, nlink: 1,
-        size: 1024, atim: 1000000, mtim: 2000000, ctim: 3000000,
-    };
-    assert_eq!(stat.filetype, 4);
-    assert_eq!(stat.size, 1024);
-}
-
-#[test]
 fn test_filestat_all_fields_semantics() {
-    // 镜像 WASI preview1 filestat_t 布局 (8 * u64 + 1 * u8 + 7 padding)
+    // SIMPLIFIED: WASI preview1 filestat_t 布局 (8 * u64 + 1 * u8 + 7 padding)
     // dev/ino: 文件设备/inode 编号, 用于唯一标识文件
     // filetype: WASI 文件类型 (0=unknown, 1=block, 2=char, 3=dir, 4=regular, 5=link, 6=socket)
     // nlink: 硬链接数
@@ -155,32 +152,27 @@ fn test_filestat_all_fields_semantics() {
 }
 
 // ============================================================================
-// WASI errno 值验证
+// WASI errno 值验证 (改引内核 WasiErrno 枚举)
 // ============================================================================
 
 #[test]
 fn test_wasi_errno_posix_alignment() {
-    const WASI_SUCCESS: i32 = 0;
-    const WASI_BADF: i32 = 8;
-    const WASI_FAULT: i32 = 21;
-    const WASI_INVAL: i32 = 28;
-    const WASI_NOENT: i32 = 44;
-    const WASI_NOTSUP: i32 = 58;
-
-    assert_eq!(WASI_SUCCESS, 0);
-    assert_eq!(WASI_BADF, 8);
-    assert_eq!(WASI_FAULT, 21);
-    assert_eq!(WASI_INVAL, 28);
-    assert_eq!(WASI_NOENT, 44);
-    assert_eq!(WASI_NOTSUP, 58);
+    // 直接验证内核 WasiErrno 枚举判别值 (preview1 规范: WASI errno 与 POSIX 编号对齐)
+    assert_eq!(WasiErrno::Success.as_i32(), 0);
+    assert_eq!(WasiErrno::Badf.as_i32(), 8);
+    assert_eq!(WasiErrno::Fault.as_i32(), 21);
+    assert_eq!(WasiErrno::Inval.as_i32(), 28);
+    assert_eq!(WasiErrno::Noent.as_i32(), 44);
+    assert_eq!(WasiErrno::Notsup.as_i32(), 58);
 }
 
 // ============================================================================
-// WASI iovec 结构测试
+// WASI iovec 结构测试 (preview1 外部规范, 保留标注)
 // ============================================================================
 
 #[test]
 fn test_iovec_structure() {
+    // SIMPLIFIED: WASI preview1 iovec_t 布局 (外部规范, 内核无对应导出结构)
     struct IoVec { buf: u32, len: u32 }
     let iovecs = [IoVec { buf: 100, len: 256 }, IoVec { buf: 400, len: 128 }];
     // 验证 buf 字段保留缓冲区起始地址
@@ -192,7 +184,7 @@ fn test_iovec_structure() {
 
 #[test]
 fn test_iovec_buf_pointer_semantics() {
-    // 镜像 WASI preview1 iovec_t 布局: buf (指针) + len (长度)
+    // SIMPLIFIED: WASI preview1 iovec_t 布局: buf (指针) + len (长度)
     // buf: 用户态缓冲区地址, len: 缓冲区长度
     // readv/writev 通过遍历 iovec 数组进行分散/聚集 I/O
     struct IoVec { buf: u32, len: u32 }

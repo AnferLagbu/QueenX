@@ -5,39 +5,21 @@
 //! 2. 任一 IST 字段为 0 → false (启动顺序错误, IDT init 应失败)
 //! 3. 边界: 越界读写 (index 7+) 不应被误报为 IST 字段
 //!
-//! 主机端镜像内核 TSS 字段结构, 验证 4 字段同时非零的 AND 短路语义.
-//! 内核 `src/kernel/framework/arch/x86_64/tss.rs::ist_validated` 是权威实现.
+//! ## B08-20 迁移 (2026-09-06)
+//! 删除本地 `TaskStateSegment` / `IST_COUNT` 平行镜像, 改引内核真实源码
+//! `queenx::kernel::framework::arch::x86_64::tss::{TaskStateSegment, IST_COUNT}`.
+//! 内核 `ist_validated` / `set_ist` / `zeroed` 均为 pub, host (x86_64) 可编译,
+//! 直接验证 4 字段同时非零的 AND 短路语义, 不再双维护.
+//!
+//! 注: 内核 `TaskStateSegment` 为 `#[repr(C, packed)]`, 字段偏移/对齐语义由
+//! tss.rs 自身保证; host-test 只关心 `ist_validated` 判定与 `set_ist` 行为.
 
-const IST_COUNT: usize = 7;
-
-struct TaskStateSegment {
-    ist: [u64; IST_COUNT],
-    // 其他字段 (rsp0/rsp1/rsp2/...) 在 host-test 中省略
-}
-
-impl TaskStateSegment {
-    fn new() -> Self {
-        Self {
-            ist: [0; IST_COUNT],
-        }
-    }
-
-    fn set_ist(&mut self, index: usize, stack_top: u64) {
-        if index < IST_COUNT {
-            self.ist[index] = stack_top;
-        }
-    }
-
-    /// 镜像内核 `ist_validated` 实现: IST 0-3 全部非零 → true
-    fn ist_validated(&self) -> bool {
-        self.ist[0] != 0 && self.ist[1] != 0 && self.ist[2] != 0 && self.ist[3] != 0
-    }
-}
+use queenx::kernel::framework::arch::x86_64::tss::{TaskStateSegment, IST_COUNT};
 
 #[test]
 fn test_ist_validated_all_set() {
     // 启动顺序正确: 4 个 IST 全部填充非零栈顶
-    let mut tss = TaskStateSegment::new();
+    let mut tss = TaskStateSegment::zeroed();
     tss.set_ist(0, 0xFFFF_8000_0000_1000);
     tss.set_ist(1, 0xFFFF_8000_0000_2000);
     tss.set_ist(2, 0xFFFF_8000_0000_3000);
@@ -48,26 +30,26 @@ fn test_ist_validated_all_set() {
 #[test]
 fn test_ist_validated_uninit_returns_false() {
     // 全部为 0 → 启动顺序错误
-    let tss = TaskStateSegment::new();
+    let tss = TaskStateSegment::zeroed();
     assert!(!tss.ist_validated());
 }
 
 #[test]
 fn test_ist_validated_partial_fails() {
     // 仅设置 IST 0 → false
-    let mut tss = TaskStateSegment::new();
+    let mut tss = TaskStateSegment::zeroed();
     tss.set_ist(0, 0x1000);
     assert!(!tss.ist_validated());
 
     // 设置 0, 1, 2, 缺 3
-    let mut tss = TaskStateSegment::new();
+    let mut tss = TaskStateSegment::zeroed();
     tss.set_ist(0, 0x1000);
     tss.set_ist(1, 0x2000);
     tss.set_ist(2, 0x3000);
     assert!(!tss.ist_validated());
 
     // 设置 0, 1, 缺 2
-    let mut tss = TaskStateSegment::new();
+    let mut tss = TaskStateSegment::zeroed();
     tss.set_ist(0, 0x1000);
     tss.set_ist(1, 0x2000);
     assert!(!tss.ist_validated());
@@ -76,7 +58,7 @@ fn test_ist_validated_partial_fails() {
 #[test]
 fn test_ist_validated_ist4_to_7_ignored() {
     // IST 4-7 不在 validated 检查范围, 不影响结果
-    let mut tss = TaskStateSegment::new();
+    let mut tss = TaskStateSegment::zeroed();
     tss.set_ist(0, 0x1000);
     tss.set_ist(1, 0x2000);
     tss.set_ist(2, 0x3000);
@@ -85,7 +67,7 @@ fn test_ist_validated_ist4_to_7_ignored() {
     assert!(tss.ist_validated());
 
     // 即使 4-7 设置了, validated 仍由 0-3 决定
-    let mut tss = TaskStateSegment::new();
+    let mut tss = TaskStateSegment::zeroed();
     tss.set_ist(4, 0x5000);
     tss.set_ist(5, 0x6000);
     tss.set_ist(6, 0x7000);
@@ -106,4 +88,10 @@ fn test_idt_ist_to_tss_ist_mapping() {
         // N → N-1
         assert_eq!(idt_ist as usize - 1, tss_idx, "IDT IST={} should map to TSS ist[{}]", idt_ist, tss_idx);
     }
+}
+
+#[test]
+fn test_ist_count_is_7() {
+    // 内核 tss.rs `IST_COUNT` (pub const) = 7 条目, 与 IDT IST 字段 1..=7 对应
+    assert_eq!(IST_COUNT, 7);
 }

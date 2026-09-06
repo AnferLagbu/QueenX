@@ -7,10 +7,11 @@
 //! 4. 管道检测: is_pipeline() 识别 |, >, <
 //! 5. as_str(): 无效 UTF-8 降级处理
 //!
-//! eash 是 #![no_std] 用户态二进制, 主机端 cargo test 会冲突 panic_impl/lang item.
-//! 这里在 host-test 中镜像核心算法 (Cmd::new), 与生产代码保持一致; 如生产代码
-//! 改动, 需同步更新此测试的 mirror 逻辑. 这是测试脆弱性的妥协, 比建独立 test
-//! crate 更轻量.
+//! ## B08-20 处置 (2026-09-06): 保留 + 标注 (用户态镜像, B08-12 不覆盖)
+//! eash 是 `#![no_std]` 用户态二进制, host-test 直接引用会冲突 panic_impl/lang item;
+//! 且 B08-12 内核 `host-test` feature 只暴露内核 crate, 不覆盖用户态 `src/user/eash`.
+//! 按 B08-20 模式 4 处置 (调研结论): 保留镜像 + 标注"用户态源码镜像, 生产改动需同步",
+//! 不属内核平行实现 (被测对象是用户态 shell, 非内核). 已登记至 audit-fix-08 B08-20 条目.
 
 use std::ffi::CStr;
 
