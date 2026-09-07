@@ -194,7 +194,7 @@
     - **层 2 纯逻辑业务（P1）**：framework/tests 门控外 13 纯逻辑 + 门控内 7 纯逻辑 + 61 处 cfg(test)（driver 17 需逐文件甄别，多数为常量/布局断言可共享，触碰 MMIO 的排除）。
     - **层 3 桩化机制状态机（P2）**：hvfs/ipc/barrier/sync（IrqSpinLock 中断禁用语义 host 桩化 no-op）、test_smp（cpu_id 桩化）——依赖 framework std 桩（B08-12 工程计划 B）。
     - **层 4 硬件路径（QEMU only 不共享）**：driver_test（VGA/串口/PIT/键盘）、net（e1000 MMIO）、syscall 串口键盘 FFI——保持 kernel_test 单端，显式登记不共享清单。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成（核心由 E-04 达成）：E-04 的 `register_all_tests()` + `host_test_runner_main()` 已让 host 端执行 256 测试（249 PASS + 7 Skip），覆盖 **37 个模块**（barrier/config/cow/devfs/devtree/elf/hvfs/ipc/ipc_dynamic/kmalloc_slab/lib/load_balance/mm/mmap/page_fault/per_cpu_sched/pi_mutex/proc/proc_exit/pwm/rcu/rt_sched/sched/sched_limit/sched_policy/sched_quota/smp/softirq/syscall/timer/uds/vfs/vma/zil_persist 等），**层 1-3 纯逻辑模块全部双端共享**。**层 4 不共享清单（显式登记）**：driver_test（独立裸机程序 VGA/串口/PIT/键盘）、net（真实 e1000 MMIO）、syscall 串口键盘 FFI（依赖中断/端口 I/O）——保持 kernel_test 单端。**层 1 例外**：buddy 因 H-04 暂缓（buddy.rs 平行实现保留待审查员，宿主物理内存模拟未建）保持搁置。**验证**：host 端 e04_shared_runner_test 249 PASS + 7 Skip failed==0；kernel_test 注册 256 + 22 硬件路径调用与改造前一致)
 
 - **E-06. host-tests 侧消并与用例去重**
   - 描述：B08-12 后 host-tests 镜像类改引内核真实源码；同源双编译再叠一层——内核侧纯逻辑测试在 host 跑，与 host-tests 的纯逻辑用例**去重**（同一被测对象只维护一份用例，双端共享；独立 55 中静态契约 48 + 自包含 7 与硬件路径测试为各自环境专属）。
