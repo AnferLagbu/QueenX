@@ -345,27 +345,27 @@ pmm.rs buddy 三态数据，改造可行性不同：
 - **H-01. 链表结构改造（FreeNode → FreeIndex）**
   - 描述：`FreeNode { prev: *mut FreeNode, next: *mut FreeNode }`（页内指针）→ `FreeIndex { prev: u64, next: u64 }`（存 pfn），链表关系存独立数组 `FREE_LINKS`（长度 = total_pages，16 字节/项）。
   - 方案：`buddy_heads` 元素 `*mut FreeNode` → `u64` pfn；`buddy_list_push/pop/remove` 改索引操作；`pfn_to_virt(pfn) as *mut FreeNode` 全部删除。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成：FreeNode/FreeNodeRef 删除，改 FreeIndex{prev,next:u64} + FREE_LINKS 独立数组；buddy_heads 改 [u64; MAX+1] 哨兵 u64::MAX；pfn_to_virt as *mut FreeNode 清零；buddy_list_push/pop/remove 改索引读写；buddy_reserve_pfn_range 遍历重写（先存 next 再 remove）；buddy_alloc is_null→哨兵比较。公开 API 零改动，55 处调用方不触碰)
 - **H-02. 边界检查替换**
   - 描述：原"防御性物理范围校验"（`node_phys < RAM_BASE || >= RAM_BASE+mem_size`，[pmm.rs:1175-1186](../../src/kernel/framework/mm/pmm.rs#L1175-L1186)）→ `pfn < total_pages` 数组边界检查（更简单且天然防越界）。
   - 方案：`buddy_list_remove/pop` 内校验替换；`FreeNodeRef`/`HeadsRef` 的 unsafe 裸指针操作大幅减少。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成：3 处物理范围校验删除（buddy_list_remove/pop/reserve_pfn_range），换 `debug_assert!(pfn < total_pages)` 前置断言；3 处 `#[allow(clippy::absurd_extreme_comparisons)]` 随删除消失)
 - **H-03. 元数据分配**
   - 描述：`FREE_LINKS` 数组（total_pages × 16B）从早期分配器（`early_current`）预留，与 `buddy_meta` 同法（init_bitmap 内布局）。
   - 方案：内存开销 4GB RAM（1M 页）→ 16MB 元数据（vs 现状 0 额外，但语义等价——侵入式也占用空闲页前 16 字节）。标记为已用页。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成：FREE_LINKS 在 init_bitmap 内 buddy_meta 之后同法分配（free_links_phys 页对齐、early_current 预留、fill_memory 预填 0xFF=SENTINEL、位图标记已用页、LTO addr_of!+write_volatile 模式）；新增 buddy_links 字段 + buddy_links_ref() 访问器。内存账本：4GB RAM → 16MB)
 - **H-04. host 测试迁移**
   - 描述：删除 `host-tests/src/buddy.rs`（436 行平行实现，含 F9 `#![allow(dead_code)]`），测试改引内核真实 `framework::mm::pmm` 的 buddy 机制。
   - 方案：经 host-test feature 暴露 pmm 内部 buddy 操作（`buddy_try_merge/alloc/list_*`）测试入口；策略层（PmmPolicy/FrameAllocDecision）已在 host 可测，机制层改造后同样 host 可测。**载体问题从架构层面消失**（buddy 只管理 pfn，不知物理地址）。
-  - 状态：[]
+  - 状态：[] (2026-09-06 暂缓：H-01~H-03 改造后 buddy 已纯索引化 host 可测，但完整 host 测试需物理内存模拟层（KERNEL_BASE 编译期常量无法 host 映射到 mock 堆），工程量较大。buddy.rs 平行实现保留（F9 违规待审查员决策，见 B08-12 条目）。E 工程层 1 的 buddy 项依赖本条目完成后实施)
 - **H-05. QEMU 回归 + 压力测试**
   - 描述：TCB 内核心路径重构，必须完整验证行为不变。
   - 方案：双架构 kernel_test 全量 + boot + 分配/释放压力测试；公开 API（`alloc_page/free_page/alloc_pages`）不变，调用方零改动。
-  - 状态：[]
+  - 状态：[] (2026-09-06 编译层已验证：双架构 cargo check 0w0e + host-tests 全量 0 失败（现有测试覆盖 pmm 相关路径）。QEMU kernel_test 实测待阶段 6 B08-17 统一验证)
 - **H-06. 验证门槛**
   - 描述：双架构 `./ci/build.sh all` 0w0e + clippy 0 warning + 核心审计 F1-F9。
   - 方案：§2.3 五条门槛 + 专项 buddy 算法差分验证（改造前后分配序列一致）。
-  - 状态：[]
+  - 状态：[] (2026-09-06 部分完成：双架构 cargo check 0w0e + clippy（x86_64/aarch64）0 警告 + 核心审计（audit_safety_coverage 100%/audit_comment_language 0/audit_repr_c/audit_services_boundary/audit_coupling/audit_once_cell）全部通过；host-tests 全量 0 失败。`./ci/build.sh all` + QEMU kernel_test 待阶段 6 B08-17)
 
 ### 关联
 
