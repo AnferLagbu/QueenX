@@ -185,7 +185,7 @@
 - **E-04. 测试运行器双端适配**
   - 描述：framework/tests/mod.rs 已有自研 TestFn/TestCase/TestResult harness（MAX_TESTS=256）。host 侧需薄适配层。
   - 方案：kernel 端 kernel_test_main（现有入口）；host 端等价 runner（cargo test harness 或复用自研 runner 统一输出）。差异处理：panic abort vs unwind、printk vs std print、TestResult::Skip 语义双端一致、结果聚合（JSON/CI 解析）。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成：① serial_print/serial_print_num 加 host-test std 输出分支；② run_all 中断改走 `sync::disable_interrupts/restore_interrupts`（裸机等价 arch!），host 分支加 catch_unwind（测试内 panic → Fail 而非中断 run_all）；③ 注册逻辑抽 `register_all_tests()`（any 门控）+ 新增 `host_test_runner_main()` + `TestSummary`；④ **arch 层 5 处 host-test 桩补充**（B08-14 仅桩化了 spinlock disable/restore，run_all 直接调 arch!(interrupt_disable) 执行 cli 特权指令 + cpu_id 读 APIC MMIO 0xFEE00000 SIGSEGV + context_switch 链接 switch.asm 符号——补桩 interrupt_enable/disable/restore/cpu_id/context_switch 5 项，仅 host-test 生效 kernel_test 零变化）。**host 端真实执行结果：249 PASS + 7 Skip，failed==0**（同一套测试代码 host 双端运行）。**host Skip 占位 6 个（E-07 白名单候选）**：IPC shm_rapid_attach_detach / ipc_dynamic shm_create / vma mm_struct_ops / smp cpu_online / per_cpu_sched init / proc_exit kernel_pml4_exists（依赖裸机 PMM/VMM/SMP 初始化，host 无对应环境）+ 原始 Skip 1 个（rt_sched policy_switching_self 双端一致）。**潜在假通过（E-07 参考）**：proc_exit kernel_pml4_stable host 下 get_kernel_pml4 恒 0 两次相等 PASS。**验证**：kernel_test + host-test + 双架构 0w0e；e04_shared_runner_test 通过；host-tests 全量 95 目标 0 failed；注册数 kernel_test 256 = host 256 + 22 硬件路径注册调用（纯逻辑双端逐行一致无丢失/重复）)
 
 - **E-05. 共享测试集分层迁移**
   - 描述：按依赖复杂度分层迁移（每层完成 = 双端编译 + 双端全绿）。

@@ -1,5 +1,8 @@
 use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
+// E-04 (2026-09-06): Ordering 仅被 per_cpu_sched::init 原实现 (not(host-test) 分支) 使用,
+// host-test 下该测试为 Skip 占位, 门控 import 避免 unused warning.
+#[cfg(not(feature = "host-test"))]
 use core::sync::atomic::Ordering;
 
 // ============================================================
@@ -20,6 +23,15 @@ fn test_smp_current_cpu_valid() -> TestResult {
     TestResult::Pass
 }
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 SMP 子系统未初始化,
+// is_cpu_online(0) 恒 false (BSP online 标记由裸机启动路径设置), 必然 FAIL
+// → 直接 Skip. kernel_test (QEMU) 下走下方原实现, 行为不变.
+#[cfg(feature = "host-test")]
+fn test_smp_cpu_online() -> TestResult {
+    TestResult::Skip("E-04: host 无 SMP 初始化, 跳过 (BSP online 标记由裸机启动设置)")
+}
+
+#[cfg(not(feature = "host-test"))]
 fn test_smp_cpu_online() -> TestResult {
     let cpu = crate::kernel::framework::smp::get_current_cpu();
     let online = crate::kernel::framework::smp::is_cpu_online(cpu);
@@ -31,6 +43,15 @@ fn test_smp_cpu_online() -> TestResult {
 // Per-CPU Scheduler — Initialization
 // ============================================================
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host-test 下调度器未初始化
+// (SCHEDULER_READY 由裸机启动路径 scheduler::init() 置位), 必然 FAIL
+// → 直接 Skip. kernel_test (QEMU) 下走下方原实现, 行为不变.
+#[cfg(feature = "host-test")]
+fn test_per_cpu_sched_init() -> TestResult {
+    TestResult::Skip("E-04: host 无调度器初始化, 跳过 (SCHEDULER_READY 由裸机启动置位)")
+}
+
+#[cfg(not(feature = "host-test"))]
 fn test_per_cpu_sched_init() -> TestResult {
     use crate::kernel::framework::proc::SCHEDULER_READY;
     check!(
@@ -161,6 +182,15 @@ fn test_load_balance_no_panic() -> TestResult {
 // 进程退出 — CR3 安全性 (回归测试)
 // ============================================================
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 VMM 未初始化,
+// get_kernel_pml4() 恒 0, 必然 FAIL → 直接 Skip.
+// kernel_test (QEMU) 下走下方原实现, 行为不变.
+#[cfg(feature = "host-test")]
+fn test_kernel_pml4_exists() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM 初始化, 跳过 (内核页表由裸机 VMM 初始化)")
+}
+
+#[cfg(not(feature = "host-test"))]
 fn test_kernel_pml4_exists() -> TestResult {
     let kpml4 = crate::kernel::framework::mm::vmm::get_kernel_pml4();
     check!(kpml4 != 0, "kernel PML4 is non-zero");

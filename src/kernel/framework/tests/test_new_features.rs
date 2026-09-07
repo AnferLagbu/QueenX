@@ -294,6 +294,15 @@ fn test_dyn_ipc_msgq_growth() -> TestResult {
     TestResult::Pass
 }
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 DynIpcNamespace::shm_create
+// 依赖裸机 PMM (内部 extern "C" pmm_alloc_pages panic abort, catch_unwind 无法捕获),
+// host 无 PMM 初始化 → 直接 Skip. kernel_test (QEMU) 下走下方原实现, 行为不变.
+#[cfg(feature = "host-test")]
+fn test_dyn_ipc_shm_create() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
+}
+
+#[cfg(not(feature = "host-test"))]
 fn test_dyn_ipc_shm_create() -> TestResult {
     let ns = crate::kernel::framework::ipc::dynamic::DynIpcNamespace::new();
     let result = ns.shm_create(2000, 8192);
@@ -333,10 +342,19 @@ fn test_vma_creation() -> TestResult {
     TestResult::Pass
 }
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 MmStruct::new()/insert_vma
+// 依赖裸机 VMM 初始化 ([VMM] accessed before initialization panic), host 无 VMM
+// → 直接 Skip. kernel_test (QEMU) 下走下方原实现, 行为不变.
+#[cfg(feature = "host-test")]
+fn test_mm_struct_operations() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM 初始化, 跳过 (依赖裸机虚拟内存管理)")
+}
+
 #[expect(
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
+#[cfg(not(feature = "host-test"))]
 fn test_mm_struct_operations() -> TestResult {
     use crate::kernel::framework::mm::PageFlags;
     use crate::kernel::framework::mm::{MmStruct, Vma, VmaType};

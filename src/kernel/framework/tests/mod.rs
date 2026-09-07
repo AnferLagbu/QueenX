@@ -130,7 +130,11 @@ impl TestRunner {
         // B03-15 修复: interrupt_disable() 返回 usize 保存旧 flags,
         // 测试循环后调 interrupt_restore(flags) 恢复原状态。
         // 之前循环结束后无 re-enable, 测试结束中断永久全关。
-        let saved_flags = crate::arch!(interrupt_disable());
+        // E-04 (2026-09-06): 中断禁用/恢复改走 sync::disable_interrupts()/
+        // restore_interrupts() — host-test 下 B08-14 已桩化为 no-op (直接
+        // arch!(interrupt_disable) 执行 cli 特权指令, host 用户态会 SIGSEGV);
+        // 裸机 (kernel_test) 下其内部即 arch!(interrupt_disable), 语义完全等价.
+        let saved_flags = crate::kernel::framework::sync::disable_interrupts();
 
         for i in 0..total {
             let tc = reg.cases[i];
@@ -148,6 +152,17 @@ impl TestRunner {
             Self::serial_print(name.as_bytes());
             Self::serial_print(b"...");
 
+            // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下用 catch_unwind
+            // 捕获测试内 panic → Fail, 避免单个测试 panic 中断整个 run_all.
+            // kernel_test (裸机) 保持直接调用, 行为与改造前完全一致.
+            // 注: extern "C" FFI 函数内 panic 为 abort, catch_unwind 无法捕获,
+            // 此类依赖裸机初始化的测试在 host-test 下以 Skip 占位注册 (见各注册函数).
+            #[cfg(feature = "host-test")]
+            let result = match std::panic::catch_unwind(func) {
+                Ok(r) => r,
+                Err(_) => TestResult::Fail("host: test panicked (裸机环境依赖)"),
+            };
+            #[cfg(not(feature = "host-test"))]
             let result = func();
 
             match result {
@@ -197,13 +212,23 @@ impl TestRunner {
         // B03-15: 恢复中断状态 (而非保持 disable 状态)。
         // SAFETY: saved_flags 由 interrupt_save() 获取, 与 interrupt_disable()
         // 配套使用恢复原状态。
-        crate::arch!(interrupt_restore(saved_flags));
+        crate::kernel::framework::sync::restore_interrupts(&saved_flags);
     }
 
     fn serial_print(s: &[u8]) {
-        #[cfg(target_arch = "x86_64")]
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test (std) 下输出走 stdout,
+        // 替代裸机串口 (COM1/uart, host 用户态不可用). host-test 分支优先;
+        // 原裸机逻辑用 not(host-test) 包裹, kernel_test (QEMU) 行为与改造前完全一致.
+        #[cfg(feature = "host-test")]
+        {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(s);
+            let _ = out.flush();
+        }
+        #[cfg(all(not(feature = "host-test"), target_arch = "x86_64"))]
         serial_print(s);
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(not(feature = "host-test"), target_arch = "aarch64"))]
         for &b in s {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
@@ -213,9 +238,18 @@ impl TestRunner {
     }
 
     fn serial_print_num(n: u64) {
-        #[cfg(target_arch = "x86_64")]
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test (std) 下数字输出走 stdout
+        // (std::io::Write::write_fmt), 替代裸机串口. 原裸机逻辑保持 not(host-test).
+        #[cfg(feature = "host-test")]
+        {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = write!(out, "{n}");
+            let _ = out.flush();
+        }
+        #[cfg(all(not(feature = "host-test"), target_arch = "x86_64"))]
         serial_print_num(n);
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(not(feature = "host-test"), target_arch = "aarch64"))]
         {
             if n == 0 {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -360,6 +394,50 @@ pub use {assert_eq_test, check, skip_test};
 pub fn test_runner_init() {
     crate::klog_boot_info!("[TEST] === QueenX Test Framework ===");
 
+    register_all_tests();
+
+    let r = runner();
+    let count = r.registry.lock().count;
+    crate::klog_boot_info!("[TEST] Registered {} test cases", count);
+
+    // 诊断: test 运行前检查页表
+    {
+        let read_u64 = |phys: u64, idx: usize| -> u64 {
+            let va = phys + crate::kernel::framework::mm::KERNEL_BASE + idx as u64 * 8;
+            // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+            unsafe { core::ptr::read_volatile(va as *const u64) }
+        };
+        let pd24 = read_u64(0x109000, 24);
+        let pd63 = read_u64(0x109000, 63);
+        crate::klog_boot_info!(
+            "[PAGETABLE] before run_all: pd[24]=0x{:016X} pd[63]=0x{:016X}",
+            pd24,
+            pd63
+        );
+    }
+
+    r.run_all();
+
+    let p = r.passed.load(Ordering::Relaxed);
+    let f = r.failed.load(Ordering::Relaxed);
+    if f == 0 {
+        crate::klog_boot_info!(
+            "[TEST] ALL TESTS PASSED ({}/{})",
+            p,
+            p + r.skipped.load(Ordering::Relaxed)
+        );
+    } else {
+        crate::klog_boot_info!("[TEST] COMPLETE: {} passed, {} FAILED", p, f);
+    }
+}
+
+// E-04 (2026-09-06): 测试运行器双端适配 — 注册入口抽取.
+// kernel_test 启动路径 (test_runner_init) 与 host-test 入口 (host_test_runner_main)
+// 共用同一注册逻辑, 保证双端注册同一套纯逻辑测试集 (注册数一致).
+// 门控外 15 mod + any(kernel_test, host-test) 5 mod 在双端均注册;
+// kernel_test 硬件路径 (driver/net/idt/reset/timer/signal/...) 保持 kernel_test 专属,
+// host-test 下不编译 (这些 mod 在 host 下不存在).
+pub fn register_all_tests() {
     // FS 全局单例初始化 — 测试模式下需主动 init, 否则后续
     // 调用 global() 会 panic (e.g. devfs::global() called before init_global()).
     // init_global 是幂等的 (OnceCell::get_or_init), 多次调用安全.
@@ -435,39 +513,32 @@ pub fn test_runner_init() {
         crate::kernel::framework::syscall::timerfd::register_timerfd_tests();
         crate::kernel::framework::syscall::sendfile::register_sendfile_tests();
     }
+}
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host 侧测试运行汇总.
+// 供 host-tests 断言 "0 failed". 仅 host-test feature 下编译 (F9 死代码零容忍).
+#[cfg(feature = "host-test")]
+#[derive(Clone, Copy)]
+pub struct TestSummary {
+    pub passed: u32,
+    pub failed: u32,
+    pub skipped: u32,
+}
+
+/// E-04 (2026-09-06): 测试运行器双端适配 — host-test 侧测试入口.
+///
+/// 与 kernel_test 的 `test_runner_init` 等价: 注册全部纯逻辑测试 + 执行 `run_all()`
+/// (输出经 `serial_print` host 分支走 stdout), 返回汇总供 host-tests 断言.
+/// 仅 host-test feature 下编译 (F9 死代码零容忍); kernel_test/裸机构建不包含本函数.
+#[cfg(feature = "host-test")]
+pub fn host_test_runner_main() -> TestSummary {
+    register_all_tests();
     let r = runner();
-    let count = r.registry.lock().count;
-    crate::klog_boot_info!("[TEST] Registered {} test cases", count);
-
-    // 诊断: test 运行前检查页表
-    {
-        let read_u64 = |phys: u64, idx: usize| -> u64 {
-            let va = phys + crate::kernel::framework::mm::KERNEL_BASE + idx as u64 * 8;
-            // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-            unsafe { core::ptr::read_volatile(va as *const u64) }
-        };
-        let pd24 = read_u64(0x109000, 24);
-        let pd63 = read_u64(0x109000, 63);
-        crate::klog_boot_info!(
-            "[PAGETABLE] before run_all: pd[24]=0x{:016X} pd[63]=0x{:016X}",
-            pd24,
-            pd63
-        );
-    }
-
     r.run_all();
-
-    let p = r.passed.load(Ordering::Relaxed);
-    let f = r.failed.load(Ordering::Relaxed);
-    if f == 0 {
-        crate::klog_boot_info!(
-            "[TEST] ALL TESTS PASSED ({}/{})",
-            p,
-            p + r.skipped.load(Ordering::Relaxed)
-        );
-    } else {
-        crate::klog_boot_info!("[TEST] COMPLETE: {} passed, {} FAILED", p, f);
+    TestSummary {
+        passed: r.passed.load(Ordering::Relaxed),
+        failed: r.failed.load(Ordering::Relaxed),
+        skipped: r.skipped.load(Ordering::Relaxed),
     }
 }
 

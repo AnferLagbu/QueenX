@@ -1,4 +1,4 @@
-//! 防回归: test_runner_init 必须 init FS 全局单例
+//! 防回归: 测试注册入口必须 init FS 全局单例
 //!
 //! 历史 bug (2026-06-25): test_runner_init 缺少 init_global 调用,
 //! 导致 DevFS::mount 测试 (测试 129/256) 触发
@@ -7,6 +7,10 @@
 //! 修复: test_runner_init 在 register_tests 之前调用:
 //! - crate::kernel::services::fs::devfs::init_global()
 //! - crate::kernel::services::fs::procfs::init_global()
+//!
+//! E-04 (2026-09-06): 测试运行器双端适配 — 注册逻辑已从 test_runner_init 抽取至
+//! `register_all_tests()` (kernel_test 的 test_runner_init 与 host 入口
+//! host_test_runner_main 共用), 本文件扫描目标同步迁移至 register_all_tests.
 //!
 //! 本测试验证修复通过静态扫描 source 存在, 防止后续误删.
 
@@ -22,11 +26,12 @@ fn read_source() -> String {
 
 #[test]
 fn test_runner_init_calls_devfs_init_global() {
-    // 验收: test_runner_init 必须 init devfs 全局单例
+    // E-04 (2026-09-06): 扫描目标为 register_all_tests (注册逻辑抽取后的唯一入口).
+    // 验收: 注册入口必须 init devfs 全局单例
     let content = read_source();
     let fn_start = content
-        .find("pub fn test_runner_init()")
-        .expect("应有 pub fn test_runner_init");
+        .find("pub fn register_all_tests()")
+        .expect("应有 pub fn register_all_tests");
     // 找下一个 fn 起始 (粗略)
     let remaining = &content[fn_start..];
     let next_fn = remaining
@@ -36,17 +41,18 @@ fn test_runner_init_calls_devfs_init_global() {
     let body = &remaining[..next_fn];
     assert!(
         body.contains("devfs::init_global"),
-        "test_runner_init 应调用 devfs::init_global(), 否则 DevFS::mount 测试会 panic"
+        "register_all_tests 应调用 devfs::init_global(), 否则 DevFS::mount 测试会 panic"
     );
 }
 
 #[test]
 fn test_runner_init_calls_procfs_init_global() {
-    // 验收: test_runner_init 应 init procfs 全局单例
+    // E-04 (2026-09-06): 扫描目标为 register_all_tests (注册逻辑抽取后的唯一入口).
+    // 验收: 注册入口应 init procfs 全局单例
     let content = read_source();
     let fn_start = content
-        .find("pub fn test_runner_init()")
-        .expect("应有 pub fn test_runner_init");
+        .find("pub fn register_all_tests()")
+        .expect("应有 pub fn register_all_tests");
     let remaining = &content[fn_start..];
     let next_fn = remaining
         .find("\npub fn ")
@@ -55,7 +61,7 @@ fn test_runner_init_calls_procfs_init_global() {
     let body = &remaining[..next_fn];
     assert!(
         body.contains("procfs::init_global"),
-        "test_runner_init 应调用 procfs::init_global(), 否则 procfs 测试会 panic"
+        "register_all_tests 应调用 procfs::init_global(), 否则 procfs 测试会 panic"
     );
 }
 

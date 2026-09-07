@@ -53,10 +53,20 @@ fn test_pipe_basic() -> TestResult {
     TestResult::Pass
 }
 
+// E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 shm 创建依赖裸机 PMM
+// (shm_create_safe → pmm_alloc_pages, extern "C" FFI 内 panic 为 abort, catch_unwind
+// 无法捕获 → 进程会 SIGABRT), host 无 PMM 初始化 → 直接 Skip 并说明原因.
+// kernel_test (QEMU) 下走下方原实现, 行为与改造前完全一致.
+#[cfg(feature = "host-test")]
+fn test_shm_rapid_attach_detach() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
+}
+
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
+#[cfg(not(feature = "host-test"))]
 fn test_shm_rapid_attach_detach() -> TestResult {
     crate::klog_ffi!(klog_ffi_info, "[SHM] creating ns");
     let mut ns = create_test_namespace();

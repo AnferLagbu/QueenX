@@ -42,13 +42,29 @@ impl CoreArch for X8664 {
     /// 获取当前 CPU ID (Local APIC ID)。
     #[inline(always)]
     fn cpu_id() -> u32 {
-        use crate::kernel::framework::arch::x86_64::apic;
-        let id = apic::get_id();
-        if id != 0 {
-            return id;
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下无 APIC MMIO,
+        // apic::get_id() 读 0xFEE00000 物理地址 → SIGSEGV (host 无映射, 非 panic,
+        // catch_unwind 无法捕获). 桩化为 0 (单核语义, 与 B08-14 中断桩化同模式).
+        // 仅 host-test feature 生效, kernel_test 行为不变.
+        #[cfg(feature = "host-test")]
+        {
+            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
+            #[expect(
+                clippy::needless_return,
+                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
+            )]
+            return 0;
         }
-        let (_, ebx, _, _) = crate::kernel::framework::cpu::cpuid::cpuid(1, 0);
-        ebx >> 24
+        #[cfg(not(feature = "host-test"))]
+        {
+            use crate::kernel::framework::arch::x86_64::apic;
+            let id = apic::get_id();
+            if id != 0 {
+                return id;
+            }
+            let (_, ebx, _, _) = crate::kernel::framework::cpu::cpuid::cpuid(1, 0);
+            ebx >> 24
+        }
     }
 
     /// 获取高精度时间戳 (rdtsc)。
@@ -159,52 +175,107 @@ impl InterruptArch for X8664 {
     /// 禁用中断并返回 RFLAGS (含 IF 位)。
     #[inline(always)]
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-    #[expect(clippy::cast_possible_truncation)]
+    // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 cast), 用 cfg_attr
+    // 条件化 expect, 避免 unfulfilled_lint_expectations.
+    #[cfg_attr(not(feature = "host-test"), expect(
+        clippy::cast_possible_truncation,
+        reason = "cast_possible_truncation: 硬件字段宽度, 寄存器/MMIO 定义保证; 当前优先 expect"
+    ))]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     fn interrupt_disable() -> usize {
-        let flags: u64;
-        // SAFETY: pushfq 压入 RFLAGS, pop 弹出到通用寄存器, 然后 cli 关中断.
-        // nomem/nostack/preserves_flags 全部由该指令序列满足.
-        unsafe {
-            core::arch::asm!(
-                "pushfq",
-                "pop {}",
-                "cli",
-                out(reg) flags,
-                options(nomem, nostack, preserves_flags)
-            );
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 cli 为特权指令,
+        // 用户态执行 → SIGSEGV. 桩化返回 0 (与 B08-14 sync::disable_interrupts 桩一致).
+        // 仅 host-test feature 生效, kernel_test 行为不变.
+        #[cfg(feature = "host-test")]
+        {
+            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
+            #[expect(
+                clippy::needless_return,
+                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
+            )]
+            return 0;
         }
-        flags as usize
+        #[cfg(not(feature = "host-test"))]
+        {
+            let flags: u64;
+            // SAFETY: pushfq 压入 RFLAGS, pop 弹出到通用寄存器, 然后 cli 关中断.
+            // nomem/nostack/preserves_flags 全部由该指令序列满足.
+            unsafe {
+                core::arch::asm!(
+                    "pushfq",
+                    "pop {}",
+                    "cli",
+                    out(reg) flags,
+                    options(nomem, nostack, preserves_flags)
+                );
+            }
+            flags as usize
+        }
     }
 
     /// 恢复中断状态，仅当 flags 中 IF 位为 1 时才启用。
     #[inline(always)]
-    #[expect(
+    // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 asm), inline_always
+    // lint 不触发 → 用 cfg_attr 条件化 expect, 避免 unfulfilled_lint_expectations.
+    #[cfg_attr(not(feature = "host-test"), expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    ))]
     fn interrupt_restore(flags: usize) {
-        if (flags as u64) & (1 << 9) != 0 {
-            // SAFETY: sti 启用中断; nomem/nostack 成立, 对内存无可观察副作用.
-            unsafe {
-                core::arch::asm!("sti", options(nomem, nostack));
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 sti 为特权指令,
+        // 用户态执行 → SIGSEGV. 桩化 no-op (与 B08-14 sync::restore_interrupts 桩一致).
+        // 仅 host-test feature 生效, kernel_test 行为不变.
+        #[cfg(feature = "host-test")]
+        {
+            let _ = flags;
+            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
+            #[expect(
+                clippy::needless_return,
+                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
+            )]
+            return;
+        }
+        #[cfg(not(feature = "host-test"))]
+        {
+            if (flags as u64) & (1 << 9) != 0 {
+                // SAFETY: sti 启用中断; nomem/nostack 成立, 对内存无可观察副作用.
+                unsafe {
+                    core::arch::asm!("sti", options(nomem, nostack));
+                }
             }
         }
     }
 
     /// 启用中断 (sti)。
     #[inline(always)]
-    #[expect(
+    // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 asm), inline_always
+    // lint 不触发 → 用 cfg_attr 条件化 expect, 避免 unfulfilled_lint_expectations.
+    #[cfg_attr(not(feature = "host-test"), expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    ))]
     fn interrupt_enable() {
-        // SAFETY: sti enables interrupts; no memory access, no stack use.
-        unsafe {
-            core::arch::asm!("sti", options(nomem, nostack));
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 sti 为特权指令,
+        // 用户态执行 → SIGSEGV (如 do_softirq 内 arch!(interrupt_enable())).
+        // 桩化 no-op. 仅 host-test feature 生效, kernel_test 行为不变.
+        #[cfg(feature = "host-test")]
+        {
+            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
+            #[expect(
+                clippy::needless_return,
+                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
+            )]
+            return;
+        }
+        #[cfg(not(feature = "host-test"))]
+        {
+            // SAFETY: sti enables interrupts; no memory access, no stack use.
+            unsafe {
+                core::arch::asm!("sti", options(nomem, nostack));
+            }
         }
     }
 
@@ -410,13 +481,30 @@ impl MmuArch for X8664 {
     /// 进程上下文切换 (`process_switch_asm`)。
     #[inline(always)]
     fn context_switch(from: *mut u8, to: *const u8) {
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        unsafe extern "C" {
-            fn process_switch_asm(prev: *mut u8, next: *const u8);
+        // E-04 (2026-09-06): 测试运行器双端适配 — host-test (std) 下无裸机上下文切换.
+        // process_switch_asm 由 proc/switch.asm 在裸机构建时汇编链接, host 无此符号,
+        // 直接 extern 调用会链接报 undefined symbol. 桩化为 no-op (host 无硬件切换语义,
+        // 与 B08-14 IrqSpinLock 中断桩化同模式). 仅 host-test feature 生效, kernel_test 不变.
+        #[cfg(feature = "host-test")]
+        {
+            let _ = (from, to);
+            // E-04: host 桩分支显式 return, 保持与裸机分支结构对称 (expect 兑底 needless_return)
+            #[expect(
+                clippy::needless_return,
+                reason = "needless_return: host 桩分支显式 return 与裸机分支保持结构对称; 当前优先 expect"
+            )]
+            return;
         }
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            process_switch_asm(from, to);
+        #[cfg(not(feature = "host-test"))]
+        {
+            // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
+            unsafe extern "C" {
+                fn process_switch_asm(prev: *mut u8, next: *const u8);
+            }
+            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            unsafe {
+                process_switch_asm(from, to);
+            }
         }
     }
 
