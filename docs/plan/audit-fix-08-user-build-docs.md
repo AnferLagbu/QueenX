@@ -223,7 +223,7 @@
 - **B08-17. 构建回归**
   - 描述：build.rs/lib.rs/link 脚本改动后跑 `./ci/build.sh all`。
   - 方案：`./ci/build.sh all` + `make test-host`。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成：`./ci/build.sh all` **Passed: 5 / Failed: 0**——x86_64 + aarch64 双架构编译 0w0e、host 单元测试通过、x86_64 链接通过；`make test-host` 通过。覆盖阶段 1-4 + 工程计划 H 全部改动。**提醒**：build.sh 的 forbidden asm 检查复现 G-03（storage/mod.rs:207 pushfq 无 cfg 门控），为预存已登记项（用户决策记录后跳过），非本次引入)
 
 - **B08-18. 文档同步**
   - 描述：ref-naming.md 修正后与代码编号一致。
