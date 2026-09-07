@@ -192,7 +192,8 @@ mod tests {
     }
 }
 
-#[cfg(feature = "kernel_test")]
+// E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试注册委托, host-test 下同样编译
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub fn register_sha256_tests() {
     crate::kernel::framework::tests::sys::register_sha256_tests();
 }

@@ -4,23 +4,31 @@ use core::sync::atomic::Ordering;
 use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock;
 
 use crate::kernel::framework::sync::once_lock::OnceLock;
-#[cfg(feature = "kernel_test")]
+// E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试模块在 host-test 下同样编译
+// (同源双编译, 供 host-tests 引用内核真实源码). 硬件路径门控保持 kernel_test.
+// 语义: any(kernel_test, host-test) = 纯逻辑测试辅助; kernel_test = 硬件路径切换.
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod arch;
 #[cfg(feature = "kernel_test")]
 pub mod driver;
+// E-03: host 不可编译（依赖 idt/types.rs::InterruptFrame::new_test_frame 与
+// idt/statistics.rs::DetailedStatistics::reset, 二者 cfg(any(test, kernel_test))
+// 门控在 host-test 下关闭），保持 kernel_test
 #[cfg(feature = "kernel_test")]
 pub mod idt;
 #[cfg(feature = "kernel_test")]
 pub mod net;
+// E-03: host 不可编译（依赖 barrier::reset::{bbr,bsr,audit,parallel}::tests,
+// 其 cfg(feature = "kernel_test") 门控在 host-test 下关闭），保持 kernel_test
 #[cfg(feature = "kernel_test")]
 pub mod reset;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sched;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod string;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sync;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sys;
 pub mod test_barrier;
 pub mod test_barrier_ext;
@@ -378,18 +386,30 @@ pub fn test_runner_init() {
     test_new_features::register_new_tests();
     test_smp::register_smp_tests();
 
-    #[cfg(feature = "kernel_test")]
+    // E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试注册 (host-test 下同样编译,
+    // 供 host-tests 同源引用; kernel_test 下行为与改造前完全一致).
+    #[cfg(any(feature = "kernel_test", feature = "host-test"))]
     {
         #[cfg(target_arch = "x86_64")]
         {
             arch::register_tests();
             sys::register_tests();
-            idt::register_tests();
-            driver::register_tests();
         }
         string::register_tests();
         sched::register_tests();
         sync::register_tests();
+    }
+
+    // E-03 (2026-09-06): 硬件路径测试注册 — 依赖裸机硬件 (驱动/网络/定时器/中断等),
+    // 仅 kernel_test (QEMU 裸机测试) 生效; host-test 下不编译.
+    // 注: idt/reset 因依赖 kernel_test 门控的框架测试辅助 (见上), 注册同样留在本块.
+    #[cfg(feature = "kernel_test")]
+    {
+        #[cfg(target_arch = "x86_64")]
+        {
+            driver::register_tests();
+            idt::register_tests();
+        }
         net::register_tests();
         reset::register_tests();
         #[cfg(target_arch = "x86_64")]

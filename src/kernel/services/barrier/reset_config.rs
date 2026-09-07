@@ -161,7 +161,8 @@ pub fn reset_stats() {
     PARALLEL_ROLLBACK_ACTIVE.store(false, Ordering::SeqCst);
 }
 
-#[cfg(feature = "kernel_test")]
+// E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试模块, host-test 下同样编译
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod tests {
     use super::*;
 

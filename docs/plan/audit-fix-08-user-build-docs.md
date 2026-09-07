@@ -180,7 +180,7 @@
     - `kernel_test`：保持"裸机测试模式"语义（QEMU 专用，硬件路径切换门控不动）
     - `host-test`：新增"host 可编译"语义（B08-12 基建引入）
   - 方案：纯逻辑测试模块统一改 `#[cfg(any(feature = "kernel_test", feature = "host-test"))]`；硬件路径切换门控保持 `#[cfg(feature = "kernel_test")]`。新增审计脚本（仿 audit_services_boundary.py）强制验证两语义不混用、services 侧不引入 host 裸机依赖。
-  - 状态：[]
+  - 状态：[X] (2026-09-06 实施完成：① framework/tests/mod.rs 门控拆分——arch/string/sched/sync/sys 改 `any(kernel_test, host-test)`，driver/net 保持 kernel_test（QEMU-only），idt/reset **改回 kernel_test 单端**（host 不可编译：idt 依赖 InterruptFrame::new_test_frame 的 any(test,kernel_test) 门控、reset 依赖 barrier::reset 各子模块 kernel_test 门控，均已标注 E-03 保持单端）；test_runner_init 注册块同步拆分。② services 侧 A 类 11 处改 `any(...)`（sync/types.rs 委托、barrier/reset_config.rs tests、credo/sha256.rs 委托、ipc/types.rs IPC_MAX_* 缩减 4 组），B 类 7 处 net 桩 + C 类 1 处 caps.rs kpti 保持 kernel_test 登记白名单。③ 新增 [audit_feature_semantics.py](../../scripts/audit_feature_semantics.py) 仿 audit_services_boundary.py（services 扫描 + 白名单 + mod.rs 门控分离校验 + JSON + 退出码），运行通过。**额外发现**：test_config.rs:162 运行时 cfg!() 断言镜像 KPTI 门控规则，经逐配置核对自洽后登记白名单豁免。**验证**：kernel_test + host-test + x86_64/aarch64 裸机全部 0w0e；host-tests 全量 94 项 ok 0 失败；审计脚本 exit 0)
 
 - **E-04. 测试运行器双端适配**
   - 描述：framework/tests/mod.rs 已有自研 TestFn/TestCase/TestResult harness（MAX_TESTS=256）。host 侧需薄适配层。

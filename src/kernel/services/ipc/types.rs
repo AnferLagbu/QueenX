@@ -20,32 +20,34 @@ pub type IpcId = u32;
 /// 最大管道数量
 ///
 /// 测试模式下缩减至 2 以节省内存
-#[cfg(not(feature = "kernel_test"))]
+// E-03 (2026-09-06): feature 语义拆分 — 以下 4 组 IPC_MAX_* 缩减常量属纯逻辑测试模式
+// (kernel_test + host-test 同语义), 统一改 any 门控
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_PIPES: usize = 64;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_PIPES: usize = 2;
 /// 最大信号数量
 pub const IPC_MAX_SIGNALS: usize = 32;
 /// 最大共享内存段数量
 ///
 /// 测试模式下缩减至 2 以节省内存
-#[cfg(not(feature = "kernel_test"))]
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_SHM_SEGS: usize = 16;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_SHM_SEGS: usize = 2;
 /// 最大消息队列数量
 ///
 /// 测试模式下缩减至 2 以节省内存
-#[cfg(not(feature = "kernel_test"))]
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_MSG_QUEUES: usize = 32;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_MSG_QUEUES: usize = 2;
 /// 最大信号量数量
 ///
 /// 测试模式下缩减至 2 以节省内存
-#[cfg(not(feature = "kernel_test"))]
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 pub const IPC_MAX_SEMAPHORES: usize = 64;
-#[cfg(feature = "kernel_test")]
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub const IPC_MAX_SEMAPHORES: usize = 2;
 
 /// 管道缓冲区大小 (4KB)
