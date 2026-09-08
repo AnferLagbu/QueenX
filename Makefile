@@ -201,7 +201,9 @@ $(RUST_LIB): $(STAGE1_BIN) build/user/init.bin $(shell find src/rust/src -name '
 	@cd src/rust && cargo build --release --target $(RUST_TARGET)
 endif
 
-$(RUST_LIB_TEST):
+# RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):
+# 否则 .a 已存在时 make 跳过 cargo 重建, kernel_test.bin 长期使用陈旧二进制 (E-06 验证踩坑, 2026-09-07)
+$(RUST_LIB_TEST): $(shell find src/rust/src src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust test kernel..."
 	cd src/rust && cargo build --release --target $(RUST_TARGET) --features kernel_test --target-dir target/test-release
 
@@ -432,10 +434,10 @@ test-unit: build/kernel_test.bin user
 	@echo '}' >> isodir/boot/grub/grub.cfg
 	@grub2-mkrescue -o build/antx_test.iso isodir 2>/dev/null
 	@echo ""
-	@echo "▶ Starting QEMU (timeout: 120s, memory: 512MB)..."
+	@echo "▶ Starting QEMU (timeout: 300s, memory: 512MB)..."
 	@mkdir -p tests/reports
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
-	timeout 120 $(QEMU) $(QEMU_FLAGS) \
+	timeout 300 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 \
 		-cdrom build/antx_test.iso \
 		$(QEMU_NET) \

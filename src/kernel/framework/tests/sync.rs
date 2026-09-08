@@ -30,6 +30,25 @@ fn mutex_trylock() -> TestResult {
     TestResult::Pass
 }
 
+// G-17 (2026-09-08) 回归: Mutex 递归锁定 — 同一线程对已持有 Mutex 再次 lock.
+// 修复前 raw_lock 无 owner 重入检测, 二次 lock 在 slow path 死等自死锁
+// (G-11 kill 广播 / G-12 signalfd 受害). 修复后 depth 递增, 逐层 drop 释放.
+fn mutex_reentrant() -> TestResult {
+    let mutex = Mutex::new(42i32);
+    let guard1 = mutex.lock();
+    let guard2 = mutex.lock();
+    check!(mutex.is_locked(), "reentrant lock keeps locked");
+    check!(mutex.depth() == 2, "reentrant depth = 2");
+    assert_eq_test!(*guard2, 42, "data accessible via inner guard");
+    drop(guard2);
+    check!(mutex.is_locked(), "still locked after first drop");
+    check!(mutex.depth() == 1, "depth back to 1");
+    drop(guard1);
+    check!(!mutex.is_locked(), "unlocked after outer drop");
+    check!(mutex.owner() == -1, "owner cleared");
+    TestResult::Pass
+}
+
 fn condvar_creation() -> TestResult {
     let _cond = CondVar::new();
     TestResult::Pass
@@ -264,6 +283,8 @@ pub fn register_mutex_tests() {
         "sync::mutex": {
             "basic": mutex_basic,
             "trylock": mutex_trylock,
+            // G-17 (2026-09-08): 递归锁定回归
+            "reentrant": mutex_reentrant,
             "condvar_creation": condvar_creation,
         },
     }

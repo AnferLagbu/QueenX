@@ -746,9 +746,11 @@ fn test_forward_periodic() -> crate::kernel::framework::tests::TestResult {
     timer.init(noop_callback);
     timer.interval_ns.store(1_000_000, Ordering::Release);
     timer.expiry_ns.store(5_000_000, Ordering::Release);
+    // forward 用 `expiry <= now` 语义: expiry 恰好等于 now 时视为已到期再推进一位.
+    // 5ms → 6 → 7 → 8(==now, 再推) → 9ms, 跳过 4 个周期, 新 expiry 9ms.
     let skipped = timer.forward(8_000_000);
-    assert_eq_test!(skipped, 3, "skipped 3 periods");
-    assert_eq_test!(timer.expiry_ns(), 8_000_000, "new expiry");
+    assert_eq_test!(skipped, 4, "skipped 4 periods");
+    assert_eq_test!(timer.expiry_ns(), 9_000_000, "new expiry");
     TestResult::Pass
 }
 

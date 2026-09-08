@@ -3,16 +3,15 @@ use std::path::Path;
 /// DECISION-H15: 构建产物缺失时直接报错, 不再生成全 0 占位符.
 ///
 /// 原因: stage1.bin / init.bin 由 Makefile 从真实汇编/ELF 产物生成
-/// (Makefile:221 由 stage1.asm 汇编, Makefile:132/177 cp 自 USER_INIT_ELF).
+/// (Makefile:221 由 stage1.asm 汇编, Makefile:132/177 cp 自 `USER_INIT_ELF`).
 /// 若此处静默写入全 0 占位, 会覆盖/遮蔽真实产物或让缺失状态被掩盖,
 /// 且与 Makefile 产物存在顺序冲突 (全 0 镜像被当成真实引导码).
 fn require_exists(path: &Path) {
-    if !path.exists() {
-        panic!(
-            "构建产物缺失: {} — 请先运行 `make` 生成该文件, 不要依赖占位符",
-            path.display()
-        );
-    }
+    assert!(
+        path.exists(),
+        "构建产物缺失: {} — 请先运行 `make` 生成该文件, 不要依赖占位符",
+        path.display()
+    );
 }
 
 fn main() {

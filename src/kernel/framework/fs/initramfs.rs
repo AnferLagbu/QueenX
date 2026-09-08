@@ -311,9 +311,10 @@ fn test_cpio_parse_minimal() -> crate::kernel::framework::tests::TestResult {
     let trailer_offset = align4(110 + 5); // = 116
     let trailer = &mut archive[trailer_offset..trailer_offset + 110];
     trailer[0..6].copy_from_slice(b"070701");
-    trailer[94..102].copy_from_slice(b"0000000A"); // namesize = 10
-    // filename "TRAILER!!!"
-    archive[trailer_offset + 110..trailer_offset + 120].copy_from_slice(b"TRAILER!!!\0");
+    // cpio newc 格式 namesize 含结尾 NUL: "TRAILER!!!"(10) + NUL = 11 = 0xB
+    trailer[94..102].copy_from_slice(b"0000000B"); // namesize = 11
+    // filename "TRAILER!!!\0" (11 字节)
+    archive[trailer_offset + 110..trailer_offset + 121].copy_from_slice(b"TRAILER!!!\0");
 
     let result = parse_next_entry(&archive, 0);
     check!(result.is_some(), "parse first entry");

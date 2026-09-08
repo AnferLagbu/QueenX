@@ -199,7 +199,7 @@
 - **E-06. host-tests 侧消并与用例去重**
   - 描述：B08-12 后 host-tests 镜像类改引内核真实源码；同源双编译再叠一层——内核侧纯逻辑测试在 host 跑，与 host-tests 的纯逻辑用例**去重**（同一被测对象只维护一份用例，双端共享；独立 55 中静态契约 48 + 自包含 7 与硬件路径测试为各自环境专属）。
   - 方案：最终形态——同一纯逻辑被测对象只有一份源码（内核）+ 一份测试用例（双端共享）；消除 kernel_test 与 host-tests 之间的用例级重复。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 实施完成，用户决策"全量去重"：①**三个重复载体删除**——host-tests/src/{sha256.rs,checksum.rs,capability.rs} 共 63 用例去重；②**用例合入 framework/tests 双端共享**——sha256 13 边界用例→sys.rs（pwm::sha256 组）、checksum 25 用例→test_hvfs.rs（hvfs::checksum 组）、capability 23 用例→新建 test_credo.rs（pwm::policy 组，被测对象 `services::credo::policy` 与 test_pwm 的 `services::credo::types` 是不同类型，需独立载体）；③**MAX_TESTS 256→512 扩容**（256 容量满导致注册静默丢弃，见 G-15）；④**QEMU 门槛恢复全绿**——扩容暴露 6 个被掩盖的预存损坏测试（G-11~G-14 已修）+ 套件 256→471 超时（Makefile 120s→300s，见 G-15）。**验证**：host 共享套件 339 用例 332 PASS + 7 Skip failed==0；kernel_test QEMU 471 TESTS ALL PASSED（0 failed 0 skipped）；双架构 build.sh all 5/5；审计全过；clippy 裸机门槛通过。buddy/dma_stream 载体保留（buddy=H-04 文档化例外，dma_stream=唯一覆盖无重叠，lib.rs 已标注迁移说明）)
 
 ### 验证门槛
 
@@ -505,6 +505,47 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 描述：`cargo clippy --features kernel_test` 报 5 处未满足的 lint expectation（route.rs×2、test_ipc.rs、lib.rs:461、idt/types.rs）。非本轮改动引入；标准 clippy 门槛（无 feature）不受影响。
   - 方案：单开 PR 处置——逐处核实 `#[expect]` 理由是否仍成立，删除失效 expectation 或补真触发。
   - 状态：[G] (2026-09-06 登记，用户决策：记录后跳过)
+
+- **G-11. 进程表 Mutex 非真递归 + kill 广播路径重入死锁（E-06 扩容暴露，真实 bug）→ 已修复**
+  - 描述：2026-09-08 E-06 MAX_TESTS 扩容（256→512）使 kernel_test 硬件路径测试首次注册运行，暴露 `do_signal_send_extended` 广播路径死锁：`PROCESS_TABLE.for_each` 持 `processes` Mutex 时，回调 `do_signal_send_inner` 内部再调 `PROCESS_TABLE.get(pid)` 对**同一 Mutex 重入加锁**。`framework/sync/mutex.rs` 文档声称"递归锁定支持"但 `raw_lock` **无 owner/深度重入检测**（慢路径死等）→ 自死锁无限自旋。影响面：`kill(0/-1/-pgid, sig)` syscall（dispatch.rs:788）与 session 前台组广播（services/proc/session.rs:553/568/569）生产环境同样死锁。kernel_test 测试 `signal::kill_broadcast_pid_zero_group` 挂起暴露。
+  - 方案：广播回调改调新增 `do_signal_send_process(&Process, sig)`（for_each 已持有 `&Process`，直接在回调内投递，不再查表），`do_signal_send_inner(pid, sig)` 保留单进程路径并委托前者。
+  - 状态：[X] (2026-09-08 委托修复完成：signal.rs 重构——新增 do_signal_send_process + 3 处广播分支（pid=0/-1/-pgid）改用；QEMU kernel_test 471 全绿。**遗留提示**：Mutex 文档"递归锁定支持"与实际实现不符，其他潜在双锁点待专项排查（G-12 已发现同类）)
+
+- **G-12. sys_signalfd 创建路径 SFD_TABLE 双重锁死锁（E-06 扩容暴露，真实 bug）→ 已修复**
+  - 描述：2026-09-08 E-06 扩容暴露 `sys_signalfd` 创建路径（fd==-1）：函数级 `let mut table = SFD_TABLE.lock()` 后，创建分支再次 `SFD_TABLE.lock()`（旧 guard 未释放，Mutex 非真递归）→ 自死锁。生产 `signalfd()` syscall 同样受影响。kernel_test 测试 `signalfd::create` 挂起暴露。G-11 同类问题（Mutex 假递归）。
+  - 方案：首个锁限定在"修改已有实例"块内（块结束即释放），创建路径独立取锁。
+  - 状态：[X] (2026-09-08 委托修复完成：signalfd.rs 首锁包块作用域；QEMU kernel_test 471 全绿)
+
+- **G-13. initramfs test_cpio_parse_minimal namesize 错误（E-06 扩容暴露，测试 bug）→ 已修复**
+  - 描述：2026-09-08 E-06 扩容暴露：测试构造 cpio TRAILER 条目时 `namesize` 字段写 0xA(10)，但写入 11 字节 `"TRAILER!!!\0"`（cpio newc 格式 namesize 含结尾 NUL，应 0xB）→ `copy_from_slice` 长度不匹配 panic，内核 alloc 错误处理二次 panic。测试从未运行过（E-04 起被 MAX_TESTS 256 容量掩盖）。
+  - 方案：namesize → 0xB(11)，目标切片 10→11 字节。
+  - 状态：[X] (2026-09-08 委托修复完成：initramfs.rs 修正；QEMU kernel_test 471 全绿)
+
+- **G-14. hrtimer/signal 测试预期错误（E-06 扩容暴露，测试 bug）→ 已修复**
+  - 描述：2026-09-08 E-06 扩容暴露 2 个从未运行的测试预期错误：①`hrtimer::forward_periodic`——`forward()` 用 `expiry <= now` 语义（expiry==now 视为已到期再推进），5ms→8ms 间隔 1ms 返回 4/新 expiry 9ms，测试预期 3/8ms 错误；②`signal::kill_broadcast_pid_positive`/`zero_group`——sig=32 是**合法实时信号**（1..=63），测试误当越界预期 EINVAL，越界验证应改用 sig=64。
+  - 方案：修正 forward_periodic 预期（4/9ms）；kill 测试越界 sig 32→64（保留 sig=9 广播作 G-11 修复回归覆盖）。
+  - 状态：[X] (2026-09-08 委托修复完成：hrtimer.rs + signal.rs 预期修正；QEMU kernel_test 471 全绿)
+
+- **G-15. MAX_TESTS=256 注册静默丢弃 + Makefile RUST_LIB_TEST 无源前置依赖（E-06 扩容暴露，测试基建缺陷）→ 已修复**
+  - 描述：2026-09-08 发现两层测试基建缺陷：①[framework/tests/mod.rs](../../src/kernel/framework/tests/mod.rs) `TestRegistry::register` 满容量时**静默忽略**（无告警无断言），MAX_TESTS=256 且硬件路径测试注册在纯逻辑之后 → **E-04 起全部硬件路径测试从未在 QEMU 运行**（G-11~G-14 正是被此掩盖的损坏测试）；②Makefile `$(RUST_LIB_TEST):` 规则**无源文件前置依赖**——kernel_test .a 存在后 make 永不重跑 cargo，kernel_test.bin 长期使用陈旧二进制（E-06 前两轮 QEMU 验证因此误判修复未生效）。另 QEMU 套件 256→471 超过 Makefile 120s 超时。
+  - 方案：MAX_TESTS 256→512（并登记 clippy large_stack_arrays 误报 expect——数组实存于 static OnceLock .bss 非栈）；Makefile RUST_LIB_TEST 补 `$(shell find src/rust/src src/kernel -name '*.rs')` 前置依赖（kernel 经 `#[path="../../kernel"]` 引入，须含 src/kernel）；test-unit QEMU 超时 120s→300s。
+  - 状态：[X] (2026-09-08 委托修复完成：mod.rs MAX_TESTS 512 + expect；Makefile 前置依赖 + 300s；QEMU kernel_test 471 全绿。**建议**：TestRegistry::register 满容量应加 `if count >= MAX_TESTS { panic/assert }` 而非静默，防复发)
+
+- **G-16. build.rs clippy manual_assert/doc_markdown（滚动 nightly 新 pedantic lint）→ 登记待处置**
+  - 描述：2026-09-08 验证 E-06 clippy 门槛时发现：`cargo clippy --release --target x86_64-unknown-none -- -D clippy::pedantic` 在 [build.rs](../../src/rust/build.rs) 报 2 个新 pedantic lint——`manual_assert`（if-panic → assert!，L10-15）与 `doc_markdown`（注释 `USER_INIT_ELF` 缺反引号，L6）。`channel = "nightly"` 未锁版本（滚动更新），lint 集随 nightly 漂移新增；G-02 记录的 2026-09-06 标准 clippy 尚通过，本次为新暴露。阻塞整个 clippy 门槛（build script 编译失败即中止），与 E-06 改动无关（build.rs 未改）。
+  - 方案：build.rs `require_exists` 改 `assert!`（manual_assert）+ 注释补反引号（doc_markdown）；或 clippy 命令加豁免。处置需用户决策（预存问题，非本次改动引入）。
+  - 状态：[G] (2026-09-08 登记，E-06 验证时以 `-A clippy::manual_assert -A clippy::doc_markdown` 临时豁免完成裸机 clippy 门槛验证；待用户决策处置方式)
+
+- **G-17. framework/sync/mutex.rs 文档"递归锁定支持"与实际实现不符（G-11/G-12 根因，架构级隐患）→ 登记待处置**
+  - 描述：2026-09-08 G-11/G-12 排查时确认根因级隐患。[mutex.rs](../../src/kernel/framework/sync/mutex.rs) 模块文档声明"**递归锁定支持**: 同一线程可多次 lock"（L23-26），但 `Mutex::lock → raw_lock`（L120-155）**无 owner/深度重入检测**——fast path 仅查 `locked != 0`，slow path 死等（自旋+yield）。同一线程对同一 Mutex 二次 lock 即自死锁无限自旋。`MutexInner.owner`（AtomicI32）字段已存在但 lock 路径未使用。G-11（kill 广播 `PROCESS_TABLE` 重入）、G-12（signalfd `SFD_TABLE` 双锁）均为受害点；**全内核其他"持锁后经调用链再 lock 同一 Mutex"的代码路径同样受影响**，无 lockdep 环境运行时不可见。
+  - 方案：A. 实现真重入（raw_lock 检查 `owner == 当前线程` → `depth++`；owner 字段已存在，成本低）——同时更新文档语义；B. 删除"递归锁定支持"文档声明，改为强制非重入约定 + 用 `audit_deadlock_matrix.py`/lockdep 排查全内核双锁点。候选 A 更符合文档承诺与调用点既有模式。
+  - 状态：[X] (2026-09-08 委托修复完成，用户决策"实现真重入"：①静态扫描 for_each 重入模式——services/proc/session.rs:376/522（只读 pgid/sid 字段安全）、table.rs:370 包装、proc_mgmt.rs:38（锁每进程内 name 非 PROCESS_TABLE 安全），无 G-11 模式残留；②mutex.rs 实现真重入——`process_get_current_pid` extern 提取到模块级（原内联于 acquire_lock_internal + items_after_statements expect，删除该 expect）、`raw_lock` fast path 在 inner_spinlock 内比较 `owner == 当前进程` → `depth.fetch_add(1)` 直接返回，slow path 仅真竞争到达；owner/depth 字段原已存在，raw_unlock 递减逻辑兼容；③补回归测试 `sync::mutex::reentrant`（双 lock depth=2 → 逐层 drop → unlocked/owner=-1）。**验证**：host 共享套件 `sync::mutex::reentrant` PASS（340 用例 333 PASS + 7 Skip）；裸机 clippy 通过；QEMU 471 全绿待 B08-17 阶段复验)
+
+- **G-18. host-test feature 下 clippy 未纳入 CI 门槛（G-02 延伸）→ 登记待评估**
+  - 描述：2026-09-08 验证 E-06 时发现：`host-test` feature 编译路径（E-03 后已成为与 kernel_test 平行的门控维度）**从未纳入 CI clippy/audit 门槛**，E-03 新增门控仅审计语义分离，未含 host-test 构建的 lint 校验。实测 `cargo clippy --features host-test --lib` 标准 pedantic 下报 **13 处 unfulfilled `#[expect(clippy::doc_markdown)]`**（rwlock.rs:60 / pi_mutex.rs:300 / irq_spinlock.rs:95 等 sync/*，host target 下这些位置不触发 doc_markdown 故 expect 失效）；kernel_test 维另有 63 处（见状态）。与 G-02（kernel_test feature 下 5 处 unfulfilled）同属"feature 维 clippy 未维护"。
+  - 方案：评估将 `cargo clippy --features host-test`（host target）+ `--features kernel_test` 纳入 CI clippy job；或至少登记 feature 维 lint 基线供人工巡检。与 G-02 合并处置。
+  - 状态：[G] (2026-09-08 登记，用户决策：**登记，但后续要落实**。实际清理量核对：host-test 维 13 处（sync/rwlock.rs:60 + pi_mutex.rs:300 + irq_spinlock.rs:95 等 unfulfilled doc_markdown expect）+ kernel_test 维 63 处（wildcard_imports 大量 / items_after_statements（lib.rs const + hrtimer 测试等）/ borrow_as_raw_ptr×11 / manual_let_else / logic_bug + G-02 记录 5 处 unfulfilled（route.rs×2、test_ipc.rs:13、lib.rs:480、idt/types.rs:82））。两维均需先清理再纳入 CI，列为后续专项工程；本轮不施工（避免跑偏 E-06 主题）)
+
 - **G-03. storage/mod.rs pushfq asm 无 cfg 门控**
   - 描述：ci 的 forbidden asm 检查发现 [storage/mod.rs:207](../../src/kernel/framework/driver/storage/mod.rs#L207) `pushfq` asm! 无 `#[cfg]` 门控。预存问题，非本轮引入。
   - 方案：按 ci 检查语义核实该 asm 是否应补 `#[cfg(target_arch = "x86_64")]` 门控（aarch64 无 pushfq）。

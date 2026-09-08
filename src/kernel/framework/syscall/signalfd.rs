@@ -182,18 +182,21 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let mut table = SFD_TABLE.lock();
-
-    if let Some((crate::kernel::framework::proc::FdSubsystem::SignalFd, idx)) =
-        crate::kernel::framework::proc::idx_of(fd)
+    // 修改已有实例 (持锁块内, 块结束即释放 — 否则下方创建路径的第二次
+    // SFD_TABLE.lock() 会对同一非重入 Mutex 自死锁, G-11 同类问题)
     {
-        // 修改已有实例
-        if idx >= SFD_MAX_SLOTS || !table.slots[idx].used {
-            return Errno::EBADF.as_ret();
+        let mut table = SFD_TABLE.lock();
+        if let Some((crate::kernel::framework::proc::FdSubsystem::SignalFd, idx)) =
+            crate::kernel::framework::proc::idx_of(fd)
+        {
+            // 修改已有实例
+            if idx >= SFD_MAX_SLOTS || !table.slots[idx].used {
+                return Errno::EBADF.as_ret();
+            }
+            table.slots[idx].sigmask = sigmask;
+            crate::klog_debug!(Sync, "[signalfd] Update fd={} mask=0x{:X}", fd, sigmask);
+            return i64::from(fd);
         }
-        table.slots[idx].sigmask = sigmask;
-        crate::klog_debug!(Sync, "[signalfd] Update fd={} mask=0x{:X}", fd, sigmask);
-        return i64::from(fd);
     }
 
     if fd != -1 {

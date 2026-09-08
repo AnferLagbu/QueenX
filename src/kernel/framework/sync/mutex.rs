@@ -46,6 +46,14 @@ pub struct Mutex<T: ?Sized> {
     data: core::cell::UnsafeCell<T>,
 }
 
+// G-17 (2026-09-08): 当前进程 PID 获取 — 供 Mutex 重入检测 (raw_lock) 与
+// 持有者记录 (acquire_lock_internal) 共用. 原实现内联于 acquire_lock_internal
+// (局部 extern 声明 + items_after_statements expect), 重入检测需复用, 提取到模块级.
+// SAFETY: process_get_current_pid 是有效的 C ABI 函数; 参数列表与声明一致
+unsafe extern "C" {
+    fn process_get_current_pid() -> u32;
+}
+
 // SAFETY: Mutex 通过内部自旋锁提供互斥.
 // UnsafeCell 提供内部可变性; 对 T 的访问受锁获取约束.
 // 要求 T: Send 是因为所有权可通过 lock/unlock 在线程间转移.
@@ -118,7 +126,7 @@ impl<T> Mutex<T> {
 
     /// 原始锁获取 (不返回 Guard)
     fn raw_lock(&self) {
-        // Fast path: 尝试立即获取
+        // Fast path: 尝试立即获取或同线程重入
         {
             // 先获取内部自旋锁
             self.inner.inner_spinlock.raw_lock();
@@ -130,13 +138,27 @@ impl<T> Mutex<T> {
                 return;
             }
 
+            // G-17 (2026-09-08): 递归锁定 — 同一线程对已持有的 Mutex 再次 lock.
+            // 文档承诺"递归锁定支持"但旧实现无 owner 检测, 同一线程二次 lock 在
+            // slow path 死等 → 自死锁无限自旋 (G-11 kill 广播 / G-12 signalfd 均为
+            // 受害点). owner 字段存持有进程 PID, 重入时 depth++ 直接返回, 由
+            // raw_unlock 递减 (depth<=1 才完全释放). 此检测须在 inner_spinlock
+            // 内进行, 保证 owner/depth 读改写原子.
+            // SAFETY: process_get_current_pid 声明于模块顶部 (C ABI)
+            let cur = unsafe { process_get_current_pid() } as i32;
+            if self.inner.owner.load(Ordering::Acquire) == cur {
+                self.inner.depth.fetch_add(1, Ordering::AcqRel);
+                self.inner.inner_spinlock.raw_unlock();
+                return;
+            }
+
             #[cfg(feature = "debug_mutex")]
             log::warn!("MUTEX: lock contention detected");
 
             self.inner.inner_spinlock.raw_unlock();
         }
 
-        // Slow path: 自旋 + yield
+        // Slow path: 自旋 + yield (仅真竞争到达, 同线程重入已在上方处理)
         loop {
             // 检查是否可用
             self.inner.inner_spinlock.raw_lock();
@@ -199,16 +221,8 @@ impl<T> Mutex<T> {
     fn acquire_lock_internal(&self) {
         self.inner.locked.store(1, Ordering::Release);
 
-        // 设置持有者 PID (从 C 函数获取)
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        #[expect(
-            clippy::items_after_statements,
-            reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-        )]
-        unsafe extern "C" {
-            fn process_get_current_pid() -> u32;
-        }
-        // SAFETY: `process_get_current_pid` 是有效的 C ABI 函数指针; 参数列表与声明一致
+        // 设置持有者 PID (从模块级 extern 获取, 见文件顶部 G-17 说明)
+        // SAFETY: process_get_current_pid 声明于模块顶部 (C ABI)
         let pid = unsafe { process_get_current_pid() };
         self.inner.owner.store(pid as i32, Ordering::Release);
 

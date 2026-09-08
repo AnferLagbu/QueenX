@@ -330,7 +330,8 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
                 let pg = proc.pgid.load(Ordering::SeqCst);
                 let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
                 if effective_pgid == target_pgid {
-                    if do_signal_send_inner(proc.pid.0, sig).is_ok() {
+                    // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
+                    if do_signal_send_process(proc, sig).is_ok() {
                         count += 1;
                     }
                 }
@@ -345,7 +346,8 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
                 if proc.pid.0 == 1 {
                     return true; // 跳过 init
                 }
-                if do_signal_send_inner(proc.pid.0, sig).is_ok() {
+                // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
+                if do_signal_send_process(proc, sig).is_ok() {
                     count += 1;
                 }
                 true
@@ -360,7 +362,8 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
                 let pg = proc.pgid.load(Ordering::SeqCst);
                 let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
                 if effective_pgid == target_pgid {
-                    if do_signal_send_inner(proc.pid.0, sig).is_ok() {
+                    // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
+                    if do_signal_send_process(proc, sig).is_ok() {
                         count += 1;
                     }
                 }
@@ -380,6 +383,17 @@ fn do_signal_send_inner(pid: u32, sig: u8) -> Result<(), i32> {
     let proc_ptr = PROCESS_TABLE.get(pid).ok_or(-2)?;
     // SAFETY: 进程在表中期间不会释放
     let proc = unsafe { &*proc_ptr };
+    do_signal_send_process(proc, sig)
+}
+
+/// 进程表内直接投递 (供 `for_each` 广播回调使用).
+///
+/// G-11 (2026-09-07): 原广播路径在 `for_each` 回调内调用 `do_signal_send_inner`,
+/// 其内部 `PROCESS_TABLE.get(pid)` 会对同一进程表 Mutex 重入加锁 — 该 Mutex
+/// 并非真递归 (raw_lock 无 owner 重入检测), 持锁回调内重入 → 无限自旋死锁.
+/// 影响面: `kill(0/-1/-pgid, sig)` syscall (dispatch.rs) 与 session 前台组广播
+/// (services/proc/session.rs) 在生产环境同样会死锁; 由 kernel_test 扩容后首次暴露.
+fn do_signal_send_process(proc: &super::process::Process, sig: u8) -> Result<(), i32> {
     // I-52: 显式跳过 Zombie (与 do_signal_send 对齐)
     let state = proc.state.load(Ordering::Acquire);
     if state == ProcessState::Zombie as u32 {
@@ -930,8 +944,8 @@ fn test_kill_broadcast_pid_positive() -> crate::kernel::framework::tests::TestRe
     // pid > 0 单进程: 不存在的 pid 必返回 Err(ESRCH)
     let res = do_signal_send_extended(9999, 9);
     check!(res.is_err(), "kill non-existent pid should fail");
-    // 验证 sig 范围检查
-    let res2 = do_signal_send_extended(9999, 32); // 越界
+    // 验证 sig 范围检查: 32-63 是合法实时信号, 越界需用 64
+    let res2 = do_signal_send_extended(9999, 64); // 越界
     assert_eq_test!(res2, Err(-1i32), "sig out of range -> EINVAL");
     TestResult::Pass
 }
@@ -939,11 +953,13 @@ fn test_kill_broadcast_pid_positive() -> crate::kernel::framework::tests::TestRe
 #[cfg(feature = "kernel_test")]
 fn test_kill_broadcast_pid_zero_group() -> crate::kernel::framework::tests::TestResult {
     use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
-    // pid = 0 广播: 接受 Err(-2) (ESRCH) 或 Ok(N) (有进程)
+    // pid = 0 广播: 接受 Err(-2) (ESRCH) 或 Ok(N) (有进程).
+    // G-11 修复后广播不再死锁; 测试进程组真实投递 sig=9 仅置 pending
+    // (kernel_test 不返回用户态不投递), 用作广播路径回归覆盖.
     let res = do_signal_send_extended(0, 9);
     check!(res.is_err() || res.is_ok(), "pid=0 must not EINVAL");
-    // 验证信号范围
-    let res = do_signal_send_extended(0, 32);
+    // 验证信号范围: 32-63 合法, 越界用 64
+    let res = do_signal_send_extended(0, 64);
     assert_eq_test!(res, Err(-1i32), "sig out of range -> EINVAL");
     TestResult::Pass
 }
