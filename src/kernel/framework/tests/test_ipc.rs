@@ -9,9 +9,15 @@ use crate::kernel::framework::tests::{TestResult, runner};
 use crate::kernel::services::ipc::{pipe, shm};
 use crate::register_tests_inner;
 
-#[expect(
-    clippy::large_stack_arrays,
-    reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
+// J-01 (2026-09-08): large_stack_arrays expect 仅在裸机 (非测试模式) 生效 —
+// IPC_MAX_* 在 any(kernel_test, host-test) 下缩减至 2 (services/ipc/types.rs),
+// 数组随之变小不触发 lint; 裸机大值数组 (64×Pipe 等) 才需要 expect.
+#[cfg_attr(
+    not(any(feature = "kernel_test", feature = "host-test")),
+    expect(
+        clippy::large_stack_arrays,
+        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
+    )
 )]
 fn create_test_namespace() -> IpcNamespace {
     IpcNamespace {

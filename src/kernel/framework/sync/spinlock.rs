@@ -340,7 +340,13 @@ pub fn restore_interrupts(flags: &IrqSaveFlags) {
 }
 
 // B08-14 前置: host-test no-op (与 disable_interrupts host 变体对应).
+// J-01 (2026-09-08): 与裸机变体一致的 trivially_copy_pass_by_ref expect —
+// host-test 编译下该变体同样传引用 (API 签名一致性), lint 与裸机对齐处理.
 #[cfg(feature = "host-test")]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (与裸机变体签名一致); 当前优先 expect"
+)]
 pub fn restore_interrupts(_flags: &IrqSaveFlags) {}
 
 // ============================================================================

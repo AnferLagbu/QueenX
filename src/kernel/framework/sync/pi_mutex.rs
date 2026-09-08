@@ -296,10 +296,8 @@ impl<T> PiMutex<T> {
 
     /// 创建命名 `PiMutex` (用于调试 + lockdep)
     #[cfg(debug_assertions)]
-    #[expect(
-        clippy::doc_markdown,
-        reason = "doc_markdown: 文档 markdown 格式已知 (中文 + 内核术语); 当前优先 expect"
-    )]
+    // J-01 (2026-09-08): 删除 unfulfilled doc_markdown expect — 文档已用反引号包裹
+    // 标识符, doc_markdown 从不触发, expect 为多余防御 (host-test debug 编译暴露)
     pub fn named(name: &'static str, data: T) -> Self {
         let class_id = crate::kernel::framework::sync::register_class(LockClassDesc {
             name,

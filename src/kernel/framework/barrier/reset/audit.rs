@@ -148,7 +148,8 @@ pub fn audit_clear() {
 
 #[cfg(feature = "kernel_test")]
 pub mod tests {
-    use super::*;
+    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
+    use super::{RecoveryLayer, RecoveryResult, ResetAuditLog};
 
     pub fn test_audit_log() -> bool {
         let mut log = ResetAuditLog::new();

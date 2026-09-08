@@ -167,6 +167,29 @@ else
 fi
 popd > /dev/null
 
+# ── 2b. Clippy feature 维 (kernel_test + host-test, J-01/G-02/G-18) ──
+# J-01 (2026-09-08): E-03 同源双编译后 feature 门控代码 lint 纳入门槛.
+# host target 运行 (避开裸机 build.rs 产物检查), 与 ci-x86.yml clippy-pedantic
+# job 对齐. 两维清理后零 unfulfilled 作为门槛 (G-02 合并).
+step "2b/6 Clippy feature 维 (kernel_test + host-test, host target)"
+for FEATURE in kernel_test host-test; do
+    if cargo +nightly clippy --manifest-path "$PROJECT_ROOT/src/rust/Cargo.toml" --features "$FEATURE" --lib \
+        -- -D warnings -D clippy::pedantic \
+        -A clippy::cast_possible_truncation \
+        -A clippy::cast_sign_loss \
+        -A clippy::cast_possible_wrap \
+        -A clippy::cast_precision_loss 2>&1 | tail -10; then
+        CLIPPY_RC=${PIPESTATUS[0]}
+        if [ "$CLIPPY_RC" -eq 0 ]; then
+            ok "clippy ${FEATURE} 维: passed"
+        else
+            err "clippy ${FEATURE} 维失败 (exit=$CLIPPY_RC, 见上方输出)"
+        fi
+    else
+        err "clippy ${FEATURE} 维执行异常"
+    fi
+done
+
 if [ "$MODE" = "quick" ]; then
     echo -e "\n${GREEN}━━━ audit (quick) 完成 ━━━${NC}"
     exit 0

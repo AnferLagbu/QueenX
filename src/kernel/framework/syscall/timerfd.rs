@@ -584,7 +584,7 @@ fn test_timerfd_settime_disarm() -> crate::kernel::framework::tests::TestResult 
 
     // disarm: it_value 全零
     let new_val = Itimerspec::zeroed();
-    let ret = sys_timerfd_settime(fd as i32, 0, &new_val as *const Itimerspec as u64, 0);
+    let ret = sys_timerfd_settime(fd as i32, 0, (&raw const new_val) as u64, 0);
     check!(ret == 0, "timerfd disarm ok");
 
     sys_timerfd_close(fd as i32);
@@ -600,7 +600,7 @@ fn test_timerfd_read_empty() -> crate::kernel::framework::tests::TestResult {
 
     // 未启动时 read → EAGAIN
     let mut val: u64 = 0;
-    let ret = sys_timerfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret = sys_timerfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret < 0, "timerfd read unarmed returns error");
 
     sys_timerfd_close(fd as i32);

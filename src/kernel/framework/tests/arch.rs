@@ -14,7 +14,9 @@ use crate::kernel::framework::arch::x86_64::tss::{DEFAULT_IOMAP_BASE, TSS_SIZE, 
 fn gdt_entry_null() -> TestResult {
     let null_desc = GdtEntry::null();
     // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-    let bytes = unsafe { core::ptr::read_volatile(&null_desc as *const _ as *const u64) };
+    let bytes = unsafe {
+        core::ptr::read_volatile(core::ptr::from_ref(&null_desc) as *const u64)
+    };
     check!(bytes == 0, "Null descriptor should be all zeros");
     TestResult::Pass
 }

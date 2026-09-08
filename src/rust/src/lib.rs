@@ -476,9 +476,14 @@ fn alloc_error(layout: alloc::alloc::Layout) -> ! {
 /// # Panics
 /// Boot 栈 canary 校验失败 (栈溢出至栈底) 时立即 panic, 断言内核状态不可信.
 #[unsafe(no_mangle)]
-#[expect(
-    clippy::used_underscore_binding,
-    reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
+// J-01 (2026-09-08): used_underscore_binding expect 仅裸机分支 (not kernel_test) 生效 —
+// kernel_test 分支无 `_xxx` 绑定使用, expect 在 feature 下 unfulfilled
+#[cfg_attr(
+    not(feature = "kernel_test"),
+    expect(
+        clippy::used_underscore_binding,
+        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
+    )
 )]
 #[expect(
     clippy::too_many_lines,
@@ -514,6 +519,12 @@ pub extern "C" fn kernel_init() {
     // Test mode: skip normal init, run unit tests
     #[cfg(feature = "kernel_test")]
     {
+        // J-01 (2026-09-08): 三个 const 集中块首 (items_after_statements 清理) —
+        // kmalloc 堆大小与 PMM bitmap 间隙布局常量, 供下方初始化步骤使用
+        const KMALLOC_HEAP_SIZE: u64 = 16 * 1024 * 1024;
+        const GAP_SIZE: u64 = 0x200000;
+        const BITMAP_GAP_SIZE: u64 = 0x200000;
+
         // Validate configuration even in test mode
         crate::kernel::framework::config::init();
 
@@ -523,7 +534,6 @@ pub extern "C" fn kernel_init() {
         let boot_info = crate::kernel::framework::boot::init();
         crate::kernel::framework::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
         crate::kernel::framework::mm::vmm::vmm_init();
-        const KMALLOC_HEAP_SIZE: u64 = 16 * 1024 * 1024;
         let heap_start = crate::kernel::framework::mm::VirtAddr(
             crate::kernel::framework::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
         );
@@ -550,8 +560,6 @@ pub extern "C" fn kernel_init() {
         // 必须包含 heap_end 到 bitmap 之间的 2MB 间隙，
         // 否则 bitmap 与 heap 共享同一个 2MB 块，heap 扩展拆分 2MB 巨页时会覆盖 bitmap 的 PTE。
         // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 16MB + 0x200000 = 20MB
-        const GAP_SIZE: u64 = 0x200000;
-        const BITMAP_GAP_SIZE: u64 = 0x200000;
         crate::kernel::framework::mm::pmm::pmm_init_bitmap(
             GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE,
         );

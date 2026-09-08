@@ -565,11 +565,11 @@ fn test_epoll_ctl_add_del() -> crate::kernel::framework::tests::TestResult {
         events: EPOLLIN,
         data: 42,
     };
-    let ret = sys_epoll_ctl(epfd, EPOLL_CTL_ADD, 3, &ev as *const EpollEvent);
+    let ret = sys_epoll_ctl(epfd, EPOLL_CTL_ADD, 3, &raw const ev);
     check!(ret == 0, "epoll_ctl ADD ok");
 
     // 重复添加应失败
-    let ret2 = sys_epoll_ctl(epfd, EPOLL_CTL_ADD, 3, &ev as *const EpollEvent);
+    let ret2 = sys_epoll_ctl(epfd, EPOLL_CTL_ADD, 3, &raw const ev);
     check!(ret2 < 0, "epoll_ctl ADD duplicate fails");
 
     // 删除

@@ -78,10 +78,8 @@ const _: () = assert!(
 impl InterruptFrame {
     /// 创建新的中断帧 (用于测试)
     #[cfg(any(test, feature = "kernel_test"))]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
+    // J-01 (2026-09-08): 删除 unfulfilled inline_always expect — new_test_frame
+    // 无 #[inline(always)] 属性, expect 从不触发 (kernel_test 编译暴露)
     pub fn new_test_frame(int_no: u64, rip: u64, cs: u64) -> Self {
         Self {
             r15: 0,

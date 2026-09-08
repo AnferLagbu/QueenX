@@ -354,12 +354,12 @@ fn test_eventfd_create_read_write() -> crate::kernel::framework::tests::TestResu
 
     // 读取: 非 semaphore 模式, 返回 5 并清零
     let mut val: u64 = 0;
-    let ret = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret == 8, "eventfd read returns 8");
     check!(val == 5, "eventfd read value == 5");
 
     // 再次读取: counter=0, EAGAIN
-    let ret2 = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret2 = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret2 < 0, "eventfd read empty returns error");
 
     // 写入 10
@@ -367,7 +367,7 @@ fn test_eventfd_create_read_write() -> crate::kernel::framework::tests::TestResu
     check!(ret3 == 8, "eventfd write returns 8");
 
     // 读取: 返回 10
-    let ret4 = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret4 = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret4 == 8, "eventfd read after write returns 8");
     check!(val == 10, "eventfd read value == 10");
 
@@ -388,21 +388,21 @@ fn test_eventfd_semaphore() -> crate::kernel::framework::tests::TestResult {
 
     // 读取: 返回 1, counter=2
     let mut val: u64 = 0;
-    let ret = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret == 8, "semaphore read returns 8");
     check!(val == 1, "semaphore read value == 1");
 
     // 再读: 返回 1, counter=1
-    let ret2 = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret2 = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret2 == 8, "semaphore read 2 returns 8");
     check!(val == 1, "semaphore read 2 value == 1");
 
     // 再读: 返回 1, counter=0
-    let ret3 = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret3 = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret3 == 8, "semaphore read 3 returns 8");
 
     // 再读: EAGAIN
-    let ret4 = sys_eventfd_read(fd as i32, &mut val as *mut u64 as u64);
+    let ret4 = sys_eventfd_read(fd as i32, (&raw mut val) as u64);
     check!(ret4 < 0, "semaphore read empty returns error");
 
     sys_eventfd_close(fd as i32);

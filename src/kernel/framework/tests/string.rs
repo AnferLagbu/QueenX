@@ -175,7 +175,7 @@ fn memchr_basic() -> TestResult {
         let data = [1, 2, 3, 4, 5, 3, 7, 8];
         let result = memchr(data.as_ptr(), 3, 8);
         check!(!result.is_null(), "memchr found");
-        let offset = (result as *const u8).offset_from(data.as_ptr()) as usize;
+        let offset = result.cast_const().offset_from(data.as_ptr()) as usize;
         assert_eq_test!(offset, 2, "memchr offset");
         let result = memchr(data.as_ptr(), 9, 8);
         check!(result.is_null(), "memchr not found");
@@ -188,7 +188,7 @@ fn secure_zero_basic() -> TestResult {
     unsafe {
         let mut secret = [0xDEu8, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE];
         secure_zero(secret.as_mut_ptr(), 6);
-        for byte in secret.iter() {
+        for byte in &secret {
             assert_eq_test!(*byte, 0, "secure zero");
         }
     }

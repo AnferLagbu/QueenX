@@ -203,6 +203,44 @@ jobs:
           fi
           echo "✅ clippy aarch64 -D pedantic 通过 (cast_* 已豁免, 见 DECISION-041)"
 
+      - name: clippy kernel_test 维 -D pedantic (排除 cast_*, J-01/G-02)
+        working-directory: .
+        run: |
+          mkdir -p build/log
+          # J-01 (2026-09-08): kernel_test feature 门控代码 lint 纳入 CI —
+          # host target 运行 (避开裸机 build.rs 产物检查), 覆盖 feature 维 lint 回归
+          cargo clippy --manifest-path src/rust/Cargo.toml --features kernel_test --lib -- \
+            -D warnings -D clippy::pedantic \
+            -A clippy::cast_possible_truncation \
+            -A clippy::cast_sign_loss \
+            -A clippy::cast_possible_wrap \
+            -A clippy::cast_precision_loss \
+            2>&1 | tee build/log/clippy_pedantic_kernel_test.txt | tail -20
+          if grep -qE "^error\[|^error:" build/log/clippy_pedantic_kernel_test.txt; then
+            echo "::error::clippy kernel_test 维失败"
+            exit 1
+          fi
+          echo "✅ clippy kernel_test 维通过 (host target, J-01)"
+
+      - name: clippy host-test 维 -D pedantic (排除 cast_*, J-01/G-18)
+        working-directory: .
+        run: |
+          mkdir -p build/log
+          # J-01 (2026-09-08): host-test feature 门控代码 lint 纳入 CI —
+          # host target 运行, 覆盖 E-03 同源双编译维度的 lint 回归
+          cargo clippy --manifest-path src/rust/Cargo.toml --features host-test --lib -- \
+            -D warnings -D clippy::pedantic \
+            -A clippy::cast_possible_truncation \
+            -A clippy::cast_sign_loss \
+            -A clippy::cast_possible_wrap \
+            -A clippy::cast_precision_loss \
+            2>&1 | tee build/log/clippy_pedantic_host_test.txt | tail -20
+          if grep -qE "^error\[|^error:" build/log/clippy_pedantic_host_test.txt; then
+            echo "::error::clippy host-test 维失败"
+            exit 1
+          fi
+          echo "✅ clippy host-test 维通过 (host target, J-01)"
+
       - name: cargo fmt --check 风格统一阻断
         working-directory: src/rust
         run: |

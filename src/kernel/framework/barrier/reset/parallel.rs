@@ -214,7 +214,8 @@ pub fn get_parallel_stats() -> (usize, u32) {
 
 #[cfg(feature = "kernel_test")]
 pub mod tests {
-    use super::*;
+    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
+    use super::{compute_dependency_layers, DependencyLayer, DependencyLayers};
 
     pub fn test_dependency_layer() -> bool {
         let mut layer = DependencyLayer::new(0);
@@ -231,7 +232,9 @@ pub mod tests {
     }
 
     pub fn test_compute_layers() -> bool {
-        let layers = compute_dependency_layers();
-        layers.count > 0 || true
+        // J-01 (2026-09-08): 原 `layers.count > 0 || true` 恒真 (overly_complex_bool_expr) —
+        // 语义为"compute_dependency_layers 可调用不 panic", 化简并丢弃返回值
+        let _ = compute_dependency_layers();
+        true
     }
 }

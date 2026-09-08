@@ -68,6 +68,12 @@ fn driver_device_info_builder() -> TestResult {
 }
 
 fn driver_result_type() -> TestResult {
+    // J-01 (2026-09-08): returns_ok 专测 Result 的 Ok 路径语义 (is_ok/unwrap),
+    // 恒 Ok 返回触发 unnecessary_wraps — 测试辅助语义, 加 expect 保留
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "unnecessary_wraps: 测试辅助 fn 专测 DriverResult Ok 路径语义 (is_ok/unwrap); 当前优先 expect"
+    )]
     fn returns_ok() -> DriverResult<u32> {
         Ok(42)
     }

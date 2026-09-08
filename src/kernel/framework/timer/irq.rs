@@ -120,8 +120,9 @@ pub fn register_timer_irq_tests() {
     use crate::kernel::framework::tests::{TestFn, TestResult, runner};
 
     fn timer_irq0_handler_signature() -> TestResult {
-        let _handler: extern "C" fn(*mut InterruptFrame) = timer_irq0_handler;
-        let _ = _handler;
+        // J-01 (2026-09-08): used_underscore_binding 清理 — 类型注解断言函数签名
+        // 编译期兼容, 无需 _handler 绑定.
+        let _: extern "C" fn(*mut InterruptFrame) = timer_irq0_handler;
         TestResult::Pass
     }
 

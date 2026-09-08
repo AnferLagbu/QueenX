@@ -110,7 +110,8 @@ pub fn execute() -> RecoveryResult {
 
 #[cfg(feature = "kernel_test")]
 pub mod tests {
-    use super::*;
+    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
+    use super::{freeze_all_domains, unfreeze_all_domains};
 
     pub fn test_freeze_unfreeze() -> bool {
         freeze_all_domains();

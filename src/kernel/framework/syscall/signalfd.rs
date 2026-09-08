@@ -415,7 +415,7 @@ fn test_signalfd_create() -> crate::kernel::framework::tests::TestResult {
 
     // 创建 signalfd, 掩码 = SIGUSR1 (bit 9) | SIGUSR2 (bit 30)
     let mask: u128 = (1u128 << 9) | (1u128 << 30);
-    let fd = sys_signalfd(-1, &mask as *const u128 as u64, 0);
+    let fd = sys_signalfd(-1, (&raw const mask) as u64, 0);
     check!(fd >= 220, "signalfd returns fd >= 220");
 
     // 关闭
@@ -430,12 +430,12 @@ fn test_signalfd_mask_update() -> crate::kernel::framework::tests::TestResult {
     use crate::kernel::framework::tests::{TestResult, check};
 
     let mask1: u128 = 1u128 << 9; // SIGUSR1
-    let fd = sys_signalfd(-1, &mask1 as *const u128 as u64, 0);
+    let fd = sys_signalfd(-1, (&raw const mask1) as u64, 0);
     check!(fd >= 220, "signalfd create ok");
 
     // 更新掩码
     let mask2: u128 = 1u128 << 30; // SIGUSR2
-    let ret = sys_signalfd(fd as i32, &mask2 as *const u128 as u64, 0);
+    let ret = sys_signalfd(fd as i32, (&raw const mask2) as u64, 0);
     check!(ret == fd, "signalfd update returns same fd");
 
     sys_signalfd_close(fd as i32);
@@ -448,15 +448,16 @@ fn test_signalfd_sigkill_filtered() -> crate::kernel::framework::tests::TestResu
 
     // 尝试注册 SIGKILL (bit 8) + SIGUSR1 (bit 9)
     let mask: u128 = (1u128 << 8) | (1u128 << 9);
-    let fd = sys_signalfd(-1, &mask as *const u128 as u64, 0);
+    let fd = sys_signalfd(-1, (&raw const mask) as u64, 0);
     check!(fd >= 220, "signalfd with SIGKILL creates ok");
 
     // 验证 SIGKILL 被过滤: 读取 slot 的 sigmask
     {
         let table = SFD_TABLE.lock();
-        let idx = match crate::kernel::framework::proc::idx_of(fd as i32) {
-            Some((crate::kernel::framework::proc::FdSubsystem::SignalFd, i)) => i,
-            _ => panic!("signalfd 测试期望 SignalFd 范围内 FD"),
+        let Some((crate::kernel::framework::proc::FdSubsystem::SignalFd, idx)) =
+            crate::kernel::framework::proc::idx_of(fd as i32)
+        else {
+            panic!("signalfd 测试期望 SignalFd 范围内 FD");
         };
         let slot_mask = table.slots[idx].sigmask;
         check!(slot_mask & (1u128 << 8) == 0, "SIGKILL filtered from mask");

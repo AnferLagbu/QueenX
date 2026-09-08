@@ -776,11 +776,13 @@ fn test_clock_read() -> crate::kernel::framework::tests::TestResult {
 #[cfg(feature = "kernel_test")]
 fn test_queue_operations() -> crate::kernel::framework::tests::TestResult {
     use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+    // J-01 (2026-09-08): static mut 移至函数顶部 (items_after_statements 清理) —
+    // 测试用持久 HrTimer, 生命周期跨多次调用
+    static mut T1: HrTimer = HrTimer::uninit();
     hrtimer_init();
     check!(is_hrtimer_ready(), "initialized");
     assert_eq_test!(hrtimer_pending_count(), 0, "empty queue");
 
-    static mut T1: HrTimer = HrTimer::uninit();
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
         T1.init(noop_callback);

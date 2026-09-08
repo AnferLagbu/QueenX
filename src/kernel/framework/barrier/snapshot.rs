@@ -318,7 +318,8 @@ pub fn snapshot_is_init_captured() -> bool {
 
 #[cfg(feature = "kernel_test")]
 pub mod tests {
-    use super::*;
+    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
+    use super::{DeviceSnapshot, DeviceSnapshotRegistry, DeviceType};
 
     pub fn test_snapshot_basic() -> bool {
         let mut snap = DeviceSnapshot::new(1, DeviceType::Timer, "test_timer", 0xF000, 10);
@@ -335,6 +336,8 @@ pub mod tests {
     }
 
     pub fn test_registry_priority_order() -> bool {
+        // J-01 (2026-09-08): 嵌套辅助 fn 移至函数顶部 (items_after_statements 清理)
+        fn dummy_write(_base: u64, _offset: u32, _value: u32) {}
         let mut registry = DeviceSnapshotRegistry::new();
         registry.register(DeviceSnapshot::new(
             1,
@@ -352,7 +355,6 @@ pub mod tests {
             8,
         ));
 
-        fn dummy_write(_base: u64, _offset: u32, _value: u32) {}
         let (success, failed) = registry.restore_all(dummy_write);
         success == 3 && failed == 0
     }

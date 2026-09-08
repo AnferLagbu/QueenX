@@ -255,7 +255,7 @@ fn atomic_bool_basic() -> TestResult {
 
 fn atomic_operations() -> TestResult {
     let mut val: i32 = 10;
-    let ptr = &mut val as *mut i32;
+    let ptr = &raw mut val;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
         assert_eq_test!(atomic_inc(ptr), 10, "inc returns old");

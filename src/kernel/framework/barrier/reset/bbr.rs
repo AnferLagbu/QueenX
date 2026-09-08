@@ -145,7 +145,8 @@ pub fn should_attempt_recovery(domain_id: u64) -> bool {
 
 #[cfg(feature = "kernel_test")]
 pub mod tests {
-    use super::*;
+    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
+    use super::should_attempt_recovery;
 
     pub fn test_compute_fingerprint() -> bool {
         true

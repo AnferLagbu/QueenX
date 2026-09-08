@@ -119,7 +119,8 @@ pub struct RecoveryStatus {
 
 #[cfg(feature = "kernel_test")]
 pub mod tests {
-    use super::*;
+    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
+    use super::get_recovery_status;
 
     pub fn test_recovery_status() -> bool {
         let status = get_recovery_status();

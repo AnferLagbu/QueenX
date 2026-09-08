@@ -338,6 +338,12 @@ mod tests {
 }
 
 #[cfg(feature = "kernel_test")]
+// J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 是
+// 本内核测试惯用模式 (let r = runner() 语句后定义 fn), 保留风格加函数级 expect.
+#[expect(
+    clippy::items_after_statements,
+    reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
+)]
 pub fn register_pit_tests() {
     use crate::kernel::framework::tests::{TestFn, TestResult, runner};
     let r = runner();
@@ -360,10 +366,12 @@ pub fn register_pit_tests() {
 
     fn frequency_bounds() -> TestResult {
         crate::check!(PIT_MIN_COUNT >= 1, "min count >= 1");
-        crate::check!(PIT_MAX_COUNT as u64 <= 65535, "max count <= 65535");
-        let max_freq = PIT_BASE_FREQUENCY / PIT_MIN_COUNT as u64;
+        // J-01 (2026-09-08): 删除恒真断言 `PIT_MAX_COUNT as u64 <= 65535`
+        // (u16 max 恒 <= 65535, invalid_upcast_comparisons) — 等价精确断言
+        // `u64::from(PIT_MAX_COUNT) == 65535` 已由 tests/sys.rs pit_frequency_bounds 覆盖.
+        let max_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MIN_COUNT);
         crate::check!(max_freq > 1_000_000, "max freq > 1MHz");
-        let min_freq = PIT_BASE_FREQUENCY / PIT_MAX_COUNT as u64;
+        let min_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MAX_COUNT);
         crate::check!(min_freq < 20, "min freq < 20Hz");
         TestResult::Pass
     }

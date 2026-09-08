@@ -262,10 +262,10 @@ fn pit_divisor_calculation() -> TestResult {
 
 fn pit_frequency_bounds() -> TestResult {
     check!(PIT_MIN_COUNT >= 1, "min count >= 1");
-    assert_eq_test!(PIT_MAX_COUNT as u64, 65535, "max count value");
-    let max_freq = PIT_BASE_FREQUENCY / PIT_MIN_COUNT as u64;
+    assert_eq_test!(u64::from(PIT_MAX_COUNT), 65535, "max count value");
+    let max_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MIN_COUNT);
     check!(max_freq > 1_000_000, "max freq > 1MHz");
-    let min_freq = PIT_BASE_FREQUENCY / PIT_MAX_COUNT as u64;
+    let min_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MAX_COUNT);
     check!(min_freq < 20, "min freq < 20Hz");
     TestResult::Pass
 }

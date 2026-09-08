@@ -28,9 +28,14 @@ pub use crate::kernel::services::net::route::{
     clippy::unnecessary_wraps,
     reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
 )]
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
+// J-01 (2026-09-08): manual_let_else expect 仅裸机分支 (not kernel_test) 生效 —
+// kernel_test 分支为 stub (无 if-let/manual_let_else 模式), expect 在 feature 下 unfulfilled
+#[cfg_attr(
+    not(feature = "kernel_test"),
+    expect(
+        clippy::manual_let_else,
+        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
+    )
 )]
 /// 将单条路由同步到 smoltcp Routes (双栈: V4/V6 按 family 分发)
 ///
@@ -101,9 +106,14 @@ pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
     }
 }
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
+// J-01 (2026-09-08): manual_let_else expect 仅裸机分支 (not kernel_test) 生效 —
+// kernel_test 分支为 stub (无 if-let/manual_let_else 模式), expect 在 feature 下 unfulfilled
+#[cfg_attr(
+    not(feature = "kernel_test"),
+    expect(
+        clippy::manual_let_else,
+        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
+    )
 )]
 /// 从内核路由表全量重建 smoltcp Routes (双栈)
 pub fn rebuild_smoltcp_routes(table: &[RouteEntry]) {
