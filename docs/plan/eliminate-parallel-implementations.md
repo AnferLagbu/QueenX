@@ -92,7 +92,7 @@
 - **迁移 sha256/checksum/buddy/capability/dma_stream（5 模块）**
   - 描述：这 5 个是纯算法复刻，对应内核真实实现（credo/sha256.rs、hvfs/checksum.rs、pmm.rs buddy、credo capability、dma_buf.rs 状态机）。
   - 方案：host-tests 的测试改为 `use queenx::kernel::...` 调用内核真实实现；删除 host-tests/src/{sha256,checksum,buddy,capability,dma_stream}.rs；`#![allow(dead_code)]`（F9 违反）随删除消失。
-  - 状态：[X] (2026-09-06 实施完成 4/5：sha256/checksum/capability/dma_stream 四模块迁移完成——本地实现删除，测试改引内核真实源码，`#![allow(dead_code)]` 随删除消失；host-tests lib 测试 186 passed 全绿（含这 4 模块）+ tests/ 集成测试全量通过。**buddy 例外**：内核 pmm 基于裸指针操作真实物理内存，host 不可测，buddy 平行实现保留，已标记问题待审查员决定处置（不迁移不删除）)
+  - 状态：[X] (2026-09-06 实施完成 4/5：sha256/checksum/capability/dma_stream 四模块迁移完成——本地实现删除，测试改引内核真实源码，`#![allow(dead_code)]` 随删除消失；host-tests lib 测试 186 passed 全绿（含这 4 模块）+ tests/ 集成测试全量通过。**buddy 例外**：内核 pmm 基于裸指针操作真实物理内存，host 不可测，buddy 平行实现保留，已标记问题待审查员决定处置（不迁移不删除）。**E-06 延伸去重（2026-09-08，见 audit-fix-08 E-06）**：同源双编译后，capability/sha256/checksum 三载体用例进一步合入 framework/tests 套件双端共享并删除 host-tests 侧文件；dma_stream 因无 framework/tests 重叠且为唯一覆盖保留)
 
 - **迁移 hvfs（被测对象）**
   - 描述：hvfs 平行实现（19 文件）删除，tests/ 226 处引用改指内核 `queenx::kernel::services::fs::hvfs`。

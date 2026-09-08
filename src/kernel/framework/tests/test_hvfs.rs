@@ -1,7 +1,7 @@
 #![cfg(target_arch = "x86_64")]
 use crate::register_tests_inner;
 
-use super::check;
+use super::{assert_eq_test, check};
 use crate::kernel::framework::fs::hvfs::arc::{HvArc, HvArcBufType, HvArcKey};
 use crate::kernel::framework::fs::hvfs::bp::{HvBlockPointer, HvCksumType, HvDva};
 use crate::kernel::framework::fs::hvfs::checksum::HvChecksum;
@@ -59,6 +59,209 @@ fn test_checksum_different_data() -> TestResult {
     let ck_a = HvChecksum::compute(HvCksumType::Fletcher4, b"hello");
     let ck_b = HvChecksum::compute(HvCksumType::Fletcher4, b"world");
     check!(ck_a.value != ck_b.value, "different data should differ");
+    TestResult::Pass
+}
+
+// E-06 (2026-09-07): host-tests/src/checksum.rs 去重载体用例合入 (同被测对象
+// services::fs::hvfs::checksum::HvChecksum 的双端共享用例统一收口到本套件).
+// 覆盖 Fletcher2/4 全族、verify 往返/损坏检测、Off/EdonR/SHA256 变体与边界长度.
+
+fn test_checksum_fletcher2_empty() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::Fletcher2, b"");
+    check!(ck.value[0] == 0 && ck.value[1] == 0, "empty fletcher2 zero");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher2_deterministic() -> TestResult {
+    let data = b"hello world";
+    let ck1 = HvChecksum::compute(HvCksumType::Fletcher2, data);
+    let ck2 = HvChecksum::compute(HvCksumType::Fletcher2, data);
+    assert_eq_test!(ck1.value, ck2.value, "fletcher2 deterministic");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_empty() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, b"");
+    check!(
+        ck.value[0] == 0 && ck.value[1] == 0 && ck.value[2] == 0 && ck.value[3] == 0,
+        "empty fletcher4 zero"
+    );
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_deterministic() -> TestResult {
+    let data = b"test data for fletcher4";
+    let ck1 = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    let ck2 = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    assert_eq_test!(ck1.value, ck2.value, "fletcher4 deterministic");
+    TestResult::Pass
+}
+
+fn test_checksum_verify_roundtrip_fletcher2() -> TestResult {
+    let data = b"some test data for verification";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher2, data);
+    check!(ck.verify(data), "fletcher2 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_verify_roundtrip_fletcher4() -> TestResult {
+    let data = b"some test data for verification";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    check!(ck.verify(data), "fletcher4 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_verify_detects_corruption() -> TestResult {
+    let data = b"original data";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    let corrupted = b"corrupted data";
+    check!(!ck.verify(corrupted), "corruption detected");
+    TestResult::Pass
+}
+
+fn test_checksum_off_always_zero() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::Off, b"any data");
+    assert_eq_test!(ck.value, [0u64; 4], "Off checksum zero");
+    TestResult::Pass
+}
+
+fn test_checksum_edonr_uses_fletcher4() -> TestResult {
+    let data = b"test data";
+    let ck_edonr = HvChecksum::compute(HvCksumType::EdonR, data);
+    let ck_f4 = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    assert_eq_test!(ck_edonr.value, ck_f4.value, "EdonR == Fletcher4");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher2_single_byte() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::Fletcher2, b"A");
+    check!(ck.value[0] != 0, "single byte fletcher2 non-zero");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_single_byte() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, b"A");
+    check!(ck.value[0] != 0, "single byte fletcher4 non-zero");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher2_odd_length() -> TestResult {
+    let data = b"hello";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher2, data);
+    check!(ck.verify(data), "odd-length fletcher2 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_odd_length() -> TestResult {
+    let data = b"odd data length test";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    check!(ck.verify(data), "odd-length fletcher4 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher2_exact_8_bytes() -> TestResult {
+    let data = b"12345678";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher2, data);
+    check!(ck.verify(data), "8-byte fletcher2 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_exact_8_bytes() -> TestResult {
+    let data = b"abcdefgh";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    check!(ck.verify(data), "8-byte fletcher4 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher2_large_data() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..4096u32).map(|i| (i % 256) as u8).collect();
+    let ck = HvChecksum::compute(HvCksumType::Fletcher2, &data);
+    check!(ck.verify(&data), "large fletcher2 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_large_data() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..8192u32).map(|i| (i % 256) as u8).collect();
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, &data);
+    check!(ck.verify(&data), "large fletcher4 verifies");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher2_different_lengths() -> TestResult {
+    let ck1 = HvChecksum::compute(HvCksumType::Fletcher2, b"hello");
+    let ck2 = HvChecksum::compute(HvCksumType::Fletcher2, b"hello world");
+    check!(ck1.value != ck2.value, "different lengths differ");
+    TestResult::Pass
+}
+
+fn test_checksum_fletcher4_different_lengths() -> TestResult {
+    let ck1 = HvChecksum::compute(HvCksumType::Fletcher4, b"hello");
+    let ck2 = HvChecksum::compute(HvCksumType::Fletcher4, b"hello world");
+    check!(ck1.value != ck2.value, "different lengths differ");
+    TestResult::Pass
+}
+
+fn test_checksum_verify_single_bit_flip() -> TestResult {
+    let data = b"some test data for verification";
+    let ck = HvChecksum::compute(HvCksumType::Fletcher4, data);
+    let mut corrupted: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    corrupted.extend_from_slice(data);
+    corrupted[5] ^= 0x01;
+    check!(!ck.verify(&corrupted), "single bit flip detected");
+    TestResult::Pass
+}
+
+fn test_checksum_off_verify_always_true() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::Off, b"any data");
+    check!(ck.verify(b"different data"), "Off verifies any data");
+    TestResult::Pass
+}
+
+fn test_checksum_sha256_short_data() -> TestResult {
+    let data = b"ab";
+    let ck1 = HvChecksum::compute(HvCksumType::SHA256, data);
+    let ck2 = HvChecksum::compute(HvCksumType::SHA256, data);
+    assert_eq_test!(ck1.value, ck2.value, "SHA256 short deterministic");
+    TestResult::Pass
+}
+
+#[expect(
+    clippy::unreadable_literal,
+    reason = "unreadable_literal: FIPS 180-4 SHA-256('abc') 测试向量按 u64 四字面值书写, 有明确标准出处"
+)]
+fn test_checksum_sha256_known_vector() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::SHA256, b"abc");
+    let expected: [u64; 4] = [
+        0xba7816bf8f01cfea,
+        0x414140de5dae2223,
+        0xb00361a396177a9c,
+        0xb410ff61f20015ad,
+    ];
+    assert_eq_test!(ck.value, expected, "SHA256('abc') FIPS vector");
+    TestResult::Pass
+}
+
+#[expect(
+    clippy::unreadable_literal,
+    reason = "unreadable_literal: FIPS 180-4 SHA-256('') 测试向量按 u64 四字面值书写, 有明确标准出处"
+)]
+fn test_checksum_sha256_empty() -> TestResult {
+    let ck = HvChecksum::compute(HvCksumType::SHA256, b"");
+    let expected: [u64; 4] = [
+        0xe3b0c44298fc1c14,
+        0x9afbf4c8996fb924,
+        0x27ae41e4649b934c,
+        0xa495991b7852b855,
+    ];
+    assert_eq_test!(ck.value, expected, "SHA256('') FIPS vector");
+    TestResult::Pass
+}
+
+fn test_checksum_sha256_long_data() -> TestResult {
+    let data = b"sha256 via checksum module - this is a longer string that spans multiple blocks";
+    let ck1 = HvChecksum::compute(HvCksumType::SHA256, data);
+    let ck2 = HvChecksum::compute(HvCksumType::SHA256, data);
+    assert_eq_test!(ck1.value, ck2.value, "SHA256 long deterministic");
     TestResult::Pass
 }
 
@@ -270,6 +473,32 @@ pub fn register_hvfs_tests() {
         "hvfs::checksum": {
             "fletcher4_basic": test_checksum_fletcher4_basic,
             "different_data": test_checksum_different_data,
+            // E-06 (2026-09-07): host-tests/src/checksum.rs 去重载体用例合入
+            "fletcher2_empty": test_checksum_fletcher2_empty,
+            "fletcher2_deterministic": test_checksum_fletcher2_deterministic,
+            "fletcher4_empty": test_checksum_fletcher4_empty,
+            "fletcher4_deterministic": test_checksum_fletcher4_deterministic,
+            "verify_roundtrip_fletcher2": test_checksum_verify_roundtrip_fletcher2,
+            "verify_roundtrip_fletcher4": test_checksum_verify_roundtrip_fletcher4,
+            "verify_detects_corruption": test_checksum_verify_detects_corruption,
+            "off_always_zero": test_checksum_off_always_zero,
+            "edonr_uses_fletcher4": test_checksum_edonr_uses_fletcher4,
+            "fletcher2_single_byte": test_checksum_fletcher2_single_byte,
+            "fletcher4_single_byte": test_checksum_fletcher4_single_byte,
+            "fletcher2_odd_length": test_checksum_fletcher2_odd_length,
+            "fletcher4_odd_length": test_checksum_fletcher4_odd_length,
+            "fletcher2_exact_8_bytes": test_checksum_fletcher2_exact_8_bytes,
+            "fletcher4_exact_8_bytes": test_checksum_fletcher4_exact_8_bytes,
+            "fletcher2_large_data": test_checksum_fletcher2_large_data,
+            "fletcher4_large_data": test_checksum_fletcher4_large_data,
+            "fletcher2_different_lengths": test_checksum_fletcher2_different_lengths,
+            "fletcher4_different_lengths": test_checksum_fletcher4_different_lengths,
+            "verify_single_bit_flip": test_checksum_verify_single_bit_flip,
+            "off_verify_always_true": test_checksum_off_verify_always_true,
+            "sha256_short_data": test_checksum_sha256_short_data,
+            "sha256_known_vector": test_checksum_sha256_known_vector,
+            "sha256_empty": test_checksum_sha256_empty,
+            "sha256_long_data": test_checksum_sha256_long_data,
         },
         "hvfs::spa": {
             "config_name": test_spa_config_name,

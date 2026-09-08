@@ -96,6 +96,113 @@ fn sha256_abc() -> TestResult {
     TestResult::Pass
 }
 
+// E-06 (2026-09-07): host-tests/src/sha256.rs 去重载体用例合入 (同被测对象
+// framework::credo::sha256 的双端共享用例统一收口到本套件, 删除 host-tests 侧重复载体).
+// 覆盖 SHA-256 已知长消息向量、块边界 (55/56/63/64)、雪崩效应与确定性/大输入.
+
+fn sha256_long_message() -> TestResult {
+    let expected: [u8; 32] = [
+        0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8, 0xe5, 0xc0, 0x26, 0x93, 0x0c, 0x3e,
+        0x60, 0x39, 0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67, 0xf6, 0xec, 0xed, 0xd4,
+        0x19, 0xdb, 0x06, 0xc1,
+    ];
+    assert_eq_test!(
+        sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+        expected,
+        "SHA256 long message"
+    );
+    TestResult::Pass
+}
+
+fn sha256_deterministic() -> TestResult {
+    let h1 = sha256(b"hello world");
+    let h2 = sha256(b"hello world");
+    assert_eq_test!(h1, h2, "same input same hash");
+    TestResult::Pass
+}
+
+fn sha256_different_inputs() -> TestResult {
+    let h1 = sha256(b"hello");
+    let h2 = sha256(b"world");
+    check!(h1 != h2, "different inputs differ");
+    TestResult::Pass
+}
+
+fn sha256_single_byte() -> TestResult {
+    let h = sha256(b"a");
+    check!(h != [0u8; 32], "single byte non-zero");
+    TestResult::Pass
+}
+
+fn sha256_exactly_55_bytes() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..55u32).map(|i| i as u8).collect();
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "55 bytes non-zero");
+    TestResult::Pass
+}
+
+fn sha256_exactly_56_bytes() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..56u32).map(|i| i as u8).collect();
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "56 bytes non-zero");
+    TestResult::Pass
+}
+
+fn sha256_exactly_63_bytes() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..63u32).map(|i| i as u8).collect();
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "63 bytes non-zero");
+    TestResult::Pass
+}
+
+fn sha256_exactly_64_bytes() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..64u32).map(|i| i as u8).collect();
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "64 bytes non-zero");
+    TestResult::Pass
+}
+
+fn sha256_multi_block() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..200u32).map(|i| (i % 256) as u8).collect();
+    let h1 = sha256(&data);
+    let h2 = sha256(&data);
+    assert_eq_test!(h1, h2, "multi-block deterministic");
+    TestResult::Pass
+}
+
+fn sha256_all_zeros() -> TestResult {
+    let data = [0u8; 64];
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "all zeros non-zero");
+    TestResult::Pass
+}
+
+fn sha256_all_ones() -> TestResult {
+    let data = [0xFFu8; 64];
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "all ones non-zero");
+    TestResult::Pass
+}
+
+fn sha256_avalanche_effect() -> TestResult {
+    let h1 = sha256(b"hello");
+    let h2 = sha256(b"hellp");
+    let diff_bits: u32 = h1
+        .iter()
+        .zip(h2.iter())
+        .map(|(a, b)| (a ^ b).count_ones())
+        .sum();
+    check!(diff_bits > 32, "avalanche flips many bits");
+    TestResult::Pass
+}
+
+fn sha256_large_input() -> TestResult {
+    let data: alloc::vec::Vec<u8> = (0..10000u32).map(|i| (i % 256) as u8).collect();
+    let h = sha256(&data);
+    check!(h != [0u8; 32], "large input non-zero");
+    TestResult::Pass
+}
+
 // B08-19 专项: secure_boot 侧 sha256_hash 委托规范实现, 输出与已知向量一致
 fn secure_boot_sha256_hash_consistency() -> TestResult {
     let expected: [u8; 32] = [
@@ -193,6 +300,20 @@ pub fn register_sha256_tests() {
         "pwm::sha256": {
             "empty": sha256_empty,
             "abc": sha256_abc,
+            // E-06 (2026-09-07): host-tests/src/sha256.rs 去重载体用例合入
+            "long_message": sha256_long_message,
+            "deterministic": sha256_deterministic,
+            "different_inputs": sha256_different_inputs,
+            "single_byte": sha256_single_byte,
+            "boundary_55": sha256_exactly_55_bytes,
+            "boundary_56": sha256_exactly_56_bytes,
+            "boundary_63": sha256_exactly_63_bytes,
+            "boundary_64": sha256_exactly_64_bytes,
+            "multi_block": sha256_multi_block,
+            "all_zeros": sha256_all_zeros,
+            "all_ones": sha256_all_ones,
+            "avalanche": sha256_avalanche_effect,
+            "large_input": sha256_large_input,
         },
         // B08-19/B08-22 专项 (重复实现合并后的一致性测试)
         "pwm::secure_boot_sha256": {

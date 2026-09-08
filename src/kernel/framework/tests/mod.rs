@@ -33,6 +33,9 @@ pub mod sys;
 pub mod test_barrier;
 pub mod test_barrier_ext;
 pub mod test_config;
+// E-06 (2026-09-07): host-tests/src/capability.rs 去重载体迁入 — services::credo::policy
+// (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑用例, 双端共享 (kernel_test + host-test).
+pub mod test_credo;
 pub mod test_devfs;
 #[cfg(target_arch = "x86_64")]
 pub mod test_hvfs;
@@ -63,7 +66,9 @@ pub struct TestCase {
     pub func: TestFn,
 }
 
-const MAX_TESTS: usize = 256;
+// E-06 (2026-09-07): 256→512 扩容 — host-tests 侧 sha256/checksum/capability
+// 载体用例去重合入本套件 (新增 ~60 纯逻辑用例), 256 容量已满会导致注册静默丢弃.
+const MAX_TESTS: usize = 512;
 
 fn noop_test() -> TestResult {
     TestResult::Pass
@@ -81,6 +86,12 @@ struct TestRegistry {
 }
 
 impl TestRegistry {
+    // E-06 (2026-09-07): MAX_TESTS 256→512 后数组 40B×512=20KiB, clippy
+    // large_stack_arrays 误报 — 本数组经 OnceLock 存放于 static (.bss) 非栈.
+    #[expect(
+        clippy::large_stack_arrays,
+        reason = "large_stack_arrays: 测试注册表数组存放于 static OnceLock (.bss) 非栈分配; clippy 对 const fn 内字面量误报, 当前优先 expect"
+    )]
     const fn new() -> Self {
         Self {
             count: 0,
@@ -454,6 +465,7 @@ pub fn register_all_tests() {
         test_hvfs_ext::register_hvfs_ext_tests();
     }
     test_pwm::register_pwm_tests();
+    test_credo::register_credo_tests();
     test_mm::register_mm_tests();
     test_vfs::register_vfs_tests();
     test_ipc::register_ipc_tests();

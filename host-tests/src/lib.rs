@@ -37,10 +37,7 @@
 
 // ── 单元测试载体模块 (内联 #[cfg(test)] mod tests) ──
 mod buddy;
-mod capability;
-mod checksum;
 mod dma_stream;
-mod sha256;
 
 // ── 公共库代码 (供 tests/ 与 bin/ 引用) ──
 pub mod framekernel_bench;
