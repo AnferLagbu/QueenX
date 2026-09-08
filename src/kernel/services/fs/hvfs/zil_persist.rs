@@ -33,8 +33,14 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-/// P0-I-15 修复: ZIL 持久化层错误类型, 区分磁盘坏块 / CRC 失败 / 长度不足,
-/// 配合 `try_deserialize_record` 取代 10 处 `try_into().unwrap()` 静默 panic 路径.
+/// P0-I-15 / J-04 (2026-09-08, G-09 长期最优): ZIL 持久化层错误类型.
+///
+/// 契约修正: 损坏块整体拒绝 (非"单条损坏跳过").
+/// - 历史上 P0-I-15 曾承诺"损坏 record 跳过", 但三层 CRC (record ⊆ data ⊆ block)
+///   结构性冗余使 record 级容错分支数学上不可达 (设计前提不成立);
+/// - 现收敛为块级单一校验 (block CRC, ZFS 语义): 任何损坏 → 整块拒绝返回空.
+/// - `try_deserialize_record` 的 Err (CRC/UnknownRecordType/BufferTooShort) 在
+///   block CRC 通过后不可达, 保留为防御性解析校验 + 单元测试直接验证对象.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HvZilPersistError {
     /// 缓冲区长度不足, 不可能通过外部 `assert!(buf.len() >= 256)` 触发
@@ -85,6 +91,9 @@ pub struct ZilBlockHeader {
     pub record_capacity: u16,
     pub total_size: u32,
     pub header_checksum: u32,
+    /// J-04 (2026-09-08, G-09 长期最优): 已弃用 — 保持 0 (块级单一校验, block CRC
+    /// 覆盖 record 区, data CRC 为结构性冗余). 字段保留仅因 #[repr(C)] 磁盘布局
+    /// 兼容 (64B header, 落盘数据不受影响), 序列化不再写入、反序列化不再校验.
     pub data_checksum: u32,
     pub next_block: u64,
     pub padding: [u8; 16],
@@ -378,16 +387,12 @@ impl HvZilPersist {
             );
         }
 
-        let data_end = record_area + count * ZIL_RECORD_DISK_SIZE;
-        header.data_checksum = crc32_checksum(&block[ZIL_HEADER_SIZE..data_end]);
-        // B08-14 修复 (2026-09-06): data_checksum 更新后必须重算 header_checksum.
-        // 此前 header_checksum 在 data_checksum=0 时计算并写入, 更新 data_checksum
-        // 后未重算, 导致 deserialize 侧 verify_header 用新 data_checksum 重算 CRC
-        // 与存储的旧 header_checksum 不匹配 → 合法 block 回放返回空 (序列化/反序列化
-        // 不一致). compute_header_checksum 内部先清 0 再算, 重复调用安全.
-        header.compute_header_checksum();
-        let header_bytes = header.as_bytes();
-        block[..ZIL_HEADER_SIZE].copy_from_slice(header_bytes);
+        // J-04 (2026-09-08, G-09 长期最优): 块级单一校验 — 不再写入 data_checksum
+        // (保持 0). 历史: B08-14 曾在此处计算 data_checksum 并二次重算
+        // header_checksum (data_checksum 参与 header CRC). 现 block CRC (trailer)
+        // 已完整覆盖 header + record 区, data CRC 为结构性冗余 (record ⊆ data ⊆
+        // block 三层收敛为块级单一校验, ZFS 语义), 移除序列化侧计算后
+        // header_checksum 仅需计算一次 (data_checksum 恒 0, 无二次重算需求).
 
         let trailer_offset = ZIL_BLOCK_SIZE - ZIL_TRAILER_SIZE;
         let trailer = ZilBlockTrailer::new();
@@ -442,38 +447,41 @@ impl HvZilPersist {
             return records;
         }
 
+        // J-04 (2026-09-08, G-09 长期最优): 块级单一校验 — block CRC 是唯一完整性
+        // 防线 (覆盖 header + record 区). 失败时 klog 记录期望 vs 实际 CRC (硬件
+        // bit rot 可诊断). 数据完整性: 原 data CRC (header.data_checksum) 已被
+        // block CRC 完全覆盖 (record ⊆ data ⊆ block 三层结构性冗余收敛), 移除.
         let computed = crc32_checksum(&block[..ZIL_BLOCK_SIZE - ZIL_TRAILER_SIZE]);
         if computed != trailer.block_checksum {
-            return records;
-        }
-
-        let data_end = ZIL_HEADER_SIZE + header.record_count as usize * ZIL_RECORD_DISK_SIZE;
-        let data_crc = crc32_checksum(&block[ZIL_HEADER_SIZE..data_end]);
-        if data_crc != header.data_checksum {
+            crate::slog_warn!(
+                FS,
+                "ZIL 回放: 损坏 block 拒绝 (CRC 不匹配 expected={:#X} computed={:#X}, 覆盖 offset 0..{})",
+                trailer.block_checksum,
+                computed,
+                ZIL_BLOCK_SIZE - ZIL_TRAILER_SIZE
+            );
             return records;
         }
 
         let record_area = ZIL_HEADER_SIZE;
         for i in 0..header.record_count as usize {
             let offset = record_area + i * ZIL_RECORD_DISK_SIZE;
-            match try_deserialize_record(&block[offset..offset + ZIL_RECORD_DISK_SIZE]) {
-                Ok(record) => records.push(record),
-                Err(e) => {
-                    // P0-I-15 修复: 损坏的 record 标记为"跳过"而非整个日志回放失败.
-                    // 真机 SSD bit flip 只会丢一条 record, 不再让回放路径 panic.
-                    // 可观测性: debug 构建下输出日志, release 构建静默跳过 (性能优先).
-                    #[cfg(debug_assertions)]
-                    {
-                        crate::slog_warn!(
-                            FS,
-                            "ZIL 回放: 跳过损坏 record (index={}, err={:?})",
-                            i,
-                            e
-                        );
-                    }
-                    let _ = e;
-                }
-            }
+            // J-04 (2026-09-08, G-09 长期最优): 删除 record 级容错死代码 — block CRC
+            // 通过后 record 解析必成功 (record CRC ⊆ block CRC 覆盖范围, 数学上不可达).
+            // Err 为不可达防御: 若发生说明块级校验有盲区, 整个 block 拒绝 (损坏块
+            // 拒绝契约), 而非静默跳过单条制造半持久化错觉.
+            let Ok(record) =
+                try_deserialize_record(&block[offset..offset + ZIL_RECORD_DISK_SIZE])
+            else {
+                #[cfg(debug_assertions)]
+                crate::slog_warn!(
+                    FS,
+                    "ZIL 回放: record 解析失败 (index={}), 整块拒绝",
+                    i
+                );
+                return Vec::new();
+            };
+            records.push(record);
         }
 
         records.sort_by_key(|r| r.seq);

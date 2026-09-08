@@ -10,13 +10,11 @@
 //! / `deserialize_zil_from_block`), 含本地常量/序列化/CRC 复刻. 已删除, 改引内核
 //! `services::fs/hvfs/zil_persist` 真实实现 (host-test feature 暴露).
 //!
-//! ## 语义差异登记 (2026-09-06)
-//! 原镜像测试断言"单条 record 损坏 → 跳过该条返回其余" (P0-I-15 契约). 内核真实
-//! 实现含**块级 data_crc 检查** (位于逐 record 解析之前, 覆盖整个 record 区) —
-//! 单条 record 损坏必然导致块级 data_crc 不匹配, deserialize 返回空而非跳过.
-//! 即 record 级容错分支 (try_deserialize_record Err 跳过) 在块级 CRC 通过时不可达.
-//! 本文件断言以内核真实行为为准 (损坏 → 空); 该"块级 CRC 使 record 级容错失效"
-//! 的语义问题已登记至 audit-fix-08 供内核侧后续评估.
+//! ## 语义契约 (2026-09-08 J-04 更新, G-09 长期最优)
+//! 原 P0-I-15 契约"单条 record 损坏 → 跳过返回其余"已修正为"损坏块拒绝":
+//! 三层 CRC (record ⊆ data ⊆ block) 结构性冗余使 record 级容错分支数学上不可达,
+//! 收敛为块级单一校验 (block CRC, ZFS 语义) — 任何损坏 → 整个 block 拒绝返回空.
+//! 本文件断言与内核契约一致 (损坏 → 空, 不 panic). G-09 已随 J-04 修复关闭.
 
 use queenx::kernel::services::fs::hvfs::zil::{HvZil, HvZilRecord, HvZilRecordType};
 use queenx::kernel::services::fs::hvfs::zil_persist::{crc32_test_wrapper, HvZilPersist};
