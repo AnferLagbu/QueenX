@@ -34,6 +34,8 @@ fn hvfs_restore() {
 }
 fn hvfs_reset() {
     crate::slog_warn!(FS, "[HvFS] Recovery: domain hard reset");
+    // J-03 (2026-09-08, G-10 方案 C): 空壳实装 — 显式重建 objset, 供栏栈硬重置恢复路径
+    get_hvfs().reset();
 }
 
 pub const HVFS_MAX_FDS: usize = 256;
@@ -153,6 +155,17 @@ impl HvfsData {
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
     pub fn init(&self) {
+        // J-03 (2026-09-08, G-10 方案 C): init 幂等化 — 重复 init 不再重建 objset.
+        // 原行为: 重复 init 经 setup_zil_datasets → HvObjSet::init 清空 objects,
+        // 静默清空磁盘数据 (挂载重试/热插拔重建/栏栈故障恢复场景灾难性).
+        // 显式重建改经 reset() (栏栈恢复钩子 hvfs_reset/hvfs_restore 调用).
+        if self.is_initialized() {
+            crate::slog_info!(
+                FS,
+                "[HvFS] init() skipped: already initialized (idempotent, data preserved)"
+            );
+            return;
+        }
         crate::slog_info!(FS, "[HvFS] Initializing...");
 
         // Step 1: 扫描所有块设备, 发现 QueenX/HvFS 磁盘
@@ -247,6 +260,29 @@ impl HvfsData {
             hvfs_restore,
             hvfs_reset,
         );
+    }
+
+    /// J-03 (2026-09-08, G-10 方案 C): 显式重建 objset — 供栏栈恢复钩子
+    /// (`hvfs_reset` 硬重置 / `hvfs_restore` 域恢复) 调用.
+    ///
+    /// 与幂等化后的 `init()` 不同, `reset()` 是**显式意图**的重建:
+    /// 清空数据集后重新初始化 SPA/ZIL/objset. 仅恢复路径调用, 正常挂载
+    /// (重复 init) 不再触发重建, 消除"重复 init 静默清空数据" (G-10).
+    pub fn reset(&self) {
+        crate::slog_warn!(FS, "[HvFS] Hard reset: rebuilding objset (explicit)");
+        self.initialized.store(false, Ordering::Release);
+        self.mounted.store(false, Ordering::Release);
+        self.spa.init("queenx-pool");
+        {
+            let mut datasets = self.datasets.lock();
+            datasets.clear();
+        }
+        self.setup_zil_datasets();
+        self.root_ds_id.store(0, Ordering::Release);
+        self.current_dir.store(HV_DMU_OBJ_ROOT, Ordering::Release);
+        self.mounted.store(true, Ordering::Release);
+        self.initialized.store(true, Ordering::Release);
+        crate::slog_info!(FS, "[HvFS] Reset complete: objset rebuilt");
     }
 
     fn setup_zil_datasets(&self) {

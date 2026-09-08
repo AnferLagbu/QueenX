@@ -489,15 +489,15 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
 - **J-01. G-18 专项：feature 维 clippy unfulfilled expect 清理 + 入 CI（76 处）**
   - 描述：host-test 维 13 处 + kernel_test 维 63 处 unfulfilled `#[expect]`（见 G-18 条目），清理后纳入 CI clippy job（与 G-02 合并）。
   - 方案：逐处核实理由 → 删失效 expect / 补真触发（同 G-17 示范模式）→ 清理后 `cargo clippy --features host-test`（host target）+ `--features kernel_test` 纳入 CI，feature 维 lint 零 unfulfilled 作为门槛。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 委托实施完成：**host-test 维 13 处** — spinlock.rs restore_interrupts 补 trivially_copy_pass_by_ref expect（与裸机变体对齐）、tests/arch.rs+sync.rs borrow_as_ptr（from_ref/&raw mut）、tests/string.rs ptr_cast_constness+explicit_iter_loop（cast_const/&secret）、tests/sys.rs cast_lossless×3（u64::from）、services/barrier/reset_config.rs wildcard_imports（显式 use）、test_ipc.rs large_stack_arrays cfg_attr 条件化（IPC_MAX_* 测试模式缩减）、sync/rwlock+pi_mutex+irq_spinlock 删多余 doc_markdown expect（doc 已用反引号从未触发）；**kernel_test 维 63 处** — items_after_statements（pit/tick/sleep/calibration 注册函数加函数级 expect 保留嵌套测试惯用模式；hrtimer static mut 移至函数顶；snapshot dummy_write 移至顶；lib.rs 三个 const 集中块首）、cast_lossless+invalid_upcast（pit 删恒真断言 `PIT_MAX_COUNT as u64<=65535`）、used_underscore_binding（irq 类型注解断言 + lib.rs expect cfg_attr）、wildcard_imports（barrier/reset 5 文件 + snapshot 显式 use）、overly_complex_bool_expr（parallel `count>0||true`→`true`）、borrow_as_ptr×15（epoll/eventfd/signalfd/timerfd &raw）、manual_let_else（signalfd 改 let-else）、unnecessary_wraps（driver 测试辅助 expect）、route.rs×2 + lib.rs + idt/types.rs unfulfilled expect cfg_attr 条件化/删除。**入 CI**：audit.sh 新增 step 2b（kernel_test+host-test 两维，host target 避免裸机产物依赖）+ ci-x86.yml clippy-pedantic job 加两 step（与 G-02 合并）。**验证**：裸机 + host-test + kernel_test 三线 clippy 全 0 unfulfilled 0 error；audit.sh quick 通过（含 step 2b）；与 G-02 合并关闭)
 - **J-02. G-03 顺手修复：storage pushfq 补 cfg 门控**
   - 描述：MSIX-03 诊断块内 `pushfq`（[storage/mod.rs:207](../../src/kernel/framework/driver/storage/mod.rs#L207)）无 `#[cfg(target_arch = "x86_64")]` 门控，aarch64 编译报错。低风险顺手项。
   - 方案：先核实宿主函数架构门控，再补 asm 门控（或整个 MSIX-03 诊断块）。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 委托实施完成：pushfq asm 包 `#[cfg(target_arch = "x86_64")]` — aarch64 下 rflags 保持 0（klog 仅诊断打印 IF=0）；aarch64 构建通过（build.sh all 5/5），ci forbidden asm 检查不再报无门控 asm)
 - **J-03. G-10 方案 C：HvfsData 显式 reset API + 栏栈 hvfs_reset 钩子实装**
   - 描述：`HvfsData::init()` 保持一次性（OnceCell 语义），新增显式 `HvfsData::reset()` 供栏栈恢复钩子调用；空壳 `hvfs_reset`（[hvfs_data.rs:35](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L35)）实装为调用 `reset()`。关联栏栈恢复路径（hvfs_restore/注册点 L248），是栏栈升级组成部分。
   - 方案：按 G-10 方案 C 设计实施；同步更新 hvfs_persist_test Phase 3 断言（重复 init 语义从"重建清空"改"拒绝/一次+显式 reset"）；QEMU kernel_test 回归验证。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 委托实施完成：①**init 幂等化** — 开头 `if is_initialized() return`（重复 init no-op，消除 G-10"重复 init 重建清空磁盘数据"灾难路径；挂载重试/热插拔/栏栈恢复场景数据保留）；②**新增 `HvfsData::reset()`** — 显式重建 objset（initialized/mounted 复位 → spa.init → datasets.clear → setup_zil_datasets → 状态置位），供栏栈恢复钩子调用；③**hvfs_reset 钩子实装** — 空壳改调 `get_hvfs().reset()`；④**hvfs_persist_test Phase 3 断言同步** — 从"重复 init 后旧文件不可读(Err)"改"重复 init 幂等 + 数据保留(open is_ok)"。**验证**：host-tests 749 passed 0 failed（hvfs_persist_test 10.29s 通过）；QEMU kernel_test 472 TESTS ALL PASSED；build.sh all 5/5；审计全绿。restore 钩子保持现状（J-03 未要求改动，其 setup_zil_datasets 复用正常))
 
 ### 验证门槛（每项不可豁免）
 
@@ -526,10 +526,10 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 描述：G-01 的 serial env 需固化到 [src/rust/.cargo/config.toml](../../src/rust/.cargo/config.toml) `[env]` 段。注意该 config 的 `build-std` 段在 host 构建时需规避（host-tests 从仓库根/host-tests 构建不加载，但 src/rust 目录内运行会触发 E0152，见 eliminate-parallel-implementations.md 工程计划 A 注意事项）。
   - 方案：在 `[env]` 新增 `CARGO_CFG_CURVE25519_DALEK_BACKEND = "serial"`；确认不破坏 host-test 构建路径。
   - 状态：[X] (2026-09-06 委托修复完成：config.toml `[env]` 段已加 serial 固化（G-01 联动）；host-test 构建（仓库根 `cargo check --features host-test`）验证通过，不破坏 host 路径)
-- **G-02. kernel_test feature 下 clippy 5 处 unfulfilled expectation**
+- **G-02. kernel_test feature 下 clippy 5 处 unfulfilled expectation → 已修复（随 J-01 合并关闭）**
   - 描述：`cargo clippy --features kernel_test` 报 5 处未满足的 lint expectation（route.rs×2、test_ipc.rs、lib.rs:461、idt/types.rs）。非本轮改动引入；标准 clippy 门槛（无 feature）不受影响。
   - 方案：单开 PR 处置——逐处核实 `#[expect]` 理由是否仍成立，删除失效 expectation 或补真触发。
-  - 状态：[G] (2026-09-06 登记，用户决策：记录后跳过)
+  - 状态：[X] (2026-09-08 随 J-01 合并关闭：route.rs×2 manual_let_else expect cfg_attr 条件化（仅 not(kernel_test) 生效）、test_ipc.rs large_stack_arrays cfg_attr（IPC_MAX_* 测试模式缩减）、lib.rs used_underscore_binding cfg_attr（仅裸机分支触发）、idt/types.rs inline_always expect 删除（函数无 inline 属性）。kernel_test 维 clippy 0 unfulfilled，已纳入 CI step 2b)
 
 - **G-11. 进程表 Mutex 非真递归 + kill 广播路径重入死锁（E-06 扩容暴露，真实 bug）→ 已修复**
   - 描述：2026-09-08 E-06 MAX_TESTS 扩容（256→512）使 kernel_test 硬件路径测试首次注册运行，暴露 `do_signal_send_extended` 广播路径死锁：`PROCESS_TABLE.for_each` 持 `processes` Mutex 时，回调 `do_signal_send_inner` 内部再调 `PROCESS_TABLE.get(pid)` 对**同一 Mutex 重入加锁**。`framework/sync/mutex.rs` 文档声称"递归锁定支持"但 `raw_lock` **无 owner/深度重入检测**（慢路径死等）→ 自死锁无限自旋。影响面：`kill(0/-1/-pgid, sig)` syscall（dispatch.rs:788）与 session 前台组广播（services/proc/session.rs:553/568/569）生产环境同样死锁。kernel_test 测试 `signal::kill_broadcast_pid_zero_group` 挂起暴露。
@@ -566,7 +566,7 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 方案：A. 实现真重入（raw_lock 检查 `owner == 当前线程` → `depth++`；owner 字段已存在，成本低）——同时更新文档语义；B. 删除"递归锁定支持"文档声明，改为强制非重入约定 + 用 `audit_deadlock_matrix.py`/lockdep 排查全内核双锁点。候选 A 更符合文档承诺与调用点既有模式。
   - 状态：[X] (2026-09-08 委托修复完成，用户决策"实现真重入"：①静态扫描 for_each 重入模式——services/proc/session.rs:376/522（只读 pgid/sid 字段安全）、table.rs:370 包装、proc_mgmt.rs:38（锁每进程内 name 非 PROCESS_TABLE 安全），无 G-11 模式残留；②mutex.rs 实现真重入——`process_get_current_pid` extern 提取到模块级（原内联于 acquire_lock_internal + items_after_statements expect，删除该 expect）、`raw_lock` fast path 在 inner_spinlock 内比较 `owner == 当前进程` → `depth.fetch_add(1)` 直接返回，slow path 仅真竞争到达；owner/depth 字段原已存在，raw_unlock 递减逻辑兼容；③补回归测试 `sync::mutex::reentrant`（双 lock depth=2 → 逐层 drop → unlocked/owner=-1）。**验证**：host 共享套件 `sync::mutex::reentrant` PASS（340 用例 333 PASS + 7 Skip）；裸机 clippy 通过；QEMU 471 全绿待 B08-17 阶段复验)
 
-- **G-18. host-test feature 下 clippy 未纳入 CI 门槛（G-02 延伸）→ 登记待评估**
+- **G-18. host-test feature 下 clippy 未纳入 CI 门槛（G-02 延伸）→ 已修复（随 J-01）**
   - 描述：2026-09-08 验证 E-06 时发现：`host-test` feature 编译路径（E-03 后已成为与 kernel_test 平行的门控维度）**从未纳入 CI clippy/audit 门槛**，E-03 新增门控仅审计语义分离，未含 host-test 构建的 lint 校验。实测 `cargo clippy --features host-test --lib` 标准 pedantic 下报 **13 处 unfulfilled `#[expect(clippy::doc_markdown)]`**（rwlock.rs:60 / pi_mutex.rs:300 / irq_spinlock.rs:95 等 sync/*，host target 下这些位置不触发 doc_markdown 故 expect 失效）；kernel_test 维另有 63 处（见状态）。与 G-02（kernel_test feature 下 5 处 unfulfilled）同属"feature 维 clippy 未维护"。
   - 方案：评估将 `cargo clippy --features host-test`（host target）+ `--features kernel_test` 纳入 CI clippy job；或至少登记 feature 维 lint 基线供人工巡检。与 G-02 合并处置。
   - 状态：[G] (2026-09-08 登记，用户决策：**登记，但后续要落实**。实际清理量核对：host-test 维 13 处（sync/rwlock.rs:60 + pi_mutex.rs:300 + irq_spinlock.rs:95 等 unfulfilled doc_markdown expect）+ kernel_test 维 63 处（wildcard_imports 大量 / items_after_statements（lib.rs const + hrtimer 测试等）/ borrow_as_raw_ptr×11 / manual_let_else / logic_bug + G-02 记录 5 处 unfulfilled（route.rs×2、test_ipc.rs:13、lib.rs:480、idt/types.rs:82））。两维均需先清理再纳入 CI，列为后续专项工程；本轮不施工（避免跑偏 E-06 主题）)
@@ -575,7 +575,7 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
     2. **删除失效 expect** 或**补真触发**（如 doc_markdown 在 host target 不触发 → 删 expect；wildcard_imports 大量 → 逐处评估改显式 use 或保留合法 wildcard 的 expect）；
     3. **清理后**将 `cargo clippy --features host-test`（host target）+ `--features kernel_test` 纳入 CI clippy job（与 G-02 合并），feature 维 lint 零 unfulfilled 作为门槛；
     4. **验证**：双架构裸机 clippy + host-test clippy + kernel_test clippy 全 0 unfulfilled；host-tests 全量 + QEMU 回归不受影响。
-  - 状态：[G] (2026-09-08 处置方案已登记，待委托人专项执行；与 G-02 合并)
+  - 状态：[X] (2026-09-08 随 J-01 实施关闭：host-test 维 13 处 + kernel_test 维 63 处 unfulfilled/真实 lint 全部清理（明细见 J-01 状态）；audit.sh 新增 step 2b + ci-x86.yml clippy-pedantic job 加两 step（kernel_test + host-test，host target 避免裸机产物依赖），feature 维 lint 零 unfulfilled 作为 CI 门槛；与 G-02 合并关闭。**验证**：裸机 + host-test + kernel_test 三线 clippy 全绿；audit.sh quick 通过)
 
 - **G-03. storage/mod.rs pushfq asm 无 cfg 门控 → 委托修复（随 G-18 一并）**
   - 描述：ci 的 forbidden asm 检查发现 [storage/mod.rs:207](../../src/kernel/framework/driver/storage/mod.rs#L207) `pushfq` asm! 无 `#[cfg]` 门控。预存问题，非本轮引入。2026-09-08 审查定位：该 asm 位于 MSIX-03 诊断块内（NVMe 队列创建路径的 LAPIC/MSI-X 状态打印），x86_64 专属指令但所在函数无 `#[cfg(target_arch = "x86_64")]` 门控——aarch64 编译该函数时 asm 报错（ci 已拦截）。
@@ -601,7 +601,7 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 方案：登记为内核侧语义问题待评估——候选：A. 移除块级 data_crc 检查（恢复 record 级容错，但牺牲块完整性）；B. 保留块级 CRC（当前行为，record 级容错分支为死代码）；C. 双校验共存但调整顺序/语义。zil_replay_test 迁移已按当前内核行为（损坏 → 空）断言。
   - 状态：[G] (2026-09-06 登记，用户决策：记录后跳过) (2026-09-08 处置建议已登记：**方案 B（保留块级 CRC 现状）+ 语义标注**——块级完整性优先于单条容错，ZIL 持久化日志整块损坏应重放失败而非静默跳过（部分恢复可能掩盖数据丢失）；record 级容错分支标注"块级 CRC 下不可达"保留（维持 P0-I-15 契约文档性存在），不删死代码。不建议 A（移除块级 CRC 牺牲完整性换几乎不用的单条容错）与 C（双校验增加复杂度无实际收益）。**结论：保持现状 + 语义标注，无需代码改动**)
 
-- **G-10. hvfs 重复 init 重建 objset 使旧数据不可见（B08-14 迁移发现，内核语义）→ 登记待内核侧评估**
+- **G-10. hvfs 重复 init 重建 objset 使旧数据不可见（B08-14 迁移发现，内核语义）→ 已修复（随 J-03 方案 C）**
   - 描述：2026-09-06 B08-14 迁移 hvfs_persist_test 时发现。内核 `HvfsData::init()` 重复调用时，`setup_zil_datasets → HvObjSet::init` 会**清空 root dataset 的 objset**（[hvfs_data.rs:275](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L275) `datasets[0].init(0)`），已写文件随后 open 返回 FileNotFound。原测试版 mock 的 `HVFS_DATA` 为 `Mutex<Option<Box>>` 可重置，重新 init 是"干净重置"语义；内核 `OnceCell` 不可重置，重复 init 是"重建 objset 破坏数据"语义。
   - 方案：登记为内核侧语义问题待评估——`HvObjSet::init` 为一次性初始化设计，重复 init 重建是当前行为；若"重复 init 应幂等保留数据"是期望语义，需内核侧评估（如 init 前检查已有数据）。hvfs_persist_test 已按当前行为断言（Phase 3 验证"重复 init 可安全调用 + 旧文件不可读"并注释记录）。
-  - 状态：[G] (2026-09-06 登记，用户决策：记录后跳过) (2026-09-08 处置建议已登记：**方案 A（改内核幂等保留数据）——待用户授权**。理由：生产路径风险高——hvfs 可能被重复 init（挂载重试/热插拔重建/barrier 故障恢复重建场景），当前行为**静默清空磁盘数据**属灾难性；幂等是更安全的默认（重复 init 检测已有 objset 则跳过重建，仅首次 init 才重建）。实现成本低（init 前 `HvObjSet` OnceCell get 判断已初始化则跳过）。**注意**：改后 hvfs_persist_test Phase 3 断言需同步（当前断言"重复 init + 旧文件不可读"是现状行为）。**待用户授权后委托实施**) (2026-09-08 处置升级为**方案 C（显式 reset API）+ 关联栏栈 hvfs_reset 钩子实装**——用户确认。依据：内核已有 `hvfs_reset` 钩子（[hvfs_data.rs:35](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L35)，当前为空壳仅 slog_warn）+ `hvfs_restore`（L28-34 重建 dataset）+ L248 注册到 barrier 恢复路径——栏栈故障恢复正是通过重建 objset 实现，与 G-10"重复 init 重建"是同一机制。**方案 C 设计**：`HvfsData::init()` 保持一次性（OnceCell 语义，拒绝重复 init 返回 Err 或 no-op）；新增显式 `HvfsData::reset()`（真正供栏栈恢复钩子调用，重建 objset）；将空壳 `hvfs_reset` 钩子实装为调用 `reset()`。**收益**：①G-10 数据破坏路径消除（不存在"重复 init 清空数据"）；②栏栈 hvfs 恢复能力从空壳变为真实实现（栏栈升级组成部分）；③显式契约——重建是显式意图。**2026-09-08 用户已授权，纳入下一轮委托批次（见工程计划 J）**) (2026-09-08 用户授权，随工程计划 J 委托)
+  - 状态：[X] (2026-09-08 随 J-03 方案 C 实施关闭：①init 幂等化（重复 init no-op，数据保留，G-10 灾难路径消除）；②新增 `HvfsData::reset()` 显式重建（供栏栈恢复钩子）；③hvfs_reset 空壳实装为调 reset()；④hvfs_persist_test Phase 3 断言更新为"重复 init 幂等 + 数据保留"。验证：host-tests 749 passed + QEMU kernel_test 472 全绿。明细见 J-03 状态)

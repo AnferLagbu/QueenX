@@ -202,7 +202,10 @@ pub fn storage_init() -> framework::Result<()> {
                                     reason = "use 声明位于诊断块语句之后 (MSIX-03 调试段), 前移会割裂局部上下文; 以 block 内 expect 兑底"
                                 )]
                                 let mut rflags: u64 = 0;
-                                // SAFETY: 只读 RFLAGS
+                                // J-02 (2026-09-08, G-03): pushfq 为 x86_64 专属指令,
+                                // 补 cfg 门控 — aarch64 下 rflags 保持 0 (klog 仅诊断打印 IF=0).
+                                // SAFETY: 只读 RFLAGS (x86_64)
+                                #[cfg(target_arch = "x86_64")]
                                 unsafe {
                                     core::arch::asm!("pushfq; pop {0}", out(reg) rflags, options(nomem));
                                 }

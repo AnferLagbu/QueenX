@@ -71,18 +71,15 @@ fn hvfs_persistence_roundtrip() {
     }
     println!("  All files readable ✓");
 
-    println!("--- Phase 3: Re-init call safety ---");
-    // 原 Phase 3/4 (测试版): 重置 HVFS_DATA 单例 + 重新 init 验证文件消失.
-    // 内核 HVFS_DATA 为 OnceCell 不可重置 (用户决策), 移除重置用例.
-    // 内核差异: 重复 init() 会重建 root dataset 的 objset (setup_zil_datasets →
-    // HvObjSet::init 清空 objects), 已写文件不再可读 (open 返回 FileNotFound).
-    // 重复 init 非内核文档化的幂等操作, 因此此处仅验证"重复 init 可安全调用
-    // (不 panic/不挂起) 且 is_initialized() 保持 true", 不验证数据保留.
+    println!("--- Phase 3: Re-init is idempotent (data preserved) ---");
+    // J-03 (2026-09-08, G-10 方案 C): init 幂等化 — 重复 init 不再重建 objset,
+    // 数据保留. 显式重建仅经 reset() (栏栈恢复钩子) 触发, 此处不调用 reset.
+    // 原断言 (重复 init 后旧文件不可读) 已随 G-10 修复更新为数据保留语义.
     hvfs.init();
-    assert!(hvfs.is_initialized(), "re-init should succeed");
-    assert_eq!(hvfs.open("/file_0", 0x0001, pwm), Err(queenx::kernel::framework::error::KernelError::FileNotFound),
-        "重复 init 重建 objset 后, 旧文件不再可读 (内核真实行为)");
-    println!("  Re-init callable, but objset rebuilt (old files gone) ✓");
+    assert!(hvfs.is_initialized(), "re-init should keep initialized");
+    assert!(hvfs.open("/file_0", 0x0001, pwm).is_ok(),
+        "重复 init 幂等, 数据保留 (旧文件仍可读)");
+    println!("  Re-init idempotent, data preserved ✓");
 
     println!("\n=== Persistence Roundtrip Passed ===\n");
 }
