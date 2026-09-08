@@ -480,9 +480,9 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
 5. B08-17 构建回归 + clippy + 核心审计
 ```
 
-## 工程计划 J: 下一轮委托批次（G-18 + G-03 + G-10，2026-09-08 用户授权合并）
+## 工程计划 J: 下一轮委托批次（G-18 + G-03 + G-10 + G-09，2026-09-08 用户授权合并）
 
-> 2026-09-08 用户授权将三项未处置 G 问题合并为下一轮委托批次。执行顺序按依赖：先 J-01（G-18 清理，为 CI 门槛前提）→ J-02（G-03 顺手项）→ J-03（G-10 内核语义变更，需 QEMU 回归）。每项完成 = 状态 [X] + §2.3 验证门槛。
+> 2026-09-08 用户授权将未处置 G 问题合并为下一轮委托批次。执行顺序按依赖：先 J-01（G-18 清理，为 CI 门槛前提）→ J-02（G-03 顺手项）→ J-03（G-10 内核语义变更，需 QEMU 回归）→ J-04（G-09 长期最优精简，用户后续授权追加）。每项完成 = 状态 [X] + §2.3 验证门槛。
 
 ### 待办
 
@@ -498,6 +498,10 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 描述：`HvfsData::init()` 保持一次性（OnceCell 语义），新增显式 `HvfsData::reset()` 供栏栈恢复钩子调用；空壳 `hvfs_reset`（[hvfs_data.rs:35](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L35)）实装为调用 `reset()`。关联栏栈恢复路径（hvfs_restore/注册点 L248），是栏栈升级组成部分。
   - 方案：按 G-10 方案 C 设计实施；同步更新 hvfs_persist_test Phase 3 断言（重复 init 语义从"重建清空"改"拒绝/一次+显式 reset"）；QEMU kernel_test 回归验证。
   - 状态：[X] (2026-09-08 委托实施完成：①**init 幂等化** — 开头 `if is_initialized() return`（重复 init no-op，消除 G-10"重复 init 重建清空磁盘数据"灾难路径；挂载重试/热插拔/栏栈恢复场景数据保留）；②**新增 `HvfsData::reset()`** — 显式重建 objset（initialized/mounted 复位 → spa.init → datasets.clear → setup_zil_datasets → 状态置位），供栏栈恢复钩子调用；③**hvfs_reset 钩子实装** — 空壳改调 `get_hvfs().reset()`；④**hvfs_persist_test Phase 3 断言同步** — 从"重复 init 后旧文件不可读(Err)"改"重复 init 幂等 + 数据保留(open is_ok)"。**验证**：host-tests 749 passed 0 failed（hvfs_persist_test 10.29s 通过）；QEMU kernel_test 472 TESTS ALL PASSED；build.sh all 5/5；审计全绿。restore 钩子保持现状（J-03 未要求改动，其 setup_zil_datasets 复用正常))
+- **J-04. G-09 长期最优：zil_persist 块级单一校验精简（2026-09-08 用户授权）**
+  - 描述：三层 CRC 结构性冗余（record ⊆ data ⊆ block），record 级容错分支数学上不可达（设计前提不成立）；ZIL 事务组语义下 record 级容错为伪需求。长期最优 = 块级单一校验（ZFS 语义）。
+  - 方案：①修正 P0-I-15 契约为"损坏块拒绝"语义（zil_replay_test 已按此断言，契约文档同步）；②移除冗余 data CRC（被 block CRC 完全覆盖）+ 删除 record 容错死代码分支（try_deserialize_record Err 分支，当前不可达）；③块级拒绝时 klog 记录损坏偏移/期望 vs 实际 CRC（硬件故障可诊断）。
+  - 状态：[]
 
 ### 验证门槛（每项不可豁免）
 
@@ -596,10 +600,10 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 描述：2026-09-06 B08-14 迁移 zil_replay_test 时发现。内核 [zil_persist.rs:356-395](../../src/kernel/services/fs/hvfs/zil_persist.rs#L356-L395) `serialize_zil_to_block` 先算 `header_checksum`（此时 `data_checksum=0`）写入 block，随后更新 `data_checksum` 并重写 header 时**未重算 `header_checksum`**。deserialize 侧 `verify_header` 用读入的新 `data_checksum` 重算 CRC → 与存储的旧 `header_checksum` 不匹配 → **合法序列化 block 回放返回空**（host 探针实测：合法 block 回放 0 条）。序列化/反序列化不一致，阻塞 zil_replay_test 迁移。
   - 方案：`serialize_zil_to_block` 在设置 `data_checksum` 后补 `header.compute_header_checksum()`（内部先清 0 再算，重复调用安全）；补回归测试验证合法 block 完整回放。
   - 状态：[X] (2026-09-06 委托修复完成：zil_persist.rs 设置 data_checksum 后补 compute_header_checksum；host 探针验证合法 block 回放 2 条、损坏块拒绝为空。B08-14 语义差异登记见 B08-14 详情：内核块级 data_crc 检查使 record 级容错（try_deserialize_record Err 跳过）在块级 CRC 通过时不可达，单条 record 损坏 → 整个 block 返回空；zil_replay_test 断言已按内核真实行为重写)
-- **G-09. zil_persist 块级 CRC 使 record 级容错失效（B08-14 迁移发现，语义问题）→ 登记待内核侧评估**
+- **G-09. zil_persist 块级 CRC 使 record 级容错失效（B08-14 迁移发现，语义问题）→ 升级为长期最优方案（J-04）**
   - 描述：2026-09-06 B08-14 迁移 zil_replay_test 时发现。内核 `deserialize_zil_from_block` 先做**块级 data_crc 检查**（覆盖整个 record 区，:444-448），再逐 record 解析（:451-471 try_deserialize_record Err 跳过）。单条 record 损坏必然导致块级 data_crc 不匹配 → 返回空，"损坏 record 跳过"（P0-I-15 契约）在块级 CRC 通过时不可达（record 内部 CRC 是 record 区子集，块级 CRC 通过则内部必然通过）。测试版镜像断言"单条损坏 → 跳过返回其余"与内核真实行为（返回空）冲突。
   - 方案：登记为内核侧语义问题待评估——候选：A. 移除块级 data_crc 检查（恢复 record 级容错，但牺牲块完整性）；B. 保留块级 CRC（当前行为，record 级容错分支为死代码）；C. 双校验共存但调整顺序/语义。zil_replay_test 迁移已按当前内核行为（损坏 → 空）断言。
-  - 状态：[G] (2026-09-06 登记，用户决策：记录后跳过) (2026-09-08 处置建议已登记：**方案 B（保留块级 CRC 现状）+ 语义标注**——块级完整性优先于单条容错，ZIL 持久化日志整块损坏应重放失败而非静默跳过（部分恢复可能掩盖数据丢失）；record 级容错分支标注"块级 CRC 下不可达"保留（维持 P0-I-15 契约文档性存在），不删死代码。不建议 A（移除块级 CRC 牺牲完整性换几乎不用的单条容错）与 C（双校验增加复杂度无实际收益）。**结论：保持现状 + 语义标注，无需代码改动**)
+  - 状态：[G] (2026-09-06 登记，用户决策：记录后跳过) (2026-09-08 处置建议已登记：**方案 B（保留块级 CRC 现状）+ 语义标注**——块级完整性优先于单条容错，ZIL 持久化日志整块损坏应重放失败而非静默跳过（部分恢复可能掩盖数据丢失）；record 级容错分支标注"块级 CRC 下不可达"保留（维持 P0-I-15 契约文档性存在），不删死代码。不建议 A（移除块级 CRC 牺牲完整性换几乎不用的单条容错）与 C（双校验增加复杂度无实际收益）。**结论：保持现状 + 语义标注，无需代码改动**) (2026-09-08 审查复核升级为**长期最优：块级单一校验（ZFS 语义）**——发现三层 CRC 为结构性冗余：record CRC ⊆ data CRC ⊆ block CRC（record 区被子集覆盖），record 级容错分支在数学上不可能生效，非"块级优先取舍"而是"设计前提不成立"；ZIL 事务组语义下 record 级容错为伪需求（静默跳单条制造半持久化错觉）。**长期最优 = 块级单一校验**：①修正 P0-I-15 契约为"损坏块拒绝"语义；②移除冗余 data CRC（被 block CRC 完全覆盖）+ 删除 record 容错死代码分支；③块级拒绝时 klog 记录损坏偏移/期望 vs 实际 CRC（硬件故障可诊断）。**2026-09-08 用户已授权，纳入工程计划 J 为 J-04**) (2026-09-08 用户授权，随工程计划 J-04 委托)
 
 - **G-10. hvfs 重复 init 重建 objset 使旧数据不可见（B08-14 迁移发现，内核语义）→ 已修复（随 J-03 方案 C）**
   - 描述：2026-09-06 B08-14 迁移 hvfs_persist_test 时发现。内核 `HvfsData::init()` 重复调用时，`setup_zil_datasets → HvObjSet::init` 会**清空 root dataset 的 objset**（[hvfs_data.rs:275](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L275) `datasets[0].init(0)`），已写文件随后 open 返回 FileNotFound。原测试版 mock 的 `HVFS_DATA` 为 `Mutex<Option<Box>>` 可重置，重新 init 是"干净重置"语义；内核 `OnceCell` 不可重置，重复 init 是"重建 objset 破坏数据"语义。
