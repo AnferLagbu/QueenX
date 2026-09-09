@@ -1,6 +1,6 @@
 # 审计修复分册 08：用户态、构建、文档与测试
 
-> 修复 src/user（链接脚本/汇编）、build（stage1.bin/build.rs）、src/rust 布局、docs（ref-naming）、tests（陈旧日志）与 host-tests（解耦/平行实装）的审计缺陷。来源：[code-audit-final-summary.md](./code-audit-final-summary.md) 第 3.5 节 + 附录 H（H.3.6/H.3.7/H.4.6/H.5.3）+ 附录 E。
+> 修复 src/user（链接脚本/汇编）、build（stage1.bin/build.rs）、src/rust 布局、docs（ref-naming）、tests（陈旧日志）与 host-tests（解耦/平行实装）的审计缺陷。来源：[code-audit-final-summary.md](../code-audit-final-summary.md) 第 3.5 节 + 附录 H（H.3.6/H.3.7/H.4.6/H.5.3）+ 附录 E。
 
 > **2026-09-03 基线核实**：委托前对全部 18 项逐一对照当前磁盘代码核实（见各条目标注）。结论：**已修复/实装 2 项**（B08-02、B08-15）、**大部分已解决 1 项**（B08-10）、**仍存在 9 项**（B08-03/04/05/07/09/12/13/16 + B08-11 背景）、**部分修复+阻塞 1 项**（B08-06）、**硬阻塞 1 项**（B08-14，前置 B08-12 步骤0）+ 验证门槛 2 项（B08-17/18）。**已实装项标注 `[X]`，委托时跳过；仍存在/部分项为待办**。关键决策点：B08-06 依赖 kpti-complete-project（F-04 全 `[]` 未完成），需标记阻塞或与 KPTI 工程联动；B08-12 为大型独立工程（内核新增 `host-test` feature + framework std 桩），全项委托时作为重点任务；B08-14 明确在 B08-12 宿主基建（步骤0）完成后才可启动。
 
@@ -37,12 +37,12 @@
 - **B08-05. lib.rs 模块结构注释不含 aarch64/chitin/wasm（H.4.11 P2-B）**
   - 描述：`src/rust/src/lib.rs` 的"模块结构"注释不含 aarch64 + chitin/wasm，与代码现状不符。
   - 方案：同步模块结构注释。
-  - 状态：[X] (2026-09-06 实施完成：模块结构注释同步为 kernel/framework（arch x86_64+aarch64/boot/cpu/mm/proc/idt/sync/driver/net/fs/dma/credo/chitin/barrier/wasm/syscall 等）+ kernel/services（syscall/proc/fs/net/ipc/mm/credo/barrier/chitin/driver/io/timer/wasm 等）两层结构，与 [kernel/mod.rs](../../src/kernel/mod.rs) 实际布局一致)
+  - 状态：[X] (2026-09-06 实施完成：模块结构注释同步为 kernel/framework（arch x86_64+aarch64/boot/cpu/mm/proc/idt/sync/driver/net/fs/dma/credo/chitin/barrier/wasm/syscall 等）+ kernel/services（syscall/proc/fs/net/ipc/mm/credo/barrier/chitin/driver/io/timer/wasm 等）两层结构，与 [kernel/mod.rs](../../../src/kernel/mod.rs) 实际布局一致)
 
 - **B08-06. 用户态链接脚本 _user_start/_user_end（P0-17）**
   - 描述：`src/user/link.x`、`link_aarch64.x`、`init/link_aarch64.x` 均无 `_user_start/_user_end` 边界符号，ELF loader 无法获取用户进程内存边界。
   - 方案：见分册 02 工程计划 A F-04（KPTI 布局）一并实施；本分册负责 ELF loader 侧消费验证。
-  - 状态：[B] (2026-09-03 基线核实：**部分修复 + 阻塞**——`src/user/link.x` 与 `link_aarch64.x` 已含 `_user_start/_user_end`（各 3 处），`init/link_aarch64.x` 仍缺（0 处）；分册 8 负责的 ELF loader 侧消费验证待办。**阻塞**：符号定义侧依赖 [kpti-complete-project.md](./kpti-complete-project.md)（F-04 KPTI 布局，状态全 `[]` 未完成），需与 KPTI 工程联动) (2026-09-08 状态同步：维持阻塞——跨分册依赖 KPTI 工程，非分册 8 内可独立完成项，登记待 KPTI 联动时一并处置；本分册其他全部委托工程已完成)
+  - 状态：[B] (2026-09-03 基线核实：**部分修复 + 阻塞**——`src/user/link.x` 与 `link_aarch64.x` 已含 `_user_start/_user_end`（各 3 处），`init/link_aarch64.x` 仍缺（0 处）；分册 8 负责的 ELF loader 侧消费验证待办。**阻塞**：符号定义侧依赖 [kpti-complete-project.md](../kpti-complete-project.md)（F-04 KPTI 布局，状态全 `[]` 未完成），需与 KPTI 工程联动) (2026-09-08 状态同步：维持阻塞——跨分册依赖 KPTI 工程，非分册 8 内可独立完成项，登记待 KPTI 联动时一并处置；本分册其他全部委托工程已完成)
 
 - **B08-07. src/user/init/src/arch/aarch64.S 死代码（H.4.6 P1-C）**
   - 描述：aarch64.S 死代码。
@@ -83,8 +83,8 @@
 
 - **B08-12. host-tests 与内核解耦根治（H.3.6 P0-26）**
   - 描述：host-tests 与内核完全解耦（838 passed 不反映内核状态），根因是"纯算法与平台机制未分离"——内核 no_std/裸机，host 侧无法引用内核源码，只能重建平行实现。经用户决策（DECISION-052），采用**路线 C 彻底根治**：内核 crate 增加 `host-test` feature + framework std 桩，host-tests 直接引用内核 services 真实源码，消除全部 7 处平行实现。
-  - 方案：详见 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md)（工程计划 A 宿主基建 / B framework std 桩 / C 迁移删除）；本条目作为该工程的承接登记。
-  - 状态：[X] (2026-09-06 阶段 3 宿主基建完成：工程计划 A（Cargo.toml host-test feature + lib.rs 顶层门控）+ B（services 全量 host 编译 0w0e）+ C 部分完成。详见 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md)。**桥接决策（2026-09-06 用户确认"桩改名桥接"）**：host-tests path 依赖内核 crate 后，hvfs_mock 5 个 no_mangle 桩与内核真实 FFI 符号重名冲突，经桩 `#[export_name]` 改名 + 平行 hvfs `#[link_name]` 指回桥接（保留 mock 语义）；内核 `#[global_allocator]` 在 host-test 下经 cfg 门控禁用。**buddy 例外**：内核 pmm host 不可测，buddy 平行实现保留，标记问题待审查员决定 → **已定案：见工程计划 H（PMM Buddy 索引式链表重构，2026-09-06 用户授权架构决策，H-04 消除 buddy 平行实现）**。剩余：工程计划 C 的 hvfs 迁移（B08-14）+ framekernel_bench + 删除完成标准，随阶段 4/5 推进)
+  - 方案：详见 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md)（工程计划 A 宿主基建 / B framework std 桩 / C 迁移删除）；本条目作为该工程的承接登记。
+  - 状态：[X] (2026-09-06 阶段 3 宿主基建完成：工程计划 A（Cargo.toml host-test feature + lib.rs 顶层门控）+ B（services 全量 host 编译 0w0e）+ C 部分完成。详见 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md)。**桥接决策（2026-09-06 用户确认"桩改名桥接"）**：host-tests path 依赖内核 crate 后，hvfs_mock 5 个 no_mangle 桩与内核真实 FFI 符号重名冲突，经桩 `#[export_name]` 改名 + 平行 hvfs `#[link_name]` 指回桥接（保留 mock 语义）；内核 `#[global_allocator]` 在 host-test 下经 cfg 门控禁用。**buddy 例外**：内核 pmm host 不可测，buddy 平行实现保留，标记问题待审查员决定 → **已定案：见工程计划 H（PMM Buddy 索引式链表重构，2026-09-06 用户授权架构决策，H-04 消除 buddy 平行实现）**。剩余：工程计划 C 的 hvfs 迁移（B08-14）+ framekernel_bench + 删除完成标准，随阶段 4/5 推进)
   - 详情：根治完成前，本文档其余 host-tests 相关条目的"标注覆盖映射表"仍为过渡手段。
 
 - **B08-13. host-tests/src/hvfs/ 平行实装差异登记（H.3.7 P0-27）**
@@ -102,7 +102,7 @@
 - **B08-14. host-tests/src/hvfs/ 合并回内核源码引用（H.3.7 P0-27 实施）**
   - 描述：消除平行双源，使 host-tests 直接引用内核 `services/fs/hvfs` 真实实现。**完成标准 = `host-tests/src/hvfs/` 下全部 19 个平行实现文件删除**（双源彻底消除），测试用例（tests/ 226 处引用）保留并改指内核实现。**不能简单 diff 合并**（两套架构不同），须以内核版（含 trait 层）为基准逐步对齐。
   - 方案：
-    0. **前置依赖（阻塞项）**：内核 host 可编译基建（H.3.6 P0-26 根治，DECISION-052）——见 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md) 工程计划 A/B；内核 hvfs 经 `host-test` feature 暴露 host 可编译入口，否则平行实现无法被替代、删除无从谈起；
+    0. **前置依赖（阻塞项）**：内核 host 可编译基建（H.3.6 P0-26 根治，DECISION-052）——见 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md) 工程计划 A/B；内核 hvfs 经 `host-test` feature 暴露 host 可编译入口，否则平行实现无法被替代、删除无从谈起；
     1. **先统一 `HvDva` 布局**：以内核版字段序为准（`offset, asize, vdev_id, gang(u8), _pad[1]`），否则布局依赖测试（块指针序列化）无意义；
     2. **迁移不变量类测试**：checksum 自洽、raidz 恢复、snapshot 语义等不依赖布局的测试，改为调用内核 API（经 host 可编译入口）；
     3. **对齐命名与 API**：测试版 `mount_disk`/`format_disk` 改回 `mount_drive`/`format_drive`，补齐 `hotplug_*`/`chown_ext` 的测试覆盖或显式标注缺失；
@@ -126,7 +126,7 @@
 ### 背景
 
 - **B08-19. framework/credo/secure_boot.rs 第二套 SHA-256 实现（内核内部平行实现）**
-  - 描述：2026-09-03 全仓平行实现核查新增。`framework/credo/secure_boot.rs::sha256_hash` 自带完整 `SHA256_K` 常量表 + 标准填充/轮函数（32 字节输出），与规范实现 `services/credo/sha256.rs::sha256`（经 [framework/credo/sha256.rs](../../src/kernel/framework/credo/sha256.rs) re-export）为同一标准 SHA-256 算法；[secure_boot.rs:47-48](file:///home/anfer/Code/QueenX/src/kernel/framework/credo/secure_boot.rs#L47-L48) 注释"独立于 credo::sha256, 后者输出 48 字节"的理由已被 B07-07 证伪（credo::sha256 已改 32 字节输出）。该重复实现**无测试覆盖**（secure_boot.rs 无 `#[cfg(test)]`），仅被 secure_boot.rs 内部 PCR 度量/quote 使用；未记录于 eliminate-parallel-implementations.md 的 7 项清单。
+  - 描述：2026-09-03 全仓平行实现核查新增。`framework/credo/secure_boot.rs::sha256_hash` 自带完整 `SHA256_K` 常量表 + 标准填充/轮函数（32 字节输出），与规范实现 `services/credo/sha256.rs::sha256`（经 [framework/credo/sha256.rs](../../../src/kernel/framework/credo/sha256.rs) re-export）为同一标准 SHA-256 算法；[secure_boot.rs:47-48](file:///home/anfer/Code/QueenX/src/kernel/framework/credo/secure_boot.rs#L47-L48) 注释"独立于 credo::sha256, 后者输出 48 字节"的理由已被 B07-07 证伪（credo::sha256 已改 32 字节输出）。该重复实现**无测试覆盖**（secure_boot.rs 无 `#[cfg(test)]`），仅被 secure_boot.rs 内部 PCR 度量/quote 使用；未记录于 eliminate-parallel-implementations.md 的 7 项清单。
   - 方案：合并到规范实现——secure_boot.rs 改调 `crate::kernel::framework::credo::sha256::sha256`，删除 `sha256_hash` 及独立 K 常量/轮函数，核对 PCR 度量/quote 输出一致；补 secure_boot.rs 侧哈希路径测试。与 B08-12 的"纯算法复刻删除"标准一致。
   - 状态：[X] (2026-09-06 实施完成：secure_boot.rs 删除本地 SHA256_K 表 + 填充/轮函数，`sha256_hash` 改委托 `framework::credo::sha256::sha256`（services 规范实现，B07-07 已证 32 字节输出）；`sha256_extend` 保留组合逻辑内部经委托；补专项测试 `pwm::secure_boot_sha256::{hash_consistency, extend_combine}`（QEMU kernel_test 实测 PASS）)
 
@@ -169,7 +169,7 @@
   - 状态：[X] (2026-09-08 背景条目闭合：E-01 四维调研（kernel_test 25 模块/21 可共享、host-tests 7 平行实现、host 可编译性障碍、255 处门控语义）已作为 E 工程设计依据完整消费，E-03~E-06 实施均已落地验证)
 
 - **E-02. 前置依赖**
-  - 描述：同源双编译完全依赖 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md) 工程计划 A/B/C（host-test feature + framework std 桩），当前全 `[]`。
+  - 描述：同源双编译完全依赖 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md) 工程计划 A/B/C（host-test feature + framework std 桩），当前全 `[]`。
   - 方案：E 工程阶段 0 = 完成 B08-12（A 宿主编译基建 → B framework std 桩 → C 平行实现迁移删除），E 不重复造基建。
   - 状态：[X] (2026-09-08 背景条目闭合：前置依赖 B08-12（工程计划 A/B/C）已全部完成，E 工程在其上实施——host-test feature + framework std 桩就绪，E-03~E-06 双端编译执行验证通过)
 
@@ -180,7 +180,7 @@
     - `kernel_test`：保持"裸机测试模式"语义（QEMU 专用，硬件路径切换门控不动）
     - `host-test`：新增"host 可编译"语义（B08-12 基建引入）
   - 方案：纯逻辑测试模块统一改 `#[cfg(any(feature = "kernel_test", feature = "host-test"))]`；硬件路径切换门控保持 `#[cfg(feature = "kernel_test")]`。新增审计脚本（仿 audit_services_boundary.py）强制验证两语义不混用、services 侧不引入 host 裸机依赖。
-  - 状态：[X] (2026-09-06 实施完成：① framework/tests/mod.rs 门控拆分——arch/string/sched/sync/sys 改 `any(kernel_test, host-test)`，driver/net 保持 kernel_test（QEMU-only），idt/reset **改回 kernel_test 单端**（host 不可编译：idt 依赖 InterruptFrame::new_test_frame 的 any(test,kernel_test) 门控、reset 依赖 barrier::reset 各子模块 kernel_test 门控，均已标注 E-03 保持单端）；test_runner_init 注册块同步拆分。② services 侧 A 类 11 处改 `any(...)`（sync/types.rs 委托、barrier/reset_config.rs tests、credo/sha256.rs 委托、ipc/types.rs IPC_MAX_* 缩减 4 组），B 类 7 处 net 桩 + C 类 1 处 caps.rs kpti 保持 kernel_test 登记白名单。③ 新增 [audit_feature_semantics.py](../../scripts/audit_feature_semantics.py) 仿 audit_services_boundary.py（services 扫描 + 白名单 + mod.rs 门控分离校验 + JSON + 退出码），运行通过。**额外发现**：test_config.rs:162 运行时 cfg!() 断言镜像 KPTI 门控规则，经逐配置核对自洽后登记白名单豁免。**验证**：kernel_test + host-test + x86_64/aarch64 裸机全部 0w0e；host-tests 全量 94 项 ok 0 失败；审计脚本 exit 0)
+  - 状态：[X] (2026-09-06 实施完成：① framework/tests/mod.rs 门控拆分——arch/string/sched/sync/sys 改 `any(kernel_test, host-test)`，driver/net 保持 kernel_test（QEMU-only），idt/reset **改回 kernel_test 单端**（host 不可编译：idt 依赖 InterruptFrame::new_test_frame 的 any(test,kernel_test) 门控、reset 依赖 barrier::reset 各子模块 kernel_test 门控，均已标注 E-03 保持单端）；test_runner_init 注册块同步拆分。② services 侧 A 类 11 处改 `any(...)`（sync/types.rs 委托、barrier/reset_config.rs tests、credo/sha256.rs 委托、ipc/types.rs IPC_MAX_* 缩减 4 组），B 类 7 处 net 桩 + C 类 1 处 caps.rs kpti 保持 kernel_test 登记白名单。③ 新增 [audit_feature_semantics.py](../../../scripts/audit_feature_semantics.py) 仿 audit_services_boundary.py（services 扫描 + 白名单 + mod.rs 门控分离校验 + JSON + 退出码），运行通过。**额外发现**：test_config.rs:162 运行时 cfg!() 断言镜像 KPTI 门控规则，经逐配置核对自洽后登记白名单豁免。**验证**：kernel_test + host-test + x86_64/aarch64 裸机全部 0w0e；host-tests 全量 94 项 ok 0 失败；审计脚本 exit 0)
 
 - **E-04. 测试运行器双端适配**
   - 描述：framework/tests/mod.rs 已有自研 TestFn/TestCase/TestResult harness（MAX_TESTS=256）。host 侧需薄适配层。
@@ -347,7 +347,7 @@ pmm.rs buddy 三态数据，改造可行性不同：
   - 方案：`buddy_heads` 元素 `*mut FreeNode` → `u64` pfn；`buddy_list_push/pop/remove` 改索引操作；`pfn_to_virt(pfn) as *mut FreeNode` 全部删除。
   - 状态：[X] (2026-09-06 实施完成：FreeNode/FreeNodeRef 删除，改 FreeIndex{prev,next:u64} + FREE_LINKS 独立数组；buddy_heads 改 [u64; MAX+1] 哨兵 u64::MAX；pfn_to_virt as *mut FreeNode 清零；buddy_list_push/pop/remove 改索引读写；buddy_reserve_pfn_range 遍历重写（先存 next 再 remove）；buddy_alloc is_null→哨兵比较。公开 API 零改动，55 处调用方不触碰)
 - **H-02. 边界检查替换**
-  - 描述：原"防御性物理范围校验"（`node_phys < RAM_BASE || >= RAM_BASE+mem_size`，[pmm.rs:1175-1186](../../src/kernel/framework/mm/pmm.rs#L1175-L1186)）→ `pfn < total_pages` 数组边界检查（更简单且天然防越界）。
+  - 描述：原"防御性物理范围校验"（`node_phys < RAM_BASE || >= RAM_BASE+mem_size`，[pmm.rs:1175-1186](../../../src/kernel/framework/mm/pmm.rs#L1175-L1186)）→ `pfn < total_pages` 数组边界检查（更简单且天然防越界）。
   - 方案：`buddy_list_remove/pop` 内校验替换；`FreeNodeRef`/`HeadsRef` 的 unsafe 裸指针操作大幅减少。
   - 状态：[X] (2026-09-06 实施完成：3 处物理范围校验删除（buddy_list_remove/pop/reserve_pfn_range），换 `debug_assert!(pfn < total_pages)` 前置断言；3 处 `#[allow(clippy::absurd_extreme_comparisons)]` 随删除消失)
 - **H-03. 元数据分配**
@@ -356,13 +356,13 @@ pmm.rs buddy 三态数据，改造可行性不同：
   - 状态：[X] (2026-09-06 实施完成：FREE_LINKS 在 init_bitmap 内 buddy_meta 之后同法分配（free_links_phys 页对齐、early_current 预留、fill_memory 预填 0xFF=SENTINEL、位图标记已用页、LTO addr_of!+write_volatile 模式）；新增 buddy_links 字段 + buddy_links_ref() 访问器。内存账本：4GB RAM → 16MB)
 - **H-04. host 测试迁移（方案 3：MetaStore 载体注入，2026-09-08 用户确认最优根治）**
   - 描述：删除 `host-tests/src/buddy.rs`（436 行平行实现，含 F9 `#![allow(dead_code)]`），测试改引内核真实 `framework::mm::pmm` 的 buddy 机制。
-  - 方案（**2026-09-08 审核升级为方案 3 载体注入，替代原 B' 特判分支方案**）：`raw::BitmapRef/MetaRef/FreeIndexRef/HeadsRef`（[pmm.rs:102-340](../../src/kernel/framework/mm/pmm.rs#L102-L340)，裸指针 safe 包装器）收敛为统一 `MetaStore` trait（read/write 接口：buddy_meta 字节 / FREE_LINKS prev-next / bitmap 位 / heads）：
+  - 方案（**2026-09-08 审核升级为方案 3 载体注入，替代原 B' 特判分支方案**）：`raw::BitmapRef/MetaRef/FreeIndexRef/HeadsRef`（[pmm.rs:102-340](../../../src/kernel/framework/mm/pmm.rs#L102-L340)，裸指针 safe 包装器）收敛为统一 `MetaStore` trait（read/write 接口：buddy_meta 字节 / FREE_LINKS prev-next / bitmap 位 / heads）：
     - **生产实现**：基于 `phys + KERNEL_BASE` 裸指针（现有逻辑，行为不变）
     - **host 测试实现**：基于 `Vec<u8>`（Box 堆，构造注入）
     - **关键**：init_bitmap 与全部 buddy 算法**仅一份代码**，测试经注入 Vec 实现而非 `#[cfg(host-test)]` 分支——**无测试/生产分叉**，符合"内核唯一权威"（B08-12 路线 C 核心）。对比原 B'（init_bitmap 特判分支）会引入测试/生产平行路径，与本册消除平行实现原则冲突，故弃用。
   - 状态：[X] (2026-09-06 暂缓：H-01~H-03 改造后 buddy 已纯索引化 host 可测，但完整 host 测试需物理内存模拟层（KERNEL_BASE 编译期常量无法 host 映射到 mock 堆——`phys_to_virt` 为 const fn + KERNEL_BASE 编译期常量，无法 host 运行时重定向到 mock 堆），工程量较大。buddy.rs 平行实现保留（F9 违规待审查员决策，见 B08-12 条目）。E 工程层 1 的 buddy 项依赖本条目完成后实施) (2026-09-08 状态同步：维持暂缓——待物理内存模拟层专项（KERNEL_BASE host 映射）建成后实施；期间 E-06 去重已将 buddy 明确登记为 H-04 文档化例外（host-tests/src/buddy.rs 保留），非阻塞项) (2026-09-08 审核定案方案 3：**实施路径分两步**——①纯重构：4 个 raw 包装器收敛为 `MetaStore` trait（生产行为不变，用现有 QEMU 测试验证等价）；②新增能力：host 测试 `Vec` 实现 + 构造注入，buddy 完整生命周期（init_bitmap → alloc/free → 合并）host 可测，删除 buddy.rs 平行实现。步骤①是行为不变重构（风险可控），步骤②才是新增能力。**2026-09-08 用户已授权实施**) (2026-09-09 实施完成：**步骤①** `raw::{BitmapRef,MetaRef,FreeIndexRef}` 删除，收敛为 `MetaStore` trait（bitmap 位 / buddy_meta 字节 / FREE_LINKS prev-next 统一 read/write 接口）+ 生产实现 `RawMetaStore`（phys+KERNEL_BASE 裸指针，行为不变）+ host 实现 `VecMetaStore`（`Vec<u8>` 堆载体，`#[cfg(any(test, feature = "host-test"))]`）；`PhysicalMemoryManager` 字段 `bitmap/buddy_meta/buddy_links` → `store: UnsafeCell<Option<Box<dyn MetaStore>>>`，`init_bitmap` 与全部 buddy 算法（buddy_try_merge/list_remove/list_push/list_pop/free_insert_range/reserve_pfn_range/alloc/init_free_lists）统一经 `meta_store()` 访问 — **init_bitmap 与 buddy 算法仅一份代码，无测试/生产分叉**。**步骤②** 新增 `inject_meta_store`（host 测试注入 VecMetaStore，cfg 门控）；新建 `host-tests/tests/pmm_buddy_host_test.rs`（4 测试：alloc/free 往返、内核保留区防护、order-9 合并、reserve_after_kernel 防护）；删除 `host-tests/src/buddy.rs`（436 行平行实现，F9 违规消除）；同步 lib.rs/Cargo.toml/README.md。**过程修复**：`buddy_init_free_lists` 原 `(remaining-1).leading_zeros()` 在 `remaining==1` 时下溢（host debug 暴露，release wrap-around 为 UB）→ `checked_ilog2().unwrap_or(0)`（行为等价，remaining==1 正确取 order-0）。**观察项**：`fsx_integration_test::test_fsx_stress` 在 make test-host 并行下偶发失败 1 次（单独运行稳定通过，与 PMM 改动无关，疑似并行时序）。**验证**：双架构 `./ci/build.sh all` 5/5 + clippy 三线（裸机 -D pedantic / host-test 维 / kernel_test 维）0 warning + 核心审计全过（safety_coverage 100%）+ QEMU kernel_test ALL TESTS PASSED + QEMU boot 1/1 + host-tests 全过（含新 4 buddy 测试）) (2026-09-09 审核后 heads 收敛补充：**方案 3 原文含 heads 接口**（4 包装器全收敛），首轮实施遗留 `HeadsRef` 走宿主字段——本轮补齐：`raw::HeadsRef` 删除；`MetaStore` 增 `heads_get/heads_set`（读/写第 order 阶链表头 pfn）；`RawMetaStore::new(heads)` 接收宿主 `buddy_heads` 字段指针（`UnsafeCell::get`，init_bitmap 单线程创建、self 不移动、buddy 就绪后仅 PMM 锁下访问，指针稳定）；`VecMetaStore` 增 `heads: RefCell<Vec<u64>>` 惰性扩容模拟（未写阶 = SENTINEL，与生产构造初始态一致）；`buddy_heads_ref()` 删除，5 处调用点（list_remove/list_push/list_pop/reserve_pfn_range/alloc）改走 `store.heads_get/set`。**验证**：双架构 build 5/5 + host buddy 4 测试全过 + host-tests 全量 0 failed + clippy 三线 0 warning + 核心审计全过 + QEMU kernel_test ALL TESTS PASSED + QEMU boot 1/1)
 - **H-04 优化项（方案 B：type alias 编译期选择载体，2026-09-09 审核提出，2026-09-09 用户授权重委托）**
-  - 描述：消除 `Box<dyn MetaStore>`（[pmm.rs:557](../../src/kernel/framework/mm/pmm.rs#L557)）的两类开销——vtable 间接调用（buddy 热路径每次 alloc/free 约 10-20 次 MetaStore 方法调用，每次 ~1-2ns）+ 载体堆分配。方案 B 用编译期类型选择替代运行时多态，零开销且保持"无测试/生产分叉"。
+  - 描述：消除 `Box<dyn MetaStore>`（[pmm.rs:557](../../../src/kernel/framework/mm/pmm.rs#L557)）的两类开销——vtable 间接调用（buddy 热路径每次 alloc/free 约 10-20 次 MetaStore 方法调用，每次 ~1-2ns）+ 载体堆分配。方案 B 用编译期类型选择替代运行时多态，零开销且保持"无测试/生产分叉"。
   - 方案（**type alias 编译期选择，长期最优**）：
     - 新增 type alias（cfg 两行，生产/测试二选一）：
       ```rust
@@ -402,7 +402,7 @@ pmm.rs buddy 三态数据，改造可行性不同：
 
 #### ① 改动面总览（必须全改，缺一漏一）
 
-`FreeNode`/侵入式链表涉及 **7 个函数 + 2 个结构 + 1 个数组**，全部在 [pmm.rs](../../src/kernel/framework/mm/pmm.rs)：
+`FreeNode`/侵入式链表涉及 **7 个函数 + 2 个结构 + 1 个数组**，全部在 [pmm.rs](../../../src/kernel/framework/mm/pmm.rs)：
 
 | 位置 | 现状 | 改造后 |
 |---|---|---|
@@ -464,13 +464,13 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
 
 #### ⑤ 边界检查替换（H-02）
 
-- 删除所有 `node_phys = (node as u64) - KERNEL_BASE` + `RAM_BASE` 范围校验（[pmm.rs:1175-1186](../../src/kernel/framework/mm/pmm.rs#L1175-L1186)、[L1250-1256](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/pmm.rs#L1250-L1256)、[L1337-1342](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/pmm.rs#L1337-L1342)）
+- 删除所有 `node_phys = (node as u64) - KERNEL_BASE` + `RAM_BASE` 范围校验（[pmm.rs:1175-1186](../../../src/kernel/framework/mm/pmm.rs#L1175-L1186)、[L1250-1256](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/pmm.rs#L1250-L1256)、[L1337-1342](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/pmm.rs#L1337-L1342)）
 - 替换为 `pfn < total_pages` 前置断言（索引访问天然越界检查；用 `debug_assert!` 裸机 + `assert!` host 测试双保险）
 - `#[allow(clippy::absurd_extreme_comparisons)]` 随删除消失
 
 #### ⑥ 元数据分配（H-03）
 
-- `FREE_LINKS` 在 [init_bitmap L469-587](../../src/kernel/framework/mm/pmm.rs#L469-L587) 的 buddy_meta 之后布局，同法：
+- `FREE_LINKS` 在 [init_bitmap L469-587](../../../src/kernel/framework/mm/pmm.rs#L469-L587) 的 buddy_meta 之后布局，同法：
   - `free_links_bytes = total_pages * 16`，页对齐，从 `early_current` 预留
   - 初始化：先全 `SENTINEL`（哨兵填充），再 `buddy_init_free_lists` 重建链表
   - 标记为已用页（同 bitmap/buddy_meta 页处理）
@@ -514,11 +514,11 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 方案：逐处核实理由 → 删失效 expect / 补真触发（同 G-17 示范模式）→ 清理后 `cargo clippy --features host-test`（host target）+ `--features kernel_test` 纳入 CI，feature 维 lint 零 unfulfilled 作为门槛。
   - 状态：[X] (2026-09-08 委托实施完成：**host-test 维 13 处** — spinlock.rs restore_interrupts 补 trivially_copy_pass_by_ref expect（与裸机变体对齐）、tests/arch.rs+sync.rs borrow_as_ptr（from_ref/&raw mut）、tests/string.rs ptr_cast_constness+explicit_iter_loop（cast_const/&secret）、tests/sys.rs cast_lossless×3（u64::from）、services/barrier/reset_config.rs wildcard_imports（显式 use）、test_ipc.rs large_stack_arrays cfg_attr 条件化（IPC_MAX_* 测试模式缩减）、sync/rwlock+pi_mutex+irq_spinlock 删多余 doc_markdown expect（doc 已用反引号从未触发）；**kernel_test 维 63 处** — items_after_statements（pit/tick/sleep/calibration 注册函数加函数级 expect 保留嵌套测试惯用模式；hrtimer static mut 移至函数顶；snapshot dummy_write 移至顶；lib.rs 三个 const 集中块首）、cast_lossless+invalid_upcast（pit 删恒真断言 `PIT_MAX_COUNT as u64<=65535`）、used_underscore_binding（irq 类型注解断言 + lib.rs expect cfg_attr）、wildcard_imports（barrier/reset 5 文件 + snapshot 显式 use）、overly_complex_bool_expr（parallel `count>0||true`→`true`）、borrow_as_ptr×15（epoll/eventfd/signalfd/timerfd &raw）、manual_let_else（signalfd 改 let-else）、unnecessary_wraps（driver 测试辅助 expect）、route.rs×2 + lib.rs + idt/types.rs unfulfilled expect cfg_attr 条件化/删除。**入 CI**：audit.sh 新增 step 2b（kernel_test+host-test 两维，host target 避免裸机产物依赖）+ ci-x86.yml clippy-pedantic job 加两 step（与 G-02 合并）。**验证**：裸机 + host-test + kernel_test 三线 clippy 全 0 unfulfilled 0 error；audit.sh quick 通过（含 step 2b）；与 G-02 合并关闭)
 - **J-02. G-03 顺手修复：storage pushfq 补 cfg 门控**
-  - 描述：MSIX-03 诊断块内 `pushfq`（[storage/mod.rs:207](../../src/kernel/framework/driver/storage/mod.rs#L207)）无 `#[cfg(target_arch = "x86_64")]` 门控，aarch64 编译报错。低风险顺手项。
+  - 描述：MSIX-03 诊断块内 `pushfq`（[storage/mod.rs:207](../../../src/kernel/framework/driver/storage/mod.rs#L207)）无 `#[cfg(target_arch = "x86_64")]` 门控，aarch64 编译报错。低风险顺手项。
   - 方案：先核实宿主函数架构门控，再补 asm 门控（或整个 MSIX-03 诊断块）。
   - 状态：[X] (2026-09-08 委托实施完成：pushfq asm 包 `#[cfg(target_arch = "x86_64")]` — aarch64 下 rflags 保持 0（klog 仅诊断打印 IF=0）；aarch64 构建通过（build.sh all 5/5），ci forbidden asm 检查不再报无门控 asm)
 - **J-03. G-10 方案 C：HvfsData 显式 reset API + 栏栈 hvfs_reset 钩子实装**
-  - 描述：`HvfsData::init()` 保持一次性（OnceCell 语义），新增显式 `HvfsData::reset()` 供栏栈恢复钩子调用；空壳 `hvfs_reset`（[hvfs_data.rs:35](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L35)）实装为调用 `reset()`。关联栏栈恢复路径（hvfs_restore/注册点 L248），是栏栈升级组成部分。
+  - 描述：`HvfsData::init()` 保持一次性（OnceCell 语义），新增显式 `HvfsData::reset()` 供栏栈恢复钩子调用；空壳 `hvfs_reset`（[hvfs_data.rs:35](../../../src/kernel/services/fs/hvfs/hvfs_data.rs#L35)）实装为调用 `reset()`。关联栏栈恢复路径（hvfs_restore/注册点 L248），是栏栈升级组成部分。
   - 方案：按 G-10 方案 C 设计实施；同步更新 hvfs_persist_test Phase 3 断言（重复 init 语义从"重建清空"改"拒绝/一次+显式 reset"）；QEMU kernel_test 回归验证。
   - 状态：[X] (2026-09-08 委托实施完成：①**init 幂等化** — 开头 `if is_initialized() return`（重复 init no-op，消除 G-10"重复 init 重建清空磁盘数据"灾难路径；挂载重试/热插拔/栏栈恢复场景数据保留）；②**新增 `HvfsData::reset()`** — 显式重建 objset（initialized/mounted 复位 → spa.init → datasets.clear → setup_zil_datasets → 状态置位），供栏栈恢复钩子调用；③**hvfs_reset 钩子实装** — 空壳改调 `get_hvfs().reset()`；④**hvfs_persist_test Phase 3 断言同步** — 从"重复 init 后旧文件不可读(Err)"改"重复 init 幂等 + 数据保留(open is_ok)"。**验证**：host-tests 749 passed 0 failed（hvfs_persist_test 10.29s 通过）；QEMU kernel_test 472 TESTS ALL PASSED；build.sh all 5/5；审计全绿。restore 钩子保持现状（J-03 未要求改动，其 setup_zil_datasets 复用正常))
 - **J-04. G-09 长期最优：zil_persist 块级单一校验精简（2026-09-08 用户授权）**
@@ -545,12 +545,12 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 详情：**2026-09-06 调研定稿**——aarch64 部分已证伪（见 G-04），G-01 收缩为纯 x86_64 SIGILL 问题；serial env 固化是标准做法（curve25519-dalek 官方支持 env 选择后端），与降 toolchain 相比影响面最小。
 
 - **G-04. dma_buf.rs `dc ivau` 为无效指令（非 LLVM 回归，真实 bug）→ 已修复**
-  - 描述：2026-09-06 审查调研确认 [dma_buf.rs:263](../../src/kernel/framework/dma_buf.rs#L263) 的 `dc ivau, x8` **在 AArch64 架构中不存在**，不是 LLVM 22 回归。证据链：①GNU `aarch64-linux-gnu-as`（binutils）同样拒绝 `dc ivau`（报 "unknown or missing operation name"），排除 LLVM 独有；②同族其他操作全部合法——`ic ivau`=D50B7528（IC 指令族，invalidate to PoU）、`dc cvau`=D50B7B28（DC clean to PoU）、`dc civac`=D50B7E28（DC clean+invalidate to PoC），均已用 GNU as 汇编 + GNU objdump 反汇编验证编码；③ARM ARM 定义：`ivau`（Invalidate to Point of Unification）是 **IC（Instruction Cache）指令族**操作，**DC（Data Cache）指令族无 ivau 变体**（有效操作仅 cvau/cvac/civac/zva 等）。原代码混淆 IC/DC 指令族，写入了不存在的指令，GNU/LLVM 拒绝均为正确行为。
-  - 方案：`dc ivau` → **`dc civac`**（clean+invalidate data cache to PoC，正是 DMA 设备→CPU 方向所需语义，与 [dma_buf.rs:241](../../src/kernel/framework/dma_buf.rs#L241) 注释"使 CPU cache 行无效"一致）。此为**修复真实 bug** 非语义妥协。改后 aarch64 构建顺带解锁。**须 QEMU aarch64 实测**（kernel_test + boot），并补注释说明指令选择依据（DC 无 ivau，DMA 方向需 PoC 维护）。
+  - 描述：2026-09-06 审查调研确认 [dma_buf.rs:263](../../../src/kernel/framework/dma_buf.rs#L263) 的 `dc ivau, x8` **在 AArch64 架构中不存在**，不是 LLVM 22 回归。证据链：①GNU `aarch64-linux-gnu-as`（binutils）同样拒绝 `dc ivau`（报 "unknown or missing operation name"），排除 LLVM 独有；②同族其他操作全部合法——`ic ivau`=D50B7528（IC 指令族，invalidate to PoU）、`dc cvau`=D50B7B28（DC clean to PoU）、`dc civac`=D50B7E28（DC clean+invalidate to PoC），均已用 GNU as 汇编 + GNU objdump 反汇编验证编码；③ARM ARM 定义：`ivau`（Invalidate to Point of Unification）是 **IC（Instruction Cache）指令族**操作，**DC（Data Cache）指令族无 ivau 变体**（有效操作仅 cvau/cvac/civac/zva 等）。原代码混淆 IC/DC 指令族，写入了不存在的指令，GNU/LLVM 拒绝均为正确行为。
+  - 方案：`dc ivau` → **`dc civac`**（clean+invalidate data cache to PoC，正是 DMA 设备→CPU 方向所需语义，与 [dma_buf.rs:241](../../../src/kernel/framework/dma_buf.rs#L241) 注释"使 CPU cache 行无效"一致）。此为**修复真实 bug** 非语义妥协。改后 aarch64 构建顺带解锁。**须 QEMU aarch64 实测**（kernel_test + boot），并补注释说明指令选择依据（DC 无 ivau，DMA 方向需 PoC 维护）。
   - 状态：[X] (2026-09-06 委托修复完成：dma_buf.rs `sync_for_cpu` 内 `dc ivau` → `dc civac`（clean+invalidate to PoC，DMA 设备→CPU 方向语义）；注释同步说明 G-04 依据（DC 指令族无 IVAU，ivau 属 IC 族）。aarch64 裸机 `cargo check --release` 通过，双架构解锁。QEMU aarch64 实测待 B08-17 构建回归阶段统一验证)
 
 - **G-05. curve25519-dalek serial 后端固化点（G-01 关联）→ 已修复**
-  - 描述：G-01 的 serial env 需固化到 [src/rust/.cargo/config.toml](../../src/rust/.cargo/config.toml) `[env]` 段。注意该 config 的 `build-std` 段在 host 构建时需规避（host-tests 从仓库根/host-tests 构建不加载，但 src/rust 目录内运行会触发 E0152，见 eliminate-parallel-implementations.md 工程计划 A 注意事项）。
+  - 描述：G-01 的 serial env 需固化到 [src/rust/.cargo/config.toml](../../../src/rust/.cargo/config.toml) `[env]` 段。注意该 config 的 `build-std` 段在 host 构建时需规避（host-tests 从仓库根/host-tests 构建不加载，但 src/rust 目录内运行会触发 E0152，见 eliminate-parallel-implementations.md 工程计划 A 注意事项）。
   - 方案：在 `[env]` 新增 `CARGO_CFG_CURVE25519_DALEK_BACKEND = "serial"`；确认不破坏 host-test 构建路径。
   - 状态：[X] (2026-09-06 委托修复完成：config.toml `[env]` 段已加 serial 固化（G-01 联动）；host-test 构建（仓库根 `cargo check --features host-test`）验证通过，不破坏 host 路径)
 - **G-02. kernel_test feature 下 clippy 5 处 unfulfilled expectation → 已修复（随 J-01 合并关闭）**
@@ -579,17 +579,17 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 状态：[X] (2026-09-08 委托修复完成：hrtimer.rs + signal.rs 预期修正；QEMU kernel_test 471 全绿)
 
 - **G-15. MAX_TESTS=256 注册静默丢弃 + Makefile RUST_LIB_TEST 无源前置依赖（E-06 扩容暴露，测试基建缺陷）→ 已修复**
-  - 描述：2026-09-08 发现两层测试基建缺陷：①[framework/tests/mod.rs](../../src/kernel/framework/tests/mod.rs) `TestRegistry::register` 满容量时**静默忽略**（无告警无断言），MAX_TESTS=256 且硬件路径测试注册在纯逻辑之后 → **E-04 起全部硬件路径测试从未在 QEMU 运行**（G-11~G-14 正是被此掩盖的损坏测试）；②Makefile `$(RUST_LIB_TEST):` 规则**无源文件前置依赖**——kernel_test .a 存在后 make 永不重跑 cargo，kernel_test.bin 长期使用陈旧二进制（E-06 前两轮 QEMU 验证因此误判修复未生效）。另 QEMU 套件 256→471 超过 Makefile 120s 超时。
+  - 描述：2026-09-08 发现两层测试基建缺陷：①[framework/tests/mod.rs](../../../src/kernel/framework/tests/mod.rs) `TestRegistry::register` 满容量时**静默忽略**（无告警无断言），MAX_TESTS=256 且硬件路径测试注册在纯逻辑之后 → **E-04 起全部硬件路径测试从未在 QEMU 运行**（G-11~G-14 正是被此掩盖的损坏测试）；②Makefile `$(RUST_LIB_TEST):` 规则**无源文件前置依赖**——kernel_test .a 存在后 make 永不重跑 cargo，kernel_test.bin 长期使用陈旧二进制（E-06 前两轮 QEMU 验证因此误判修复未生效）。另 QEMU 套件 256→471 超过 Makefile 120s 超时。
   - 方案：MAX_TESTS 256→512（并登记 clippy large_stack_arrays 误报 expect——数组实存于 static OnceLock .bss 非栈）；Makefile RUST_LIB_TEST 补 `$(shell find src/rust/src src/kernel -name '*.rs')` 前置依赖（kernel 经 `#[path="../../kernel"]` 引入，须含 src/kernel）；test-unit QEMU 超时 120s→300s。
   - 状态：[X] (2026-09-08 委托修复完成：mod.rs MAX_TESTS 512 + expect；Makefile 前置依赖 + 300s；QEMU kernel_test 471 全绿。**建议**：TestRegistry::register 满容量应加 `if count >= MAX_TESTS { panic/assert }` 而非静默，防复发)
 
 - **G-16. build.rs clippy manual_assert/doc_markdown（滚动 nightly 新 pedantic lint）→ 已修复**
-  - 描述：2026-09-08 验证 E-06 clippy 门槛时发现：`cargo clippy --release --target x86_64-unknown-none -- -D clippy::pedantic` 在 [build.rs](../../src/rust/build.rs) 报 2 个新 pedantic lint——`manual_assert`（if-panic → assert!，L10-15）与 `doc_markdown`（注释 `USER_INIT_ELF` 缺反引号，L6）。`channel = "nightly"` 未锁版本（滚动更新），lint 集随 nightly 漂移新增；G-02 记录的 2026-09-06 标准 clippy 尚通过，本次为新暴露。阻塞整个 clippy 门槛（build script 编译失败即中止），与 E-06 改动无关（build.rs 未改）。
+  - 描述：2026-09-08 验证 E-06 clippy 门槛时发现：`cargo clippy --release --target x86_64-unknown-none -- -D clippy::pedantic` 在 [build.rs](../../../src/rust/build.rs) 报 2 个新 pedantic lint——`manual_assert`（if-panic → assert!，L10-15）与 `doc_markdown`（注释 `USER_INIT_ELF` 缺反引号，L6）。`channel = "nightly"` 未锁版本（滚动更新），lint 集随 nightly 漂移新增；G-02 记录的 2026-09-06 标准 clippy 尚通过，本次为新暴露。阻塞整个 clippy 门槛（build script 编译失败即中止），与 E-06 改动无关（build.rs 未改）。
   - 方案：build.rs `require_exists` 改 `assert!`（manual_assert）+ 注释补反引号（doc_markdown）；或 clippy 命令加豁免。处置需用户决策（预存问题，非本次改动引入）。
   - 状态：[X] (2026-09-08 代码已修复于 commit baaed948，2026-09-08 审查同步文档状态：`require_exists` if-panic → `assert!`（manual_assert）+ 注释 `USER_INIT_ELF` 补反引号（doc_markdown）均已实装；裸机 clippy 门槛经 `-D clippy::pedantic` 验证通过，无需临时豁免。**备注**：G-18 记录的 host-test/kernel_test 维 unfulfilled expect 清理与 CI 纳入为独立专项工程（见 G-18））
 
 - **G-17. framework/sync/mutex.rs 文档"递归锁定支持"与实际实现不符（G-11/G-12 根因，架构级隐患）→ 登记待处置**
-  - 描述：2026-09-08 G-11/G-12 排查时确认根因级隐患。[mutex.rs](../../src/kernel/framework/sync/mutex.rs) 模块文档声明"**递归锁定支持**: 同一线程可多次 lock"（L23-26），但 `Mutex::lock → raw_lock`（L120-155）**无 owner/深度重入检测**——fast path 仅查 `locked != 0`，slow path 死等（自旋+yield）。同一线程对同一 Mutex 二次 lock 即自死锁无限自旋。`MutexInner.owner`（AtomicI32）字段已存在但 lock 路径未使用。G-11（kill 广播 `PROCESS_TABLE` 重入）、G-12（signalfd `SFD_TABLE` 双锁）均为受害点；**全内核其他"持锁后经调用链再 lock 同一 Mutex"的代码路径同样受影响**，无 lockdep 环境运行时不可见。
+  - 描述：2026-09-08 G-11/G-12 排查时确认根因级隐患。[mutex.rs](../../../src/kernel/framework/sync/mutex.rs) 模块文档声明"**递归锁定支持**: 同一线程可多次 lock"（L23-26），但 `Mutex::lock → raw_lock`（L120-155）**无 owner/深度重入检测**——fast path 仅查 `locked != 0`，slow path 死等（自旋+yield）。同一线程对同一 Mutex 二次 lock 即自死锁无限自旋。`MutexInner.owner`（AtomicI32）字段已存在但 lock 路径未使用。G-11（kill 广播 `PROCESS_TABLE` 重入）、G-12（signalfd `SFD_TABLE` 双锁）均为受害点；**全内核其他"持锁后经调用链再 lock 同一 Mutex"的代码路径同样受影响**，无 lockdep 环境运行时不可见。
   - 方案：A. 实现真重入（raw_lock 检查 `owner == 当前线程` → `depth++`；owner 字段已存在，成本低）——同时更新文档语义；B. 删除"递归锁定支持"文档声明，改为强制非重入约定 + 用 `audit_deadlock_matrix.py`/lockdep 排查全内核双锁点。候选 A 更符合文档承诺与调用点既有模式。
   - 状态：[X] (2026-09-08 委托修复完成，用户决策"实现真重入"：①静态扫描 for_each 重入模式——services/proc/session.rs:376/522（只读 pgid/sid 字段安全）、table.rs:370 包装、proc_mgmt.rs:38（锁每进程内 name 非 PROCESS_TABLE 安全），无 G-11 模式残留；②mutex.rs 实现真重入——`process_get_current_pid` extern 提取到模块级（原内联于 acquire_lock_internal + items_after_statements expect，删除该 expect）、`raw_lock` fast path 在 inner_spinlock 内比较 `owner == 当前进程` → `depth.fetch_add(1)` 直接返回，slow path 仅真竞争到达；owner/depth 字段原已存在，raw_unlock 递减逻辑兼容；③补回归测试 `sync::mutex::reentrant`（双 lock depth=2 → 逐层 drop → unlocked/owner=-1）。**验证**：host 共享套件 `sync::mutex::reentrant` PASS（340 用例 333 PASS + 7 Skip）；裸机 clippy 通过；QEMU 471 全绿待 B08-17 阶段复验) (2026-09-08 多线程关联登记：**当前 PID 重入检测依赖单线程模型**（调度器以 PID 为单位）；多线程工程已独立成档（docs/plan/multithreading-project.md），其中将 owner 从 PID 迁移线程指针以解除此架构假设；当前模型下本修复正确，无需回退)
 
@@ -605,12 +605,12 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 状态：[X] (2026-09-08 随 J-01 实施关闭：host-test 维 13 处 + kernel_test 维 63 处 unfulfilled/真实 lint 全部清理（明细见 J-01 状态）；audit.sh 新增 step 2b + ci-x86.yml clippy-pedantic job 加两 step（kernel_test + host-test，host target 避免裸机产物依赖），feature 维 lint 零 unfulfilled 作为 CI 门槛；与 G-02 合并关闭。**验证**：裸机 + host-test + kernel_test 三线 clippy 全绿；audit.sh quick 通过)
 
 - **G-03. storage/mod.rs pushfq asm 无 cfg 门控 → 委托修复（随 G-18 一并）**
-  - 描述：ci 的 forbidden asm 检查发现 [storage/mod.rs:207](../../src/kernel/framework/driver/storage/mod.rs#L207) `pushfq` asm! 无 `#[cfg]` 门控。预存问题，非本轮引入。2026-09-08 审查定位：该 asm 位于 MSIX-03 诊断块内（NVMe 队列创建路径的 LAPIC/MSI-X 状态打印），x86_64 专属指令但所在函数无 `#[cfg(target_arch = "x86_64")]` 门控——aarch64 编译该函数时 asm 报错（ci 已拦截）。
+  - 描述：ci 的 forbidden asm 检查发现 [storage/mod.rs:207](../../../src/kernel/framework/driver/storage/mod.rs#L207) `pushfq` asm! 无 `#[cfg]` 门控。预存问题，非本轮引入。2026-09-08 审查定位：该 asm 位于 MSIX-03 诊断块内（NVMe 队列创建路径的 LAPIC/MSI-X 状态打印），x86_64 专属指令但所在函数无 `#[cfg(target_arch = "x86_64")]` 门控——aarch64 编译该函数时 asm 报错（ci 已拦截）。
   - 方案：补 `#[cfg(target_arch = "x86_64")]` 包住该 asm（或整个 MSIX-03 诊断块，若 aarch64 无 MSI-X 诊断需求）；需先确认该函数在 aarch64 是否真被编译（若宿主路径已被上层 cfg 排除则无需门控）。
   - 状态：[X] (2026-09-08 随 J-02 实施关闭，2026-09-08 审核同步状态行：pushfq asm 包 `#[cfg(target_arch = "x86_64")]`（aarch64 下 rflags 保持 0）；aarch64 构建通过（build.sh all 5/5），ci forbidden asm 检查不再报无门控 asm。明细见 J-02 状态)
 
 - **G-06. build.rs 隐式 make 产物依赖（审查发现，B08-03 引入）→ 已修复**
-  - 描述：2026-09-06 审查发现。B08-03 改 `require_exists` 后，[build.rs](../../src/rust/build.rs) 对 `build/user/init.bin`（及 x86_64 的 `build/stage1.bin`）产生**隐式构建期依赖**。`build/` 目录被 [.gitignore:3](../../.gitignore#L3) 忽略——干净 checkout + 直接 `cargo test`（host-tests 触发 queenx path 依赖）时，build.rs 会因产物缺失而 panic。当前本地产物存在所以通过，但 **CI 必须先 `make` 才能跑 host-tests**，形成未记录的隐式耦合。
+  - 描述：2026-09-06 审查发现。B08-03 改 `require_exists` 后，[build.rs](../../../src/rust/build.rs) 对 `build/user/init.bin`（及 x86_64 的 `build/stage1.bin`）产生**隐式构建期依赖**。`build/` 目录被 [.gitignore:3](../../../.gitignore#L3) 忽略——干净 checkout + 直接 `cargo test`（host-tests 触发 queenx path 依赖）时，build.rs 会因产物缺失而 panic。当前本地产物存在所以通过，但 **CI 必须先 `make` 才能跑 host-tests**，形成未记录的隐式耦合。
   - 方案：host-tests 的 queenx path 依赖需显式规避 build.rs 产物检查——候选：① `[lib]` 加 `test` 构建走独立 profile 跳过 build.rs；② build.rs 产物检查加 `#[cfg(not(feature = "host-test"))]` 语义（但 build.rs 无法感知 feature）；③ 约定 CI 先 `make`（登记为 CI 前置）；④ 评估 `require_exists` 仅对裸机 target 生效（`CARGO_CFG_TARGET_OS` 区分）。由委托人调研后定。
   - 状态：[X] (2026-09-06 委托修复完成：采用方案④——build.rs 产物存在性检查外包 `if target_os == "none"`（`CARGO_CFG_TARGET_OS` 区分）。裸机 none target 仍 require_exists（正确：裸机产物必须存在）；host 构建（target_os=linux，host-tests 经 queenx path 依赖触发）跳过检查，干净 checkout 直接 cargo test 不再 panic，隐式 make 耦合消除。host-test + 裸机双路径验证通过。未选③（CI 约定）因不根治；未选②（build.rs 无法感知 feature）)
 
@@ -620,7 +620,7 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 状态：[X] (2026-09-06 委托修复完成：① F9 违规消除——`#![allow(dead_code)]` 删除（实测移除后仅 6 处真实死代码，均为 bench mock 辅助的未用字段/变体，逐一消除：DmaDirection 三变体构造、SyncState::BidirInProgress 删、FaultRecord sp/caller_chain 删、MockSocketWaitQueue::is_pending 删、MockVqDesc addr 删、BLK_SECTOR_SIZE/BLK_4K_SECTORS 删）；② bench 算法调用改引内核——sha256/capability/dma/iomem 等热点已随 B08-12/20 迁移改引内核真实实现；③ `cargo check --lib` 0 warning + `cargo test --lib framekernel_bench` 81 passed。**剩余说明**：29 个 bench 中 hvfs dispatch（zap/txg/dmu/spa/raidz/arc/zil）与部分框架 mock 仍在本地（bench 专用性能测量，非功能测试被测对象），因内核 host 可测性限制保留，性能基线机制（baseline.json）不受影响)
 
 - **G-08. zil_persist.rs 序列化/反序列化不一致 bug（B08-14 迁移发现，真实 bug）→ 已修复**
-  - 描述：2026-09-06 B08-14 迁移 zil_replay_test 时发现。内核 [zil_persist.rs:356-395](../../src/kernel/services/fs/hvfs/zil_persist.rs#L356-L395) `serialize_zil_to_block` 先算 `header_checksum`（此时 `data_checksum=0`）写入 block，随后更新 `data_checksum` 并重写 header 时**未重算 `header_checksum`**。deserialize 侧 `verify_header` 用读入的新 `data_checksum` 重算 CRC → 与存储的旧 `header_checksum` 不匹配 → **合法序列化 block 回放返回空**（host 探针实测：合法 block 回放 0 条）。序列化/反序列化不一致，阻塞 zil_replay_test 迁移。
+  - 描述：2026-09-06 B08-14 迁移 zil_replay_test 时发现。内核 [zil_persist.rs:356-395](../../../src/kernel/services/fs/hvfs/zil_persist.rs#L356-L395) `serialize_zil_to_block` 先算 `header_checksum`（此时 `data_checksum=0`）写入 block，随后更新 `data_checksum` 并重写 header 时**未重算 `header_checksum`**。deserialize 侧 `verify_header` 用读入的新 `data_checksum` 重算 CRC → 与存储的旧 `header_checksum` 不匹配 → **合法序列化 block 回放返回空**（host 探针实测：合法 block 回放 0 条）。序列化/反序列化不一致，阻塞 zil_replay_test 迁移。
   - 方案：`serialize_zil_to_block` 在设置 `data_checksum` 后补 `header.compute_header_checksum()`（内部先清 0 再算，重复调用安全）；补回归测试验证合法 block 完整回放。
   - 状态：[X] (2026-09-06 委托修复完成：zil_persist.rs 设置 data_checksum 后补 compute_header_checksum；host 探针验证合法 block 回放 2 条、损坏块拒绝为空。B08-14 语义差异登记见 B08-14 详情：内核块级 data_crc 检查使 record 级容错（try_deserialize_record Err 跳过）在块级 CRC 通过时不可达，单条 record 损坏 → 整个 block 返回空；zil_replay_test 断言已按内核真实行为重写)
 - **G-09. zil_persist 块级 CRC 使 record 级容错失效（B08-14 迁移发现，语义问题）→ 已修复（随 J-04 长期最优）**
@@ -629,6 +629,6 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
   - 状态：[X] (2026-09-06 登记，用户决策：记录后跳过) (2026-09-08 处置建议已登记：**方案 B（保留块级 CRC 现状）+ 语义标注**——块级完整性优先于单条容错，ZIL 持久化日志整块损坏应重放失败而非静默跳过（部分恢复可能掩盖数据丢失）；record 级容错分支标注"块级 CRC 下不可达"保留（维持 P0-I-15 契约文档性存在），不删死代码。不建议 A（移除块级 CRC 牺牲完整性换几乎不用的单条容错）与 C（双校验增加复杂度无实际收益）。**结论：保持现状 + 语义标注，无需代码改动**) (2026-09-08 审查复核升级为**长期最优：块级单一校验（ZFS 语义）**——发现三层 CRC 为结构性冗余：record CRC ⊆ data CRC ⊆ block CRC（record 区被子集覆盖），record 级容错分支在数学上不可能生效，非"块级优先取舍"而是"设计前提不成立"；ZIL 事务组语义下 record 级容错为伪需求（静默跳单条制造半持久化错觉）。**长期最优 = 块级单一校验**：①修正 P0-I-15 契约为"损坏块拒绝"语义；②移除冗余 data CRC（被 block CRC 完全覆盖）+ 删除 record 容错死代码分支；③块级拒绝时 klog 记录损坏偏移/期望 vs 实际 CRC（硬件故障可诊断）。**2026-09-08 用户已授权，纳入工程计划 J 为 J-04**) (2026-09-08 用户授权，随工程计划 J-04 委托) (2026-09-08 随 J-04 实施关闭：见 J-04 状态，zil_replay_test 8/8 + host-tests 749 + QEMU 472 全绿)
 
 - **G-10. hvfs 重复 init 重建 objset 使旧数据不可见（B08-14 迁移发现，内核语义）→ 已修复（随 J-03 方案 C）**
-  - 描述：2026-09-06 B08-14 迁移 hvfs_persist_test 时发现。内核 `HvfsData::init()` 重复调用时，`setup_zil_datasets → HvObjSet::init` 会**清空 root dataset 的 objset**（[hvfs_data.rs:275](../../src/kernel/services/fs/hvfs/hvfs_data.rs#L275) `datasets[0].init(0)`），已写文件随后 open 返回 FileNotFound。原测试版 mock 的 `HVFS_DATA` 为 `Mutex<Option<Box>>` 可重置，重新 init 是"干净重置"语义；内核 `OnceCell` 不可重置，重复 init 是"重建 objset 破坏数据"语义。
+  - 描述：2026-09-06 B08-14 迁移 hvfs_persist_test 时发现。内核 `HvfsData::init()` 重复调用时，`setup_zil_datasets → HvObjSet::init` 会**清空 root dataset 的 objset**（[hvfs_data.rs:275](../../../src/kernel/services/fs/hvfs/hvfs_data.rs#L275) `datasets[0].init(0)`），已写文件随后 open 返回 FileNotFound。原测试版 mock 的 `HVFS_DATA` 为 `Mutex<Option<Box>>` 可重置，重新 init 是"干净重置"语义；内核 `OnceCell` 不可重置，重复 init 是"重建 objset 破坏数据"语义。
   - 方案：登记为内核侧语义问题待评估——`HvObjSet::init` 为一次性初始化设计，重复 init 重建是当前行为；若"重复 init 应幂等保留数据"是期望语义，需内核侧评估（如 init 前检查已有数据）。hvfs_persist_test 已按当前行为断言（Phase 3 验证"重复 init 可安全调用 + 旧文件不可读"并注释记录）。
   - 状态：[X] (2026-09-08 随 J-03 方案 C 实施关闭：①init 幂等化（重复 init no-op，数据保留，G-10 灾难路径消除）；②新增 `HvfsData::reset()` 显式重建（供栏栈恢复钩子）；③hvfs_reset 空壳实装为调 reset()；④hvfs_persist_test Phase 3 断言更新为"重复 init 幂等 + 数据保留"。验证：host-tests 749 passed + QEMU kernel_test 472 全绿。明细见 J-03 状态)

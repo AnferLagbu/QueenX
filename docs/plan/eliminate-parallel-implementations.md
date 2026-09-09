@@ -1,6 +1,6 @@
 # 消除 host-tests 平行实现（内核源码 host 可编译根治）
 
-> 用户决策：直接上路线 C（内核 crate 增加 `host-test` feature + framework std 桩），让 host-tests 直接引用内核 services 真实源码，彻底消除全部 7 处平行实现（hvfs 被测对象 / dma_stream / buddy / capability / checksum / sha256 / framekernel_bench 复刻）。来源：[audit-fix-08](./audit-fix-08-user-build-docs.md) H.3.6 P0-26 + H.3.7 P0-27 相关条目。
+> 用户决策：直接上路线 C（内核 crate 增加 `host-test` feature + framework std 桩），让 host-tests 直接引用内核 services 真实源码，彻底消除全部 7 处平行实现（hvfs 被测对象 / dma_stream / buddy / capability / checksum / sha256 / framekernel_bench 复刻）。来源：[audit-fix-08](./archive/audit-fix-08-user-build-docs.md) H.3.6 P0-26 + H.3.7 P0-27 相关条目。
 
 ## 工程计划 A: 内核 crate host-test 编译基建
 
