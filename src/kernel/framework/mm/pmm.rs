@@ -714,7 +714,9 @@ impl PhysicalMemoryManager {
         // host 测试已在 init_bitmap 前经 inject_meta_store 注入 VecMetaStore.
         // SAFETY: store 为单写者字段 (UnsafeCell), 本处是唯一生产写入点
         // (init_bitmap 单线程启动期; host 测试经 inject_meta_store 注入).
-        let store: &mut dyn MetaStore = unsafe {
+        // 方案 B (2026-09-09): MetaStoreImpl 为具体类型, 静态分发可内联 —
+        // 不用 `dyn` 强转 trait object, init 路径同样零 vtable (观察项修复).
+        let store: &mut MetaStoreImpl = unsafe {
             let slot = &mut *self.store.get();
             #[cfg(not(any(test, feature = "host-test")))]
             if slot.is_none() {
