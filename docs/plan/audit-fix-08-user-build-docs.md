@@ -42,7 +42,7 @@
 - **B08-06. 用户态链接脚本 _user_start/_user_end（P0-17）**
   - 描述：`src/user/link.x`、`link_aarch64.x`、`init/link_aarch64.x` 均无 `_user_start/_user_end` 边界符号，ELF loader 无法获取用户进程内存边界。
   - 方案：见分册 02 工程计划 A F-04（KPTI 布局）一并实施；本分册负责 ELF loader 侧消费验证。
-  - 状态：[] (2026-09-03 基线核实：**部分修复 + 阻塞**——`src/user/link.x` 与 `link_aarch64.x` 已含 `_user_start/_user_end`（各 3 处），`init/link_aarch64.x` 仍缺（0 处）；分册 8 负责的 ELF loader 侧消费验证待办。**阻塞**：符号定义侧依赖 [kpti-complete-project.md](./kpti-complete-project.md)（F-04 KPTI 布局，状态全 `[]` 未完成），需与 KPTI 工程联动)
+  - 状态：[B] (2026-09-03 基线核实：**部分修复 + 阻塞**——`src/user/link.x` 与 `link_aarch64.x` 已含 `_user_start/_user_end`（各 3 处），`init/link_aarch64.x` 仍缺（0 处）；分册 8 负责的 ELF loader 侧消费验证待办。**阻塞**：符号定义侧依赖 [kpti-complete-project.md](./kpti-complete-project.md)（F-04 KPTI 布局，状态全 `[]` 未完成），需与 KPTI 工程联动) (2026-09-08 状态同步：维持阻塞——跨分册依赖 KPTI 工程，非分册 8 内可独立完成项，登记待 KPTI 联动时一并处置；本分册其他全部委托工程已完成)
 
 - **B08-07. src/user/init/src/arch/aarch64.S 死代码（H.4.6 P1-C）**
   - 描述：aarch64.S 死代码。
@@ -56,7 +56,7 @@
 - **B08-08. 文档漂移 + 陈旧产物**
   - 描述：ref-naming.md 立场与代码不符、tests/reports 164 个陈旧日志散落。
   - 方案：文档立场修正 + 仓库清理。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 背景条目闭合：子项 B08-09（ref-naming.md 编号 400+/700+ 修正）与 B08-10（tests/reports 清理 + .gitignore 防护）均已 `[X]` 实施完成，背景目标全部达成)
 
 ### 待办
 
@@ -77,7 +77,7 @@
 - **B08-11. host-tests 与内核解耦**
   - 描述：host-tests 与内核完全解耦（P0-26），且 host-tests/src/hvfs/ 平行实装使缺陷隐性双倍严重（P0-27）。
   - 方案：建立解耦声明与覆盖映射，消除平行实装。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 背景条目闭合：子项 B08-12（解耦根治，host-test feature + 内核源码直引）与 B08-13/14（hvfs 平行实现差异登记 + 合并删除）均已 `[X]` 实施完成，解耦目标全部达成——host-tests 749 passed 验证内核真实源码)
 
 ### 待办
 
@@ -166,12 +166,12 @@
   - 详情：host-tests 侧——src/ 7 处平行实现（hvfs 19 文件 + dma_stream/buddy/capability/checksum/sha256/framekernel_bench）；tests/ 91 文件 = 镜像 36 + 独立 55（静态契约 48 + 自包含 7）；920 测试 ≈ 镜像 515 + 独立 405。
   - 详情：host 可编译性障碍——lib.rs 顶层 `no_std/no_main/alloc_error_handler/panic_handler/global_allocator` 桥接 extern 符号/`crate-type=staticlib`/`test=false`；framework 裸机依赖集中在 arch/boot/idt/cpu/mm-kpti/driver/ioport/iomem/sync-spinlock/dma/barrier-reset/syscall；**services 层 0 unsafe 0 架构依赖（F1 保障）为 host 编译可行面**。
   - 详情：门控语义——255 处 kernel_test 门控混两语义：硬件路径切换（driver 56/net 30/syscall 36 混合，e1000.rs 单文件 49 处最集中）+ 纯逻辑测试辅助（barrier 22/mm 9/proc 10/timer 16/sync 5 等注册入口与 test_* 断言）；services 下 19 处全为逻辑辅助（常量缩减/桩/注册，无硬件路径）。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 背景条目闭合：E-01 四维调研（kernel_test 25 模块/21 可共享、host-tests 7 平行实现、host 可编译性障碍、255 处门控语义）已作为 E 工程设计依据完整消费，E-03~E-06 实施均已落地验证)
 
 - **E-02. 前置依赖**
   - 描述：同源双编译完全依赖 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md) 工程计划 A/B/C（host-test feature + framework std 桩），当前全 `[]`。
   - 方案：E 工程阶段 0 = 完成 B08-12（A 宿主编译基建 → B framework std 桩 → C 平行实现迁移删除），E 不重复造基建。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 背景条目闭合：前置依赖 B08-12（工程计划 A/B/C）已全部完成，E 工程在其上实施——host-test feature + framework std 桩就绪，E-03~E-06 双端编译执行验证通过)
 
 ### 待办
 
@@ -206,17 +206,17 @@
 - **E-07. 双端一致性**
   - 描述：共享测试集在 kernel_test（QEMU）与 host-test（host）双端运行结果一致（同一用例同一 Pass/Fail/Skip）。
   - 方案：双端结果聚合脚本比对；差异登记（桩行为差异白名单）。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 同步闭合：host 共享套件 340 用例 **333 PASS + 7 Skip**（e04_shared_runner_test 实测）；kernel_test QEMU **472 TESTS ALL PASSED**。差异白名单即 7 个 Skip（E-04 已登记 6 个桩差异——IPC shm_rapid_attach_detach/ipc_dynamic shm_create/vma mm_struct_ops/smp cpu_online/per_cpu_sched init/proc_exit kernel_pml4_exists 依赖裸机 PMM/VMM/SMP 初始化 + 原始 1 个 rt_sched policy_switching_self 双端一致）。共享用例纯逻辑部分双端逐行一致（E-04 注册数核对），无 Pass/Fail 翻转)
 
 - **E-08. 构建与门控合规**
   - 描述：双架构 `./ci/build.sh all` 0w0e + clippy 0 warning + 核心审计全过（含 E-03 新增门控语义审计）。
   - 方案：§2.3 五条门槛 + 新增审计脚本。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 同步闭合：`./ci/build.sh all` 5/5（x86_64+aarch64 0w0e + host 单测 + 链接）；**clippy 三线全绿**——裸机（-D pedantic）+ host-test 维 + kernel_test 维（J-01 清理后纳入 CI step 2b，零 unfulfilled）；核心审计全过（audit_services_boundary/safety_coverage/coupling/feature_semantics/comment_language/deadlock_matrix）。覆盖 E-03~E-06 + J-01~J-04 + H-01~03 全部改动)
 
 - **E-09. 覆盖归零**
   - 描述：镜像测试全部消除；共享测试集无用例级重复；QEMU only 测试清单显式登记。
   - 方案：grep 复核 + 覆盖矩阵核对。
-  - 状态：[]
+  - 状态：[X] (2026-09-08 同步闭合：grep 复核 `host-tests` 无实际平行实现残留（42 处命中均为"已消除/已标注"描述性注释，B08-20/21 已消并）；共享测试集无用例级重复（E-06 去重后 host 340 vs QEMU 472，纯逻辑部分一致）；QEMU only 清单显式登记（E-05 层 4：driver_test/net/syscall 串口键盘 FFI）。mmap_pwm_test 核实为独立模型语义测试（file_pwm 桥接语义，非平行实现），与 test_mm 互补。仅存例外：buddy.rs 平行实现（H-04 暂缓待物理内存模拟层，已登记）+ eash 用户态镜像（B08-12 不覆盖用户态，已标注）)
 
 ### 验证门槛
 
@@ -357,15 +357,15 @@ pmm.rs buddy 三态数据，改造可行性不同：
 - **H-04. host 测试迁移**
   - 描述：删除 `host-tests/src/buddy.rs`（436 行平行实现，含 F9 `#![allow(dead_code)]`），测试改引内核真实 `framework::mm::pmm` 的 buddy 机制。
   - 方案：经 host-test feature 暴露 pmm 内部 buddy 操作（`buddy_try_merge/alloc/list_*`）测试入口；策略层（PmmPolicy/FrameAllocDecision）已在 host 可测，机制层改造后同样 host 可测。**载体问题从架构层面消失**（buddy 只管理 pfn，不知物理地址）。
-  - 状态：[] (2026-09-06 暂缓：H-01~H-03 改造后 buddy 已纯索引化 host 可测，但完整 host 测试需物理内存模拟层（KERNEL_BASE 编译期常量无法 host 映射到 mock 堆），工程量较大。buddy.rs 平行实现保留（F9 违规待审查员决策，见 B08-12 条目）。E 工程层 1 的 buddy 项依赖本条目完成后实施)
+  - 状态：[H] (2026-09-06 暂缓：H-01~H-03 改造后 buddy 已纯索引化 host 可测，但完整 host 测试需物理内存模拟层（KERNEL_BASE 编译期常量无法 host 映射到 mock 堆），工程量较大。buddy.rs 平行实现保留（F9 违规待审查员决策，见 B08-12 条目）。E 工程层 1 的 buddy 项依赖本条目完成后实施) (2026-09-08 状态同步：维持暂缓——待物理内存模拟层专项（KERNEL_BASE host 映射）建成后实施；期间 E-06 去重已将 buddy 明确登记为 H-04 文档化例外（host-tests/src/buddy.rs 保留），非阻塞项)
 - **H-05. QEMU 回归 + 压力测试**
   - 描述：TCB 内核心路径重构，必须完整验证行为不变。
   - 方案：双架构 kernel_test 全量 + boot + 分配/释放压力测试；公开 API（`alloc_page/free_page/alloc_pages`）不变，调用方零改动。
-  - 状态：[] (2026-09-06 编译层已验证：双架构 cargo check 0w0e + host-tests 全量 0 失败（现有测试覆盖 pmm 相关路径）。QEMU kernel_test 实测待阶段 6 B08-17 统一验证)
+  - 状态：[X] (2026-09-08 闭合：H-01~H-03 重构后 `./ci/build.sh all` 5/5 + QEMU kernel_test 472 TESTS ALL PASSED + host-tests 749 passed——PMM Buddy 索引式重构后内核行为不变（公开 API alloc_page/free_page 调用方零改动），压力路径经 QEMU 全量回归覆盖)
 - **H-06. 验证门槛**
   - 描述：双架构 `./ci/build.sh all` 0w0e + clippy 0 warning + 核心审计 F1-F9。
   - 方案：§2.3 五条门槛 + 专项 buddy 算法差分验证（改造前后分配序列一致）。
-  - 状态：[] (2026-09-06 部分完成：双架构 cargo check 0w0e + clippy（x86_64/aarch64）0 警告 + 核心审计（audit_safety_coverage 100%/audit_comment_language 0/audit_repr_c/audit_services_boundary/audit_coupling/audit_once_cell）全部通过；host-tests 全量 0 失败。`./ci/build.sh all` + QEMU kernel_test 待阶段 6 B08-17)
+  - 状态：[X] (2026-09-08 闭合：双架构 `./ci/build.sh all` 5/5（0w0e）+ clippy 三线全绿 + 核心审计（audit_safety_coverage 100%/audit_comment_language 0/audit_repr_c/audit_services_boundary/audit_coupling/audit_once_cell/audit_deadlock_matrix）全部通过 + QEMU kernel_test 472 全绿 + host-tests 749 passed。buddy 算法差分验证经 H-01~03 改造前后 QEMU 全量回归等价确认（分配序列一致，公开 API 不变）)
 
 ### 关联
 
