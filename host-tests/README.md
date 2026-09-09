@@ -108,15 +108,14 @@ criterion_main!(benches);
 
 ## 测试分类索引
 
-### 单元测试 (5 模块, 内联)
+### 单元测试 (1 模块, 内联)
 
 | 模块 | 内容 | 位置 |
 |------|------|------|
-| `buddy` | 伙伴分配器算法 | `src/buddy.rs` |
-| `capability` | 能力位矩阵 | `src/capability.rs` |
-| `checksum` | Fletcher2/4 / SHA-256 / EdonR | `src/checksum.rs` |
-| `sha256` | SHA-256 纯算法 | `src/sha256.rs` |
 | `dma_stream` | DMA 状态机 + 校验 | `src/dma_stream.rs` |
+
+> H-04 (2026-09-09): `buddy` 平行实现已删除 — buddy 测试移至集成测试
+> `pmm_buddy_host_test.rs` (经 `MetaStore` 注入 `VecMetaStore` 驱动内核真实 pmm).
 
 ### 集成测试 (按 scope 分类)
 
@@ -275,7 +274,10 @@ make test-host
 cargo test -p queenx-host-tests --test vfs_close_atomic_test
 
 # 跑单个单元测试
-cargo test -p queenx-host-tests --lib buddy
+cargo test -p queenx-host-tests --lib dma_stream
+
+# 跑 PMM buddy host 集成测试 (H-04)
+cargo test -p queenx-host-tests --test pmm_buddy_host_test
 
 # 跑特定测试函数
 cargo test -p queenx-host-tests --test net_socket_wait_queue_test socket_wait_queue_basic

@@ -9,10 +9,6 @@
 //! - `fsx`              — 文件系统一致性测试工具
 //!
 //! ### 2. 单元测试 (内联在各源文件 `#[cfg(test)] mod tests`)
-//! - `buddy`       — 伙伴分配器 (平行实现, 内核 pmm host 不可测, 保留)
-//! - `capability`  — 能力位矩阵 (改引内核 credo::policy)
-//! - `checksum`    — 校验和 (改引内核 hvfs::checksum/bp)
-//! - `sha256`      — SHA-256 (改引内核 credo::sha256)
 //! - `dma_stream`  — DMA 状态机 (改引内核 dma_buf)
 //!
 //! ## B08-12/B08-14 迁移 (2026-09-06)
@@ -20,6 +16,10 @@
 //! `queenx = { path = "../src/rust", features = ["host-test"] }` 直接引用内核
 //! 真实源码 (services/framework host-test 暴露面). 详见 docs/plan/
 //! eliminate-parallel-implementations.md.
+//!
+//! ## H-04 迁移 (2026-09-09)
+//! `buddy` 平行实现已删除 — buddy 测试移至集成测试 `tests/pmm_buddy_host_test.rs`,
+//! 经 `MetaStore` 载体注入 `VecMetaStore` 直接驱动内核真实 `framework::mm::pmm`.
 //!
 //! ## 集成测试 (Cargo 自动发现)
 //! `tests/` 目录下的每个 `.rs` 文件被 Cargo 视为独立测试二进制, 不在
@@ -36,7 +36,6 @@
 #![allow(clippy::explicit_counter_loop)]
 
 // ── 单元测试载体模块 (内联 #[cfg(test)] mod tests) ──
-mod buddy;
 mod dma_stream;
 
 // ── 公共库代码 (供 tests/ 与 bin/ 引用) ──

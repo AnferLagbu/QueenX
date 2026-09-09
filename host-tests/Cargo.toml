@@ -10,11 +10,10 @@ authors = ["Anfer"]
 # 命名规范: <scope>_<feature>_<kind>_test.rs
 #
 # 单元测试 (unit tests) 内联于 src/*.rs 的 #[cfg(test)] mod tests:
-# - src/buddy.rs       — 伙伴分配器
-# - src/capability.rs  — 能力位矩阵
-# - src/checksum.rs    — Fletcher2/4 / SHA-256 / EdonR
-# - src/sha256.rs      — SHA-256 纯算法
 # - src/dma_stream.rs  — DMA 状态机 + 校验
+#
+# H-04 (2026-09-09): src/buddy.rs 平行实现已删除, buddy 测试移至
+# tests/pmm_buddy_host_test.rs (经 MetaStore 注入 VecMetaStore 驱动内核 pmm).
 #
 # 性能基准 (binary, 通过 bin/ 入口运行):
 # - src/bin/framekernel_bench.rs 调用 lib::framekernel_bench::run_all() 输出 JSON

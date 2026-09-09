@@ -22,6 +22,7 @@ macro_rules! klog_pmm {
 
 use super::{KERNEL_BASE, MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr};
 use crate::kernel::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
+use alloc::boxed::Box;
 use core::cell::{Cell, UnsafeCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -100,241 +101,6 @@ pub(crate) struct FreeIndex {
 // 封装在这里.  外层 `PhysicalMemoryManager` 方法只调用
 // safe 包装器, 使 buddy 分配算法本身保持 safe Rust.
 pub(crate) mod raw {
-    use super::{AtomicU32, FreeIndex, MAX_BUDDY_ORDER, NonNull, Ordering};
-
-    // ---- FREE_LINKS 索引式链表 safe 包装器 ----
-    // SAFETY 不变式: links 指针在 init_bitmap 后有效; idx < total_pages
-    pub struct FreeIndexRef {
-        ptr: *mut FreeIndex,
-    }
-
-    impl FreeIndexRef {
-        /// # Safety
-        /// - `ptr` 必须指向合法的 `FREE_LINKS` 数组
-        /// - 使用期间必须持有 PMM 锁
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub unsafe fn new_unchecked(ptr: *mut FreeIndex) -> Self {
-            Self { ptr }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn read_prev(&self, idx: usize) -> u64 {
-            // SAFETY: 调用方保证 idx < total_pages; 读 FREE_LINKS[idx].prev (PMM 锁持有)
-            unsafe { (*self.ptr.add(idx)).prev }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn read_next(&self, idx: usize) -> u64 {
-            // SAFETY: 调用方保证 idx < total_pages; 读 FREE_LINKS[idx].next (PMM 锁持有)
-            unsafe { (*self.ptr.add(idx)).next }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn set_prev(&self, idx: usize, p: u64) {
-            // SAFETY: 调用方保证 idx < total_pages; 写 FREE_LINKS[idx].prev (PMM 锁持有)
-            unsafe {
-                (*self.ptr.add(idx)).prev = p;
-            }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn set_next(&self, idx: usize, p: u64) {
-            // SAFETY: 调用方保证 idx < total_pages; 写 FREE_LINKS[idx].next (PMM 锁持有)
-            unsafe {
-                (*self.ptr.add(idx)).next = p;
-            }
-        }
-    }
-
-    // ---- Buddy 元数据 safe 包装器 ----
-    // SAFETY 不变式: meta 指针在 init_bitmap 后有效; idx < total_pages
-    pub struct MetaRef {
-        ptr: *mut u8,
-    }
-
-    impl MetaRef {
-        /// # Safety
-        /// - `ptr` 必须指向合法的 buddy 元数据数组
-        /// - 使用期间必须持有 PMM 锁
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub unsafe fn new_unchecked(ptr: *mut u8) -> Self {
-            Self { ptr }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn read(&self, idx: usize) -> u8 {
-            // SAFETY: 调用方保证 idx < total_pages, ptr 合法
-            unsafe { *self.ptr.add(idx) }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn write(&self, idx: usize, val: u8) {
-            // SAFETY: 调用方保证 idx < total_pages, ptr 合法
-            unsafe {
-                *self.ptr.add(idx) = val;
-            }
-        }
-    }
-
-    // ---- Bitmap safe 包装器 ----
-    // SAFETY 不变式: bitmap 指针在 init_bitmap 后有效; word < bitmap_size
-    pub struct BitmapRef {
-        ptr: NonNull<u32>,
-    }
-
-    impl BitmapRef {
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn new(ptr: NonNull<u32>) -> Self {
-            Self { ptr }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn set_bit(&self, bit: usize, bitmap_size: usize) {
-            let word = bit / 32;
-            if word < bitmap_size {
-                // SAFETY: word < bitmap_size guarantees valid access
-                unsafe {
-                    let p = self.ptr.as_ptr().add(word) as *const AtomicU32;
-                    (*p).fetch_or(1u32 << (bit % 32), Ordering::Relaxed);
-                }
-            }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn clear_bit(&self, bit: usize, bitmap_size: usize) {
-            let word = bit / 32;
-            if word < bitmap_size {
-                // SAFETY: word < bitmap_size guarantees valid access
-                unsafe {
-                    let p = self.ptr.as_ptr().add(word) as *const AtomicU32;
-                    (*p).fetch_and(!(1u32 << (bit % 32)), Ordering::Relaxed);
-                }
-            }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn test_bit(&self, bit: usize, bitmap_size: usize) -> bool {
-            let word = bit / 32;
-            if word < bitmap_size {
-                // SAFETY: word < bitmap_size guarantees valid access
-                unsafe {
-                    let p = self.ptr.as_ptr().add(word) as *const AtomicU32;
-                    (*p).load(Ordering::Relaxed) & (1u32 << (bit % 32)) != 0
-                }
-            } else {
-                false
-            }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn count_free(&self, bitmap_size: usize) -> u64 {
-            let mut free: u64 = 0;
-            for w in 0..bitmap_size {
-                // SAFETY: w < bitmap_size guarantees valid access
-                unsafe {
-                    let p = self.ptr.as_ptr().add(w) as *const AtomicU32;
-                    free += u64::from((!(*p).load(Ordering::Relaxed)).count_ones());
-                }
-            }
-            free
-        }
-    }
-
-    // ---- Buddy heads safe 包装器 ----
-    // SAFETY 不变式: buddy_heads 仅在 PMM 锁保护下访问
-    // H-01 (2026-09-06): 链表头改存 pfn (u64), 哨兵 = SENTINEL
-    pub struct HeadsRef {
-        ptr: *mut [u64; MAX_BUDDY_ORDER as usize + 1],
-    }
-
-    impl HeadsRef {
-        /// # Safety
-        /// - `ptr` 必须指向合法的 `buddy_heads` 数组
-        /// - 使用期间必须持有 PMM 锁
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub unsafe fn new_unchecked(ptr: *mut [u64; MAX_BUDDY_ORDER as usize + 1]) -> Self {
-            Self { ptr }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn head(&self, order: u8) -> u64 {
-            // SAFETY: order <= MAX_BUDDY_ORDER, ptr valid under lock
-            unsafe { (*self.ptr)[order as usize] }
-        }
-
-        #[inline(always)]
-        #[expect(
-            clippy::inline_always,
-            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-        )]
-        pub fn set_head(&self, order: u8, pfn: u64) {
-            // SAFETY: order <= MAX_BUDDY_ORDER, ptr 持锁时合法
-            unsafe {
-                (*self.ptr)[order as usize] = pfn;
-            }
-        }
-    }
-
     /// 清零一段内存.
     ///
     /// # Safety
@@ -362,7 +128,402 @@ pub(crate) mod raw {
     }
 }
 
-use raw::{BitmapRef, FreeIndexRef, HeadsRef, MetaRef};
+// ============================================================================
+// H-04 (2026-09-09): MetaStore — 内存元数据载体统一访问接口
+//
+// buddy 分配器对 3 类外部内存载体 (bitmap / buddy_meta / FREE_LINKS) 与
+// 链表头 (buddy_heads) 的统一抽象访问. 生产实现 `RawMetaStore` 基于
+// `phys + KERNEL_BASE` 裸指针 (行为与 H-04 改造前一致); host 测试实现
+// `VecMetaStore` 基于 `Vec<u8>`/`Vec<u64>` 堆载体 (构造注入), 使
+// init_bitmap 与全部 buddy 算法仅一份代码, 无测试/生产分叉
+// (B08-12 路线 C 核心).
+//
+// `buddy_heads` 是 `PhysicalMemoryManager` 结构体内部字段: 生产 `RawMetaStore`
+// 构造时接收该字段指针 (init_bitmap 单线程启动期创建, self 不移动,
+// buddy 就绪后仅在 PMM 锁下访问, 故指针稳定); host 测试 `VecMetaStore`
+// 以 `Vec<u64>` 惰性模拟 (初始 SENTINEL, 与生产初始态一致).
+// ============================================================================
+
+/// 内存元数据载体接口 — buddy 分配器对 bitmap / buddy_meta / FREE_LINKS 的统一访问
+///
+/// # 实现
+/// - [`RawMetaStore`]: 生产实现, 基于 `phys + KERNEL_BASE` 裸指针 (行为不变)
+/// - [`VecMetaStore`]: host 测试实现, 基于 `Vec<u8>` 堆载体 (构造注入)
+///
+/// # 安全
+/// 所有读写方法都要求调用方持有 PMM 锁 (buddy 算法持锁执行);
+/// `setup_*` 仅在 init_bitmap 单线程启动期调用.
+///
+/// # Send/Sync
+/// 本 trait 不声明 `Send + Sync` 上界: 载体实现 (含 RefCell 的
+/// `VecMetaStore`) 的并发安全性由 `PhysicalMemoryManager` 的
+/// `unsafe impl Sync` (PMM 锁互斥保证) 承担.
+pub trait MetaStore {
+    /// 预置 bitmap 载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
+    fn setup_bitmap(&mut self, phys: u64, bytes: usize);
+    /// 预置 buddy_meta 载体: 填充 `BUDDY_ALLOCATED` (0xFF) 并记录区段
+    fn setup_meta(&mut self, phys: u64, bytes: usize);
+    /// 预置 FREE_LINKS 载体: 填充 0xFF (=SENTINEL) 并记录区段
+    fn setup_links(&mut self, phys: u64, bytes: usize);
+
+    /// 置位 bitmap 第 `bit` 位 (载体未就绪/越界时静默跳过)
+    fn bitmap_set(&self, bit: usize);
+    /// 清位 bitmap 第 `bit` 位 (载体未就绪/越界时静默跳过)
+    fn bitmap_clear(&self, bit: usize);
+    /// 测试 bitmap 第 `bit` 位 (越界返回 false)
+    fn bitmap_test(&self, bit: usize) -> bool;
+    /// 统计 bitmap 空闲位数 (清零位个数)
+    fn bitmap_count_free(&self) -> u64;
+
+    /// 读 buddy_meta[idx] (0xFF=已分配, 0..=MAX_BUDDY_ORDER=空闲块头阶数)
+    fn meta_read(&self, idx: usize) -> u8;
+    /// 写 buddy_meta[idx]
+    fn meta_write(&self, idx: usize, val: u8);
+
+    /// 读 FREE_LINKS[idx].prev (存前驱块头 pfn, SENTINEL=无前驱)
+    fn links_read_prev(&self, idx: usize) -> u64;
+    /// 读 FREE_LINKS[idx].next (存后继块头 pfn, SENTINEL=无后继)
+    fn links_read_next(&self, idx: usize) -> u64;
+    /// 写 FREE_LINKS[idx].prev
+    fn links_set_prev(&self, idx: usize, val: u64);
+    /// 写 FREE_LINKS[idx].next
+    fn links_set_next(&self, idx: usize, val: u64);
+
+    /// 读第 `order` 阶空闲链表头 (存块头 pfn, SENTINEL=空链表)
+    fn heads_get(&self, order: u8) -> u64;
+    /// 写第 `order` 阶空闲链表头 (存块头 pfn)
+    fn heads_set(&self, order: u8, pfn: u64);
+}
+
+/// 生产 MetaStore 实现 — 基于 `phys + KERNEL_BASE` 裸指针
+///
+/// 与 H-04 改造前的行为完全一致: bitmap 走 AtomicU32 位操作,
+/// buddy_meta / FREE_LINKS 走裸指针读写. 仅在 init_bitmap 中构造
+/// (buddy 就绪后指针固定, 之后仅在 PMM 锁下访问).
+pub struct RawMetaStore {
+    /// bitmap 段虚拟地址 (u32 word 数组, 原子位操作)
+    bitmap: Option<NonNull<u32>>,
+    /// bitmap 长度 (u32 word 数), 越界位操作静默跳过
+    bitmap_words: usize,
+    /// buddy_meta 段虚拟地址 (按页 1 字节)
+    meta: Option<NonNull<u8>>,
+    /// FREE_LINKS 段虚拟地址 (FreeIndex = prev/next 各 u64)
+    links: Option<NonNull<FreeIndex>>,
+    /// 宿主 `PhysicalMemoryManager.buddy_heads` 字段地址
+    /// (init_bitmap 单线程创建时传入, self 不移动, 锁保护下访问)
+    heads: *mut [u64; MAX_BUDDY_ORDER as usize + 1],
+}
+
+impl RawMetaStore {
+    pub const fn new(heads: *mut [u64; MAX_BUDDY_ORDER as usize + 1]) -> Self {
+        Self {
+            bitmap: None,
+            bitmap_words: 0,
+            meta: None,
+            links: None,
+            heads,
+        }
+    }
+}
+
+impl MetaStore for RawMetaStore {
+    fn setup_bitmap(&mut self, phys: u64, bytes: usize) {
+        let virt = (phys + KERNEL_BASE) as *mut u8;
+        // SAFETY: virt 由 init_bitmap 计算 (phys + KERNEL_BASE 内核映射区),
+        // bytes 为该区段长度, 区段已按页对齐且未他用.
+        unsafe { raw::zero_memory(virt, bytes) };
+        self.bitmap = NonNull::new(virt.cast::<u32>());
+        self.bitmap_words = bytes / 4;
+    }
+
+    fn setup_meta(&mut self, phys: u64, bytes: usize) {
+        let virt = (phys + KERNEL_BASE) as *mut u8;
+        // SAFETY: 同上; 0xFF 预置 = BUDDY_ALLOCATED (与 H-04 之前行为一致)
+        unsafe { raw::fill_memory(virt, BUDDY_ALLOCATED, bytes) };
+        self.meta = NonNull::new(virt);
+    }
+
+    fn setup_links(&mut self, phys: u64, bytes: usize) {
+        let virt = (phys + KERNEL_BASE) as *mut u8;
+        // SAFETY: 同上; 0xFF 字节填充 → 每个 u64 字段 = u64::MAX = SENTINEL (链表空态)
+        unsafe { raw::fill_memory(virt, 0xFF, bytes) };
+        self.links = NonNull::new(virt.cast::<FreeIndex>());
+    }
+
+    fn bitmap_set(&self, bit: usize) {
+        let Some(bmp) = self.bitmap else { return };
+        let word = bit / 32;
+        if word < self.bitmap_words {
+            // SAFETY: word < bitmap_words 保证访问有效; bmp 在 setup_bitmap 中建立
+            unsafe {
+                let p = bmp.as_ptr().add(word) as *const AtomicU32;
+                (*p).fetch_or(1u32 << (bit % 32), Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn bitmap_clear(&self, bit: usize) {
+        let Some(bmp) = self.bitmap else { return };
+        let word = bit / 32;
+        if word < self.bitmap_words {
+            // SAFETY: word < bitmap_words 保证访问有效; bmp 在 setup_bitmap 中建立
+            unsafe {
+                let p = bmp.as_ptr().add(word) as *const AtomicU32;
+                (*p).fetch_and(!(1u32 << (bit % 32)), Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn bitmap_test(&self, bit: usize) -> bool {
+        let Some(bmp) = self.bitmap else { return false };
+        let word = bit / 32;
+        if word < self.bitmap_words {
+            // SAFETY: word < bitmap_words 保证访问有效; bmp 在 setup_bitmap 中建立
+            unsafe {
+                let p = bmp.as_ptr().add(word) as *const AtomicU32;
+                (*p).load(Ordering::Relaxed) & (1u32 << (bit % 32)) != 0
+            }
+        } else {
+            false
+        }
+    }
+
+    fn bitmap_count_free(&self) -> u64 {
+        let Some(bmp) = self.bitmap else { return 0 };
+        let mut free: u64 = 0;
+        for w in 0..self.bitmap_words {
+            // SAFETY: w < bitmap_words 保证访问有效; bmp 在 setup_bitmap 中建立
+            unsafe {
+                let p = bmp.as_ptr().add(w) as *const AtomicU32;
+                free += u64::from((!(*p).load(Ordering::Relaxed)).count_ones());
+            }
+        }
+        free
+    }
+
+    fn meta_read(&self, idx: usize) -> u8 {
+        let Some(meta) = self.meta else {
+            // 载体未就绪: 返回已分配态 (保守, 阻止误合并)
+            return BUDDY_ALLOCATED;
+        };
+        // SAFETY: 调用方保证 idx < total_pages; meta 在 setup_meta 中建立 (buddy 就绪后)
+        unsafe { *meta.as_ptr().add(idx) }
+    }
+
+    fn meta_write(&self, idx: usize, val: u8) {
+        let Some(meta) = self.meta else { return };
+        // SAFETY: 调用方保证 idx < total_pages; meta 在 setup_meta 中建立 (buddy 就绪后)
+        unsafe {
+            *meta.as_ptr().add(idx) = val;
+        }
+    }
+
+    fn links_read_prev(&self, idx: usize) -> u64 {
+        let Some(links) = self.links else { return SENTINEL };
+        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        unsafe { (*links.as_ptr().add(idx)).prev }
+    }
+
+    fn links_read_next(&self, idx: usize) -> u64 {
+        let Some(links) = self.links else { return SENTINEL };
+        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        unsafe { (*links.as_ptr().add(idx)).next }
+    }
+
+    fn links_set_prev(&self, idx: usize, val: u64) {
+        let Some(links) = self.links else { return };
+        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        unsafe {
+            (*links.as_ptr().add(idx)).prev = val;
+        }
+    }
+
+    fn links_set_next(&self, idx: usize, val: u64) {
+        let Some(links) = self.links else { return };
+        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        unsafe {
+            (*links.as_ptr().add(idx)).next = val;
+        }
+    }
+
+    fn heads_get(&self, order: u8) -> u64 {
+        // SAFETY: heads 指针在构造时指向宿主 buddy_heads 字段 (init_bitmap
+        // 单线程创建, self 不移动); order <= MAX_BUDDY_ORDER; 调用方持锁.
+        unsafe { (*self.heads)[order as usize] }
+    }
+
+    fn heads_set(&self, order: u8, pfn: u64) {
+        // SAFETY: 同上, 锁保护下写宿主 buddy_heads 字段.
+        unsafe {
+            (*self.heads)[order as usize] = pfn;
+        }
+    }
+}
+
+/// host 测试 MetaStore 实现 — 基于 `Vec<u8>` 堆载体 (构造注入)
+///
+/// bitmap / buddy_meta / FREE_LINKS 分别用独立 Vec 模拟, `setup_*` 时创建
+/// (与生产载体等长), 读写为纯内存操作, 单线程测试语义.
+/// 仅 `host-test` / `test` 配置下编译, 生产二进制不含 (避免死代码).
+#[cfg(any(test, feature = "host-test"))]
+use core::cell::RefCell;
+
+#[cfg(any(test, feature = "host-test"))]
+pub struct VecMetaStore {
+    /// bitmap 载体 (字节数组模拟 u32 word, 小端)
+    bitmap: RefCell<Option<Vec<u8>>>,
+    /// bitmap 长度 (u32 word 数), 越界位操作静默跳过
+    bitmap_words: usize,
+    /// buddy_meta 载体 (按页 1 字节)
+    meta: RefCell<Option<Vec<u8>>>,
+    /// FREE_LINKS 载体 (每项 16 字节 = prev/next 各 u64)
+    links: RefCell<Option<Vec<u8>>>,
+    /// buddy_heads 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
+    heads: RefCell<Vec<u64>>,
+}
+
+#[cfg(any(test, feature = "host-test"))]
+impl VecMetaStore {
+    pub const fn new() -> Self {
+        Self {
+            bitmap: RefCell::new(None),
+            bitmap_words: 0,
+            meta: RefCell::new(None),
+            links: RefCell::new(None),
+            heads: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "host-test"))]
+impl MetaStore for VecMetaStore {
+    fn setup_bitmap(&mut self, _phys: u64, bytes: usize) {
+        *self.bitmap.borrow_mut() = Some(vec![0u8; bytes]);
+        self.bitmap_words = bytes / 4;
+    }
+
+    fn setup_meta(&mut self, _phys: u64, bytes: usize) {
+        *self.meta.borrow_mut() = Some(vec![BUDDY_ALLOCATED; bytes]);
+    }
+
+    fn setup_links(&mut self, _phys: u64, bytes: usize) {
+        // 0xFF 字节填充 → 每 u64 = u64::MAX = SENTINEL (链表空态, 与生产一致)
+        *self.links.borrow_mut() = Some(vec![0xFFu8; bytes]);
+    }
+
+    fn bitmap_set(&self, bit: usize) {
+        let mut bmp = self.bitmap.borrow_mut();
+        let Some(b) = bmp.as_mut() else { return };
+        let word = bit / 32;
+        if word < self.bitmap_words {
+            let byte = word * 4 + (bit % 32) / 8;
+            b[byte] |= 1u8 << ((bit % 32) % 8);
+        }
+    }
+
+    fn bitmap_clear(&self, bit: usize) {
+        let mut bmp = self.bitmap.borrow_mut();
+        let Some(b) = bmp.as_mut() else { return };
+        let word = bit / 32;
+        if word < self.bitmap_words {
+            let byte = word * 4 + (bit % 32) / 8;
+            b[byte] &= !(1u8 << ((bit % 32) % 8));
+        }
+    }
+
+    fn bitmap_test(&self, bit: usize) -> bool {
+        let bmp = self.bitmap.borrow();
+        let Some(b) = bmp.as_ref() else { return false };
+        let word = bit / 32;
+        if word < self.bitmap_words {
+            let byte = word * 4 + (bit % 32) / 8;
+            b[byte] & (1u8 << ((bit % 32) % 8)) != 0
+        } else {
+            false
+        }
+    }
+
+    fn bitmap_count_free(&self) -> u64 {
+        let bmp = self.bitmap.borrow();
+        let Some(b) = bmp.as_ref() else { return 0 };
+        b.iter().map(|&x| u64::from((!x).count_ones())).sum()
+    }
+
+    fn meta_read(&self, idx: usize) -> u8 {
+        let meta = self.meta.borrow();
+        meta.as_ref()
+            .and_then(|m| m.get(idx))
+            .copied()
+            .unwrap_or(BUDDY_ALLOCATED)
+    }
+
+    fn meta_write(&self, idx: usize, val: u8) {
+        let mut meta = self.meta.borrow_mut();
+        if let Some(m) = meta.as_mut() {
+            if let Some(slot) = m.get_mut(idx) {
+                *slot = val;
+            }
+        }
+    }
+
+    fn links_read_prev(&self, idx: usize) -> u64 {
+        let links = self.links.borrow();
+        let Some(l) = links.as_ref() else { return SENTINEL };
+        let off = idx * 16;
+        if off + 8 <= l.len() {
+            u64::from_le_bytes(l[off..off + 8].try_into().expect("links prev"))
+        } else {
+            SENTINEL
+        }
+    }
+
+    fn links_read_next(&self, idx: usize) -> u64 {
+        let links = self.links.borrow();
+        let Some(l) = links.as_ref() else { return SENTINEL };
+        let off = idx * 16 + 8;
+        if off + 8 <= l.len() {
+            u64::from_le_bytes(l[off..off + 8].try_into().expect("links next"))
+        } else {
+            SENTINEL
+        }
+    }
+
+    fn links_set_prev(&self, idx: usize, val: u64) {
+        let mut links = self.links.borrow_mut();
+        let Some(l) = links.as_mut() else { return };
+        let off = idx * 16;
+        if off + 8 <= l.len() {
+            l[off..off + 8].copy_from_slice(&val.to_le_bytes());
+        }
+    }
+
+    fn links_set_next(&self, idx: usize, val: u64) {
+        let mut links = self.links.borrow_mut();
+        let Some(l) = links.as_mut() else { return };
+        let off = idx * 16 + 8;
+        if off + 8 <= l.len() {
+            l[off..off + 8].copy_from_slice(&val.to_le_bytes());
+        }
+    }
+
+    fn heads_get(&self, order: u8) -> u64 {
+        self.heads
+            .borrow()
+            .get(order as usize)
+            .copied()
+            .unwrap_or(SENTINEL)
+    }
+
+    fn heads_set(&self, order: u8, pfn: u64) {
+        let mut h = self.heads.borrow_mut();
+        let idx = order as usize;
+        if h.len() <= idx {
+            // 惰性扩容: 未写过的阶保持 SENTINEL (与生产构造初始态一致)
+            h.resize(idx + 1, SENTINEL);
+        }
+        h[idx] = pfn;
+    }
+}
 
 /// 物理内存管理器 — Buddy 分配器
 ///
@@ -372,7 +533,7 @@ use raw::{BitmapRef, FreeIndexRef, HeadsRef, MetaRef};
 #[repr(C)]
 pub struct PhysicalMemoryManager {
     // ---- Bitmap (reserved 跟踪 + 统计) ----
-    bitmap: Cell<Option<NonNull<u32>>>,
+    /// bitmap 长度 (u32 word 数), count_free_pages 的尾部余位修正使用
     bitmap_size: Cell<usize>,
     mem_size: Cell<u64>,
     kernel_end: Cell<u64>,
@@ -390,12 +551,10 @@ pub struct PhysicalMemoryManager {
     total_frees: AtomicU64,
     failed_allocs: AtomicU64,
     // ---- Buddy 分配器 ----
-    /// 按页阶数元数据: 0xFF = 已分配, 0..9 = 空闲块头阶数
-    buddy_meta: Cell<Option<NonNull<u8>>>,
-    /// H-02 (2026-09-06): 索引式空闲链表关系数组 FREE_LINKS (长度 = total_pages,
-    /// 16 字节/项), 由 init_bitmap 分配; 哨兵 = SENTINEL (u64::MAX).
-    /// 存放方式与 buddy_meta 相同: Cell<Option<NonNull<u8>>> 存裸字节指针 (VA).
-    buddy_links: Cell<Option<NonNull<u8>>>,
+    /// H-04 (2026-09-09): 内存元数据载体 — 生产为 RawMetaStore (裸指针),
+    /// host 测试经 inject_meta_store 注入 VecMetaStore (Vec<u8> 堆载体).
+    /// init_bitmap 单线程启动期设置; buddy 就绪后仅在 PMM 锁下访问.
+    store: UnsafeCell<Option<Box<dyn MetaStore>>>,
     /// 索引式双向链表空闲块头 (存块头 pfn), 每个阶数一个; 空链表头 = SENTINEL
     buddy_heads: UnsafeCell<[u64; MAX_BUDDY_ORDER as usize + 1]>,
     /// B05-55: reserve 摘除块的暂存 (待位图置位后压回, 防止合并吞掉 reserve 区)
@@ -405,7 +564,7 @@ pub struct PhysicalMemoryManager {
 // SAFETY: PhysicalMemoryManager 使用 Cell/UnsafeCell 实现内部可变性.
 // 所有公开修改都通过 pmm_alloc_pages/pmm_free_pages 进行, 它们
 // 获取内部锁 (AtomicBool 自旋锁). 锁保证互斥, 多线程并发访问安全.
-// buddy_heads 仅在持锁时访问; bitmap/buddy_meta 仅在初始化时设置,
+// buddy_heads/store 仅在持锁时访问; bitmap_size 仅在初始化时设置,
 // SAFETY: PhysicalMemoryManager 含 UnsafeCell, 但初始化完成后只读.
 unsafe impl Sync for PhysicalMemoryManager {}
 // SAFETY: 同上, 初始化后只读, 无并发写风险.
@@ -414,7 +573,6 @@ unsafe impl Send for PhysicalMemoryManager {}
 impl PhysicalMemoryManager {
     pub const fn new() -> Self {
         Self {
-            bitmap: Cell::new(None),
             bitmap_size: Cell::new(0),
             mem_size: Cell::new(0),
             kernel_end: Cell::new(0),
@@ -428,14 +586,31 @@ impl PhysicalMemoryManager {
             total_allocs: AtomicU64::new(0),
             total_frees: AtomicU64::new(0),
             failed_allocs: AtomicU64::new(0),
-            buddy_meta: Cell::new(None),
-            buddy_links: Cell::new(None),
+            store: UnsafeCell::new(None),
             buddy_heads: UnsafeCell::new([SENTINEL; MAX_BUDDY_ORDER as usize + 1]),
             buddy_reserve_deferred: UnsafeCell::new(alloc::vec::Vec::new()),
         }
     }
 
     // ==================== 公开 API (不变) ====================
+
+    /// 注入 host 测试内存元数据载体 (`VecMetaStore`)
+    ///
+    /// 仅 `host-test` / `test` 配置编译, 生产二进制不含 (避免死代码, F9).
+    /// 必须在 `init_bitmap` 之前调用 — 之后 `init_bitmap` 将经该载体建立
+    /// bitmap / buddy_meta / FREE_LINKS 三区, 使 buddy 完整生命周期
+    /// (init_bitmap → alloc/free → 合并) 在 host 侧以同一份算法代码运行,
+    /// 无测试/生产分叉 (B08-12 路线 C 核心).
+    ///
+    /// # 安全
+    /// `store` 为单写者字段: 生产路径由 `init_bitmap` 创建 `RawMetaStore`,
+    /// host 测试经本方法注入 `VecMetaStore`; 二者只能取其一且只写入一次.
+    #[cfg(any(test, feature = "host-test"))]
+    pub fn inject_meta_store(&self, store: VecMetaStore) {
+        // SAFETY: 调用方保证在 init_bitmap 之前注入且仅注入一次;
+        // buddy 就绪后 store 为只读路径且均在 PMM 锁下访问 (见 meta_store).
+        unsafe { *self.store.get() = Some(Box::new(store)) };
+    }
 
     pub fn init(&self, mem_size: u64, kernel_end: u64) {
         self.mem_size.set(mem_size);
@@ -465,10 +640,14 @@ impl PhysicalMemoryManager {
         clippy::similar_names,
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
+    /// 初始化 buddy 元数据 (bitmap / buddy_meta / FREE_LINKS) 并建立空闲链表
+    ///
+    /// `reserved_after_kernel`: 内核镜像末尾之后额外预留的字节数 (向上取整到页),
+    /// 与内核镜像页一起标记为已用, 不可被分配.
+    ///
+    /// # Panics
+    /// 元数据载体 (`MetaStore`) 缺失时 panic — 生产路径在载体自动创建失败时可达
+    /// (理论上不可达, 见 init 前置); host 测试必须先 `inject_meta_store`.
     pub fn init_bitmap(&self, reserved_after_kernel: u64) {
         if self.initialized.load(Ordering::Acquire) {
             return;
@@ -489,27 +668,11 @@ impl PhysicalMemoryManager {
             .early_current
             .fetch_add(bitmap_bytes as u64, Ordering::Relaxed);
         let bitmap_aligned = (bitmap_phys + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let bitmap_virt = bitmap_aligned + KERNEL_BASE;
-
-        // SAFETY: bitmap_virt is phys_to_virt(PM) + KERNEL_BASE — valid kernel VA
-        unsafe {
-            raw::zero_memory(bitmap_virt as *mut u8, bitmap_bytes);
-        }
-
-        self.bitmap
-            .set(if let Some(ptr) = NonNull::new(bitmap_virt as *mut u32) {
-                Some(ptr)
-            } else {
-                klog_pmm!("[PMM] FATAL: bitmap null (0x{:X})", bitmap_virt);
-                return;
-            });
-        self.bitmap_size.set(bitmap_words);
 
         // ---- Buddy 元数据布局 (位于 bitmap 之后, 页对齐) ----
         let buddy_meta_bytes = total_pages;
         let buddy_meta_phys =
             (bitmap_aligned + bitmap_bytes as u64 + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let buddy_meta_virt = buddy_meta_phys + KERNEL_BASE;
         let buddy_meta_pages = buddy_meta_bytes.div_ceil(PAGE_SIZE as usize) as u64;
 
         // 将 early_current 推过 buddy 元数据
@@ -518,41 +681,12 @@ impl PhysicalMemoryManager {
             Ordering::Relaxed,
         );
 
-        // SAFETY: buddy_meta_virt = buddy_meta_phys + KERNEL_BASE — 合法的内核 VA
-        unsafe {
-            raw::fill_memory(
-                buddy_meta_virt as *mut u8,
-                BUDDY_ALLOCATED,
-                buddy_meta_bytes,
-            );
-        }
-
-        // 2026-07-02: turn 28 排查 test 86 hang (LTO 错位 PMM 字段).
-        // GDB dump 显示 do_alloc 内 `mov 0x8(%rsi), %rax` 触发 #PF,
-        // rsi 来自 buddy_heads 数组中的非法 FreeNode 指针 (0x7F80000
-        // 不在 heap 范围). 原因: init_bitmap 时 self.buddy_meta.set()
-        // LTO 错位到 buddy_heads 数组. 修复: 用 core::ptr::addr_of! 获取
-        // 真实字段地址, 强制编译器在 LTO 之前解析出正确偏移.
-        // SAFETY: 单线程启动期, 无并发写.
-        let nn = core::ptr::NonNull::new(buddy_meta_virt as *mut u8);
-        unsafe {
-            let meta_ptr: *mut Option<core::ptr::NonNull<u8>> =
-                core::ptr::addr_of!(self.buddy_meta) as *const _ as *mut _;
-            core::ptr::write_volatile(meta_ptr, nn);
-        }
-        klog_pmm!(
-            "[PMM] Buddy meta: {} B at 0x{:X}",
-            buddy_meta_bytes,
-            buddy_meta_virt
-        );
-
         // ---- FREE_LINKS 索引式链表布局 (位于 buddy 元数据之后, 页对齐) ----
         // H-02 (2026-09-06): 每个空闲块头项 16 字节 (prev/next 各 8 字节, 存 pfn),
         // 长度 = total_pages, 与 buddy_meta 同法从 early 区分配.
         let free_links_bytes = total_pages * 16;
         let free_links_phys =
             (buddy_meta_phys + buddy_meta_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-        let free_links_virt = free_links_phys + KERNEL_BASE;
         let free_links_pages = free_links_bytes.div_ceil(PAGE_SIZE as usize) as u64;
 
         // 将 early_current 推过 FREE_LINKS
@@ -561,24 +695,41 @@ impl PhysicalMemoryManager {
             Ordering::Relaxed,
         );
 
-        // SAFETY: free_links_virt = free_links_phys + KERNEL_BASE — 合法的内核 VA.
-        // 0xFF 字节填充 → 每个 u64 字段 = u64::MAX = SENTINEL, 即预置链表空态.
-        unsafe {
-            raw::fill_memory(free_links_virt as *mut u8, 0xFF, free_links_bytes);
-        }
-
-        // H-02: 同 buddy_meta, 用 addr_of! + write_volatile 防 LTO 字段错位.
-        // SAFETY: 单线程启动期, 无并发写.
-        let links_nn = core::ptr::NonNull::new(free_links_virt as *mut u8);
-        unsafe {
-            let links_ptr: *mut Option<core::ptr::NonNull<u8>> =
-                core::ptr::addr_of!(self.buddy_links) as *const _ as *mut _;
-            core::ptr::write_volatile(links_ptr, links_nn);
-        }
+        // H-04 (2026-09-09): 三区内存预置统一经 MetaStore 载体 —
+        // 生产自动创建 RawMetaStore (基于 phys + KERNEL_BASE 裸指针, 行为不变),
+        // host 测试已在 init_bitmap 前经 inject_meta_store 注入 VecMetaStore.
+        // SAFETY: store 为单写者字段 (UnsafeCell), 本处是唯一生产写入点
+        // (init_bitmap 单线程启动期; host 测试经 inject_meta_store 注入).
+        let store: &mut dyn MetaStore = unsafe {
+            let slot = &mut *self.store.get();
+            if slot.is_none() {
+                // SAFETY: 生产路径单线程启动期创建 RawMetaStore; heads 指针经
+                // UnsafeCell::get 指向宿主 buddy_heads 字段 (self 不移动, init_bitmap
+                // 后稳定, buddy 就绪后仅在 PMM 锁下访问); Box 堆分配在内核堆已就绪后
+                // (kmalloc init 先于 pmm_init_bitmap).
+                *slot = Some(Box::new(RawMetaStore::new(
+                    self.buddy_heads.get(),
+                )));
+            }
+            // 注入或新建必然成功 (slot 刚保证非 None); 原实现 bitmap_virt=0 的
+            // FATAL 分支在真实内核不可达 (KERNEL_BASE 映射地址恒非零).
+            slot.as_mut()
+                .expect("[PMM] meta store missing")
+                .as_mut()
+        };
+        store.setup_bitmap(bitmap_aligned, bitmap_bytes);
+        store.setup_meta(buddy_meta_phys, buddy_meta_bytes);
+        store.setup_links(free_links_phys, free_links_bytes);
+        self.bitmap_size.set(bitmap_words);
+        klog_pmm!(
+            "[PMM] Buddy meta: {} B at 0x{:X}",
+            buddy_meta_bytes,
+            buddy_meta_phys + KERNEL_BASE
+        );
         klog_pmm!(
             "[PMM] FREE_LINKS: {} B at 0x{:X} ({} pages)",
             free_links_bytes,
-            free_links_virt,
+            free_links_phys + KERNEL_BASE,
             free_links_pages
         );
 
@@ -1003,70 +1154,45 @@ impl PhysicalMemoryManager {
 
     // ==================== Bitmap 辅助函数 (统计 + reserved) ====================
 
-    // 2026-07-01 test 110 hang 修复: 防止 LTO 字段错位.
-    //
-    // dump 显示 set_bit 汇编 `cmp GLOBAL_PMM+0x1078(%rip),%rdx` 实际读
-    // failed_allocs 字段, 而非 bitmap_size 字段 (差 0x1060 字节).
-    // LTO 在 inline 时把 self.bitmap_size.get() 错位到 self.failed_allocs,
-    // 运行时 cmp 与 failed_allocs 实际值 (~0x3FF) 比较, 几乎总通过 jae,
-    // 导致巨大 page index 的 set_bit 不被跳过, 越界写入触发 #PF.
-    //
-    // B03-05 修复: 用 `core::ptr::addr_of!(self.bitmap_size)` 获取真实字段地址,
-    // 强制编译器在 LTO 之前解析出正确偏移, 消除 `p.add(1)` 硬编码假设.
-    // (与既有 buddy_meta_ref / buddy_heads_ref 修复模式一致)
+    /// 访问内存元数据载体 (buddy 就绪后必有; 未 init 时为 None)
+    ///
+    /// # 安全
+    /// store 仅在 init_bitmap (或 host 测试 inject_meta_store) 中写入一次,
+    /// 之后为只读路径, 且全部在 PMM 锁保护下访问.
+    #[inline]
+    fn meta_store(&self) -> Option<&dyn MetaStore> {
+        // SAFETY: store 单写者 (init_bitmap/inject), 读路径持有 PMM 锁
+        unsafe { (*self.store.get()).as_deref() }
+    }
+
+    // B03-05 背景: 2026-07-01 test 110 hang 修复 (LTO 字段错位) —
+    // 原实现从 self.bitmap_size 读取 word 数, LTO 在 inline 时错位到
+    // failed_allocs 字段导致越界写. H-04 后 bitmap word 数由载体内部
+    // 持有 (setup_bitmap 记录), 该 LTO 错位面整体消除.
     fn set_bit(&self, bit: usize) {
-        if let Some(bmp) = self.bitmap.get() {
-            // SAFETY: bitmap 已 init 时 self.bitmap_size 也是已 set 的有效值.
-            // addr_of! 保证读到真实字段, 不可被 LTO 错位.
-            // volatile read 防止任何 caching.
-            let bitmap_size = unsafe {
-                let field_ptr = core::ptr::addr_of!(self.bitmap_size);
-                // SAFETY: bitmap 已 init 时 self.bitmap_size 是已 set 的有效值;
-                // addr_of! 读到真实字段, Cell::get 提取内部 usize, volatile 防止 caching.
-                core::ptr::read_volatile(field_ptr).get()
-            };
-            BitmapRef::new(bmp).set_bit(bit, bitmap_size);
+        if let Some(store) = self.meta_store() {
+            store.bitmap_set(bit);
         }
     }
 
-    // B03-05: 同上 (见 set_bit 注释)
     fn clear_bit(&self, bit: usize) {
-        if let Some(bmp) = self.bitmap.get() {
-            // SAFETY: 同 set_bit, addr_of! 治根 + Cell::get + volatile read.
-            let bitmap_size = unsafe {
-                let field_ptr = core::ptr::addr_of!(self.bitmap_size);
-                core::ptr::read_volatile(field_ptr).get()
-            };
-            BitmapRef::new(bmp).clear_bit(bit, bitmap_size);
+        if let Some(store) = self.meta_store() {
+            store.bitmap_clear(bit);
         }
     }
 
-    // B03-05: 同上 (见 set_bit 注释)
     fn test_bit(&self, bit: usize) -> bool {
-        self.bitmap.get().map_or(false, |bmp| {
-            // SAFETY: 同 set_bit, addr_of! 治根 + Cell::get + volatile read.
-            let bitmap_size = unsafe {
-                let field_ptr = core::ptr::addr_of!(self.bitmap_size);
-                core::ptr::read_volatile(field_ptr).get()
-            };
-            BitmapRef::new(bmp).test_bit(bit, bitmap_size)
-        })
+        self.meta_store()
+            .map_or(false, |store| store.bitmap_test(bit))
     }
 
-    // B03-05: 同上 (见 set_bit 注释)
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     fn count_free_pages(&self) -> u64 {
         let total = self.info.get().total_pages as usize;
-        // SAFETY: bitmap 已 init 时 self.bitmap_size 有效; addr_of! 治根.
-        let bmp_size = unsafe {
-            let field_ptr = core::ptr::addr_of!(self.bitmap_size);
-            core::ptr::read_volatile(field_ptr).get()
-        };
         let free = self
-            .bitmap
-            .get()
-            .map_or(0, |bmp| BitmapRef::new(bmp).count_free(bmp_size));
+            .meta_store()
+            .map_or(0, MetaStore::bitmap_count_free);
         // 截断到 total (bitmap 在 total_pages 之外可能还有剩余位)
         let extra = (self.bitmap_size.get() * 32).saturating_sub(total) as u32;
         if extra > 0 {
@@ -1106,66 +1232,6 @@ impl PhysicalMemoryManager {
 
     // ==================== Buddy 分配器核心 ====================
 
-    #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    fn buddy_meta_ref(&self) -> Option<MetaRef> {
-        // 2026-07-02: turn 28 排查. LTO 错位 buddy_meta 字段访问.
-        // 用 core::ptr::addr_of! 获取真实字段地址, 防 LTO 错位.
-        // Cell<T> 是 repr(transparent), 指针 cast 到 T 安全.
-        let meta_field_ptr = core::ptr::addr_of!(self.buddy_meta);
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-        let buddy_meta: Option<core::ptr::NonNull<u8>> = unsafe {
-            core::ptr::read_volatile(meta_field_ptr as *const Option<core::ptr::NonNull<u8>>)
-        };
-        buddy_meta.map(|n| {
-            // SAFETY: buddy_meta 在 init_bitmap 中设置一次, 此后只读;
-            // 所有 buddy 操作都持有 PMM 锁.
-            unsafe { MetaRef::new_unchecked(n.as_ptr()) }
-        })
-    }
-
-    #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
-    )]
-    fn buddy_heads_ref(&self) -> HeadsRef {
-        // 2026-07-02: turn 28 排查. LTO 错位 buddy_heads 字段访问.
-        // 用 core::ptr::addr_of! 获取真实字段地址, 防 LTO 错位.
-        // UnsafeCell<T> 是 repr(transparent), 地址 = T 地址.
-        let field_addr = core::ptr::addr_of!(self.buddy_heads) as *const u8;
-        let heads_ptr: *mut [u64; MAX_BUDDY_ORDER as usize + 1] = field_addr as *mut _;
-        // SAFETY: buddy_heads 在 PMM 锁保护下访问; init_bitmap 之后稳定.
-        unsafe { HeadsRef::new_unchecked(heads_ptr) }
-    }
-
-    #[inline]
-    #[expect(
-        clippy::ptr_as_ptr,
-        reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
-    )]
-    fn buddy_links_ref(&self) -> Option<FreeIndexRef> {
-        // H-02 (2026-09-06): 同 buddy_meta_ref 的 LTO 修复模式 —
-        // addr_of! 取真实字段地址 + volatile read, 防 LTO 字段错位.
-        let links_field_ptr = core::ptr::addr_of!(self.buddy_links);
-        // SAFETY: 指针操作在有效范围内, 调用方保证指针有效性
-        let buddy_links: Option<core::ptr::NonNull<u8>> = unsafe {
-            core::ptr::read_volatile(links_field_ptr as *const Option<core::ptr::NonNull<u8>>)
-        };
-        buddy_links.map(|n| {
-            // SAFETY: buddy_links 在 init_bitmap 中设置一次, 此后只读;
-            // 所有 buddy 操作都持有 PMM 锁.
-            unsafe { FreeIndexRef::new_unchecked(n.as_ptr().cast()) }
-        })
-    }
-
     /// 尝试将 `order` 处释放的 `pfn` 与其上方的 buddy 合并.
     /// 返回 (`merged_pfn`, `final_order`).
     ///
@@ -1178,8 +1244,8 @@ impl PhysicalMemoryManager {
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
     fn buddy_try_merge(&self, mut pfn: u64, mut order: u8, limit_pfn: u64) -> (u64, u8) {
-        let meta = match self.buddy_meta_ref() {
-            Some(m) => m,
+        let store = match self.meta_store() {
+            Some(s) => s,
             None => return (pfn, order),
         };
         let total = core::cmp::min(self.info.get().total_pages, limit_pfn);
@@ -1196,7 +1262,7 @@ impl PhysicalMemoryManager {
             }
 
             // M2: 显式验证伙伴块的 order
-            let buddy_state = meta.read(buddy_pfn as usize);
+            let buddy_state = store.meta_read(buddy_pfn as usize);
 
             // 检查 buddy_state 是否为有效的 order 值 (0..=MAX_BUDDY_ORDER)
             // 如果 buddy_state == BUDDY_ALLOCATED (0xFF)，说明已分配，不能合并
@@ -1214,13 +1280,13 @@ impl PhysicalMemoryManager {
 
             // 从空闲链表中移除 buddy
             self.buddy_list_remove(buddy_pfn, order);
-            meta.write(buddy_pfn as usize, BUDDY_ALLOCATED);
+            store.meta_write(buddy_pfn as usize, BUDDY_ALLOCATED);
 
             pfn = core::cmp::min(pfn, buddy_pfn);
             order += 1;
         }
 
-        meta.write(pfn as usize, order);
+        store.meta_write(pfn as usize, order);
         (pfn, order)
     }
 
@@ -1229,21 +1295,20 @@ impl PhysicalMemoryManager {
     /// H-01 (2026-09-06): 索引式 — FREE_LINKS[pfn] 读写 prev/next (存 pfn),
     /// 不再解引用物理页内节点, 不依赖 KERNEL_BASE/物理地址换算.
     fn buddy_list_remove(&self, pfn: u64, order: u8) {
-        let heads = self.buddy_heads_ref();
-        let Some(links) = self.buddy_links_ref() else {
+        let Some(store) = self.meta_store() else {
             return;
         };
         // 前置断言: pfn 越界 = FREE_LINKS 越界访问
         debug_assert!(pfn < self.info.get().total_pages);
-        let prev = links.read_prev(pfn as usize);
-        let next = links.read_next(pfn as usize);
+        let prev = store.links_read_prev(pfn as usize);
+        let next = store.links_read_next(pfn as usize);
         if prev == SENTINEL {
-            heads.set_head(order, next);
+            store.heads_set(order, next);
         } else {
-            links.set_next(prev as usize, next);
+            store.links_set_next(prev as usize, next);
         }
         if next != SENTINEL {
-            links.set_prev(next as usize, prev);
+            store.links_set_prev(next as usize, prev);
         }
     }
 
@@ -1263,39 +1328,37 @@ impl PhysicalMemoryManager {
         for i in 0..(npages as usize) {
             self.clear_bit(pfn as usize + i);
         }
-        let heads = self.buddy_heads_ref();
-        let Some(links) = self.buddy_links_ref() else {
+        let Some(store) = self.meta_store() else {
             return;
         };
         // 前置断言: pfn 越界 = FREE_LINKS 越界访问
         debug_assert!(pfn < self.info.get().total_pages);
-        let old_head = heads.head(order);
-        links.set_prev(pfn as usize, SENTINEL);
-        links.set_next(pfn as usize, old_head);
+        let old_head = store.heads_get(order);
+        store.links_set_prev(pfn as usize, SENTINEL);
+        store.links_set_next(pfn as usize, old_head);
         if old_head != SENTINEL {
-            links.set_prev(old_head as usize, pfn);
+            store.links_set_prev(old_head as usize, pfn);
         }
-        heads.set_head(order, pfn);
+        store.heads_set(order, pfn);
     }
 
     /// 从空闲链表头弹出一个块, 返回 pfn.
     ///
     /// H-01 (2026-09-06): 索引式 — 读 FREE_LINKS[head].next (存 pfn).
     fn buddy_list_pop(&self, order: u8) -> Option<u64> {
-        let heads = self.buddy_heads_ref();
-        let pfn = heads.head(order);
+        let Some(store) = self.meta_store() else {
+            return None;
+        };
+        let pfn = store.heads_get(order);
         if pfn == SENTINEL {
             return None;
         }
         // 前置断言: 索引式链表要求 pfn < total_pages (越界 = OOB 访问)
         debug_assert!(pfn < self.info.get().total_pages);
-        let Some(links) = self.buddy_links_ref() else {
-            return None;
-        };
-        let next = links.read_next(pfn as usize);
-        heads.set_head(order, next);
+        let next = store.links_read_next(pfn as usize);
+        store.heads_set(order, next);
         if next != SENTINEL {
-            links.set_prev(next as usize, SENTINEL);
+            store.links_set_prev(next as usize, SENTINEL);
         }
         Some(pfn)
     }
@@ -1310,7 +1373,7 @@ impl PhysicalMemoryManager {
     #[expect(clippy::cast_possible_truncation)]
     fn buddy_free_insert_range(&self, start_pfn: u64, npages: u64) {
         // buddy 元数据未就绪 (早期/未初始化阶段) 时, 不操作空闲链表
-        if self.buddy_meta_ref().is_none() {
+        if self.meta_store().is_none() {
             return;
         }
         let end_pfn = start_pfn + npages;
@@ -1353,10 +1416,9 @@ impl PhysicalMemoryManager {
     #[expect(clippy::cast_possible_truncation)]
     fn buddy_reserve_pfn_range(&self, start_pfn: u64, npages: u64) {
         let end_pfn = start_pfn + npages;
-        let meta = self.buddy_meta_ref();
         // H-03 (2026-09-06): 索引式遍历 — FREE_LINKS 已由 init_bitmap 分配,
         // 直接以 pfn 读写链表关系, 不再做物理地址校验 / 解引用物理页.
-        let Some(links) = self.buddy_links_ref() else {
+        let Some(store) = self.meta_store() else {
             return;
         };
 
@@ -1367,19 +1429,16 @@ impl PhysicalMemoryManager {
 
         // 逐阶遍历空闲链表, 摘除与预留范围重叠的块
         for order in 0..=MAX_BUDDY_ORDER {
-            let heads = self.buddy_heads_ref();
-            let mut cur = heads.head(order);
+            let mut cur = store.heads_get(order);
             while cur != SENTINEL {
                 // H-03: 先存 next 再可能 remove (remove 会改写链表关系)
-                let next = links.read_next(cur as usize);
+                let next = store.links_read_next(cur as usize);
                 let block_size = 1u64 << order;
                 if cur < end_pfn && cur + block_size > start_pfn {
                     // 重叠: 整块摘除, 元数据整块标记为已分配 (防止后续错误合并)
                     self.buddy_list_remove(cur, order);
-                    if let Some(ref m) = meta {
-                        for i in 0..block_size {
-                            m.write((cur + i) as usize, BUDDY_ALLOCATED);
-                        }
+                    for i in 0..block_size {
+                        store.meta_write((cur + i) as usize, BUDDY_ALLOCATED);
                     }
                     // 不重叠部分暂不压回: 待位图置位后再压回,
                     // 使 buddy_free_insert_range 的合并不会吞掉 reserve 区
@@ -1420,12 +1479,15 @@ impl PhysicalMemoryManager {
         if order > MAX_BUDDY_ORDER {
             return None;
         }
+        let store = match self.meta_store() {
+            Some(s) => s,
+            None => return None,
+        };
 
         // 寻找 >= 请求阶数的最小可用阶
         let mut avail_order: Option<u8> = None;
         for o in order..=MAX_BUDDY_ORDER {
-            let heads = self.buddy_heads_ref();
-            let h = heads.head(o);
+            let h = store.heads_get(o);
             if h != SENTINEL {
                 avail_order = Some(o);
                 break;
@@ -1434,12 +1496,8 @@ impl PhysicalMemoryManager {
         let alloc_order = avail_order?;
 
         let pfn = self.buddy_list_pop(alloc_order)?;
-        let meta = match self.buddy_meta_ref() {
-            Some(m) => m,
-            None => return None,
-        };
 
-        meta.write(pfn as usize, BUDDY_ALLOCATED);
+        store.meta_write(pfn as usize, BUDDY_ALLOCATED);
 
         // 向下分裂, 直至达到请求阶数
         let cur_pfn = pfn;
@@ -1448,9 +1506,9 @@ impl PhysicalMemoryManager {
             cur_order -= 1;
             let buddy_pfn = cur_pfn + (1u64 << cur_order);
             self.buddy_list_push(buddy_pfn, cur_order);
-            meta.write(buddy_pfn as usize, cur_order);
+            store.meta_write(buddy_pfn as usize, cur_order);
         }
-        meta.write(cur_pfn as usize, BUDDY_ALLOCATED);
+        store.meta_write(cur_pfn as usize, BUDDY_ALLOCATED);
 
         Some((cur_pfn, order))
     }
@@ -1540,8 +1598,8 @@ impl PhysicalMemoryManager {
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
     fn buddy_init_free_lists(&self, total_pages: usize) {
-        let meta = match self.buddy_meta_ref() {
-            Some(m) => m,
+        let store = match self.meta_store() {
+            Some(s) => s,
             None => return,
         };
 
@@ -1564,7 +1622,14 @@ impl PhysicalMemoryManager {
             let mut remaining = run_len;
             while remaining > 0 {
                 // ≤ remaining 的最大 2 的幂, 对齐到自身大小
-                let max_order = (usize::BITS - 1 - (remaining - 1).leading_zeros())
+                // H-04 (2026-09-09): 原 `(remaining - 1).leading_zeros()` 在
+                // remaining == 1 时 `0.leading_zeros()` = 64 → `64-1-64` 下溢
+                // (host debug 暴露; release 下 wrap-around 为 UB 碰巧工作).
+                // checked_ilog2: remaining==1 → None → 0 (order-0 单页, 正确语义);
+                // 其余与 `BITS-1-leading_zeros` 恒等.
+                let max_order = (remaining - 1)
+                    .checked_ilog2()
+                    .unwrap_or(0)
                     .min(u32::from(MAX_BUDDY_ORDER)) as u8;
                 // 寻找 cur 自然对齐 且 2^order ≤ remaining 的最大阶
                 let mut order = max_order;
@@ -1577,7 +1642,7 @@ impl PhysicalMemoryManager {
                 }
                 let block_size = 1usize << order as usize;
 
-                meta.write(cur as usize, order);
+                store.meta_write(cur as usize, order);
                 self.buddy_list_push(cur, order);
 
                 cur += block_size as u64;
