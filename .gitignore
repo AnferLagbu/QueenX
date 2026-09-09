@@ -3,6 +3,7 @@ logs/
 build/
 isodir/
 tmp/
+other/
 backup/
 .mimocode/
 

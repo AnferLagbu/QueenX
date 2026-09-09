@@ -354,10 +354,13 @@ pmm.rs buddy 三态数据，改造可行性不同：
   - 描述：`FREE_LINKS` 数组（total_pages × 16B）从早期分配器（`early_current`）预留，与 `buddy_meta` 同法（init_bitmap 内布局）。
   - 方案：内存开销 4GB RAM（1M 页）→ 16MB 元数据（vs 现状 0 额外，但语义等价——侵入式也占用空闲页前 16 字节）。标记为已用页。
   - 状态：[X] (2026-09-06 实施完成：FREE_LINKS 在 init_bitmap 内 buddy_meta 之后同法分配（free_links_phys 页对齐、early_current 预留、fill_memory 预填 0xFF=SENTINEL、位图标记已用页、LTO addr_of!+write_volatile 模式）；新增 buddy_links 字段 + buddy_links_ref() 访问器。内存账本：4GB RAM → 16MB)
-- **H-04. host 测试迁移**
+- **H-04. host 测试迁移（方案 3：MetaStore 载体注入，2026-09-08 用户确认最优根治）**
   - 描述：删除 `host-tests/src/buddy.rs`（436 行平行实现，含 F9 `#![allow(dead_code)]`），测试改引内核真实 `framework::mm::pmm` 的 buddy 机制。
-  - 方案：经 host-test feature 暴露 pmm 内部 buddy 操作（`buddy_try_merge/alloc/list_*`）测试入口；策略层（PmmPolicy/FrameAllocDecision）已在 host 可测，机制层改造后同样 host 可测。**载体问题从架构层面消失**（buddy 只管理 pfn，不知物理地址）。
-  - 状态：[H] (2026-09-06 暂缓：H-01~H-03 改造后 buddy 已纯索引化 host 可测，但完整 host 测试需物理内存模拟层（KERNEL_BASE 编译期常量无法 host 映射到 mock 堆），工程量较大。buddy.rs 平行实现保留（F9 违规待审查员决策，见 B08-12 条目）。E 工程层 1 的 buddy 项依赖本条目完成后实施) (2026-09-08 状态同步：维持暂缓——待物理内存模拟层专项（KERNEL_BASE host 映射）建成后实施；期间 E-06 去重已将 buddy 明确登记为 H-04 文档化例外（host-tests/src/buddy.rs 保留），非阻塞项)
+  - 方案（**2026-09-08 审核升级为方案 3 载体注入，替代原 B' 特判分支方案**）：`raw::BitmapRef/MetaRef/FreeIndexRef/HeadsRef`（[pmm.rs:102-340](../../src/kernel/framework/mm/pmm.rs#L102-L340)，裸指针 safe 包装器）收敛为统一 `MetaStore` trait（read/write 接口：buddy_meta 字节 / FREE_LINKS prev-next / bitmap 位 / heads）：
+    - **生产实现**：基于 `phys + KERNEL_BASE` 裸指针（现有逻辑，行为不变）
+    - **host 测试实现**：基于 `Vec<u8>`（Box 堆，构造注入）
+    - **关键**：init_bitmap 与全部 buddy 算法**仅一份代码**，测试经注入 Vec 实现而非 `#[cfg(host-test)]` 分支——**无测试/生产分叉**，符合"内核唯一权威"（B08-12 路线 C 核心）。对比原 B'（init_bitmap 特判分支）会引入测试/生产平行路径，与本册消除平行实现原则冲突，故弃用。
+  - 状态：[H] (2026-09-06 暂缓：H-01~H-03 改造后 buddy 已纯索引化 host 可测，但完整 host 测试需物理内存模拟层（KERNEL_BASE 编译期常量无法 host 映射到 mock 堆——`phys_to_virt` 为 const fn + KERNEL_BASE 编译期常量，无法 host 运行时重定向到 mock 堆），工程量较大。buddy.rs 平行实现保留（F9 违规待审查员决策，见 B08-12 条目）。E 工程层 1 的 buddy 项依赖本条目完成后实施) (2026-09-08 状态同步：维持暂缓——待物理内存模拟层专项（KERNEL_BASE host 映射）建成后实施；期间 E-06 去重已将 buddy 明确登记为 H-04 文档化例外（host-tests/src/buddy.rs 保留），非阻塞项) (2026-09-08 审核定案方案 3：**实施路径分两步**——①纯重构：4 个 raw 包装器收敛为 `MetaStore` trait（生产行为不变，用现有 QEMU 测试验证等价）；②新增能力：host 测试 `Vec` 实现 + 构造注入，buddy 完整生命周期（init_bitmap → alloc/free → 合并）host 可测，删除 buddy.rs 平行实现。步骤①是行为不变重构（风险可控），步骤②才是新增能力。**2026-09-08 用户已授权实施**)
 - **H-05. QEMU 回归 + 压力测试**
   - 描述：TCB 内核心路径重构，必须完整验证行为不变。
   - 方案：双架构 kernel_test 全量 + boot + 分配/释放压力测试；公开 API（`alloc_page/free_page/alloc_pages`）不变，调用方零改动。
@@ -372,6 +375,7 @@ pmm.rs buddy 三态数据，改造可行性不同：
 - **前置**：无（不依赖 B08-12/E；H-04 测试迁移依赖 host-test feature 已就绪，B08-12 A/B 完成）
 - **受益方**：E-05 层 1 buddy 项（H 完成后从搁置转可实施）；问题 2（buddy 平行实现）随 H-04 彻底消除
 - **风险**：TCB 内 PMM 重构，需完整回归；但改动集中在 buddy 子模块，公开 API 不变，风险可控
+- **H-04 状态**（2026-09-08）：方案 3（MetaStore 载体注入）定案，分两步实施（纯重构 → Vec 注入）；步骤①行为不变可先用现有 QEMU 测试验证；**待授权委托实施**
 
 ### H-OP. 操作级工程指引（2026-09-06 补充，委托人实施指南）
 
@@ -501,7 +505,7 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
 - **J-04. G-09 长期最优：zil_persist 块级单一校验精简（2026-09-08 用户授权）**
   - 描述：三层 CRC 结构性冗余（record ⊆ data ⊆ block），record 级容错分支数学上不可达（设计前提不成立）；ZIL 事务组语义下 record 级容错为伪需求。长期最优 = 块级单一校验（ZFS 语义）。
   - 方案：①修正 P0-I-15 契约为"损坏块拒绝"语义（zil_replay_test 已按此断言，契约文档同步）；②移除冗余 data CRC（被 block CRC 完全覆盖）+ 删除 record 容错死代码分支（try_deserialize_record Err 分支，当前不可达）；③块级拒绝时 klog 记录损坏偏移/期望 vs 实际 CRC（硬件故障可诊断）。
-  - 状态：[X] (2026-09-08 委托实施完成：①**P0-I-15 契约修正** — zil_persist.rs 头注释 + zil_replay_test.rs 头注释同步为"损坏块拒绝"（ZFS 语义，单条损坏 → 整块拒绝）；②**移除冗余 data CRC + record 容错死代码** — serialize 不再写 data_checksum（header 恒 0，header_checksum 单次计算，B08-14 双阶段重算注释删除）；deserialize 移除 data_crc 检查 + 循环内 record 容错跳过分支改为"整块拒绝"不可达防御（let-else，block CRC 通过后 record 解析必成功）；`ZilBlockHeader.data_checksum` 字段标注弃用（#[repr(C)] 磁盘布局兼容保留，落盘数据不受影响）；③**块级拒绝 klog** — block CRC 失败时记录 expected vs computed + 覆盖偏移（硬件 bit rot 可诊断）；`try_deserialize_record` 的 record CRC 校验保留（防御 + 单元测试直接验证对象）。**验证**：zil_replay_test 8/8（合法块回放 + 单条损坏 → 空 + 全损坏 → 空不 panic）；host-tests 749 passed 0 failed；QEMU kernel_test 472 TESTS ALL PASSED；build.sh all 5/5；clippy 三线全绿；审计全过。G-09 随本提交关闭)
+  - 状态：[X] (2026-09-08 委托实施完成：①**P0-I-15 契约修正** — zil_persist.rs 头注释 + zil_replay_test.rs 头注释同步为"损坏块拒绝"（ZFS 语义，单条损坏 → 整块拒绝）；②**移除冗余 data CRC + record 容错死代码** — serialize 不再写 data_checksum（header 恒 0，header_checksum 单次计算，B08-14 双阶段重算注释删除）；deserialize 移除 data_crc 检查 + 循环内 record 容错跳过分支改为"整块拒绝"不可达防御（let-else，block CRC 通过后 record 解析必成功）；`ZilBlockHeader.data_checksum` 字段标注弃用（#[repr(C)] 磁盘布局兼容保留，落盘数据不受影响）；③**块级拒绝 klog** — block CRC 失败时记录 expected vs computed + 覆盖偏移（硬件 bit rot 可诊断）；`try_deserialize_record` 的 record CRC 校验保留（防御 + 单元测试直接验证对象）。**验证**：zil_replay_test 8/8（合法块回放 + 单条损坏 → 空 + 全损坏 → 空不 panic）；host-tests 749 passed 0 failed；QEMU kernel_test 472 TESTS ALL PASSED；build.sh all 5/5；clippy 三线全绿；审计全过。G-09 随本提交关闭) (2026-09-08 审核补注：**方案②"删除 record 容错死代码"与实际实现有出入**——实现为**改造为"整块拒绝"不可达防御**（let-else 保留 `try_deserialize_record` Err 校验，块 CRC 通过后解析失败 → 整块拒绝 + debug 日志），而非直接删除。审核结论：改造优于原方案删除——保留 block CRC 盲区时的最终防线，且 `try_deserialize_record` 仍为单元测试直接验证对象；文档方案文字与实现已对齐记录（删除 → 改造为防御），无功能风险)
 
 ### 验证门槛（每项不可豁免）
 
@@ -568,12 +572,12 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
 - **G-17. framework/sync/mutex.rs 文档"递归锁定支持"与实际实现不符（G-11/G-12 根因，架构级隐患）→ 登记待处置**
   - 描述：2026-09-08 G-11/G-12 排查时确认根因级隐患。[mutex.rs](../../src/kernel/framework/sync/mutex.rs) 模块文档声明"**递归锁定支持**: 同一线程可多次 lock"（L23-26），但 `Mutex::lock → raw_lock`（L120-155）**无 owner/深度重入检测**——fast path 仅查 `locked != 0`，slow path 死等（自旋+yield）。同一线程对同一 Mutex 二次 lock 即自死锁无限自旋。`MutexInner.owner`（AtomicI32）字段已存在但 lock 路径未使用。G-11（kill 广播 `PROCESS_TABLE` 重入）、G-12（signalfd `SFD_TABLE` 双锁）均为受害点；**全内核其他"持锁后经调用链再 lock 同一 Mutex"的代码路径同样受影响**，无 lockdep 环境运行时不可见。
   - 方案：A. 实现真重入（raw_lock 检查 `owner == 当前线程` → `depth++`；owner 字段已存在，成本低）——同时更新文档语义；B. 删除"递归锁定支持"文档声明，改为强制非重入约定 + 用 `audit_deadlock_matrix.py`/lockdep 排查全内核双锁点。候选 A 更符合文档承诺与调用点既有模式。
-  - 状态：[X] (2026-09-08 委托修复完成，用户决策"实现真重入"：①静态扫描 for_each 重入模式——services/proc/session.rs:376/522（只读 pgid/sid 字段安全）、table.rs:370 包装、proc_mgmt.rs:38（锁每进程内 name 非 PROCESS_TABLE 安全），无 G-11 模式残留；②mutex.rs 实现真重入——`process_get_current_pid` extern 提取到模块级（原内联于 acquire_lock_internal + items_after_statements expect，删除该 expect）、`raw_lock` fast path 在 inner_spinlock 内比较 `owner == 当前进程` → `depth.fetch_add(1)` 直接返回，slow path 仅真竞争到达；owner/depth 字段原已存在，raw_unlock 递减逻辑兼容；③补回归测试 `sync::mutex::reentrant`（双 lock depth=2 → 逐层 drop → unlocked/owner=-1）。**验证**：host 共享套件 `sync::mutex::reentrant` PASS（340 用例 333 PASS + 7 Skip）；裸机 clippy 通过；QEMU 471 全绿待 B08-17 阶段复验)
+  - 状态：[X] (2026-09-08 委托修复完成，用户决策"实现真重入"：①静态扫描 for_each 重入模式——services/proc/session.rs:376/522（只读 pgid/sid 字段安全）、table.rs:370 包装、proc_mgmt.rs:38（锁每进程内 name 非 PROCESS_TABLE 安全），无 G-11 模式残留；②mutex.rs 实现真重入——`process_get_current_pid` extern 提取到模块级（原内联于 acquire_lock_internal + items_after_statements expect，删除该 expect）、`raw_lock` fast path 在 inner_spinlock 内比较 `owner == 当前进程` → `depth.fetch_add(1)` 直接返回，slow path 仅真竞争到达；owner/depth 字段原已存在，raw_unlock 递减逻辑兼容；③补回归测试 `sync::mutex::reentrant`（双 lock depth=2 → 逐层 drop → unlocked/owner=-1）。**验证**：host 共享套件 `sync::mutex::reentrant` PASS（340 用例 333 PASS + 7 Skip）；裸机 clippy 通过；QEMU 471 全绿待 B08-17 阶段复验) (2026-09-08 多线程关联登记：**当前 PID 重入检测依赖单线程模型**（调度器以 PID 为单位）；多线程工程已独立成档（docs/plan/multithreading-project.md），其中将 owner 从 PID 迁移线程指针以解除此架构假设；当前模型下本修复正确，无需回退)
 
 - **G-18. host-test feature 下 clippy 未纳入 CI 门槛（G-02 延伸）→ 已修复（随 J-01）**
   - 描述：2026-09-08 验证 E-06 时发现：`host-test` feature 编译路径（E-03 后已成为与 kernel_test 平行的门控维度）**从未纳入 CI clippy/audit 门槛**，E-03 新增门控仅审计语义分离，未含 host-test 构建的 lint 校验。实测 `cargo clippy --features host-test --lib` 标准 pedantic 下报 **13 处 unfulfilled `#[expect(clippy::doc_markdown)]`**（rwlock.rs:60 / pi_mutex.rs:300 / irq_spinlock.rs:95 等 sync/*，host target 下这些位置不触发 doc_markdown 故 expect 失效）；kernel_test 维另有 63 处（见状态）。与 G-02（kernel_test feature 下 5 处 unfulfilled）同属"feature 维 clippy 未维护"。
   - 方案：评估将 `cargo clippy --features host-test`（host target）+ `--features kernel_test` 纳入 CI clippy job；或至少登记 feature 维 lint 基线供人工巡检。与 G-02 合并处置。
-  - 状态：[G] (2026-09-08 登记，用户决策：**登记，但后续要落实**。实际清理量核对：host-test 维 13 处（sync/rwlock.rs:60 + pi_mutex.rs:300 + irq_spinlock.rs:95 等 unfulfilled doc_markdown expect）+ kernel_test 维 63 处（wildcard_imports 大量 / items_after_statements（lib.rs const + hrtimer 测试等）/ borrow_as_raw_ptr×11 / manual_let_else / logic_bug + G-02 记录 5 处 unfulfilled（route.rs×2、test_ipc.rs:13、lib.rs:480、idt/types.rs:82））。两维均需先清理再纳入 CI，列为后续专项工程；本轮不施工（避免跑偏 E-06 主题）)
+  - 状态：[X] (2026-09-08 随 J-01 实施关闭，2026-09-08 审核同步状态行：host-test 维 13 处 + kernel_test 维 63 处 unfulfilled/真实 lint 全部清理（明细见 J-01 状态）；audit.sh 新增 step 2b + ci-x86.yml clippy-pedantic job 加两 step（kernel_test + host-test，host target 避免裸机产物依赖），feature 维 lint 零 unfulfilled 作为 CI 门槛；与 G-02 合并关闭。审核独立验证：裸机/host-test/kernel_test 三线 clippy 全绿（豁免 cast_* 与 CI 一致）)
   - 处置方案（2026-09-08 用户确认，委托专项工程）：
     1. **逐处核实** host-test 维 13 处 + kernel_test 维 63 处 `#[expect]` 理由是否仍成立（同 G-17 已示范模式——mutex.rs 提取 extern 后删除失效 items_after_statements expect）；
     2. **删除失效 expect** 或**补真触发**（如 doc_markdown 在 host target 不触发 → 删 expect；wildcard_imports 大量 → 逐处评估改显式 use 或保留合法 wildcard 的 expect）；
@@ -584,7 +588,7 @@ struct FreeIndex { prev: u64, next: u64 }   // 16 字节/项, 长度 = total_pag
 - **G-03. storage/mod.rs pushfq asm 无 cfg 门控 → 委托修复（随 G-18 一并）**
   - 描述：ci 的 forbidden asm 检查发现 [storage/mod.rs:207](../../src/kernel/framework/driver/storage/mod.rs#L207) `pushfq` asm! 无 `#[cfg]` 门控。预存问题，非本轮引入。2026-09-08 审查定位：该 asm 位于 MSIX-03 诊断块内（NVMe 队列创建路径的 LAPIC/MSI-X 状态打印），x86_64 专属指令但所在函数无 `#[cfg(target_arch = "x86_64")]` 门控——aarch64 编译该函数时 asm 报错（ci 已拦截）。
   - 方案：补 `#[cfg(target_arch = "x86_64")]` 包住该 asm（或整个 MSIX-03 诊断块，若 aarch64 无 MSI-X 诊断需求）；需先确认该函数在 aarch64 是否真被编译（若宿主路径已被上层 cfg 排除则无需门控）。
-  - 状态：[G] (2026-09-08 处置建议已登记：低风险顺手修复，随 G-18 专项工程一并委托执行；先核实宿主函数架构门控再补 asm 门控)
+  - 状态：[X] (2026-09-08 随 J-02 实施关闭，2026-09-08 审核同步状态行：pushfq asm 包 `#[cfg(target_arch = "x86_64")]`（aarch64 下 rflags 保持 0）；aarch64 构建通过（build.sh all 5/5），ci forbidden asm 检查不再报无门控 asm。明细见 J-02 状态)
 
 - **G-06. build.rs 隐式 make 产物依赖（审查发现，B08-03 引入）→ 已修复**
   - 描述：2026-09-06 审查发现。B08-03 改 `require_exists` 后，[build.rs](../../src/rust/build.rs) 对 `build/user/init.bin`（及 x86_64 的 `build/stage1.bin`）产生**隐式构建期依赖**。`build/` 目录被 [.gitignore:3](../../.gitignore#L3) 忽略——干净 checkout + 直接 `cargo test`（host-tests 触发 queenx path 依赖）时，build.rs 会因产物缺失而 panic。当前本地产物存在所以通过，但 **CI 必须先 `make` 才能跑 host-tests**，形成未记录的隐式耦合。
