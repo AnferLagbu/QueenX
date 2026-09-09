@@ -22,7 +22,6 @@ macro_rules! klog_pmm {
 
 use super::{KERNEL_BASE, MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr};
 use crate::kernel::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
-use alloc::boxed::Box;
 use core::cell::{Cell, UnsafeCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -525,6 +524,19 @@ impl MetaStore for VecMetaStore {
     }
 }
 
+// H-04 优化项方案 B (2026-09-09): 编译期选择载体, 消除 `Box<dyn MetaStore>` 的
+// vtable 间接调用 (buddy 热路径 alloc/free 每次 ~10-20 次 MetaStore 调用) 与
+// 载体堆分配. 物理内存模型在镜像编译时定死, 从不运行时切换 (与 Linux
+// CONFIG_FLATMEM/SPARSEMEM 编译期选择一致); PMM 为全局单例, "运行时替换载体"
+// 语义无意义, 故 type alias 无损. 未来失效场景 (内存故障注入/热插拔模拟感知)
+// 当前与可预见未来均不存在, 按 AGENTS.md §12.3 不预留扩展点.
+/// 实际载体类型 — 生产 `RawMetaStore` (裸指针), host 测试 `VecMetaStore` (Vec 注入).
+/// cfg 仅此一处, `PhysicalMemoryManager.store` 字段经此编译期定死.
+#[cfg(not(any(test, feature = "host-test")))]
+pub(crate) type MetaStoreImpl = RawMetaStore;
+#[cfg(any(test, feature = "host-test"))]
+pub(crate) type MetaStoreImpl = VecMetaStore;
+
 /// 物理内存管理器 — Buddy 分配器
 ///
 /// 2026-07-02: 加 `#[repr(C)]` 防止 LTO 字段重排. 本次会话诊断发现
@@ -553,8 +565,9 @@ pub struct PhysicalMemoryManager {
     // ---- Buddy 分配器 ----
     /// H-04 (2026-09-09): 内存元数据载体 — 生产为 RawMetaStore (裸指针),
     /// host 测试经 inject_meta_store 注入 VecMetaStore (Vec<u8> 堆载体).
+    /// 载体类型经 type alias `MetaStoreImpl` 编译期定死 (无 dyn/vtable).
     /// init_bitmap 单线程启动期设置; buddy 就绪后仅在 PMM 锁下访问.
-    store: UnsafeCell<Option<Box<dyn MetaStore>>>,
+    store: UnsafeCell<Option<MetaStoreImpl>>,
     /// 索引式双向链表空闲块头 (存块头 pfn), 每个阶数一个; 空链表头 = SENTINEL
     buddy_heads: UnsafeCell<[u64; MAX_BUDDY_ORDER as usize + 1]>,
     /// B05-55: reserve 摘除块的暂存 (待位图置位后压回, 防止合并吞掉 reserve 区)
@@ -609,7 +622,8 @@ impl PhysicalMemoryManager {
     pub fn inject_meta_store(&self, store: VecMetaStore) {
         // SAFETY: 调用方保证在 init_bitmap 之前注入且仅注入一次;
         // buddy 就绪后 store 为只读路径且均在 PMM 锁下访问 (见 meta_store).
-        unsafe { *self.store.get() = Some(Box::new(store)) };
+        // cfg(any(test, host-test)) 下 MetaStoreImpl = VecMetaStore, 直接赋值.
+        unsafe { *self.store.get() = Some(store) };
     }
 
     pub fn init(&self, mem_size: u64, kernel_end: u64) {
@@ -702,20 +716,18 @@ impl PhysicalMemoryManager {
         // (init_bitmap 单线程启动期; host 测试经 inject_meta_store 注入).
         let store: &mut dyn MetaStore = unsafe {
             let slot = &mut *self.store.get();
+            #[cfg(not(any(test, feature = "host-test")))]
             if slot.is_none() {
                 // SAFETY: 生产路径单线程启动期创建 RawMetaStore; heads 指针经
                 // UnsafeCell::get 指向宿主 buddy_heads 字段 (self 不移动, init_bitmap
-                // 后稳定, buddy 就绪后仅在 PMM 锁下访问); Box 堆分配在内核堆已就绪后
-                // (kmalloc init 先于 pmm_init_bitmap).
-                *slot = Some(Box::new(RawMetaStore::new(
-                    self.buddy_heads.get(),
-                )));
+                // 后稳定, buddy 就绪后仅在 PMM 锁下访问).
+                // 方案 B: 载体直接存储于 store 字段, 无 Box 堆分配.
+                *slot = Some(RawMetaStore::new(self.buddy_heads.get()));
             }
             // 注入或新建必然成功 (slot 刚保证非 None); 原实现 bitmap_virt=0 的
             // FATAL 分支在真实内核不可达 (KERNEL_BASE 映射地址恒非零).
-            slot.as_mut()
-                .expect("[PMM] meta store missing")
-                .as_mut()
+            // host-test 下 slot 由 inject_meta_store 预置 (若未注入则 panic, 属错误用法).
+            slot.as_mut().expect("[PMM] meta store missing")
         };
         store.setup_bitmap(bitmap_aligned, bitmap_bytes);
         store.setup_meta(buddy_meta_phys, buddy_meta_bytes);
@@ -1160,9 +1172,10 @@ impl PhysicalMemoryManager {
     /// store 仅在 init_bitmap (或 host 测试 inject_meta_store) 中写入一次,
     /// 之后为只读路径, 且全部在 PMM 锁保护下访问.
     #[inline]
-    fn meta_store(&self) -> Option<&dyn MetaStore> {
-        // SAFETY: store 单写者 (init_bitmap/inject), 读路径持有 PMM 锁
-        unsafe { (*self.store.get()).as_deref() }
+    fn meta_store(&self) -> Option<&MetaStoreImpl> {
+        // SAFETY: store 单写者 (init_bitmap/inject), 读路径持有 PMM 锁.
+        // 方案 B: 载体直接存于字段 (非 Box), 具体类型引用, 方法调用静态解析.
+        unsafe { (*self.store.get()).as_ref() }
     }
 
     // B03-05 背景: 2026-07-01 test 110 hang 修复 (LTO 字段错位) —
