@@ -131,6 +131,7 @@ pub unsafe fn init() {
         // 设置 TCR_EL1 (Translation Control Register)
         // T0SZ=16 (TTBR0 用 48-bit IPA), T1SZ=16 (TTBR1 用 48-bit IPA)
         // 4KB 颗粒 (TG0=00, TG1=10), 内部共享, Normal 可缓存
+        // 2026-09-11 实测: 0b00<<14 触发 identity_op, 需豁免
         #[allow(clippy::identity_op)]
         let tcr: u64 = 16u64 // T0SZ: 64 - 48 = 16
                   | (16u64 << 16)   // T1SZ: 64 - 48 = 16

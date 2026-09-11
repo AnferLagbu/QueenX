@@ -3,7 +3,6 @@
 //! QEMU virt 机器默认使用 PL011 @ 0x09000000。
 //! 寄存器定义基于 ARM DDI 0183G。
 //! UARTDR 寄存器低 8 位是数据字节, as u8 截断是已知硬件行为.
-#![allow(clippy::cast_possible_truncation)]
 
 use core::ptr::{read_volatile, write_volatile};
 

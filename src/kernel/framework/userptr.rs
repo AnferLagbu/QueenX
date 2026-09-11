@@ -175,6 +175,7 @@ impl<T> UserRefMut<T> {
     /// 获取对用户态结构体的可变引用。
     ///
     /// 此方法是安全的，因为构造时的 `unsafe` 契约已保证了指针有效性。
+    // 2026-09-11 实测: as_mut 触发 should_implement_trait, 需豁免
     #[allow(clippy::should_implement_trait)]
     pub fn as_mut(&mut self) -> &mut T {
         // SAFETY: 构造时的 unsafe 契约保证 ptr 是有效的可写 T

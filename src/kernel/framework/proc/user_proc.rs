@@ -644,7 +644,6 @@ pub(crate) mod raw {
     ///
     /// # Safety (内部)
     /// - `kproc_ptr` 必须为 `alloc_kernel_process` 返回的合法指针, 已被清零。
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::ptr_as_ptr,
         reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"

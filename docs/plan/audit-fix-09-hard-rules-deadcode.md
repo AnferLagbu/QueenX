@@ -36,10 +36,12 @@
       - **冗余移除 2 处**：limits.rs:12 模块级 `#![allow(dead_code)]`（全为 pub const，不受 dead_code 管辖，移除后双架构 0 触发）；dma/engine.rs:422 `#[allow(unused_variables)]`（cache_flush 无未用变量，双架构 0 触发）
       - **有使用者保留 3 处**（加注释说明）：ebpf_verifier.rs:28 unused_imports（x86_64 下 BpfInsn 未用）；dma/engine.rs:510 cfg_attr(x86_64) unused_variables（x86_64 下 cache_invalidate 的 addr/size 未用）；idt/safety.rs:7 unused_imports（**aarch64 下 KERNEL_BASE 未用**——x86_64 不报、aarch64 报，实测揭示跨架构差异）
       - 连同 mmu.rs:182（allow(clippy::identity_op)，见下）**合计净移除 3 处冗余抑制**；最终 x86_64 + aarch64 `clippy -D warnings` 均 0 warning
-    - **allow(clippy) 冗余核实（2026-09-11，实测闭环）**：22 处 allow(clippy) 逐处核实——
-      - 17 处静态确认有真实触发（aarch64 cast×7、identity_op×1、absurd_extreme_comparisons、too_many_arguments、eq_op、cast、should_implement_trait×2、slow_vector_initialization、explicit_auto_deref、wildcard_imports）
-      - **5 处 upper_case_acronyms（errno.rs:17、syscall/types.rs:12、hvfs/bp.rs:79、cgroup.rs:505、klog/mod.rs:491）实测移除后 clippy 报 87 处触发（全大写 enum 变体 EPERM/ENOENT/EIO 等触发该 lint）——确认有使用者，已恢复**（注：静态分析曾误判"全大写不触发"，实测纠正；这 5 处允许保留）
-      - **1 处 mmu.rs:182 identity_op 实测移除后 aarch64 clippy 0 触发——确认冗余，已移除**（净代码改动：仅此 1 处；aarch64/x86_64 clippy -D warnings 均 0 warning 验证）
+    - **allow(clippy) 冗余核实（2026-09-11，实测闭环）**：22 处 allow(clippy) 逐处实测——
+      - **5 处 upper_case_acronyms（errno/syscall·types/hvfs·bp/cgroup/klog·mod）实测移除后 clippy 报 87 处触发（全大写 enum 变体 EPERM 等）——有使用者，保留**（静态曾误判，实测纠正）
+      - **17 处静态确认项二轮实测（2026-09-11）**：
+        - **9 处冗余移除**：aarch64 模块级 7 处（exception/gic/psci/uart/mod/kpti/vmm 的 cast_possible_truncation/sign_loss + vmm wildcard——实测双架构 0 触发，静态"必然触发"判断被推翻，多为扩展/同宽 cast 不触发 lint）；user_proc:647 too_many_arguments（双架构 0 触发）；klog:110 cast（双架构 0 触发）
+        - **8 处有使用者保留**：mmu:134 identity_op（0b00<<14 触发）；virtio/net:570 absurd_extreme_comparisons（**仅 aarch64 恒真比较触发**）；test_proc:99 eq_op；userptr:178 should_implement_trait；hvfs/arc:79 slow_vector；hvfs/dataset:39 should_implement_trait；boot_image:62 explicit_auto_deref
+      - **合计本轮移除 12 处冗余 allow**（含此前 mmu.rs:182 identity_op）；x86_64 + aarch64 `clippy -D warnings` 均 0 warning
   - 方案：逐处核实——真死代码删除或接入使用路径；cfg 门控引用则 cfg_attr 精确化；不保留裸 allow（对齐 B09-03 治理模式）。
   - 状态：[]
 

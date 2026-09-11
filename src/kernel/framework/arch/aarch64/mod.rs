@@ -4,7 +4,6 @@
 //! - context:   上下文切换 (context_switch_asm)
 //! - mmu:       MMU/页表管理 (identity mapping, TTBR0_EL1)
 //! - 寄存器值转换 (DAIF/SPSR/ELR) 多为 u64 ↔ usize 已知安全
-#![allow(clippy::cast_possible_truncation)]
 //! - exception: 异常向量表 + handler (VBAR_EL1)
 //! - gic:       GICv3 中断控制器初始化
 //! - psci:      PSCI 电源管理 (关机/重启)

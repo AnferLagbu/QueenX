@@ -3,7 +3,6 @@
 //! ARMv8-A 异常级别 EL1 (内核) 异常向量表。
 //! 每个异常类型有 4 个入口: 同异常级别使用 SP_EL0/SP_ELx, 不同异常级别使用 SP_EL0/SP_ELx。
 //! 本文件 cast 多为异常返回码/中断号转换, 硬件已知安全.
-#![allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 //!
 //! 向量表布局 (VBAR_EL1):
 //! | 偏移 | 类型 | 级别 | 说明 |

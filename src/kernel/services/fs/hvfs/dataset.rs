@@ -36,6 +36,7 @@ pub struct HvDsProps {
 }
 
 impl HvDsProps {
+    // 2026-09-11 实测: default 触发 should_implement_trait, 需豁免
     #[allow(clippy::should_implement_trait)]
     #[expect(
         clippy::unreadable_literal,

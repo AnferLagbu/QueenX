@@ -3,7 +3,6 @@
 //! 实现与 x86_64 vmm.rs 相同的 FFI 接口, 提供:
 //! - 内核高半区页表 (TTBR1_EL1) 管理
 //! - 用户空间页表 (TTBR0_EL1) 创建/映射
-#![allow(clippy::wildcard_imports, clippy::cast_possible_truncation)] // 导入 vmm.rs 全部公共 API 是 aarch64 移植约定; vmm_x86_64.rs 同样模式
 //! - 页表遍历/克隆/销毁
 //!
 //! 架构: ARMv8-A 4KB granule, 48-bit VA

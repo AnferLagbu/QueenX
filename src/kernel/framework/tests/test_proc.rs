@@ -96,6 +96,7 @@ fn test_process_state_name() -> TestResult {
     TestResult::Pass
 }
 
+// 2026-09-11 实测: Ready==Ready 触发 eq_op, 需豁免
 #[allow(clippy::eq_op)]
 fn test_process_state_equality() -> TestResult {
     check!(

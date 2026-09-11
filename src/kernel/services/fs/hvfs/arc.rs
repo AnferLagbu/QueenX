@@ -76,6 +76,7 @@ pub struct HvArcBuf {
 
 impl HvArcBuf {
     pub fn new(key: HvArcKey, size: usize, buf_type: HvArcBufType) -> Self {
+        // 2026-09-11 实测: with_capacity+resize 触发 slow_vector_initialization, 需豁免
         #[allow(clippy::slow_vector_initialization)]
         let mut data = Vec::with_capacity(size);
         data.resize(size, 0);

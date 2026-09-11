@@ -567,6 +567,7 @@ pub extern "C" fn virtio_net_send(driver_data: *mut u8, data: *const u8, len: u3
     // 在 aarch64 上退化为 `phys`, 等价于原 aarch64 分支; 不再需要 cfg 互斥.
     // SAFETY: aarch64 上 KERNEL_BASE=0, `phys >= 0` 对 u64 恒真, clippy
     // absurd_extreme_comparisons 可安全抑制 — 语义等价于直接取 phys.
+    // 2026-09-11 实测: 仅 aarch64 触发 (x86_64 不触发), 需豁免
     #[allow(clippy::absurd_extreme_comparisons)]
     let dma_phys = if phys >= KERNEL_BASE {
         phys - KERNEL_BASE

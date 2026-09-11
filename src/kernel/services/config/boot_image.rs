@@ -59,6 +59,7 @@ pub fn encode_boot_image() {
     let caps = s.capabilities;
 
     let mut guard = BOOT_IMAGE.lock();
+    // 2026-09-11 实测: &mut *guard 触发 explicit_auto_deref, 需豁免
     #[allow(clippy::explicit_auto_deref)]
     let buf: &mut [u8; ENCODED_LEN] = &mut *guard;
     buf.fill(0);

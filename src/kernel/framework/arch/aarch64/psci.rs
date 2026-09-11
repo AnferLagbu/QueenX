@@ -3,7 +3,6 @@
 //! ARM 电源管理标准接口，通过 SMC/HVC 调用实现关机/重启。
 //! QEMU virt 机器使用 PSCI v0.2+。
 //! PSCI_VERSION 返回 (major<<16 | minor<<8 | patch), 取高位/低位都是 u32 已知安全.
-#![allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 
 /// PSCI 函数 ID (SMC64)
 const PSCI_SYSTEM_OFF: u32 = 0x84000008;

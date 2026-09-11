@@ -7,7 +7,6 @@
 //!
 //! ARMv8-A 硬件自动根据 VA 高位选择 TTBR0_EL1 (低半区, 用户) 或
 //! TTBR1_EL1 (高半区, 内核), 无需软件切换. KPTI 的作用是:
-#![allow(clippy::cast_possible_truncation)]
 //!
 //! 在用户态 (EL0) 运行时, TTBR1_EL1 指向最小化的 trampoline 页表
 //! (仅含异常入口代码), 减少内核地址空间泄露面. 异常入口时切换到

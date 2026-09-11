@@ -5,7 +5,6 @@
 //!   - Timer 中断使能
 //!   - IRQ ACK/EOI 处理
 //! 本文件 cast 多为寄存器地址偏移 (u32 → u64) 与中断号 (SGI < 16 已知).
-#![allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 
 use core::ptr::{read_volatile, write_volatile};
 

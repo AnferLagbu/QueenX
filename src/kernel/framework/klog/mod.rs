@@ -107,7 +107,6 @@ macro_rules! klog_fmt {
         let _ = core::fmt::Write::write_fmt(&mut w, format_args!($($arg)*));
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         // cast 已知安全: LogLevel/LogCategory 枚举值 < 256; ptr 改用 .cast() 根治 ptr_as_ptr
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         unsafe {
             $crate::kernel::framework::klog::klog_write(
                 $crate::kernel::framework::klog::LogLevel::$lvl as u8,
