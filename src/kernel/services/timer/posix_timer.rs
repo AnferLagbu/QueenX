@@ -46,7 +46,8 @@ pub use crate::kernel::framework::proc::{
     Sigevent, TFD_TIMER_ABSTIME, posix_timer_active_count,
 };
 
-use crate::kernel::framework::syscall::posix_timer as syscall_ptimer;
+// §6.1 下沉: 系统调用包装迁至 services/syscall/posix_timer (纯策略)
+use crate::kernel::services::syscall::posix_timer as syscall_ptimer;
 
 // ============================================================================
 // 系统调用安全包装

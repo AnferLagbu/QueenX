@@ -1,6 +1,4 @@
 pub mod api;
-pub mod brk;
-pub mod canary;
 pub mod clone;
 pub mod dispatch;
 /// T-03: 系统调用分发决策 trait
@@ -15,7 +13,6 @@ pub mod io;
 pub mod madvise_mlock;
 pub mod mmap;
 pub mod mprotect;
-pub mod posix_timer;
 pub mod sendfile;
 pub mod signalfd;
 pub mod timerfd;

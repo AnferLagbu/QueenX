@@ -19,7 +19,11 @@
 //!
 //! 评估日期: 2026-06-04
 
+pub mod brk;
+pub mod canary;
 pub mod dispatch;
+// POSIX Timer 系统调用包装 (从 framework/syscall/posix_timer.rs 下沉, §6.1)
+pub mod posix_timer;
 pub mod types;
 
 use crate::kernel::framework::syscall;

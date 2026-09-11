@@ -1,20 +1,12 @@
-//! Stack Canary / 熵源 系统调用 (P1 #14)
+#![deny(unsafe_code)]
+//! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 framework API。
+//! Stack Canary / 熵源 系统调用 — services 层实现 (从 framework/syscall/canary.rs 下沉, §6.1)
 //!
 //! 提供两个 `QueenX` 原生 syscall:
 //! - [`sys_getrandom`]: 从内核熵源填充用户 buffer (Linux getrandom 语义)
 //! - [`sys_get_canary`]: 返回当前进程 8 字节 stack canary
 //!
-//! ## Linux 兼容
-//!
-//! - `getrandom` 对应 Linux 318 (`x86_64`) / 278 (aarch64). 完整 flags 暂不实现
-//!   (`GRND_RANDOM` / `GRND_NONBLOCK`), 仅支持最常用语义 (buf, buflen, 0).
-//! - `get_canary` 是 `QueenX` 扩展, 无 Linux 对应, 编号 747 仅 QX 原生空间.
-//!
-//! ## 安全性
-//!
-//! - 用户指针必须合法 (`check_user_buf`)
-//! - `getrandom` 写用户 buffer, `copy_to_user` 异常路径被覆盖
-//! - `get_canary` 不写内存, 单纯返回 8 字节, 无内存风险
+//! 纯策略包装: 实际熵源/用户拷贝由 framework `proc::canary` 提供。
 
 use crate::kernel::framework::proc;
 
@@ -47,13 +39,6 @@ pub fn sys_getrandom(arg0: u64, arg1: u64, _arg2: u64) -> i64 {
 ///
 /// - arg0: 用户 buffer 虚拟地址 (必须可写, 至少 8 字节)
 /// - arg1: buffer 长度 (建议 8, 实际只写 8 字节)
-///
-/// 用户态 libc 启动序列:
-/// ```c
-/// uint64_t canary;
-/// syscall(QX_GET_CANARY, &canary, 8);
-/// // canary 的低字节恒为 0
-/// ```
 ///
 /// `#[inline(never)]` 关键: 此函数最终调用 `canary::process_get_current_canary`
 /// 进而调用 `PROCESS_TABLE.with_process` 闭包. 若 inline 进入 `dispatch` 宏

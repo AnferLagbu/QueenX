@@ -65,9 +65,9 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | 文件 | 下沉目标 | 依据 |
 |---|---|---|
 | framework/proc/canary.rs | services/proc/canary（合并已有封装）| LFSR-64 熵池纯算法 + safe API |
-| framework/syscall/brk.rs | services/syscall/brk | 0 unsafe，sys_brk 纯策略 |
-| framework/syscall/canary.rs | services/syscall/canary | 0 unsafe，薄包装 |
-| framework/syscall/posix_timer.rs | services/syscall/posix_timer | 0 unsafe，薄包装 |
+| framework/syscall/brk.rs | services/syscall/brk | 0 unsafe，sys_brk 纯策略 — ✅ 已下沉 |
+| framework/syscall/canary.rs | services/syscall/canary | 0 unsafe，薄包装 — ✅ 已下沉 |
+| framework/syscall/posix_timer.rs | services/syscall/posix_timer | 0 unsafe，薄包装 — ✅ 已下沉 |
 | framework/net/init/dns.rs | services/net/dns | 0 unsafe 纯静态 hosts 匹配 |
 | framework/driver/hotplug.rs | services/driver | 0 unsafe 纯事件分发 |
 | framework/driver/bus/mod.rs | services/driver/bus | 0 unsafe 编排 |
@@ -252,7 +252,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 📝 **DmaStream 收敛裸指针**：已无 pub 裸指针（`cpu_addr` 返回 `NonNull<u8>`），随阶段 3 下沉驱动验证
   - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
   - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
-- 阶段 1：**纯策略下沉**（§6.1 20 文件）。[]
+- 阶段 1：**纯策略下沉**（§6.1 20 文件）。[~] 3/20 已下沉（syscall brk/canary/posix_timer 包装）；framework/proc/canary 需回调注册（§7.4），driver/barrier/net 各文件按调用方逐一处置
 - 阶段 2：**封装+下沉**（§6.2 23 文件）。[]
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 + DECISION-B）。[]
 - 阶段 4：**VFS 4 文件下沉 + backend_trait 扩展**（DECISION-A）。[]
@@ -310,3 +310,14 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | 核心审计 | ✅ boundary 0 / safety 100% / coupling 0 / comment 0 / deadlock 0（1 项 HIGH 为既有 smp_init.rs）/ invariants 全 PASS |
 | host-tests | ✅ 全过（exit 0） |
 | QEMU | ⚠️ 未跑——x86_64 进 Ring 3 卡点（display→usb 区间）为既有 ISSUE-RT-001，与本阶段改动正交；本阶段为纯机制重构 + fallback 保持行为 |
+
+### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
+
+| 门槛 | 结果 |
+|---|---|
+| 双架构 cargo check --release 0w0e | ✅ x86_64 + aarch64（RUSTFLAGS=-D warnings） |
+| clippy -D pedantic 0（除 cast_*） | ✅ x86_64 + aarch64 |
+| 核心审计 | ✅ boundary 0 / safety 100% / coupling 0 / comment 0 / deadlock 0 / invariants 全 PASS |
+| host-tests | ✅ 全过（exit 0）——首次全量并行 `test_fsx_stress` 偶发失败（单独跑 33s 通过，全量重跑通过），判定为并行负载 flaky，非本次改动引入 |
+
+> 备注：`scripts/audit_coupling.py` 中 `framework::syscall::{brk,canary,posix_timer}` 检测模式随文件删除失效（不再匹配），无害保留。

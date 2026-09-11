@@ -784,19 +784,21 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
     Some(match num {
-        // POSIX Timer (从 framework 回退迁移)
-        SYS_timer_create => crate::kernel::framework::syscall::api::sys_timer_create(a0, a1, a2),
+        // POSIX Timer (从 framework 回退迁移, §6.1 下沉 services/syscall/posix_timer)
+        SYS_timer_create => crate::kernel::services::syscall::posix_timer::sys_timer_create(a0, a1, a2),
         SYS_timer_settime => {
-            crate::kernel::framework::syscall::api::sys_timer_settime(a0, a1, a2, a3)
+            crate::kernel::services::syscall::posix_timer::sys_timer_settime(a0, a1, a2, a3)
         }
-        SYS_timer_gettime => crate::kernel::framework::syscall::api::sys_timer_gettime(a0, a1),
-        SYS_timer_delete => crate::kernel::framework::syscall::api::sys_timer_delete(a0),
-        SYS_timer_getoverrun => crate::kernel::framework::syscall::api::sys_timer_getoverrun(a0),
-        SYS_clock_getres => crate::kernel::framework::syscall::api::sys_clock_getres(a0, a1),
+        SYS_timer_gettime => crate::kernel::services::syscall::posix_timer::sys_timer_gettime(a0, a1),
+        SYS_timer_delete => crate::kernel::services::syscall::posix_timer::sys_timer_delete(a0),
+        SYS_timer_getoverrun => {
+            crate::kernel::services::syscall::posix_timer::sys_timer_getoverrun(a0)
+        }
+        SYS_clock_getres => crate::kernel::services::syscall::posix_timer::sys_clock_getres(a0, a1),
 
-        // 熵源 / Stack Canary
-        SYS_getrandom => crate::kernel::framework::syscall::api::sys_getrandom(a0, a1, a2),
-        QX_GET_CANARY => crate::kernel::framework::syscall::api::sys_get_canary(a0, a1),
+        // 熵源 / Stack Canary (§6.1 下沉 services/syscall/canary)
+        SYS_getrandom => crate::kernel::services::syscall::canary::sys_getrandom(a0, a1, a2),
+        QX_GET_CANARY => crate::kernel::services::syscall::canary::sys_get_canary(a0, a1),
 
         _ => return None,
     })
