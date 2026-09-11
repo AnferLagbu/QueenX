@@ -77,7 +77,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/driver/display/framebuffer.rs | services/driver/display | 0 unsafe 纯绘制算法 |
 | framework/driver/display/self_test.rs | services/driver/display | 0 unsafe 自检图案 |
 | framework/chitin/firmware.rs | services/driver/firmware（已有代理）| 0 unsafe 纯 blob 管理 |
-| framework/chitin/proto_block.rs | services | 0 unsafe 纯注册逻辑 |
+| framework/chitin/proto_block.rs | services | 0 unsafe 纯注册逻辑 — DECISION-E: 依 Asterinas 范式裁决下沉（0 unsafe 安全注册包装，非指针表）|
 | framework/credo/engine.rs | services/credo | 0 unsafe 纯能力检查策略 |
 | framework/barrier/fault_inject.rs | services/barrier | 0 unsafe 测试策略 |
 | framework/barrier/reset/audit.rs | services/barrier | 0 unsafe 审计记录 |
@@ -310,6 +310,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | 核心审计 | ✅ boundary 0 / safety 100% / coupling 0 / comment 0 / deadlock 0（1 项 HIGH 为既有 smp_init.rs）/ invariants 全 PASS |
 | host-tests | ✅ 全过（exit 0） |
 | QEMU | ⚠️ 未跑——x86_64 进 Ring 3 卡点（display→usb 区间）为既有 ISSUE-RT-001，与本阶段改动正交；本阶段为纯机制重构 + fallback 保持行为 |
+
+### DECISION-E: proto_block 归属裁决（依据 Asterinas 范式）
+
+- **矛盾**: §6.1 列 `framework/chitin/proto_block.rs` 下沉 services（0 unsafe 纯注册逻辑）；§6.6 保留清单含"chitin 注册表 + proto 指针表 + user_driver"。
+- **实证调研**:
+  - `proto_block.rs` 实际是 **0 unsafe 安全注册包装**（`register_block_device(name, dev: impl BlockDevice, io_base)` → `Box::leak` + 调 `chitin_register_block_dev`），**不是**函数指针表——真正的 `extern "C"` ops 表是 `proto_char/proto_input/proto_net`（机制，保留 framework）。
+  - Asterinas 范式（`other/asterinas-0.18.1/AGENTS.md`）：`kernel/`（= services）safe 层含全部功能；块设备注册/注册表位于 **`kernel/core/src/device/registry/block.rs`**（safe 层），ostd（= framework）仅机制。
+  - Q1/Q2/Q3 判据：`register_block_device` 0 unsafe → 不强制 framework → 纯注册逻辑 → **下沉 services**。
+- **裁决**: §6.1 正确。`proto_block.rs` 下沉 services（`services/chitin/proto_block.rs` 或并入 chitin 服务层）；§6.6 的"proto 指针表"专指 `proto_char/input/net`（extern "C" ops），保留 framework。配套: `audit_block_registration.py` 的允许文件清单随位置更新；framework 侧调用方（driver/storage、chitin/composite）按 §7.4 接口化处置。
+- **状态**: [X]（裁决登记，实施随逐文件接口化推进）
 
 ### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
 
