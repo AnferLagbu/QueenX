@@ -150,7 +150,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework/barrier/reset/bsr.rs | freeze/unfreeze/rollback 编排迁出；mmio_write32 机制保留 | 编排经 framework 恢复机制 API（RECOVERY_MANAGER）；mmio 写留框架 |
 | framework/debug/ebpf.rs | 验证器策略已 trait 化（services）；解释执行引擎保留 | ✅ 已有 BpfVerifier trait（services/ebpf_verifier 权威）|
 
-### 6.4 双份合并（services 权威，framework 删业务）——20 文件
+### 6.4 双份合并（services 权威，framework 删业务）——20 文件 ⛔ 暂缓（DECISION-G 复核后方向待裁决）
 
 | framework 文件 | services 权威 |
 |---|---|
@@ -348,6 +348,24 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 🔒 **17 保留**: 其余全部被 framework 机制直接调用或是机制安全导出面——proto_block（chitin 注册表安全导出）、proc/canary（process.rs:332 机制直接依赖 + services 顶层 re-export 消费）、net/init/dns（net init cmd.rs 调用）、driver/hotplug（syscall/dispatch.rs:960 + init_all 调用）、driver/bus×2（init_all 调用）、driver/display×4（显示机制内部 + console 消费）、chitin/firmware（devtree.rs:94 直接引用）、credo/engine（session/api/user_driver 直接调用）、barrier/fault_inject（recoverable.rs:71 调用）、barrier/reset×4（恢复机制本体）。
 - **审计脚本纪律**: 凡确认下沉的文件，其审计白名单（如 audit_block_registration）仅在归属变更后同步路径，禁止先改白名单再迁移。
 - **状态**: [X]
+
+### DECISION-G: §6.4 双份合并复核（接线实证，2026-09-12 调研）
+
+> 按"核查后再动工"纪律，对 §6.4 全部 20 项做接线实证（谁被 init_all/services 实际调用），发现原表方向与真实状态有较大出入，**不能按原表直接执行**。
+
+**实证结论**：
+1. **framework/driver/mod.rs `init_all` 全部接线 framework 侧驱动**（char/bus/storage/input/display/usb/hotplug，L197-226）——framework 驱动是 **active 权威实现**；services 侧驱动（storage/nvme+ahci、char/serial+vga、virtio/blk+net）是**真实实现但未接入启动路径**的影子（即既有 MIG-005 未理清的双份）。
+2. **services/usb×5（enumerate/hid/mass_storage/ring/usb_core）、chitin/devtree、driver/net/e1000、uefi、kexec、firmware** 均为 `pub use crate::kernel::framework::...::*` 的 **re-export 壳** → 属 §6.5 壳删除，**不是** §6.4 合并对象。
+3. **services/credo/grants+sessions、services/chitin/composite** 是 framework 机制（grant/session/composite 机制）之上的**策略层/安全代理**——按服务对象准则（安全导出面保留）是**正确形态**，framework 版本应保留，无"删业务"。
+4. **display/hdmi**：framework/driver/display/hdmi/（7 文件）是否孤儿待核（services/driver/display/hdmi.rs 权威）。
+
+**处置**：§6.4 原表**暂缓执行**，分类改为：
+- 🔒 壳（→§6.5 删壳，非本阶段）：usb×5、chitin/devtree、e1000、uefi、kexec、firmware
+- 🔒 机制/策略正确形态（保留 framework，无重复）：credo/grant+session、chitin/composite
+- ⚠ 真双份（framework wired active + services 影子）：storage×7、char×2、virtio×2 —— 合并方向需用户/审核员裁决（保留 framework 机制并删 services 影子，还是按 §6.2 封装+下沉把业务迁 services 并改接线）
+- ⚠ display/hdmi（7 文件孤儿）待核
+
+**状态**: [X]（复核登记；§6.4 实际施工待方向裁决）
 
 ### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
 
