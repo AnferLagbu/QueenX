@@ -761,6 +761,10 @@ pub extern "C" fn kernel_init() {
 
         // 10-10.6. Driver subsystem init
         crate::kernel::framework::driver::init_all();
+        // §6.4 直接方案 B: x86_64 字符设备 (vga/serial) 权威迁 services,
+        // 由 crate root (合法双向编排者) 调用 services char_init 注册进 Chitin.
+        #[cfg(target_arch = "x86_64")]
+        crate::kernel::services::driver::char::char_init();
         crate::klog_boot_info!("Driver subsystem initialized");
         {
             let chitin_count = crate::kernel::framework::chitin::chitin_count() as u64;

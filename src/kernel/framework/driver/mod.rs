@@ -123,15 +123,10 @@ pub use display::{FB_PHYS_ADDR, FB_PHYS_SIZE, display_init, get_framebuffer};
 pub use bus::pci;
 
 // --- 字符设备导出 ---
+// §6.4 直接方案 B (2026-09-12): x86_64 char 业务已迁 services/driver/char,
+// framework 仅保留 aarch64 pl011 (机制).
 #[cfg(target_arch = "aarch64")]
 pub use char::pl011::Pl011Driver;
-#[cfg(target_arch = "x86_64")]
-pub use char::vga::Color as VgaColor;
-#[cfg(target_arch = "x86_64")]
-pub use char::{
-    BaudRate, DataBits, ParityMode, SCREEN_HEIGHT, SCREEN_WIDTH, SerialConfig, SerialPort,
-    StopBits, TextAttribute, VgaChar, VgaDriver,
-};
 
 // --- 网络设备导出 ---
 // e1000 内部函数 (`e1000_probe` 等) 在 e1000.rs 中以
@@ -164,10 +159,6 @@ pub use storage::ata::{
     AtaDevice, MAX_ATA_DEVICES, WORDS_PER_SECTOR, get_ctrl_base, get_io_base,
 };
 
-// --- serial 内部细节 re-export (供测试使用) ---
-#[cfg(target_arch = "x86_64")]
-pub use char::serial::{COM1_BASE, COM2_BASE, MAX_COM_PORTS, RingBuffer, SERIAL_BUFFER_SIZE};
-
 // --- e1000 内部细节 re-export (供测试使用) ---
 #[cfg(not(feature = "kernel_test"))]
 pub use net::e1000::{
@@ -197,7 +188,8 @@ pub use uefi::*;
 pub fn init_all() {
     #[cfg(target_arch = "x86_64")]
     {
-        char::char_init();
+        // §6.4 直接方案 B: x86_64 字符设备 (vga/serial) 由 services::driver::char::char_init
+        // 注册 (crate root lib.rs 编排), 此处不再调用 framework char_init.
         let _ = bus::bus_init();
         let _ = storage::storage_init();
         input::input_init();

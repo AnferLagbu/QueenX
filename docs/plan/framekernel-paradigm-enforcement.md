@@ -393,6 +393,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - 但**读写路径** `ChitinOps::Char(&CharOps)` 是 `extern "C" fn(driver_data: *mut u8, ...)` 指针表（framework/chitin/proto_char.rs:11-24），实现体需 unsafe 指针转换（framework 侧 serial.rs:687/718）→ **services 0 unsafe 无法直接构造** → 需 framework 提供**安全桥 trait**（framework 定义 `CharDeviceOps` + 构造 CharOps 的机制函数，unsafe 转换留在 framework；services impl trait）——即 §7.4 trait 注入模式，与审核员裁决一致。
 - 接线编排：crate root `src/rust/src/lib.rs` 是合法双向编排者（L763 调 `framework::driver::init_all()`、L833 调 `services::syscall::init()`）→ char_init 迁至 services 后由 lib.rs 调用，framework init_all 移除 char 项。
 
+### char 子类接线实施记录（步骤 4 首批，commit 待填）
+
+- **services 侧（新增权威）**：`services/driver/char/serial.rs` + `vga.rs` 各加 `impl Driver`（name/device_type/init/shutdown 全 safe）；`services/driver/char/mod.rs` 新增 `char_init()`（x86_64）将 VgaConsole + COM1 SerialPort 注册进 Chitin（`chitin_register_driver`，合法方向）。
+- **framework 退位**：删除 `framework/driver/char/{serial,vga}.rs`；`char/mod.rs` 仅保留 aarch64 pl011；`driver/mod.rs` 移除 char serial/vga 顶层 re-export（VgaColor/SerialPort/BaudRate/RingBuffer 等）与 init_all 中 x86_64 char 项。
+- **接线**：`lib.rs` init_all 后新增 `#[cfg(x86_64)] services::driver::char::char_init()`。
+- **测试同步**：framework/tests/driver.rs 移除 serial 测试块（framework serial 已删，纯逻辑测试迁 host-tests 为后续项）；tests/driver_test.rs 的 vga/serial 输出改走 services VgaConsole/SerialPort（§7.3 允许 framework/tests 访问 services）。
+- **SIMPLIFIED（已登记）**：注册走 `chitin_register_driver` 无 CharOps 读写绑定——Chitin char 读写路径当前无生产消费者（休眠）；待 devfs char 读写接入时按 §6.2 补 framework 安全桥 trait。
+- **验证**：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（fs_permissions_regression_test 单跑 28s 通过，为慢二进制非挂起）。
+
 ### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
 
 | 门槛 | 结果 |

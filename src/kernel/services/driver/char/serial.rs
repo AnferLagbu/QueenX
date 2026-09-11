@@ -575,3 +575,27 @@ impl SerialPort {
         SERIAL_BUFFER_SIZE - self.tx_buffer.len()
     }
 }
+
+// ============================================================================
+// Chitin Driver trait 实现 (§6.4 直接方案 B: services 权威注册)
+// ============================================================================
+
+impl crate::kernel::framework::driver::Driver for SerialPort {
+    /// 驱动名 (与 framework 原注册名保持一致: "serial0")
+    fn name(&self) -> &'static str {
+        "serial0"
+    }
+
+    fn device_type(&self) -> crate::kernel::framework::driver::DeviceType {
+        crate::kernel::framework::driver::DeviceType::Char
+    }
+
+    /// `SerialPort::new` 已 apply_config, 此处保持幂等
+    fn init(&mut self) -> Result<(), crate::kernel::framework::driver::DriverError> {
+        Ok(())
+    }
+
+    fn shutdown(&mut self) -> Result<(), crate::kernel::framework::driver::DriverError> {
+        Ok(())
+    }
+}

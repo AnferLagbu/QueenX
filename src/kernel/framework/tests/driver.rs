@@ -10,11 +10,6 @@ use crate::kernel::framework::driver::{
     ATA_PRIMARY_CTRL, ATA_PRIMARY_IO, ATA_SECONDARY_CTRL, ATA_SECONDARY_IO, AtaController,
     AtaDevice, MAX_ATA_DEVICES, WORDS_PER_SECTOR, get_ctrl_base, get_io_base,
 };
-#[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::driver::{
-    BaudRate, COM1_BASE, COM2_BASE, DataBits, MAX_COM_PORTS, ParityMode, RingBuffer,
-    SERIAL_BUFFER_SIZE, SerialConfig, SerialPort, StopBits,
-};
 use crate::kernel::framework::driver::{DeviceInfo, DeviceType, DriverError, DriverResult};
 use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
@@ -174,74 +169,6 @@ fn keyboard_driver_trait() -> TestResult {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn serial_constants() -> TestResult {
-    assert_eq_test!(COM1_BASE, 0x3F8, "COM1");
-    assert_eq_test!(COM2_BASE, 0x2F8, "COM2");
-    assert_eq_test!(MAX_COM_PORTS, 4, "max ports");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn serial_config_default() -> TestResult {
-    let config = SerialConfig::default();
-    assert_eq_test!(config.baud_rate, BaudRate::Baud115200, "baud");
-    assert_eq_test!(config.data_bits, DataBits::Bits8, "data bits");
-    assert_eq_test!(config.stop_bits, StopBits::One, "stop bits");
-    assert_eq_test!(config.parity, ParityMode::None, "parity");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn serial_baud_rate() -> TestResult {
-    assert_eq_test!(BaudRate::Baud9600.to_divisor(), 12, "9600 divisor");
-    assert_eq_test!(BaudRate::Baud115200.to_divisor(), 1, "115200 divisor");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn serial_data_bits() -> TestResult {
-    assert_eq_test!(DataBits::Bits5.to_lcr_value(), 0x00, "5 bits");
-    assert_eq_test!(DataBits::Bits8.to_lcr_value(), 0x03, "8 bits");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn serial_parity() -> TestResult {
-    assert_eq_test!(ParityMode::None.to_lcr_value(), 0x00, "none parity");
-    assert_eq_test!(ParityMode::Odd.to_lcr_value(), 0x08, "odd parity");
-    assert_eq_test!(ParityMode::Even.to_lcr_value(), 0x18, "even parity");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn serial_port_creation() -> TestResult {
-    check!(SerialPort::new(0).is_some(), "port 0 valid");
-    check!(SerialPort::new(3).is_some(), "port 3 valid");
-    check!(SerialPort::new(4).is_none(), "port 4 invalid");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn serial_ring_buffer() -> TestResult {
-    let mut buf: RingBuffer<u8> = RingBuffer::default();
-    check!(buf.is_empty(), "empty");
-    check!(!buf.is_full(), "not full");
-    assert_eq_test!(buf.len(), 0, "len 0");
-    for i in 0..SERIAL_BUFFER_SIZE {
-        check!(buf.push(i as u8).is_ok(), "push ok");
-    }
-    check!(buf.is_full(), "full");
-    assert_eq_test!(buf.len(), SERIAL_BUFFER_SIZE, "len full");
-    check!(buf.push(0xFF).is_err(), "push full fails");
-    for i in 0..SERIAL_BUFFER_SIZE {
-        assert_eq_test!(buf.pop(), Some(i as u8), "pop value");
-    }
-    check!(buf.is_empty(), "empty after drain");
-    assert_eq_test!(buf.pop(), None, "pop empty");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
 fn ata_constants() -> TestResult {
     assert_eq_test!(ATA_PRIMARY_IO, 0x1F0, "primary IO");
     assert_eq_test!(ATA_SECONDARY_IO, 0x170, "secondary IO");
@@ -319,15 +246,6 @@ pub fn register_keyboard_serial_tests() {
             "modifier_operations": keyboard_modifier_operations,
             "buffer": keyboard_buffer,
             "driver_trait": keyboard_driver_trait,
-        },
-        "driver::serial": {
-            "constants": serial_constants,
-            "config_default": serial_config_default,
-            "baud_rate": serial_baud_rate,
-            "data_bits": serial_data_bits,
-            "parity": serial_parity,
-            "port_creation": serial_port_creation,
-            "ring_buffer": serial_ring_buffer,
         },
     }
 }

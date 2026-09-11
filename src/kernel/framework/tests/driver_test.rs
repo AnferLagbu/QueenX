@@ -47,47 +47,36 @@ fn test_drivers() {
     test_keyboard();
 }
 
-/// 测试 VGA 文本模式驱动
+/// 测试 VGA 文本模式驱动 (services 权威, §6.4 直接方案 B)
 fn test_vga() {
-    // 使用 VGA 驱动输出测试信息
+    // 使用 services VgaConsole 输出测试信息
     vga_println!("=== VGA Driver Test ===");
     vga_println!("Initializing VGA text mode (80x25)...");
-    
-    // 测试颜色
-    vga_set_color!(Color::LightGreen, Color::Black);
-    vga_println!("[OK] VGA initialized successfully");
-    
-    vga_set_color!(Color::White, Color::Black);
+    vga_println!("[OK] VGA console created");
+
     vga_println!("Screen width: 80");
     vga_println!("Screen height: 25");
     vga_println!("Buffer address: 0xB8000");
-    
-    // 测试边框绘制
-    vga_println!("Drawing border...");
-    // draw_test_border();
-    
-    vga_set_color!(Color::LightCyan, Color::Black);
+
     vga_println!("[PASS] VGA test completed");
-    vga_set_color!(Color::White, Color::Black);
     vga_println!("");
 }
 
-/// 测试串口驱动
+/// 测试串口驱动 (services 权威, §6.4 直接方案 B)
 fn test_serial() {
     vga_println!("=== Serial Port Test ===");
     vga_println!("Testing COM1 (0x3F8)...");
-    
-    // 初始化串口
-    serial_init(0);
-    
-    // 发送测试字符串
-    serial_puts(0, b"QueenX - Serial Port Test\n");
-    serial_puts(0, b"COM1 initialized at 115200 baud\n");
-    serial_puts(0, b"8N1 configuration\n");
-    
-    vga_set_color!(Color::LightGreen, Color::Black);
-    vga_println!("[OK] Serial port test completed");
-    vga_set_color!(Color::White, Color::Black);
+
+    // 初始化串口 (services SerialPort, COM1 115200 8N1)
+    match serial() {
+        Some(port) => {
+            port.send_str("QueenX - Serial Port Test\n");
+            port.send_str("COM1 initialized at 115200 baud\n");
+            port.send_str("8N1 configuration\n");
+            vga_println!("[OK] Serial port test completed");
+        }
+        None => vga_println!("[FAIL] SerialPort::new(COM1) returned None"),
+    }
     vga_println!("");
 }
 
@@ -171,6 +160,40 @@ fn test_keyboard() {
 // 辅助宏和函数
 // ============================================================================
 
+// 字符设备输出走 services 权威实现 (§6.4 直接方案 B):
+// framework/driver/char/{serial,vga}.rs 已删除, 此处改为 services VgaConsole/SerialPort.
+
+use core::sync::OnceLock;
+use crate::kernel::services::driver::char::serial::{ComPort, SerialConfig, SerialPort};
+use crate::kernel::services::driver::char::vga::{CursorPos, TextAttribute, VgaConsole};
+
+static SERIAL: OnceLock<Option<SerialPort>> = OnceLock::new();
+static VGA: OnceLock<Option<VgaConsole>> = OnceLock::new();
+
+/// 获取全局 COM1 串口 (services SerialPort)
+fn serial() -> &'static Option<SerialPort> {
+    SERIAL.get_or_init(|| SerialPort::new(ComPort::Com1, SerialConfig::default_115200_8n1()))
+}
+
+/// 获取全局 VGA 控制台 (services VgaConsole)
+fn vga() -> &'static Option<VgaConsole> {
+    VGA.get_or_init(VgaConsole::new)
+}
+
+/// VGA 文本输出 (简化: services VgaConsole 无全局光标状态, 固定定位 0,0)
+fn vga_puts(s: &[u8]) {
+    if let Some(v) = vga().as_ref() {
+        v.write_string_at(CursorPos { x: 0, y: 0 }, s, TextAttribute::default());
+    }
+}
+
+/// VGA 单字符输出 (简化, 定位 0,0)
+fn vga_putchar(c: u8) {
+    if let Some(v) = vga().as_ref() {
+        v.write_char(CursorPos { x: 0, y: 0 }, c, TextAttribute::default());
+    }
+}
+
 /// VGA 打印宏 (简化版)
 macro_rules! vga_println {
     () => {
@@ -192,36 +215,22 @@ macro_rules! vga_print {
     };
 }
 
-/// VGA 设置颜色宏
+/// VGA 设置颜色宏 (services VgaConsole 无全局颜色状态, no-op)
 macro_rules! vga_set_color {
-    ($fg:expr, $bg:expr) => {
-        vga_set_color($fg as u8, $bg as u8);
-    };
+    ($fg:expr, $bg:expr) => {};
 }
 
 // ============================================================================
-// 外部函数声明 (FFI)
+// 外部函数声明 (FFI) — 仅键盘保留 framework C ABI
 // ============================================================================
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
 unsafe extern "C" {
-    // VGA 函数
-    fn vga_init();
-    fn vga_putchar(ch: i32);
-    fn vga_puts(s: *const i8);
-    fn vga_clear();
-    fn vga_set_color(fg: u8, bg: u8);
-    
-    // 串口函数
-    fn serial_init(com: u32);
-    fn serial_putc(com: u32, ch: i32);
-    fn serial_puts(com: u32, s: *const i8);
-    
     // 键盘函数
     fn keyboard_init();
     fn keyboard_has_char() -> i32;
     fn keyboard_read_char() -> i32;
-    
+
     // PIT 函数
     // fn pit_init(freq: u32) -> u32;  // 已弃用, 使用 hrtimer
     // fn pit_delay_ms(ms: u32);
