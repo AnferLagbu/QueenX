@@ -61,6 +61,24 @@ impl UserReadPtr {
         Self { ptr, len }
     }
 
+    /// 从裸指针安全构造 (先经范围校验)。
+    ///
+    /// 内部先执行 `validate_user_buf` 地址范围校验, 通过后构造 `UserReadPtr`。
+    /// 相比 `new`, 本方法在构造时即拦截非法地址 (NULL / 越界), 调用方无需
+    /// 自行校验。注意: 范围校验不验证页表映射存在性, 与 `new` 的契约一致
+    /// (映射保证由调用方/页表机制承担, 见模块 doc)。
+    ///
+    /// # 返回
+    /// 指针为 NULL 或超出用户地址空间范围时返回 `None`。
+    pub fn checked_new(ptr: *const u8, len: usize) -> Option<Self> {
+        if !validate_user_buf(ptr as u64, len as u64) {
+            return None;
+        }
+        // SAFETY: validate_user_buf 已校验 ptr 非空且 [ptr, ptr+len) 在用户地址
+        // 空间范围内; 与 `new` 的构造契约一致 (页表映射存在性由调用方/页表机制保证)。
+        Some(unsafe { Self::new(ptr, len) })
+    }
+
     /// 以不可变字节切片形式访问用户内存。
     ///
     /// 此方法是安全的，因为构造时的 `unsafe` 契约已保证了指针有效性。
@@ -109,6 +127,24 @@ impl UserWritePtr {
         //   1. 内存映射权限含 W (页表 PTE_RW=1)
         //   2. 在 `UserWritePtr` 存活期间不会有其他 writer (独占 `&mut` 借用)
         Self { ptr, len }
+    }
+
+    /// 从裸指针安全构造 (先经范围校验)。
+    ///
+    /// 内部先执行 `validate_user_buf` 地址范围校验, 通过后构造 `UserWritePtr`。
+    /// 相比 `new`, 本方法在构造时即拦截非法地址 (NULL / 越界), 调用方无需
+    /// 自行校验。注意: 范围校验不验证页表映射存在性, 与 `new` 的契约一致
+    /// (映射保证由调用方/页表机制承担, 见模块 doc)。
+    ///
+    /// # 返回
+    /// 指针为 NULL 或超出用户地址空间范围时返回 `None`。
+    pub fn checked_new(ptr: *mut u8, len: usize) -> Option<Self> {
+        if !validate_user_buf(ptr as u64, len as u64) {
+            return None;
+        }
+        // SAFETY: validate_user_buf 已校验 ptr 非空且 [ptr, ptr+len) 在用户地址
+        // 空间范围内; 与 `new` 的构造契约一致 (页表映射存在性由调用方/页表机制保证)。
+        Some(unsafe { Self::new(ptr, len) })
     }
 
     /// 以可变字节切片形式访问用户内存。
@@ -265,4 +301,41 @@ pub fn read_struct_from_user<T: Copy>(src_ptr: u64, dst: &mut T) -> bool {
         core::arch::asm!("clac", options(nomem, nostack, preserves_flags));
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_checked_new_read_rejects_null() {
+        assert!(UserReadPtr::checked_new(core::ptr::null(), 1).is_none());
+        assert!(UserReadPtr::checked_new(core::ptr::null(), 0).is_none());
+    }
+
+    #[test]
+    fn test_checked_new_read_rejects_out_of_range() {
+        // [USER_ADDR_MAX-1, +2) 越过用户地址空间上限
+        let p = (USER_ADDR_MAX - 1) as *const u8;
+        assert!(UserReadPtr::checked_new(p, 2).is_none());
+    }
+
+    #[test]
+    fn test_checked_new_read_accepts_valid() {
+        // 零长度但非 NULL: 合法 (与 validate_user_buf 语义一致)
+        let p = 0x1000 as *const u8;
+        assert!(UserReadPtr::checked_new(p, 0).is_some());
+        assert!(UserReadPtr::checked_new(p, 128).is_some());
+    }
+
+    #[test]
+    fn test_checked_new_write_rejects_null() {
+        assert!(UserWritePtr::checked_new(core::ptr::null_mut(), 1).is_none());
+    }
+
+    #[test]
+    fn test_checked_new_write_accepts_valid() {
+        let p = 0x2000 as *mut u8;
+        assert!(UserWritePtr::checked_new(p, 64).is_some());
+    }
 }

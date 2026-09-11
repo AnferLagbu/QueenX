@@ -11,7 +11,12 @@
 //!
 //! 页表级: L0 (512GB) → L1 (1GB) → L2 (2MB) → L3 (4KB)
 
-use super::*;
+// 显式导入 mm 父模块符号 (2026-09-12 方案 B: 消除 glob 导入, 满足 clippy::wildcard_imports)
+// 背景: 既有 commit a7851509 删除本文件 glob allow 导致 aarch64 clippy 回归, 用户裁决改显式导入.
+// 说明: `super::KERNEL_BASE` / `super::kpti::kpti_init` 走显式路径, 无需在此导入.
+use super::{
+    PAGE_NX, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PhysAddr, VirtAddr, get_pmm,
+};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 

@@ -1,9 +1,8 @@
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::types::{
-    BACKOFF_BASE_TICKS, BarrierSnapshot, CAP_FS_WRITE, CAP_NET_SEND, CAP_PROC_CREATE,
-    DEFAULT_BARRIER_INTERVAL, DomainState, MAX_ADDR_RANGES, MAX_BARRIER_SNAPSHOTS,
-    MAX_CONSECUTIVE_FAILURES, MAX_DOMAIN_DEPENDENCIES,
+    BACKOFF_BASE_TICKS, BarrierSnapshot, DEFAULT_BARRIER_INTERVAL, DomainState, MAX_ADDR_RANGES,
+    MAX_BARRIER_SNAPSHOTS, MAX_CONSECUTIVE_FAILURES, MAX_DOMAIN_DEPENDENCIES,
 };
 use super::undo_log::UndoLog;
 
@@ -142,23 +141,16 @@ impl RecoveryDomain {
     fn apply_degradation(&self) {
         let failures = self.consecutive_failures.load(Ordering::SeqCst);
         let original = self.original_cap_mask.load(Ordering::SeqCst);
-        match failures {
-            1..=2 => {
-                self.dom_cap_mask.store(original, Ordering::SeqCst);
-            }
-            3 => {
-                let degraded = original & !(CAP_FS_WRITE);
-                self.dom_cap_mask.store(degraded, Ordering::SeqCst);
-                self.set_state(DomainState::Degraded, Ordering::SeqCst);
-            }
-            4 => {
-                let degraded = original & !(CAP_FS_WRITE | CAP_NET_SEND | CAP_PROC_CREATE);
-                self.dom_cap_mask.store(degraded, Ordering::SeqCst);
-                self.set_state(DomainState::Degraded, Ordering::SeqCst);
-            }
-            _ => {
-                self.set_state(DomainState::Quarantined, Ordering::SeqCst);
-            }
+        // 降级矩阵为策略 (degrade_policy trait, §6.3 拆分接口), 纯决策无副作用;
+        // 状态写入由 framework 依据决策执行.
+        let decision =
+            super::degrade_policy::current_barrier_degrade_policy().degrade(failures, original);
+        self.dom_cap_mask.store(decision.cap_mask, Ordering::SeqCst);
+        if decision.mark_degraded {
+            self.set_state(DomainState::Degraded, Ordering::SeqCst);
+        }
+        if decision.mark_quarantined {
+            self.set_state(DomainState::Quarantined, Ordering::SeqCst);
         }
     }
 

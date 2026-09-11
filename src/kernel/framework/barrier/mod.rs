@@ -47,6 +47,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::kernel::framework::sync::IrqSpinLock;
 pub mod api;
+pub mod degrade_policy;
 pub mod domain;
 pub mod fault_inject;
 pub mod manager;
@@ -76,6 +77,12 @@ pub use snapshot::{
 };
 pub use types::*;
 pub use undo_log::UndoLog;
+
+// 降级策略 trait — 机制/策略分离 (§6.3 domain.rs 拆分接口)
+pub use degrade_policy::{
+    BarrierDegradePolicy, DegradeDecision, FallbackBarrierDegradePolicy,
+    current_barrier_degrade_policy, register_barrier_degrade_policy,
+};
 
 pub use api::{
     recovery_barrier_maintenance, recovery_domain_add_addr_range, recovery_domain_add_dep,

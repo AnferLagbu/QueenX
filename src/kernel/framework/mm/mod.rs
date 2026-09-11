@@ -59,6 +59,7 @@ pub mod mechanism;
 /// D3: NUMA 拓扑感知与内存策略
 pub mod numa;
 pub mod page_fault;
+pub mod page_fault_policy;
 pub mod pcache;
 /// T2-2: PMM 策略决策 trait (阶数选择/碎片化/水位线)
 pub mod pmm_trait;
@@ -127,6 +128,12 @@ pub use slab_trait::{
 pub use swap_trait::{
     FallbackSwapPolicy, LruPageInfo, SwapPolicy, SwapPolicyContext, current_swap_policy,
     register_swap_policy,
+};
+
+// page_fault_policy 公共接口 re-export — 缺页策略-机制分离
+pub use page_fault_policy::{
+    FallbackPageFaultPolicy, PageFaultPolicy, current_page_fault_policy,
+    register_page_fault_policy,
 };
 
 // cow 公共接口 re-export — 避免跨子系统直接访问 mm::cow 内部

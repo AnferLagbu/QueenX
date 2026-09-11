@@ -102,16 +102,10 @@ pub fn discover_xhci_controllers() -> framework::Result<Vec<XhciController>> {
             }
         };
 
-        // 4. 创建 IoMem
-        // SAFETY: BAR0 由 PCI 枚举保证为 xHCI 设备 MMIO 区域; bar_base..bar_base+mmio_size
-        // 已通过 PCI BAR 配置 + 4KB 对齐映射到内核空间. ALIAS_REGISTRY 通过 Mutex
-        // 保护, 与其他设备枚举路径无竞争 (PCI 枚举在 SMP 启动前完成).
+        // 4. 创建 IoMem — 经 from_pci_bar 安全包装 (PCI BAR 由枚举保证有效区域)
         let mmio_size = bar_size.min(XHCI_DEFAULT_MMIO_SIZE as u64) as usize;
-        let iomem = unsafe {
-            match IoMem::new(PhysAddr(bar_base), mmio_size, "xhci-pci") {
-                Ok(im) => im,
-                Err(_) => continue, // MMIO 映射失败, 跳过该设备
-            }
+        let Ok(iomem) = IoMem::from_pci_bar(PhysAddr(bar_base), mmio_size, "xhci-pci") else {
+            continue; // MMIO 映射失败, 跳过该设备
         };
 
         // 5. 实例化 XhciController (未初始化, 调用方需 init_hardware)

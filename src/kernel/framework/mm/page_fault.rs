@@ -23,6 +23,7 @@
 //!   确保用户态不会看到脏数据（信息泄漏防护）。
 //! - `PAGE_FAULT_COUNT` 使用 `AtomicU64`, 无竞争条件。
 
+use super::page_fault_policy::current_page_fault_policy;
 use super::pmm;
 use super::vma::{MmStruct, Vma, VmaType};
 use super::vmm;
@@ -61,11 +62,16 @@ impl PageFaultInfo {
     }
 }
 
-// 用户栈顶 (经典 Linux 概念, 等同用户地址空间上限, B05-45 集中)
-// 引用 constants::limits::USER_ADDR_MAX 而非硬编码; 二者语义等价 (栈顶 = 地址空间上限)
-const USER_STACK_TOP: u64 = crate::kernel::framework::constants::limits::USER_ADDR_MAX;
-const USER_STACK_DEFAULT_SIZE: u64 = 0x0080_0000; // 8MB
-const USER_STACK_GUARD_PAGES: u64 = 1; // 1 page guard
+// 用户栈扩展参数已策略化 (page_fault_policy trait, §6.3 拆分接口).
+// #PF 中断上下文: current_page_fault_policy() 是纯决策读取, 无阻塞/分配.
+
+/// 栈保护页结束地址 (栈底向下 guard 页边界), 缺页地址低于此值即 SIGSEGV
+#[inline]
+fn stack_guard_end() -> u64 {
+    let p = current_page_fault_policy();
+    let base = p.stack_top() - p.stack_default_size();
+    base + p.stack_guard_pages() * PAGE_SIZE
+}
 
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
@@ -163,10 +169,8 @@ pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
 )]
 fn handle_stack_expansion_simple(addr: usize, user_cr3: u64) -> PfResult {
     let page_aligned = addr & !(PAGE_SIZE as usize - 1);
-    let stack_base = USER_STACK_TOP - USER_STACK_DEFAULT_SIZE;
-    let guard_end = stack_base + USER_STACK_GUARD_PAGES * PAGE_SIZE;
 
-    if (page_aligned as u64) < guard_end {
+    if (page_aligned as u64) < stack_guard_end() {
         return PfResult::SignalSegv;
     }
 
@@ -339,8 +343,9 @@ fn handle_file_fault(
 }
 
 fn is_stack_expansion_candidate(addr: usize) -> bool {
+    let p = current_page_fault_policy();
     let a = addr as u64;
-    (USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&a)
+    (p.stack_top() - p.stack_default_size()..p.stack_top()).contains(&a)
 }
 
 // 有意窄化: 显式收窄, 调用方保证值域
@@ -351,10 +356,8 @@ fn is_stack_expansion_candidate(addr: usize) -> bool {
 )]
 fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult {
     let page_aligned = addr & !(PAGE_SIZE as usize - 1);
-    let stack_base = USER_STACK_TOP - USER_STACK_DEFAULT_SIZE;
-    let guard_end = stack_base + USER_STACK_GUARD_PAGES * PAGE_SIZE;
 
-    if (page_aligned as u64) < guard_end {
+    if (page_aligned as u64) < stack_guard_end() {
         return PfResult::SignalSegv;
     }
 
@@ -471,10 +474,12 @@ mod tests {
 
     #[test]
     fn test_stack_expansion_candidate() {
-        let inside = (USER_STACK_TOP - PAGE_SIZE) as usize;
+        // 回退策略与历史硬编码值一致: 栈顶 = USER_ADDR_MAX, 默认 8MB, guard 1 页
+        let p = crate::kernel::framework::mm::page_fault_policy::FallbackPageFaultPolicy;
+        let inside = (p.stack_top() - PAGE_SIZE) as usize;
         assert!(is_stack_expansion_candidate(inside));
 
-        let outside = (USER_STACK_TOP - USER_STACK_DEFAULT_SIZE - PAGE_SIZE) as usize;
+        let outside = (p.stack_top() - p.stack_default_size() - PAGE_SIZE) as usize;
         assert!(!is_stack_expansion_candidate(outside));
 
         assert!(!is_stack_expansion_candidate(0x1000));

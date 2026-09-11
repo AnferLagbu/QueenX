@@ -2,7 +2,7 @@
 
 > **优先级（2026-09-11 用户裁决）：本工程优先于分册 9**。理由：范式落实（归属判据 + 依赖方向）直接影响后续一切开发的代码归属与接口设计，是分册 9（死代码/TODO 治理）及其后工程的前置。分册 9 的 B09-13 反向依赖治理被本工程 §7 吸收。
 
-> 工程定位：独立架构工程。落实 Asterinas framekernel 范式（机制/策略分离 + Minimalism + 依赖单向），全面整治 framework→services 反向依赖。**实施交外部委托人，AI 审查。**
+> 工程定位：独立架构工程。落实 Asterinas framekernel 范式（机制/策略分离 + Minimalism + 依赖单向），全面整治 framework→services 反向依赖。**实施由 AI 全权接手（用户委派），用户审查。**
 
 ## 1. 背景与依据
 
@@ -243,7 +243,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 描述：分 6 阶段，每阶段独立可验证（实施交委托人）。
 方案：
-- 阶段 0：**safe API 缺口补齐**——IoMem::from_pci_bar 化、UserPtr safe 构造、DmaStream 收敛裸指针、FFI 薄层分离；**定义策略注入 trait**：PageFaultPolicy（#PF 栈扩展）、BarrierDegradePolicy（降级）、采样回调（calibration）、VMA 查询/修改 API（mremap 编排）。[]（前置）
+- 阶段 0：**safe API 缺口补齐 + 策略注入 trait 定义**。[X]（本工程首批交付）
+  - ✅ **PageFaultPolicy trait**（[framework/mm/page_fault_policy.rs](../../src/kernel/framework/mm/page_fault_policy.rs)）：栈扩展三参数策略化，fallback=历史值；page_fault.rs 已接入（`current_page_fault_policy`）
+  - ✅ **BarrierDegradePolicy trait**（[framework/barrier/degrade_policy.rs](../../src/kernel/framework/barrier/degrade_policy.rs)）：降级矩阵策略化，fallback=历史矩阵；domain.rs `apply_degradation` 已接入
+  - ✅ **IoMem::from_pci_bar 化**：usb/mod.rs xhci-pci 改安全包装（-1 unsafe）；xhci.rs 测试用 fake MMIO 保留 `IoMem::new`
+  - ✅ **UserPtr safe 构造**：`UserReadPtr/UserWritePtr::checked_new`（先 `validate_user_buf` 再构造）+ 单测；FFI 调用点（unsafe extern "C" 契约）随对应下沉阶段迁移
+  - ✅ **VMA 查询/修改 API**：已满足——services/mm/{mremap,mprotect}.rs 已委托 framework `MmStruct::{mremap,mprotect}`，无需新增
+  - 📝 **DmaStream 收敛裸指针**：已无 pub 裸指针（`cpu_addr` 返回 `NonNull<u8>`），随阶段 3 下沉驱动验证
+  - 📝 **FFI 薄层分离**：随阶段 6.2/6.3 下沉实施（syscall 用户指针拷贝集中框架）
+  - 📝 **calibration 采样回调**：boot 早期路径，随阶段 6.3 timer 部分下沉实施
 - 阶段 1：**纯策略下沉**（§6.1 20 文件）。[]
 - 阶段 2：**封装+下沉**（§6.2 23 文件）。[]
 - 阶段 3：**驱动双份合并 + E1000 回迁**（§6.4 20 文件 + DECISION-B）。[]
@@ -270,3 +278,35 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - B04-AUDIT-005（E1000 上移）→ 被 DECISION-B 回迁。
 - 分册 5/6 系列迁移（T1-T9/E6）→ 已下沉成果为本工程基础。
 - AGENTS.md §4.1 / explain-framekernel.md（2026-09-11 决策树补全）→ 判据来源。
+
+## 11. 中途问题与决策记录
+
+> 本工程实施过程中遇到的问题与用户决策登记（变更历史由 git 提交承载，此处仅登记决策内容与理由）。
+
+### DECISION-C: aarch64 clippy 回归处置（用户裁决方案 B — 显式导入）
+
+- **发现时机**: 阶段 0 验证 aarch64 `clippy -D pedantic` 时，`mm/vmm_aarch64.rs:14` 报 `wildcard_imports` 错误（`use super::*;`）。
+- **根因**: 既有 commit `a7851509`（分册 9 死代码治理，2026-09-11）将本文件的 `#![allow(clippy::wildcard_imports, clippy::cast_possible_truncation)]` 当作"过时 allow"删除，但 `use super::*;` 仍在——该 allow 保护的是 aarch64 移植约定（glob 导入 mm 父模块全部公开 API，与 x86_64 侧同步），删除即 CI 回归。
+- **候选方案**:
+  - A: 恢复 `#![allow(clippy::wildcard_imports)]`——保留移植约定，改动 1 行，风险最低；
+  - B: 按 clippy 建议改显式导入清单——消除 glob，风格与 x86_64 侧（已无 glob）一致，更干净。
+- **用户裁决**: B。已将 `use super::*;` 改为 `use super::{PAGE_NX, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PhysAddr, VirtAddr, get_pmm};`；`super::KERNEL_BASE` / `super::kpti::kpti_init` 保留显式路径。
+- **状态**: [X]
+
+### DECISION-D: 阶段 0 范围登记（三项顺延至对应阶段）
+
+- **描述**: 阶段 0 原列的 DmaStream 收敛裸指针 / FFI 薄层分离 / calibration 采样回调，经调研确认与后续阶段绑定，登记顺延：
+  - **DmaStream 收敛裸指针**: 当前已无 pub 裸指针返回（`cpu_addr` 返回 `NonNull<u8>`，构造走 safe `from_frame`），待阶段 3 驱动下沉时随业务验证；
+  - **FFI 薄层分离**: 属阶段 6.2/6.3 下沉动作的一部分（syscall 用户指针拷贝集中框架、中断/panic 上下文经 trait 注入）；
+  - **calibration 采样回调**: boot 早期路径（PIT 参考时钟），随阶段 6.3 timer 部分下沉一并实施。
+- **状态**: [X]（登记，不在阶段 0 交付）
+
+### 阶段 0 验证结果（§9 门槛）
+
+| 门槛 | 结果 |
+|---|---|
+| 双架构 cargo check --release 0w0e | ✅ x86_64 + aarch64（RUSTFLAGS=-D warnings） |
+| clippy -D pedantic 0（除 cast_*） | ✅ x86_64 + aarch64 |
+| 核心审计 | ✅ boundary 0 / safety 100% / coupling 0 / comment 0 / deadlock 0（1 项 HIGH 为既有 smp_init.rs）/ invariants 全 PASS |
+| host-tests | ✅ 全过（exit 0） |
+| QEMU | ⚠️ 未跑——x86_64 进 Ring 3 卡点（display→usb 区间）为既有 ISSUE-RT-001，与本阶段改动正交；本阶段为纯机制重构 + fallback 保持行为 |
