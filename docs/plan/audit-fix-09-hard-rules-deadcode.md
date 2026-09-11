@@ -23,6 +23,26 @@
   - 方案：逐处审查——真死代码删除，被 cfg 引用则用 cfg_attr 精确化；不保留裸 allow。
   - 状态：[]
 
+- **B09-20. src/kernel 核心 allow 抑制消除（2026-09-11 登记，F9 隐性死代码治理）**
+  - 描述：2026-09-11 隐性死代码全量扫描（编译器 dead_code lint 三态：默认/kernel_test/host-test 链 **均 0 warning**，私有零引用项为零）。**死代码抑制全形式清点**（Rust 全部抑制机制，排除 vendored smoltcp）：
+    - `#[expect(dead_code)]`/`#[expect(unused*)]`：**0 处**
+    - 多 lint 合并 allow 含 dead_code：**0 处**；带 reason 的 allow(dead_code)：**0 处**
+    - **模块级 `#![allow(dead_code)]`：1 处**（framework/constants/limits.rs:12——"各模块按需使用"豁免，F9 违规，对应 D-7 已登记）
+    - `#[allow(unused*)` 单项：3 处（debug/ebpf_verifier.rs:28 unused_imports、idt/safety.rs:7 unused_imports、dma/engine.rs:422 unused_variables）
+    - **`#[cfg_attr(..., allow(unused*))]` 条件抑制：1 处**（framework/dma/engine.rs:511 `#[cfg_attr(target_arch = "x86_64", allow(unused_variables))]`——x86_64 专用豁免，F9 违规）
+    - 全局配置核查：Cargo.toml 无 `[lints]`/`[workspace.lints]`；clippy.toml 无死代码抑制——**无全局死代码豁免**
+    - 合计 **5 处**抑制残留（非死代码类的 `#[expect(clippy::*)]`/`#[allow(clippy::*)]` ~150+ 处为规范豁免，带 reason 合规，非 F9 范畴）
+    - **死代码类抑制实测闭环（2026-09-11，双架构 clippy 验证）**：
+      - **冗余移除 2 处**：limits.rs:12 模块级 `#![allow(dead_code)]`（全为 pub const，不受 dead_code 管辖，移除后双架构 0 触发）；dma/engine.rs:422 `#[allow(unused_variables)]`（cache_flush 无未用变量，双架构 0 触发）
+      - **有使用者保留 3 处**（加注释说明）：ebpf_verifier.rs:28 unused_imports（x86_64 下 BpfInsn 未用）；dma/engine.rs:510 cfg_attr(x86_64) unused_variables（x86_64 下 cache_invalidate 的 addr/size 未用）；idt/safety.rs:7 unused_imports（**aarch64 下 KERNEL_BASE 未用**——x86_64 不报、aarch64 报，实测揭示跨架构差异）
+      - 连同 mmu.rs:182（allow(clippy::identity_op)，见下）**合计净移除 3 处冗余抑制**；最终 x86_64 + aarch64 `clippy -D warnings` 均 0 warning
+    - **allow(clippy) 冗余核实（2026-09-11，实测闭环）**：22 处 allow(clippy) 逐处核实——
+      - 17 处静态确认有真实触发（aarch64 cast×7、identity_op×1、absurd_extreme_comparisons、too_many_arguments、eq_op、cast、should_implement_trait×2、slow_vector_initialization、explicit_auto_deref、wildcard_imports）
+      - **5 处 upper_case_acronyms（errno.rs:17、syscall/types.rs:12、hvfs/bp.rs:79、cgroup.rs:505、klog/mod.rs:491）实测移除后 clippy 报 87 处触发（全大写 enum 变体 EPERM/ENOENT/EIO 等触发该 lint）——确认有使用者，已恢复**（注：静态分析曾误判"全大写不触发"，实测纠正；这 5 处允许保留）
+      - **1 处 mmu.rs:182 identity_op 实测移除后 aarch64 clippy 0 触发——确认冗余，已移除**（净代码改动：仅此 1 处；aarch64/x86_64 clippy -D warnings 均 0 warning 验证）
+  - 方案：逐处核实——真死代码删除或接入使用路径；cfg 门控引用则 cfg_attr 精确化；不保留裸 allow（对齐 B09-03 治理模式）。
+  - 状态：[]
+
 ## 工程计划 B: 死代码分类治理（R1-R4）
 
 ### 背景
@@ -62,7 +82,8 @@
 - **B09-10. 28 处 TODO(TRACK-...) 注释（H.3.5 P2-C）**
   - 描述：28 处 `TODO(TRACK-...)` 注释违反 AGENTS.md §9.4"不留 TODO"；其中 ISSUE-SRC-002（Ed25519）等已在分册 07 登记。
   - 方案：逐一处置——实装、转 plan 任务或删除；完成后 grep 复核为 0。
-  - 状态：[] (2026-09-09 实测复核：TRACK- 现存 24 处（文档登记 28 处，差 4 处待核）——syscall/types.rs 8、iouring.rs 4、ipc/signal.rs 4、uefi.rs 2、shadow_stack.rs 2、idt/safety 1、framework power 1、services power 1、tickless 1；另有普通 TODO 9 处。处置按 2026-09-09 治理决策三分层（见 DECISION-052）)
+  - 状态：[] (2026-09-09 实测复核：TRACK- 现存 24 处（文档登记 28 处，差 4 处待核）——syscall/types.rs 8、iouring.rs 4、ipc/signal.rs 4、uefi.rs 2、shadow_stack.rs 2、idt/safety 1、framework power 1、services power 1、tickless 1；另有普通 TODO 9 处。处置按 2026-09-09 治理决策三分层（见 DECISION-052))
+  - 2026-09-11 全仓补扫（src/kernel 之外）：src/user 0 TODO；src/rust/src/lib.rs 3 处 `TRACK-INIT-RING3-PANIC` 为"修复(TRACK-)"已解决说明非待办；host-tests 3 处——2 处测试数据/历史说明非真实（td25 数据串、td11-13 历史注），**1 处过期引用：mmap_pwm_test.rs:101 `TODO(TRACK-5B3EBC)`（内核现存 24 处 TRACK- 中无 5B3EBC，注释失同步）登记待清理**
 
 - **B09-17. QX_* 私有编号归位 SYS_*（2026-09-09 新增，R2 syscall 编号空间治理）**
   - 描述：实测 2026-09-09 `audit_unwired_pub_fn.py` 扫描（分册 1 修复版）：R2 未接线 syscall 157 项 = **SYS_* 38 项 + QX_* 119 项**；另有 dispatch 已接线的 QX_* 46 项。经 Linux x86_64 syscall 表对照，**大量基础 syscall 错误挂在 QX_* 私有区（500+）**，违背编号空间设计（DECISION-037：0-299 直接用 Linux 标准编号、500+ 留给 QX 独有功能）。
@@ -244,9 +265,10 @@
 
 > 完整 445 项见 B09-18 实测报告；逐项核实后分拣（接线 vs 转正式 vs 删除）。
 
-### D-5. TODO → 转正式（32 项）
+### D-5. TODO → 转正式（33 项，2026-09-11 复核：TRACK- 23 + 普通 10）
 
-> 处置：TRACK- 23 项 + 普通 9 项 = **实现治理**（实装对应功能）；过期/无价值 TODO（如 mremap 90BFB0）→ 直接删（见 D-7）。
+> 处置：TRACK- 23 项 + 普通 10 项 = **实现治理**（实装对应功能）；过期/无价值 TODO（如 mremap 90BFB0）→ 直接删（见 D-7）。
+> 2026-09-11 全量复核：TRACK- 实测 24 处（mremap 90BFB0 过期 → 删除，转正式 23 项）；普通 TODO 实测 10 处（原登记 9 项笔误，实为 10 处——时间戳 3 处 + oomd/memfd×2/xhci/net-init/pidfd/overlayfs）。
 
 **TRACK- 追踪规划（23 项）**：
 - syscall/types.rs（7 项）：getitimer/setitimer/clone(线程创建)/hardlink/symlink/fchown/times——POSIX 兼容必需（mremap 90BFB0 已过期 → 删除，不入清单）

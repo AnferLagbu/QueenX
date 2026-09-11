@@ -3,7 +3,7 @@
 //! 提供对 x86-64 底层硬件寄存器的安全访问接口。
 //! 封装内联汇编，提供类型安全的 API。
 
-// 以下 import 在地址校验函数与 test 构建中使用
+// 以下 import 在地址校验函数与 test 构建中使用 (aarch64 下 KERNEL_BASE 未用, 2026-09-11 实测需豁免)
 #[allow(unused_imports)]
 use crate::kernel::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE, USER_ADDR_FLOOR, USER_ADDR_MIN};
 

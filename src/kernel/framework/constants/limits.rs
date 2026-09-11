@@ -9,7 +9,6 @@
 //!
 //! 按 framekernel §4.2 资源分类, 敏感资源 (如硬件容量上限) 归 framework
 //! 内部, 不暴露给 services. 强类型 (usize) const 不可变, 单点定义.
-#![allow(dead_code)] // 各模块按需使用, 编译期 dead_code lint 不触发
 
 /// MMIO 别名注册表最大容量
 ///

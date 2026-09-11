@@ -179,7 +179,6 @@ pub unsafe fn init() {
 /// 页表层级:
 ///   TTBR1_L1`[0]` → L2_DEVICE (0-1GB, Device memory, 2MB 粒度)
 ///   TTBR1_L1`[1]` → 1GB 块 (1-2GB, Normal memory)
-#[allow(clippy::identity_op)]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn init_kernel_ttbr1() {
     unsafe {

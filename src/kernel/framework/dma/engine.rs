@@ -419,7 +419,6 @@ impl DmaEngine {
     /// 刷新 CPU 缓存以确保 DMA 一致性.
     /// 该函数与架构相关, 对非一致性 DMA 至关重要.
     #[inline(always)]
-    #[allow(unused_variables)]
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
