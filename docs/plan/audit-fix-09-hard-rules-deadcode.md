@@ -43,7 +43,7 @@
         - **8 处有使用者保留**：mmu:134 identity_op（0b00<<14 触发）；virtio/net:570 absurd_extreme_comparisons（**仅 aarch64 恒真比较触发**）；test_proc:99 eq_op；userptr:178 should_implement_trait；hvfs/arc:79 slow_vector；hvfs/dataset:39 should_implement_trait；boot_image:62 explicit_auto_deref
       - **合计本轮移除 12 处冗余 allow**（含此前 mmu.rs:182 identity_op）；x86_64 + aarch64 `clippy -D warnings` 均 0 warning
   - 方案：逐处核实——真死代码删除或接入使用路径；cfg 门控引用则 cfg_attr 精确化；不保留裸 allow（对齐 B09-03 治理模式）。
-  - 状态：[]
+  - 状态：[X]（2026-09-11 核实与消除已完成：死代码类 5 处 + allow(clippy) 22 处全部实测定性，**移除 12 处冗余**（limits.rs 模块级 dead_code、dma/engine.rs:422 unused_variables、mmu.rs:182/134 见上、aarch64 模块级 cast×6 + wildcard、user_proc too_many_arguments、klog cast），14 处确认有使用者保留并加注释；x86_64 + aarch64 clippy -D warnings 0；剩余 F9 死代码类治理（如未来新增代码规范）并入 B09-03 统一把关）
 
 ## 工程计划 B: 死代码分类治理（R1-R4）
 
