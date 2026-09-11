@@ -362,10 +362,36 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **处置**：§6.4 原表**暂缓执行**，分类改为：
 - 🔒 壳（→§6.5 删壳，非本阶段）：usb×5、chitin/devtree、e1000、uefi、kexec、firmware
 - 🔒 机制/策略正确形态（保留 framework，无重复）：credo/grant+session、chitin/composite
-- ⚠ 真双份（framework wired active + services 影子）：storage×7、char×2、virtio×2 —— 合并方向需用户/审核员裁决（保留 framework 机制并删 services 影子，还是按 §6.2 封装+下沉把业务迁 services 并改接线）
+- ⚠ 真双份（framework wired active + services 影子）：storage×7、char×2、virtio×2 —— **方向裁决：直接方案 B**（见下）
 - ⚠ display/hdmi（7 文件孤儿）待核
 
-**状态**: [X]（复核登记；§6.4 实际施工待方向裁决）
+**方向裁决（审核员，2026-09-12）——真双份 11 项执行"直接方案 B"，取消"先 A 后 B"**：
+- **理由**：services 影子是"真实实现但未接线"（内容完整）——直接 B = 接线切到 services + framework 留机制删业务，一步到位；"先 A"会误删可复用 services 实现，B 时仍需从 framework 迁回（重复搬移）。接线改造风险是 A 后 B 也必经的，A 只推迟不消除。
+- **执行要求**：
+  1. **前置核实**：11 项 services 影子内容自足性（0 unsafe ✓ / 硬件访问经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）。**完整 → 直接接线**；**不完整（半成品/依赖 framework 内部）→ 该项改从 framework 迁业务**（仍是 B 形态）。核实不通过不构成选 A 的理由。
+  2. **接线改造**：init_all 从"调 framework 驱动"改为 **Chitin 注册分发指向 services 驱动**（§7.4 接口化模式）。
+  3. **framework 退位**：留 IoMem/IoPort/DmaStream/Chitin 注册机制，删驱动业务。
+  4. **分子类推进**：先 1 子类（char 或 storage）→ QEMU 驱动冒烟 → 再扩展；每子类跑 audit_services_boundary。
+  5. **MIG-005 收尾**：真双份 11 项即 MIG-005 遗留，本阶段接管（§10 关联登记）。
+
+**状态**: [X]（复核登记 + 方向裁决完成；§6.4 施工按直接方案 B 执行）
+
+### 前置核实执行记录（步骤 1，2026-09-12）
+
+> 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
+
+| 子类 | 项 | 核实结果 | 结论 |
+|---|---|---|---|
+| char | serial.rs | ✅ 0 unsafe；PIO 全经 `framework::ioport::IoPort`（new_safe）；业务自含 | **直接接线** |
+| char | vga.rs | ✅ 0 unsafe；MMIO/PIO 经 `IoMem::from_pci_bar` + `IoPort::new_safe`；业务自含 | **直接接线** |
+| virtio | blk.rs / net.rs | ⚠ 依赖 `framework::driver::virtio::queue::{DmaBuffer, VirtQueue}`（DMA 环机制，合法机制依赖）；blk/net 业务待完整核实 | 待续核 |
+| storage | nvme.rs | ⚠ 依赖 `fw_nvme::NvmeCommand/Completion`（wire 类型，机制可留）+ `fw_storage::nvme_read_identify_*`（解析 helper，业务）→ 解析 helper 需迁 services | **从 framework 迁业务**（解析 helper） |
+| storage | ahci.rs / ata.rs / mod.rs | 待核 | 待续核 |
+
+**接线改造的关键耦合点（步骤 2/3 设计确认）**：
+- Chitin 注册安全路径 = `chitin_register_driver(name, proto, io_base, irq, Box<dyn Driver>)`，`Driver` trait **全 safe 方法**（framework/driver/framework.rs:287）→ **services 可 0 unsafe impl Driver 并注册**（合法方向）。
+- 但**读写路径** `ChitinOps::Char(&CharOps)` 是 `extern "C" fn(driver_data: *mut u8, ...)` 指针表（framework/chitin/proto_char.rs:11-24），实现体需 unsafe 指针转换（framework 侧 serial.rs:687/718）→ **services 0 unsafe 无法直接构造** → 需 framework 提供**安全桥 trait**（framework 定义 `CharDeviceOps` + 构造 CharOps 的机制函数，unsafe 转换留在 framework；services impl trait）——即 §7.4 trait 注入模式，与审核员裁决一致。
+- 接线编排：crate root `src/rust/src/lib.rs` 是合法双向编排者（L763 调 `framework::driver::init_all()`、L833 调 `services::syscall::init()`）→ char_init 迁至 services 后由 lib.rs 调用，framework init_all 移除 char 项。
 
 ### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
 
