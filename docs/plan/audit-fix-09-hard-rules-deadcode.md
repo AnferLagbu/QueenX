@@ -161,7 +161,7 @@
 - **B09-13. framework→services 全量反向依赖清单与治理（D8）**
   - 描述：**136 处反向依赖 / 78 文件**（2026-09-11 全量复查，grep `kernel::services` 含内联路径；原登记 146 处，B09-12 治理后减少）按子模块分类（ipc 31、fs 24、syscall 20、proc 14、net 11、config 10、credo 6、wasm 5、driver 3、mm 2、sync/io/barrier 1）；含 B09-09 并入的 ~78 处 pub use re-export 壳。
   - 方案：建立清单 → 分类（类型迁回 / 顶层 re-export / 接口抽象）→ 分批治理；**20 处直接 use（sm_fi/syscall/sendfile/user_proc 等）为生产治理重点，优先于 re-export 壳**；每批跑 F2 门禁（分册 01 修复后）+ audit_services_boundary 0 违规。
-  - 状态：[]
+  - 状态：[]（2026-09-11 **优先级让位**：本条目被独立工程 [framekernel-paradigm-enforcement.md](../plan/framekernel-paradigm-enforcement.md) §7 吸收——该工程优先于分册 9，含逐文件下沉清单 + trait 化改造 + 残留调用点接口方案；实施并入该工程）
 
 - **B09-14. F3 循环依赖门禁接入**
   - 描述：audit_coupling.py 修复（分册 01）后接入 CI，新增代码禁止引入模块间循环依赖。
