@@ -76,6 +76,22 @@ make test-host                     # host-tests
 
 **要 unsafe 吗？要 → framework。不要 → services。涉及硬件/MMU/中断/上下文切换？→ framework。纯算法/策略/业务？→ services.**
 
+**归属决策树（2026-09-11 依 Asterinas framekernel 标准补全，TCB 最小化关键）**：
+
+```
+Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
+ ├─ 否 → services（纯策略/功能）✅
+ └─ 是 → Q2: 它是"机制"还是"功能"？
+       ├─ 机制（页表/上下文切换/寄存器原语/同步/安全代理）→ framework ✅
+       └─ 功能（驱动/文件系统/网络栈/进程/信号/syscall）→ Q3
+             Q3: 能否封装为 safe API 供 services 用？
+              ├─ 能 → framework 留机制原语 + 封装 safe API（IoMem/IoPort/
+             │        DmaStream/UserPtr），功能实现在 services（0 unsafe）✅
+              └─ 不能（self-referential / FFI ABI / 中断上下文）→ framework 薄层
+```
+
+> 要点：**"要 unsafe" ≠ "放 framework"**。驱动等要 unsafe 的**功能**应由 framework 封装 safe API 后实现在 services——这是 Minimalism 准则（TCB 最小化）的落地关键。
+
 ### 4.2 6 安全不变式
 
 修改 framework 时必须逐项自检（详见 `docs/explain/explain-framekernel.md` 与 `docs/explain/spec-engineering.md`）：

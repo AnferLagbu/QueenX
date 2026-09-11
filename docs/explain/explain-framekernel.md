@@ -48,6 +48,25 @@ framework 必须同时满足 4 条准则：(1) Soundness 安全性：任何用 f
 
 新增代码应放 framework 还是 services。放 services（策略）：算法选择（CFS 权重/buddy 阶数）/ 数据结构管理（VMA 合并/调度队列）/ 策略参数（rlimit/时间片/OOM 评分）/ 协议逻辑（信号投递/seccomp 过滤链）/ 格式解析（ELF 验证/cpio 解包）；放 framework（机制）：硬件操作（CR3 切换/页表写入/上下文切换）/ unsafe 内存操作（copy_from/to_user/物理页操作）/ 原子指令/内存屏障 / 中断控制器编程（APIC/GIC）/ 寄存器读写/MMIO；不为将来可能用到预留章节（准则 §0）。
 
+**归属决策树（2026-09-11 依 Asterinas 标准补全 Q2/Q3，修正"要 unsafe → framework"的片面理解）**：
+
+```
+Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
+ ├─ 否 → services（纯策略/功能）✅
+ └─ 是 → Q2: 它是"机制"还是"功能"？
+       ├─ 机制（页表/上下文切换/寄存器原语/同步/安全代理）→ framework ✅
+       └─ 功能（驱动/文件系统/网络栈/进程/信号/syscall）→ Q3
+             Q3: 能否封装为 safe API 供 services 用？
+              ├─ 能 → framework 留机制原语 + 封装 safe API
+             │        （IoMem::from_pci_bar / IoPort::new_safe /
+             │         DmaStream / UserPtr safe 构造），
+             │        功能实现在 services（0 unsafe 调用 safe API）✅
+              └─ 不能（self-referential / no_mangle FFI ABI / 中断上下文）
+                   → framework 留薄层（如 smoltcp 集成层 / FFI 边界）
+```
+
+> 关键洞察：**驱动等"功能"即使要 unsafe（MMIO/DMA），也不该直接进 framework**——Asterinas 的做法是 framework 提供安全代理（IoMem/IoPort/DmaStream），驱动在 services 以 0 unsafe 实现。下沉路径 = 先补 safe API 缺口 → 策略层下沉 → 驱动经 safe API 下沉。
+
 ### safe API 失败回滚模式
 
 失败回滚专用入口的设计模式。分配入口 safe API（返回 Result，失败自动清理已分配资源）；释放入口 safe API（失败回滚专用）；调用点 LIFO 反序（先 UserProcess 再 Process，避免 NonNull<Process> 悬挂）；模式出处：Asterinas 论文 §4.3 "Privilege Separation" 的工程落地 unsafe 只在 framework 一次出现，业务层只看到 safe API。

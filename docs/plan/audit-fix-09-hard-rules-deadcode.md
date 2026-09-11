@@ -76,10 +76,10 @@
   - 方案：核实后删除。
   - 状态：[]
 
-- **B09-09. services "策略上移"模式违反 OSTD Minimalism（H.3.5 P2-B）**
-  - 描述：services 层策略上移模式与 OSTD Minimalism 立场冲突（P2-B）。
-  - 方案：登记立场冲突，决策是否调整策略归属。
-  - 状态：[]
+- **B09-09. framework 78 处 pub use re-export 反向依赖（H.3.5 P2-B，2026-09-11 定性修正）**
+  - 描述：原登记"services 策略上移违反 OSTD Minimalism"——**2026-09-11 依据 Asterinas framekernel 定义（APSys'24）定性为错误分类**：策略放 services（Service OS）是 framekernel 标准设计（Asterinas aster-kernel 承担 all OS policy），OSTD Minimalism 约束的是 Framework 层最小化而非 Services 策略量——**"策略上移 vs Minimalism"冲突不存在**。P2-B 实际内容 = framework 约 78 处 `pub use crate::kernel::services::*` re-export 壳（config/credo/driver/hvfs 等），属 **F2 反向依赖**（framework 引用 services 类型）。
+  - 方案：**合并入 B09-13**（全量反向依赖治理）——撤销 framework re-export 壳，services 类型只经顶层 API 暴露。不构成独立架构策略决策点。
+  - 状态：[X]（2026-09-11 定性修正完成，处置并入 B09-13）
 
 - **B09-10. 28 处 TODO(TRACK-...) 注释（H.3.5 P2-C）**
   - 描述：28 处 `TODO(TRACK-...)` 注释违反 AGENTS.md §9.4"不留 TODO"；其中 ISSUE-SRC-002（Ed25519）等已在分册 07 登记。
@@ -148,6 +148,7 @@
   - 描述：实测 framework→services 反向依赖 84 文件 / 146 处（TOP 20 #19、决策点 D8），vfs/api.rs 严重违反 F2 单向数据流。
   - 方案：按子模块分类治理（决策点 D8），DECISION-039 仅修 userctx 一处，覆盖不足。
   - 状态：[] (2026-08-31 注记：**部分进展**——vfs/api.rs 反向依赖已由 B09-12 治理（api.rs 3 处直 use 消除，见 B09-12 状态）；但 framework 仍有 ~10 处直接 `use crate::kernel::services`（net/syscall.rs、sm_fi.rs、user_proc.rs、sendfile.rs 等）+ ~70 处 pub use re-export 壳，全量治理未完成，详见 B09-13)
+  - 2026-09-11 全量复查（grep `kernel::services` 含内联路径）：**当前 136 处 / 78 文件**（较登记 146/84 少 10 处/6 文件，B09-12 治理后自然减少）——子模块分布 ipc 31、fs 24、syscall 20、proc 14、net 11、config 10、credo 6、wasm 5、driver 3、mm 2、sync/io/barrier 各 1（tests 7 为测试载体访问 services 真实代码，非生产路径）；形态：pub use 壳 ~70+ 处 + 直接 use ~20 处（sm_fi/syscall/sendfile/user_proc 为生产重点）+ tests 7
 
 ### 待办
 
@@ -158,8 +159,8 @@
   - 详情：⚠ **同文件冲突约束**——`vfs/api.rs` 同时被 B06-10（拆分）、B06-11（直调 F2）涉及。**必须串行执行，顺序：B09-12（依赖方向治理）→ B06-10（文件拆分）**。先修依赖方向再拆分，避免拆分后 import 返工；并发委派时 B09-12 与 B06-10/11 不得并行。（已按序执行：B09-12 → B06-10，见分册 6 B06-10/11 状态）
 
 - **B09-13. framework→services 全量反向依赖清单与治理（D8）**
-  - 描述：146 处反向依赖按子模块分类（fs/api、userctx、syscall 等）。
-  - 方案：建立清单 → 分类（类型迁回 / 顶层 re-export / 接口抽象）→ 分批治理；每批跑 F2 门禁（分册 01 修复后）。
+  - 描述：**136 处反向依赖 / 78 文件**（2026-09-11 全量复查，grep `kernel::services` 含内联路径；原登记 146 处，B09-12 治理后减少）按子模块分类（ipc 31、fs 24、syscall 20、proc 14、net 11、config 10、credo 6、wasm 5、driver 3、mm 2、sync/io/barrier 1）；含 B09-09 并入的 ~78 处 pub use re-export 壳。
+  - 方案：建立清单 → 分类（类型迁回 / 顶层 re-export / 接口抽象）→ 分批治理；**20 处直接 use（sm_fi/syscall/sendfile/user_proc 等）为生产治理重点，优先于 re-export 壳**；每批跑 F2 门禁（分册 01 修复后）+ audit_services_boundary 0 违规。
   - 状态：[]
 
 - **B09-14. F3 循环依赖门禁接入**
