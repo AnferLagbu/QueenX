@@ -284,7 +284,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **裁决请求**：壳删除的正确执行路径 = **DECISION-A 式所有权反转**（机制项迁回 framework，services 侧改 re-export 保持 API 兼容），而非机械删文件。是否确认此方向？若是，§7 壳删除批次将按"先迁移机制项到 framework → services re-export → 删除 framework 壳 → 清理引用"执行（每批验证链全绿）。
 
-### DECISION-J 第一批执行记录：ipc 类型反转（commit 待填）
+### DECISION-J 第一批执行记录：ipc 类型反转（commit 3519410e）
 
 > 审核员裁决（DECISION-J）：采纳所有权反转路径，ipc 类型反转第一批通过。边界：仅迁机制类型/常量、策略逻辑禁止随迁、依赖闭包检查、services re-export 保兼容。
 
