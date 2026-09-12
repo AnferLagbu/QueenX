@@ -649,6 +649,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 48→47。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过 ✅ / host-tests 98 套件全通过 ✅ / **QEMU x86_64 启动通过**（config::init 编排改动，实测正常）。
 
+### DECISION-J 第十一批执行记录：fd_alloc 机制迁回
+
+> 调研确认：`services/proc/fd_alloc.rs`（TD-02/I-51 全局统一 FD 分配器）是**用户态可见的全局 FD 编号内核机制**（集中基址规划 + 位图分配/释放/反查），被 framework 4 处（sm_fi/eventfd/signalfd/timerfd）+ services（inotify/pidfd）消费，依赖闭包为空（纯 core 原子 + 编译期 const 规划）——按 DECISION-J 迁回 framework。
+
+- **迁回 framework**：`framework/proc/fd_alloc.rs` 由 re-export 壳改为真实定义（346 行，0 unsafe）；services/proc/fd_alloc.rs 改 glob re-export（framework/proc fd_alloc 为 `pub mod`，同 ipc/types 模式）。framework/proc/mod.rs 顶层 re-export（FdPlan/FdSubsystem/alloc_fd/fd_at/free_fd/idx_of）现解析到 framework 自身。
+- **消费点**：services pidfd.rs 已走 `framework::proc::fd_alloc::` 路径（不变）；services inotify.rs 的 `services::proc::fd_alloc::*` 经 glob re-export 保持可用（无需改）。
+- **host-test 同步**：`fd_allocator_unified_test.rs` + `td15_fd_idx_of_test.rs` 的源路径 `services/proc/fd_alloc.rs` → `framework/proc/fd_alloc.rs`。
+- **引用计数**：framework 文件级反向依赖 47→46。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过 ✅ / host-tests 全通过（fd 两套件 9+6 用例）✅ / QEMU x86_64 启动通过 ✅。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

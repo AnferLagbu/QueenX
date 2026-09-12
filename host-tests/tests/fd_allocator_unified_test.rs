@@ -9,7 +9,7 @@
 use std::fs;
 use std::path::Path;
 
-const FD_ALLOC_RS: &str = "src/kernel/services/proc/fd_alloc.rs";
+const FD_ALLOC_RS: &str = "src/kernel/framework/proc/fd_alloc.rs";
 
 fn read_fd_alloc() -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR"))

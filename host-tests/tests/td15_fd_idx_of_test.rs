@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::Path;
 
-const FD_ALLOC: &str = "src/kernel/services/proc/fd_alloc.rs";
+const FD_ALLOC: &str = "src/kernel/framework/proc/fd_alloc.rs";
 const EVENTFD: &str = "src/kernel/framework/syscall/eventfd.rs";
 const SIGNALFD: &str = "src/kernel/framework/syscall/signalfd.rs";
 const TIMERFD: &str = "src/kernel/framework/syscall/timerfd.rs";
