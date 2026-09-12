@@ -82,11 +82,6 @@ pub use super::api::copy_from_user;
 pub use super::api::copy_to_user;
 pub use super::api::is_user_buf;
 
-// ==================== 内存压力 ====================
-
-pub use super::api::MemoryPressure;
-pub use super::api::update_pressure;
-
 // ==================== 页错误处理 ====================
 
 pub use super::api::PageFaultInfo;

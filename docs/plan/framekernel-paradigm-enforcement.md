@@ -624,6 +624,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 50→49。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过（含 coupling 无循环）✅ / host-tests 98 套件全通过 ✅ / QEMU 未跑（纯壳删除不触 boot）。
 
+### DECISION-J 第十批执行记录：mm/pressure 壳删除
+
+> 调研确认：framework 生产代码对 `framework::mm::pressure`（`MemoryPressure`/`update_pressure`）**零消费**——`update_pressure` 定义于 services/mm/memory_pressure.rs、唯一消费方 services/proc/oomd.rs（services 内部），framework 侧仅转发链（pressure → api → mechanism → mod 顶层）。属"framework 无生产消费的纯转发壳" → 删壳。
+
+- **删除壳**：framework/mm/pressure.rs 删除；mm/api.rs 移除 `pub use super::pressure::{MemoryPressure, update_pressure}`；mm/mechanism.rs 移除 2 个转发（恢复"页错误处理"注释，无多余改动）；mm/mod.rs 移除 `pub mod pressure` + 顶层 re-export 中 MemoryPressure/update_pressure。
+- **调用点同步**：services/proc/oomd.rs 的 `mm_api::update_pressure`/`mm_api::MemoryPressure`（原经 framework::mm 别名）改为 `use crate::kernel::services::mm::memory_pressure::{MemoryPressure, update_pressure}` 直连 services（services 权威，合法方向）。
+- **host-test 同步**：`memory_pressure_extraction_test.rs` 的 `framework_re_exports_memory_pressure` 改名为 `framework_pressure_shell_removed`——断言 framework/mm/pressure.rs 已删除 + mm/mod.rs 不再声明/re-export（P1-I-01 D9 契约随 DECISION-J 更新）。
+- **引用计数**：framework 文件级反向依赖 49→48。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过 ✅ / host-tests 98 套件全通过 ✅（memory_pressure_extraction_test 8 用例过）/ QEMU 未跑（纯壳删除不触 boot）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

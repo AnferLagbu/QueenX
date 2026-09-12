@@ -586,8 +586,5 @@ pub fn vma_set_current_mm(mm: *const super::vma::MmStruct) {
 // copy_user re-export — 避免跨子系统直接引用 mm::copy_user 内部
 pub use super::copy_user::{copy_from_user, copy_to_user, is_user_buf};
 
-// pressure re-export — 避免跨子系统直接引用 mm::pressure 内部
-pub use super::pressure::{MemoryPressure, update_pressure};
-
 // page_fault re-export — 避免跨子系统直接引用 mm::page_fault 内部
 pub use super::page_fault::{PageFaultInfo, PfResult, handle_page_fault, handle_user_page_fault};

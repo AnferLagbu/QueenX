@@ -18,6 +18,9 @@
 
 use crate::kernel::framework::mm::{self as mm_api};
 use crate::kernel::framework::proc::scheduler::TICK_COUNT;
+// DECISION-J: framework::mm 不再导出 MemoryPressure/update_pressure (pressure 壳已删),
+// 改从 services::mm::memory_pressure 引用 (services 权威)
+use crate::kernel::services::mm::memory_pressure::{MemoryPressure, update_pressure};
 use crate::slog_err;
 use crate::slog_info;
 use crate::slog_warn;
@@ -61,13 +64,12 @@ impl OomDaemon {
         let free_pages = mm_api::pmm_get_free_pages();
         let total_pages = mm_api::pmm_get_total_pages();
 
-        let p = mm_api::update_pressure(free_pages, total_pages);
-
+        let p = update_pressure(free_pages, total_pages);
         match p {
-            mm_api::MemoryPressure::Normal => {
+            MemoryPressure::Normal => {
                 self.emergency_since.store(0, Ordering::Relaxed);
             }
-            mm_api::MemoryPressure::Warning => {
+            MemoryPressure::Warning => {
                 self.warned_count.fetch_add(1, Ordering::Relaxed);
                 self.emergency_since.store(0, Ordering::Relaxed);
                 slog_info!(
@@ -75,14 +77,14 @@ impl OomDaemon {
                     "[OOMD] Memory pressure WARNING: notify processes to release cache"
                 );
             }
-            mm_api::MemoryPressure::Critical => {
+            MemoryPressure::Critical => {
                 self.warned_count.fetch_add(1, Ordering::Relaxed);
                 slog_warn!(
                     Memory,
                     "[OOMD] Memory pressure CRITICAL: lowering priority for top-RSS processes"
                 );
             }
-            mm_api::MemoryPressure::Emergency => {
+            MemoryPressure::Emergency => {
                 let es = self.emergency_since.load(Ordering::Relaxed);
                 if es == 0 {
                     self.emergency_since.store(tick, Ordering::Relaxed);

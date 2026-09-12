@@ -6,11 +6,18 @@
 //! 静态契约:
 //! 1. MemoryPressure 枚举必在 services
 //! 2. services 文件必 deny unsafe_code
-//! 3. framework 仅 re-export
+//! 3. framework 侧壳已删 (DECISION-J 2026-09-12: framework 生产代码零消费
+//!    memory_pressure, 壳删除, 调用方直连 services::mm::memory_pressure)
 //! 4. 核心 API 一致: set_thresholds / current_pressure / update_pressure
 //! 5. services 文件不含 klog_ffi (避免 unsafe 边界)
 
 use std::fs;
+use std::path::PathBuf;
+
+fn repo_root() -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest.parent().unwrap().to_path_buf()
+}
 
 fn services_memory_pressure_rs() -> String {
     let path = format!(
@@ -20,12 +27,9 @@ fn services_memory_pressure_rs() -> String {
     fs::read_to_string(&path).expect("read services/mm/memory_pressure.rs")
 }
 
-fn framework_pressure_rs() -> String {
-    let path = format!(
-        "{}/../src/kernel/framework/mm/pressure.rs",
-        env!("CARGO_MANIFEST_DIR")
-    );
-    fs::read_to_string(&path).expect("read framework/mm/pressure.rs")
+fn framework_mm_mod_rs() -> String {
+    let p = repo_root().join("src/kernel/framework/mm/mod.rs");
+    fs::read_to_string(&p).expect("read framework/mm/mod.rs")
 }
 
 fn services_mm_mod_rs() -> String {
@@ -79,24 +83,23 @@ fn memory_pressure_services_uses_framework_atomic() {
 }
 
 #[test]
-fn framework_re_exports_memory_pressure() {
-    // P1-I-01 D9 验收: framework 通过 re-export 引用
-    let src = framework_pressure_rs();
+fn framework_pressure_shell_removed() {
+    // DECISION-J (2026-09-12): framework 生产代码零消费 memory_pressure,
+    // framework/mm/pressure.rs 壳已删除, 调用方直连 services::mm::memory_pressure
+    let path = repo_root().join("src/kernel/framework/mm/pressure.rs");
     assert!(
-        src.contains("pub use crate::kernel::services::mm::memory_pressure::*"),
-        "P1-I-01 D9: framework/mm/pressure.rs 必 re-export services::mm::memory_pressure"
+        !path.exists(),
+        "DECISION-J: framework/mm/pressure.rs 应已删除 (framework 零消费, 壳删除)"
     );
-    // framework 文件必无 enum 重复定义
+    // framework/mm/mod.rs 不再声明 pressure 模块 / 不再 re-export MemoryPressure/update_pressure
+    let mm_mod = framework_mm_mod_rs();
     assert!(
-        !src.contains("pub enum MemoryPressure"),
-        "P1-I-01 D9: framework/mm/pressure.rs 不应重复定义 MemoryPressure"
+        !mm_mod.contains("pub mod pressure"),
+        "DECISION-J: framework/mm/mod.rs 不应再声明 pub mod pressure"
     );
-    // framework 文件必无 update_pressure 重复定义
-    let update_count = src.matches("pub fn update_pressure").count();
-    assert_eq!(
-        update_count, 0,
-        "P1-I-01 D9: framework 不应再 fn update_pressure, 重复 {} 次",
-        update_count
+    assert!(
+        !mm_mod.contains("MemoryPressure") && !mm_mod.contains("update_pressure"),
+        "DECISION-J: framework/mm/mod.rs 不应再 re-export MemoryPressure/update_pressure"
     );
 }
 
