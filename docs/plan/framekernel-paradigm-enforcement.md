@@ -284,6 +284,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **裁决请求**：壳删除的正确执行路径 = **DECISION-A 式所有权反转**（机制项迁回 framework，services 侧改 re-export 保持 API 兼容），而非机械删文件。是否确认此方向？若是，§7 壳删除批次将按"先迁移机制项到 framework → services re-export → 删除 framework 壳 → 清理引用"执行（每批验证链全绿）。
 
+### DECISION-J 第一批执行记录：ipc 类型反转（commit 待填）
+
+> 审核员裁决（DECISION-J）：采纳所有权反转路径，ipc 类型反转第一批通过。边界：仅迁机制类型/常量、策略逻辑禁止随迁、依赖闭包检查、services re-export 保兼容。
+
+- **迁回 framework**：`framework/ipc/types.rs` 由 re-export 壳改为真实类型定义（约 600 行）——`IpcId`/`IPC_MAX_*`(8 常量, 含 E-03 any 门控)/`PIPE_BUFFER_SIZE`/`SHM_MAX_SIZE`/`MSG_MAX_SIZE`/`MSG_QUEUE_MAX_MSGS`/`IpcType`/`SignalNum`(+From)/`SignalAction`/`WaitQueueItem`/`WaitQueue`(+B07-15 中断安全实现)/`Pipe`/`SignalHandlerFn`/`SignalHandler`/`SignalPending`/`ShmSegment`/`Message`/`MsgQueue`/`Semaphore`/`IpcNamespace` + cfg(test) WaitQueue 测试。0 unsafe（依赖闭包：WaitQueue→IrqSpinLock 为 framework 自身类型）。
+- **services 改 re-export**：`services/ipc/types.rs` 改为 `pub use crate::kernel::framework::ipc::types::*`（含 #![deny(unsafe_code)]），API 兼容。
+- **策略逻辑未随迁**：services/ipc/{pipe,shm,msgq,sem,signal}.rs 的 `*_safe` 策略实现保持 services（T6 权威），且它们本就经 `crate::kernel::framework::ipc::types::*` 引用类型（services→framework 合法方向）。
+- **引用计数**：framework 文件级反向依赖 79→78（types.rs 壳引用消除）；framework/ipc/mod.rs 的 `use types::*` 现解析到 framework 自身类型（0 services 引用）。
+- **验证**：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 待确认 / QEMU 未跑（纯类型归位不触 boot，下一批壳删除时合并冒烟）。
+
 ## 8. 批次实施计划
 
 描述：分 6 阶段，每阶段独立可验证（实施交委托人）。
@@ -423,6 +433,23 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 1. **virtio-blk IRQ**：**转专项补 I-42 路径**（services 补中断驱动 + framework 留 virtqueue 机制），**不接受轮询为功能等值**——轮询 CPU 占用/延迟不等值；丢 IRQ = 降级迁移，违反"不损失功能"铁律；与 storage 缺 MSI-X 转专项同一标准；Asterinas virtio-blk 中断驱动在 kernel。轮询仅作专项完成前过渡兜底，不作终态。
 2. **§7 施工顺序**：采纳**先 §6.5 壳删除（分批，每批双架构 0w0e + audit_services_boundary + host-tests）→ 再 trait 注入**。理由：壳删 -70 反向依赖清障、验证 services 顶层 API 完备、为 IpcStrategy 注册时序设计提供干净依赖面。**IpcStrategy trait 注入为 trait 化首战**（ipc 24 处最大头，13 处 FFI 集中）；注册时序（framework 机制先启 → services 注册 → 使用）单独评审。
+
+**状态**: [X]（裁决完成）
+
+### DECISION-J: 壳删除 = 所有权反转路径（机制项迁回 framework，2026-09-12 审核员裁决）
+
+> **障碍实证**（委托人）：§6.5 壳非纯机械删除——壳存在 = framework 生产代码持有 services 定义的类型/常量（`framework/ipc/mod.rs:89` 的 `IPC_NAMESPACE: RacyCell<IpcNamespace>` 持有 services 类型；`framework::config::{PAGE_SIZE, MAX_CPUS}` 被 iobuf/cpu_local/smp/rcu/irq/mm 机制大量使用）。
+
+**裁决**：
+1. **壳删除路径 = DECISION-A 式所有权反转**：机制项（类型/常量）迁回 framework，services 侧改 `pub use framework::...::*` 保持 API 兼容，再删 framework 壳、清理引用。
+2. **统一判据**：机制持有的数据结构/常量归 framework，功能实现归 services——与 DECISION-A（VFS 下沉）不矛盾，是同一判据的两面。
+3. **边界（防 B09-12 治标重演）**：
+   - 反转对象仅限机制项（framework 机制持有/使用的类型/常量）；
+   - 策略逻辑禁止随迁（services 的 sem/msgq/pipe 策略权威保持 services）；
+   - 依赖闭包检查（迁回类型依赖的 services 项一并处理，防迁一半）；
+   - services re-export 保持 API 兼容，内部引用路径同步。
+4. **第一批（ipc 类型反转）通过**：`IpcNamespace`/`Pipe`/`MsgQueue`/`ShmSegment`/`Semaphore`/`Message`/`WaitQueue`/`IPC_MAX_*` 迁回 `framework/ipc/types.rs`（~500 行）——衔接 DECISION-I（ipc 24 处第一优先 + IpcStrategy 首战清依赖面）。
+5. **每批验证**：双架构 0w0e + audit_services_boundary 0 + host-tests + `kernel::services` 引用计数下降。
 
 **状态**: [X]（裁决完成）
 
