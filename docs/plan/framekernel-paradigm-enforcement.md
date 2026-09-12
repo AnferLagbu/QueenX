@@ -314,6 +314,21 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - 阶段 5：**壳删除 82 + 直接 use trait 化 20 + 保留文件 43 处收敛**（§7.5，ipc 24 第一优先）。[]
 - 阶段 6：**全量验证**（§3 验收 + §9 门槛）。[]
 
+### §7 DECISION-J 批次进度（2026-09-12 截止第八批）
+
+描述：DECISION-J 所有权反转按批推进，每批独立验证（双架构 0w0e / clippy 0 / audit 全过 / host-tests / QEMU）。
+方案：
+- **已完成批次**（反向依赖 79 文件/137 行 → **50 文件/约 110 行**）：
+  - J-1 ipc 类型反转（3519410e）→ J-2 config 常量（dfaa4918）→ J-3 config 8 壳（eed99468）→ J-4 ipc 4 纯壳删（98f9c2d6）→ **I-首战 IpcStrategy trait 注入**（f30febcb，注册时序待评审）→ J-5 sync/types（dcdcb893）→ J-6 机制常量 4 壳（c7231ca5）→ J-7 wasm 5 壳删（e0e66351+3815390f）→ J-8 net 3 壳（75cafcae，route 合并解双向引用）
+- **剩余批次计划**（按序，部分需专项/裁决）：
+  - **fs 系列**：ramfs/devfs/hvfs/flock/inotify 被 framework VFS 机制消费 → 反转归位（hvfs 为大型 ZFS 风格实现，反转工作量大的单批）；procfs 壳待定（framework 无生产消费 → 可能删壳）
+  - **net 剩余 2**：syscall.rs（类型引用 socket/unix）、init/sm_fi.rs（启动编排调 services uds/fd_alloc）——逐项判定
+  - **credо 专项**：安全敏感 + 框架/services 双份实现（audit/identity/capability/sha256/secure_boot/types 双份），3 壳（capability/types/sha256）被 framework re-export 消费 + identity.rs 引用 PwmEntry —— **需专项调研后裁决**，不贸然施工
+  - **proc 系列**（约 13 文件）：核心子系统，types 壳 + 多个直接调用——需专项
+  - **syscall 系列**（约 12 文件）：FFI 边界，部分需 trait 注入/接口化——需专项
+  - **validate 壳**：ConfigValidateHook trait 注入（DECISION-I 顺序，ipc 之后）
+- **待评审项**：IpcStrategy 注册时序 / validate ConfigValidateHook / virtio-blk IRQ 专项 / storage 专项后续 / credо 与 proc 处理方式
+
 ## 9. 验证门槛
 
 描述：每阶段提交必须满足（§2.3 + 本工程专项）。
