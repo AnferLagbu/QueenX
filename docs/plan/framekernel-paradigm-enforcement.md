@@ -668,6 +668,14 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 46→44（madvise_mlock proc/syscall 两壳）。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic lib + kernel_test + host-test 三维）✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动到 Ring 3（VFS ready，串口 242 行）✅。
 
+### DECISION-J 第十三批执行记录：fd_alloc 迁回关联消引（commit 待定）
+
+- **背景**：第十一批 fd_alloc 迁回 framework 后，framework 侧 4 个消费点（`syscall/eventfd.rs`/`signalfd.rs`/`timerfd.rs` + `net/init/sm_fi.rs`）仍写 `crate::kernel::services::proc::fd_alloc::` 路径——经 services glob re-export 壳解析成功（services→framework 合法方向），但 framework→services 构成反向依赖，属第十一批迁回遗漏。
+- **修复**：framework 内 12 处引用统一改指 `crate::kernel::framework::proc::fd_alloc::`（`framework/proc/fd_alloc` 为 `pub mod`，纯路径替换零逻辑改动）。
+- **引用计数**：framework 文件级反向依赖 44→41、行数 98→87。
+- **sm_fi 剩余**：`uds_setsockopt` 委托（`services::net::unix`）留待 UDS/SocketStrategy 委托 trait 注入专项（文档 §7 net 剩余 2）。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic 三维）✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动到 Ring 3（VFS ready，串口 242 行）✅。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
