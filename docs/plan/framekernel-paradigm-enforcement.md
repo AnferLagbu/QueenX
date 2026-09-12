@@ -319,7 +319,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 描述：DECISION-J 所有权反转按批推进，每批独立验证（双架构 0w0e / clippy 0 / audit 全过 / host-tests / QEMU）。
 方案：
 - **已完成批次**（反向依赖 79 文件/137 行 → **50 文件/约 110 行**）：
-  - J-1 ipc 类型反转（3519410e）→ J-2 config 常量（dfaa4918）→ J-3 config 8 壳（eed99468）→ J-4 ipc 4 纯壳删（98f9c2d6）→ **I-首战 IpcStrategy trait 注入**（f30febcb，注册时序待评审）→ J-5 sync/types（dcdcb893）→ J-6 机制常量 4 壳（c7231ca5）→ J-7 wasm 5 壳删（e0e66351+3815390f）→ J-8 net 3 壳（75cafcae，route 合并解双向引用）
+  - J-1 ipc 类型反转（3519410e）→ J-2 config 常量（dfaa4918）→ J-3 config 8 壳（eed99468）→ J-4 ipc 4 纯壳删（98f9c2d6）→ **I-首战 IpcStrategy trait 注入**（f30febcb，**DECISION-K 修订已落地**：注册点前置 interrupt_late_init 前 + Option 降级 + 门禁测试，见 DECISION-K 修订执行记录）→ J-5 sync/types（dcdcb893）→ J-6 机制常量 4 壳（c7231ca5）→ J-7 wasm 5 壳删（e0e66351+3815390f）→ J-8 net 3 壳（75cafcae，route 合并解双向引用）
 - **剩余批次计划**（按序，部分需专项/裁决）：
   - **fs 系列**：ramfs/devfs/hvfs/flock/inotify 被 framework VFS 机制消费 → 反转归位。**依赖闭包发现（第八批后调研）**：devfs/flock 依赖 `services::sync::irq_lock::IrqSpinLock`（= `framework::sync::IrqSpinLock` 类型别名，可替换）+ devfs 依赖 `services::fs::inode::Inode`（services 实现，**闭包不闭合** → 需连带 inode 迁回或 trait 注入）；ramfs_core 为目录模块（ramfs_data/ramfs_node）——**建议专项评估依赖闭包后施工**；hvfs 为大型 ZFS 风格实现（反转工作量大的单批）；procfs 壳待定（framework 无生产消费，仅 framework/tests 用 → 可能删壳）
   - **net 剩余 2**：syscall.rs（类型引用 socket/unix）、init/sm_fi.rs（启动编排调 services uds/fd_alloc）——逐项判定
@@ -327,7 +327,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - **proc 系列**（约 13 文件）：核心子系统，types 壳 + 多个直接调用——需专项
   - **syscall 系列**（约 12 文件）：FFI 边界，部分需 trait 注入/接口化——需专项
   - **validate 壳**：ConfigValidateHook trait 注入（DECISION-I 顺序，ipc 之后）
-- **待评审项**：IpcStrategy 注册时序 / validate ConfigValidateHook / virtio-blk IRQ 专项 / storage 专项后续 / credо 与 proc 处理方式
+- **待评审项**（2026-09-12 已评审，见 DECISION-K）：IpcStrategy 注册时序 / validate ConfigValidateHook / virtio-blk IRQ 专项 / storage 专项后续 / credо 与 proc 处理方式
 
 ## 9. 验证门槛
 
@@ -467,6 +467,64 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 5. **每批验证**：双架构 0w0e + audit_services_boundary 0 + host-tests + `kernel::services` 引用计数下降。
 
 **状态**: [X]（裁决完成）
+
+### DECISION-K: 五项待评审结论（2026-09-12 审核员评审）
+
+1. **IpcStrategy 注册时序**：**长期最优（2026-09-12 修订）——注册点前置 + 时序契约化**：
+   - **注册点前置**：`register_default_ipc_strategy()` 紧随 framework `ipc_init()` 后立即（kernel_init 早期），删去"VFS 后"约束——依据：`DefaultIpcStrategy` 零字段构造 + `static` 零初始化 + OnceLock 存指针，**注册零依赖**；策略方法**惰性调用**（用户态 syscall 才执行 `*_safe`，彼时 VFS 早已就绪）——注册点与调用点分离，注册无需等 VFS。
+   - **启动契约化**：注册点位置固定 + `// IPC 策略注册契约点` 注释；添加**时序门禁测试**（host-test 断言注册在 IPC FFI 可达路径之前必然执行）。
+   - **panic 语义（2026-09-12 二次修订）**：**运行时 release 不 panic**——`current_ipc_strategy()` 返回 `Option`，未注册 → 调用点返回 `Err(ENOSYS)` + 显式错误日志（"IpcStrategy 未注册：检查 kernel_init 编排"）；**开发期**由时序门禁测试 + `debug_assert` 捕获。**依据**：QX panic 触发 barrier 系统级恢复（`panic!()→PANIC_FLAG→int 0x82`）——"策略未注册"是确定性逻辑错误（启动顺序 bug），非可恢复故障，panic 会使逻辑错误错配恢复机制（syscall 错误升级为系统恢复事件）。**统一原则：逻辑错误一律降级 + 日志，不进恢复流程**（与 validate Option 可空一致）。13 处 FFI 调用点 `let Some(s) = current_ipc_strategy() else { log + return ENOSYS }`。
+   - **演进预留**（SIMPLIFIED）：未来策略增多时演进为阶段化注册表（PHASE_INIT→PHASE_SERVICES→PHASE_RUN 阶段机校验），当前不引入。
+2. **ConfigValidateHook trait 注入**：模式同 IpcStrategy ✓；**并入统一"机制 init 后立即注册策略"启动契约**——注册在 framework `config::init()` 之前（机制初始化后立即，services validate 依赖闭包轻可极早注册）；未注册语义 **Option 可空**（未注册跳过校验 + 打日志——validate 是启动增强）。**与 IpcStrategy 统一"逻辑错误降级原则"**（均不 panic；差异仅在降级语义：validate 跳过校验 vs IPC 返回 ENOSYS）。
+3. **virtio-blk IRQ 专项**：确认 DECISION-I——services 补中断驱动（IrqLine + 完成通知）→ framework 留 virtqueue 机制 + ISR 注册原语 → 接线 + QEMU 冒烟；轮询仅过渡兜底。
+4. **storage 专项后续子步**：按 DECISION-H 推进（补 _block/MSI-X/I-42 → storage_init 退位 → 接线 + QEMU 冒烟），无新裁决。
+5. **fs 依赖闭包 / credo / proc**：统一"持有者判据 + trait 注入"——
+   - **inode.rs 选 trait 注入（不连带迁回）**：Inode 是契约接口留 framework，具体 FS inode 实现经 backend_trait 注入（services 注册）；**连带迁回会把 ext2/exfat 具体实现拉进 framework = B09-12 治标重演，禁止**；
+   - fs 机制持有的具体类型（framework 全局表/句柄）→ 迁回（DECISION-J 模式）；策略留 services；
+   - credo：framework 留 C ABI + 安全原语（csprng/audit/identity/secure_boot），策略（auth/policy/grants/sessions）留 services，持有类型迁回；
+   - proc：framework 留进程表/调度器机制，策略（sched_policy/seccomp/session）留 services，跨层策略经 ProcStrategy trait 注入。
+
+**状态**: [X]（评审完成）
+
+### DECISION-K 修订执行记录：IpcStrategy 注册点前置 + Option 降级（2026-09-12 委托人实施）
+
+> 按 DECISION-K 两项修订实施并验证（此前 I-首战 f30febcb 为"VFS 后注册 + 未注册 panic"，现已修正）。
+
+- **注册点前置**：lib.rs 注册块从"VFS 后"（原 9-0.5 节）前移至 `interrupt_late_init` 之前（5.75 节，kernel_init 早期），带 `// IPC 策略注册契约点 (DECISION-K)` 注释。依据：`DefaultIpcStrategy` 零字段构造 + static 零初始化 + OnceLock 存指针，注册零依赖；策略方法惰性调用（用户态 syscall 才执行），注册点与调用点分离。
+- **Option 降级语义**：`framework/ipc/strategy.rs` 的 `current_ipc_strategy()` 由 `&dyn`（未注册 panic）改为 `Option<&dyn IpcStrategy>`（`.copied()`，未注册 None）。依据：QX panic 触发 barrier 系统级恢复（int 0x82），"策略未注册"是确定性逻辑错误（启动顺序 bug），非可恢复故障——**逻辑错误一律降级 + 日志，不进恢复流程**。
+- **13 处 FFI 降级**：pipe(5)/shm(4)/msgq(4) 每处 `let Some(s) = current_ipc_strategy() else { klog_warn!("IpcStrategy 未注册: <fn>"); return <哨兵> }`；哨兵值：i32/i64 类返回 `-(Errno::ENOSYS as i32/i64)`（=-38），create 类（返回 IpcId）返回 0（无效 id），`is_pipe_fd` 返回 false。
+- **时序门禁测试**：新增 `host-tests/tests/ipc_strategy_registration_test.rs`（4 用例）：注册行号 < `Arch>::interrupt_late_init()` 调用行号（排除注释干扰）/ 契约注释存在 / `current_ipc_strategy` 返回 Option 且不 panic / 13 处 FFI 含 ENOSYS 降级标记。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 全过 ✅ / host-tests 98 套件（含门禁 4 用例）全过 ✅ / QEMU x86_64 启动通过 ✅。
+
+### DECISION-L: barrier 开发阻塞（2026-09-12 审核员裁决）
+
+> **背景**：barrier（可恢复栏栈）后期将整体重构设计升级。裁决：**阻塞（挂起）barrier 相关开发任务，重构后处理**。
+
+**裁决**：
+1. **挂起清单**（标"待重构后处理"）：§6.1 barrier 5（fault_inject/reset·audit/bbr/layered/parallel）、§6.3 barrier 2（domain·apply_degradation / reset·bsr 编排）、阶段 0 BarrierDegradePolicy trait 定义。
+2. **边界**：阻塞的是**开发/下沉/改造**——barrier 运行时功能（panic→int 0x82 恢复、undo_log、域降级）**保持可用，绝不禁用**（安全基线）；framework 保留机制（api/manager/recoverable/recovery/snapshot/undo_log/bhr）不动。
+3. **验收影响**：实测 framework/barrier `kernel::services` 引用 = 0——阻塞对"反向依赖 0"验收零影响；TCB 目标不受 barrier 项影响（机制本就留 framework）。
+4. **理由**：barrier 后期整体重构，现做下沉/改造大概率作废（避免重复劳动）；barrier 涉中断/panic 上下文 + 内存回滚（安全敏感），重构前动它风险高收益低。
+5. **主线不受影响**：§7 反向依赖治理等继续推进。
+
+**状态**: [X]（裁决完成；barrier 项挂起待重构）
+
+### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
+
+> 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。
+
+**证据（design 文档依据）**：
+1. **现状已分层正确**（L42）：机制层 `framework/barrier/`（RecoveryDomain/UndoLog/屏障快照/BBR/BSR/BHR），策略层 `services/barrier/`（RecoveryPolicy/故障归属/健康监测/级联）——正是 F/S 形态样板，非下沉对象。
+2. **机制必须留 framework**（服务对象准则）：重构后核心机制（受控锁 `DomainState<T>`、胶囊原语、BCB 全局控制块、panic→int 0x82 恢复入口、Isolated 架构抽象）服务"系统故障恢复"TCB 级职责，结构性/编译期强制，下沉即违规。
+3. **TCB 边界白纸黑字**（L140）：framework 不因栏栈重建扩大 unsafe 面；services 0 unsafe、F1-F9 不变——重构后仍 framework/services 分层。
+
+**§6.1/§6.3 的 7 个 barrier 项处置**：fault_inject/audit/bbr/layered/parallel + domain·apply_degradation/bsr·编排 本质是策略/编排，重构后在 services 落实是正确方向；**但现在不做**（重构用 DomainState/胶囊替代 RecoverableMutex/UndoLog，旧 trait 注入接口随机制更换失效）——保持"待重构后处理"标注，从本工程当前批次移除，不占验收。
+
+**行动指令**：barrier 任务维持阻塞（不做下沉/改造/新开发）；运行时功能保持可用（panic→int 0x82/undo_log/域降级，安全基线，只禁开发不禁用）；主线（§7 反向依赖治理等）不受阻；重构时按 L0-L4 分层 + BCB 五区 + 服务对象准则自然落地。
+
+**执行确认**（委托人）：DECISION-J 第八批反转的 `barrier/reset/config.rs`（RecoveryLayer/set_reset_in_progress 机制配置）方向符合"机制留 framework"，与终局结论一致，不回滚；services barrier 策略（RecoveryPolicy 等）未动，符合"策略在 services"。
+
+**状态**: [X]（终局验证；barrier 项维持阻塞，从当前批次移除）
 
 ### DECISION-J 第二批执行记录：config 常量反转（memory + capacity）
 

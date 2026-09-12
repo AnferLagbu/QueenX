@@ -8,6 +8,7 @@
 //! - 用户空间指针通过 `UserRefMut` 安全访问.
 
 use super::types::IpcId;
+use crate::kernel::framework::errno::Errno;
 use crate::kernel::framework::ipc::strategy::current_ipc_strategy;
 use crate::kernel::framework::proc::process_get_current_pid;
 use crate::kernel::framework::userptr::UserRefMut;
@@ -23,9 +24,12 @@ pub extern "C" fn ipc_shm_create(size: u64, perm: i32) -> IpcId {
     let ns = super::IPC_NAMESPACE.get_mut();
     let next_id = super::NEXT_IPC_ID.get_mut();
     let pid = process_get_current_pid();
-    current_ipc_strategy()
-        .shm_create(ns, next_id, size, perm, pid)
-        .unwrap_or(0)
+    // DECISION-K: 未注册降级 (返回 0=无效 id, 逻辑错误降级原则, 不 panic)
+    let Some(s) = current_ipc_strategy() else {
+        crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_shm_create");
+        return 0;
+    };
+    s.shm_create(ns, next_id, size, perm, pid).unwrap_or(0)
 }
 
 /// FFI: 附加共享内存段。
@@ -37,7 +41,12 @@ pub extern "C" fn ipc_shm_create(size: u64, perm: i32) -> IpcId {
 pub unsafe extern "C" fn ipc_shm_attach(id: IpcId, addr: *mut *mut u8) -> i32 {
     let ns = super::IPC_NAMESPACE.get_mut();
     let pid = process_get_current_pid();
-    current_ipc_strategy().shm_attach(ns, id, pid).map_or(-1, |phys_addr| {
+    // DECISION-K: 未注册降级 ENOSYS (逻辑错误降级原则, 不 panic)
+    let Some(s) = current_ipc_strategy() else {
+        crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_shm_attach");
+        return -(Errno::ENOSYS as i32);
+    };
+    s.shm_attach(ns, id, pid).map_or(-1, |phys_addr| {
         if !addr.is_null() {
             // SAFETY: caller guarantees addr is a valid pointer to
             // a *mut u8 in user memory.
@@ -54,9 +63,12 @@ pub unsafe extern "C" fn ipc_shm_attach(id: IpcId, addr: *mut *mut u8) -> i32 {
 pub extern "C" fn ipc_shm_detach(id: IpcId) -> i32 {
     let ns = super::IPC_NAMESPACE.get_mut();
     let pid = process_get_current_pid();
-    current_ipc_strategy()
-        .shm_detach(ns, id, pid)
-        .map_or(-1, |()| 0)
+    // DECISION-K: 未注册降级 ENOSYS (逻辑错误降级原则, 不 panic)
+    let Some(s) = current_ipc_strategy() else {
+        crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_shm_detach");
+        return -(Errno::ENOSYS as i32);
+    };
+    s.shm_detach(ns, id, pid).map_or(-1, |()| 0)
 }
 
 /// FFI: 销毁共享内存段
@@ -64,7 +76,12 @@ pub extern "C" fn ipc_shm_detach(id: IpcId) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ipc_shm_destroy(id: IpcId) -> i32 {
     let ns = super::IPC_NAMESPACE.get_mut();
-    match current_ipc_strategy().shm_destroy(ns, id) {
+    // DECISION-K: 未注册降级 ENOSYS (逻辑错误降级原则, 不 panic)
+    let Some(s) = current_ipc_strategy() else {
+        crate::klog_warn!(Kernel, "IpcStrategy 未注册: ipc_shm_destroy");
+        return -(Errno::ENOSYS as i32);
+    };
+    match s.shm_destroy(ns, id) {
         Ok(()) => 0,
         Err(_) => -1,
     }

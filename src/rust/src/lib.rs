@@ -715,6 +715,14 @@ pub extern "C" fn kernel_init() {
             crate::klog_boot_info!("Swap subsystem init FAILED (degraded mode)");
         }
 
+        // 5.75. IPC 策略注册契约点 (DECISION-K 2026-09-12: 注册点前置)
+        // 紧随 framework ipc_init() 后立即 (kernel_init 早期, 删去 VFS 后约束) —
+        // DefaultIpcStrategy 零字段构造 + static 零初始化 + OnceLock 存指针, 注册零
+        // 依赖; 策略方法惰性调用 (用户态 syscall 才执行 *_safe, 彼时 VFS 早已就绪),
+        // 注册点与调用点分离。未注册降级: FFI 返回 ENOSYS + 日志 (逻辑错误降级原则)。
+        crate::kernel::services::ipc::strategy::register_default_ipc_strategy()
+            .expect("ipc strategy registered (kernel_init 早期契约点)");
+
         // 6. 中断/异常设置
         <crate::kernel::framework::arch::CurrentArch as crate::kernel::framework::arch::Arch>::interrupt_late_init();
         crate::klog_boot_info!("Interrupt subsystem ready");
@@ -742,12 +750,6 @@ pub extern "C" fn kernel_init() {
         // 9. VFS
         crate::kernel::framework::fs::vfs::init();
         crate::klog_boot_info!("VFS ready");
-
-        // 9-0.5. IPC 策略注册 (DECISION-I: framework 机制先启 → services 注册 → 使用)
-        // 注册时机: scheduler 之后、任何用户态 IPC syscall 之前; 首次注册必成功,
-        // 失败即编程错误 (未注册时 FFI 边界 current_ipc_strategy() 会 panic).
-        crate::kernel::services::ipc::strategy::register_default_ipc_strategy()
-            .expect("ipc strategy registered before user IPC");
 
         // 9-1. UDS (AF_UNIX) — Phase C.3
         crate::kernel::services::net::unix::uds_init();
