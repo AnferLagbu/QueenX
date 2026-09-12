@@ -504,6 +504,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 66→63、精确行数 129→116（ipc FFI 13 处消除）。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（本次含 lib.rs 启动编排改动，QEMU 冒烟与后续批次合并执行）。
 
+### DECISION-J 第五批执行记录：sync/types 反转
+
+> 首批"机制类型壳"反转（剩余壳多为同构，模式已确立：机制消费→反转归位，services 独有→删壳）。调研确认：`SpinLockInner`/`MutexInner`/`RwLockInner`/RAII 守卫/IrqSaveFlags 被 framework sync 机制（spinlock/rwlock/mutex FFI 层）直接消费，且 `#[repr(C)]` 与 C 版本布局兼容 — 属机制类型。
+
+- **迁回 framework**：`framework/sync/types.rs` 由 re-export 壳改为真实定义（LockState/TryLockResult/SpinLockInner/MutexInner/RwLockInner/CondVarInner/IrqSaveFlags/LockStatistics + 5 个 RAII 守卫，0 unsafe，依赖闭包为空）。mod.rs 顶层既有 `pub use types::{...}` 现解析到 framework 自身。
+- **services 改 re-export**：`services/sync/types.rs` 改为 `pub use crate::kernel::framework::sync::types::*`（framework/sync/types 为 `pub mod`，glob 可行，同 ipc/types 模式）。services/sync/mod.rs 的显式 re-export 不变（解析到 framework 项）。
+- **引用计数**：framework 文件级反向依赖 63→62。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 全量通过 ✅ / QEMU 未跑（纯类型归位不触 boot，合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
