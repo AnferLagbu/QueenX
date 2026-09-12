@@ -480,6 +480,19 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 76→70、精确行数 135→132；config 目录仅剩 validate.rs 壳。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过（services 0 unsafe、6 不变式 PASS、SAFETY 覆盖 0 缺漏、注释/C 命名 0 违规）✅ / host-tests 全量通过 ✅ / QEMU 未跑（常量/类型归位不触 boot，与下一批壳删除合并冒烟）。
 
+### DECISION-J 第四批执行记录：ipc 4 纯壳删除（sem/signal/scheduler_integration/async_ipc）
+
+> 调研确认：framework 生产代码（非 cfg(test)）对 4 壳项均无消费——`sem/signal` 系统调用走 `framework::proc::do_signal_*` 与 services syscall 层，不经 `framework::ipc::{sem,signal}`；`scheduler_integration` 仅被 services 内部（msgq/sem/pipe）消费；`async_ipc` 仅 cfg async re-export。services/ipc 已完全自足（含 `IpcLock` 完整 API）。
+
+- **删除壳**：framework/ipc/{sem,signal,scheduler_integration,async_ipc}.rs 删除；mod.rs 移除对应 `pub mod` 声明 + 顶层 re-export（`block_current_thread` 等 4 函数 + cfg async 的 `AsyncMsgSender` 等）。
+- **cfg(test) 引用同步**（测试代码允许访问 services，§7.3 精神）：
+  - mod.rs `mod tests` 加 `use crate::kernel::services::ipc::{sem, signal};`
+  - stress_tests.rs `use ...::ipc::{msgq, pipe, sem, shm}` 补 sem
+  - framework/tests/test_ipc.rs `use ...::services::ipc::{pipe, sem, shm}` 替换 framework 壳路径
+  - api.rs 头注释同步（scheduler_integration/sem/signal 指向 services）
+- **引用计数**：framework 文件级反向依赖 70→66、精确行数 132→129；ipc 目录生产代码反向依赖仅剩 pipe.rs(5)/shm.rs(4)/msgq.rs(4) FFI 边界 13 处——**DECISION-I IpcStrategy trait 注入对象**（下一批）。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过（含 kernel_test/host-test clippy 维）✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯壳删除不触 boot，与 trait 注入批次合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

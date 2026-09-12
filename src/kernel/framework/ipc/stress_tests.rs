@@ -8,9 +8,9 @@
 
 use super::types::*;
 use super::*;
-// T6-1: pipe/shm/msgq 策略函数已迁移到 services
+// T6-1: pipe/shm/msgq 策略函数已迁移到 services; DECISION-J: sem 壳已删, 亦走 services
 use crate::kernel::services::ipc::types::PIPE_BUFFER_SIZE;
-use crate::kernel::services::ipc::{msgq, pipe, shm};
+use crate::kernel::services::ipc::{msgq, pipe, sem, shm};
 
 // ============================================================================
 // 压力测试

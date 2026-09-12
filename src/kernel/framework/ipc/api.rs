@@ -6,16 +6,14 @@
 //! ## 调用方契约
 //! - `syscall::mod` —— 管道/共享内存/消息队列/信号量/信号系统调用入口
 //! - `proc::api` —— 进程 fork/exec 时继承/清理 IPC 资源
-//! - `ipc::scheduler_integration` —— 阻塞/唤醒与调度器交互
+//! - `services::ipc::scheduler_integration` —— 阻塞/唤醒与调度器交互 (services 策略)
 //!
 //! ## 内部接口
-//! - `pipe.rs` —— 管道安全创建/关闭/读写
-//! - `shm.rs` —— 共享内存安全创建/附加/分离/销毁
-//! - `msgq.rs` —— 消息队列安全创建/发送/接收
-//! - `sem.rs` —— 信号量安全创建/等待/唤醒
-//! - `signal.rs` —— 信号安全发送/注册
+//! - `pipe.rs` —— 管道安全创建/关闭/读写 (framework FFI 边界, 调 services::ipc::pipe)
+//! - `shm.rs` —— 共享内存安全创建/附加/分离/销毁 (framework FFI 边界, 调 services::ipc::shm)
+//! - `msgq.rs` —— 消息队列安全创建/发送/接收 (framework FFI 边界, 调 services::ipc::msgq)
 //! - `types.rs` —— Pipe/ShmSegment/MsgQueue/Semaphore/SignalAction 类型定义
-//! - `scheduler_integration.rs` —— 阻塞/唤醒/全部唤醒线程
+//! - sem/signal 策略与 scheduler_integration/async_ipc 由 `services::ipc` 提供 (DECISION-J 壳已删)
 //!
 //! ## 安全约束
 //! - 所有 _safe 函数接收 &mut IpcNamespace, 调用方负责命名空间生命周期

@@ -50,28 +50,8 @@ pub mod shm;
 /// 消息队列实现
 pub mod msgq;
 
-/// 信号量实现
-pub mod sem;
-
-/// 信号机制实现
-pub mod signal;
-
 /// 动态 IPC 命名空间
 pub mod dynamic;
-
-// ============================================================================
-// 调度器集成 (阻塞/唤醒)
-// ============================================================================
-
-/// 调度器集成功能
-pub mod scheduler_integration;
-
-// ============================================================================
-// 异步 IPC 基础设施
-// ============================================================================
-
-#[cfg(feature = "async")]
-pub mod async_ipc;
 
 // ============================================================================
 // 全局状态
@@ -145,16 +125,9 @@ pub use types::{
     WaitQueue, WaitQueueItem,
 };
 
-// 调度器集成功能导出
-pub use scheduler_integration::{
-    block_current_thread, block_with_timeout, wake_all_threads, wake_one_thread,
-};
-
-// 异步 IPC 功能导出 (需要 async feature)
-#[cfg(feature = "async")]
-pub use async_ipc::{
-    AsyncMsgReceiver, AsyncMsgSender, AsyncPipeReader, AsyncPipeWriter, wait_for_condition,
-};
+// 调度器集成 (block_current_thread/block_with_timeout/wake_*) 与异步 IPC
+// (AsyncMsgSender/Receiver 等) 为 services 策略项, framework 侧壳已删 (DECISION-J),
+// 由 `services::ipc::{scheduler_integration, async_ipc}` 提供。
 
 // ============================================================================
 // 压力测试与边界测试
@@ -170,6 +143,8 @@ mod stress_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    // DECISION-J: sem/signal 壳已删, tests 经 services 公共 API 访问 (测试代码)
+    use crate::kernel::services::ipc::{sem, signal};
 
     #[test]
     fn test_pipe_create_and_close() {
