@@ -325,7 +325,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - **net 剩余 2**：syscall.rs（framework TCB 引用 `services::net::socket::{Domain,SockType,SockAddrIn}` + `services::net::unix::SockAddrUn`——协议 wire 类型，机制属性强，**建议迁回 framework（DECISION-J 模式），但涉及从大文件 socket.rs/unix.rs 抽取类型 + 大量引用改造，专项施工**）、init/sm_fi.rs（启动编排调 services uds/fd_alloc——功能编排，逐项判定）
   - **credо 专项**：安全敏感 + 框架/services 双份实现（audit/identity/capability/sha256/secure_boot/types 双份），3 壳（capability/types/sha256）被 framework re-export 消费 + identity.rs 引用 PwmEntry —— **需专项调研后裁决**，不贸然施工
   - **driver 2 壳（power/hdmi）**：`driver/power.rs` 为"framework 机制持有 `PM_SUBSYSTEM: PmSubsystem` 全局实例 + syscall 入口调 `services sys_pm_dispatch`"（同 IpcStrategy 模式：类型迁回 + 分发 trait 注入）；`driver/display/hdmi` 为 framework 机制文件 + 壳 re-export services hdmi——专项
-  - **杂项**：barrier/types（framework 机制壳）、net/init/sm_fi.rs（启动编排调 services uds/fd_alloc，功能编排判定）
+  - **杂项**：barrier/types（framework 机制壳）、net/init/sm_fi.rs（启动编排调 services uds/fd_alloc——功能编排判定。**第十批后调研**：sm_fi 反依赖 3 处 = `uds_setsockopt` 委托（机制调策略 → SocketStrategy/UDS 委托 trait 注入）+ `fd_alloc::alloc_fd`（fd 表为内核机制但实现在 services，eventfd/signalfd/timerfd 亦调用 → **fd_alloc 迁回 framework 候选**））
   - **proc 系列**（约 13 文件）：核心子系统，types 壳 + 多个直接调用——需专项
   - **syscall 系列**（约 12 文件）：FFI 边界，部分需 trait 注入/接口化——需专项
   - **validate 壳**：ConfigValidateHook trait 注入（DECISION-I 顺序，ipc 之后）
