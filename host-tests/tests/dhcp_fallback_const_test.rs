@@ -7,10 +7,13 @@
 //! 4. 集中化后, 任何修改需走单一来源
 //!
 //! 主机端无法跑真实网络, 这里做静态契约验证.
+//!
+//! DECISION-J (2026-09-12): FALLBACK_* 为机制常量 (被 framework net init/dns
+//! 机制消费), 已反转归位至 `framework/net/types.rs`, 本测试路径同步更新。
 
 use std::fs;
 
-const TYPES_RS: &str = "../src/kernel/services/net/types.rs";
+const TYPES_RS: &str = "../src/kernel/framework/net/types.rs";
 const INIT_RS: &str = "../src/kernel/framework/net/init.rs";
 
 fn read(path: &str) -> String {

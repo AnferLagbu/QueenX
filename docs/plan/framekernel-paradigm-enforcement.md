@@ -513,6 +513,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 63→62。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 全量通过 ✅ / QEMU 未跑（纯类型归位不触 boot，合并冒烟）。
 
+### DECISION-J 第六批执行记录：机制常量/状态 4 壳反转（net/types + barrier/reset_config + mm/numa + io/iouring）
+
+> 批量处理同构"机制持有项"壳。逐项调研 framework 消费点后判定：4 项均被 framework 机制直接消费且依赖闭包全在 framework 内 → 反转归位。模式与第五批相同（cp + 头部 DECISION-J 注释 + services glob re-export）。
+
+- **net/types**：`NET_READY`/`NET_CONFIGURED` 全局状态 + `FALLBACK_*` 常量迁回（被 framework net init/dns 机制消费）。services glob re-export。**host-test 同步**：`dhcp_fallback_const_test.rs` 的 `TYPES_RS` 路径 `services/net/types.rs` → `framework/net/types.rs`（跨模块接口变更，§8）。
+- **barrier/reset_config**：`RecoveryLayer`/`RecoveryResult`/`set_reset_*` 等恢复配置迁回（被 framework proc/scheduler Barrier 恢复域路径消费，0 外部依赖）。services glob re-export（framework 路径 `barrier::reset::config`）。
+- **mm/numa**：`NumaTopology`/`NumaNode`/`NumaMempolicy`/`sys_*` 迁回（`NumaMempolicy` 被 framework proc/process 持有、`numa_init` 被 framework mm 调用；依赖闭包 `mm::PAGE_SIZE`+`sync::IrqSpinLock` 在 framework 内）。services glob re-export（services/syscall 的 4 处 `numa::sys_*` 引用经 glob 保持可用，无需改）。
+- **io/iouring**：`Sqe`/`Cqe`/`RingBuffer`/`IoUring` + `sys_io_uring_*` 迁回（被 framework syscall dispatch 直接调用；依赖闭包 `sync::IrqSpinLock`+`errno::Errno` 在 framework 内）。services glob re-export。
+- **引用计数**：framework 文件级反向依赖 62→58。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯常量/类型归位不触 boot，合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
