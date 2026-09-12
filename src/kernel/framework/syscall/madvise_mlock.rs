@@ -1,12 +1,9 @@
 //! madvise / mlock / mincore — framework 层 re-export
 //!
-//! ## 迁移记录
+//! ## DECISION-J 归属反转记录 (2026-09-13)
 //!
-//! 策略代码已于 2026-06-17 迁移到 `services::mm::madvise_mlock`.
-//! 本文件仅 re-export 保持调用方兼容.
+//! 实现在 `framework::proc::madvise_mlock` (机制项, 由 services 迁回), 本文件
+//! re-export 其全部符号 (MADV_*/MCL_* 常量 + sys_* 入口) 保持 framework/syscall
+//! 侧调用方兼容. 消除旧的 `services::mm::madvise_mlock` 反向依赖。
 
-pub use crate::kernel::services::mm::madvise_mlock::{
-    MADV_DONTNEED, MADV_FREE, MADV_NORMAL, MADV_PAGEOUT, MADV_RANDOM, MADV_REMOVE, MADV_SEQUENTIAL,
-    MADV_WILLNEED, MCL_CURRENT, MCL_FUTURE, MCL_ONFAULT, sys_madvise, sys_mincore, sys_mlock,
-    sys_mlockall, sys_munlock, sys_munlockall,
-};
+pub use crate::kernel::framework::proc::madvise_mlock::*;
