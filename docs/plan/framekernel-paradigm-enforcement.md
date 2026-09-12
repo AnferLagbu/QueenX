@@ -272,6 +272,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **风险**：注册时序（boot 早期须先于首个 syscall）；trait 对象动态分派微开销（可接受，与 pmm_trait 同级）。
 - **进度**：本分析为 §7 ipc 施工前置。**§6.5 壳删除（types/sem/signal/scheduler_integration/async_ipc 5 壳 + 全仓 70 壳）是更低风险的首批收敛动作**，可与 trait 注入并行推进。
 
+### §7 壳删除真实障碍：所有权纠缠（2026-09-12 复核，需裁决）
+
+> 实测发现：**所有 §6.5 壳并非纯机械删除**——壳存在的原因正是 framework 生产代码依赖 services 项。壳删除 = 逐项判定归属 + 所有权反转，而非删文件。
+
+| 壳组 | framework 生产依赖 | 归属判定 | 处置 |
+|---|---|---|---|
+| ipc 类型壳（types.rs）| `IPC_NAMESPACE: RacyCell<IpcNamespace>`（framework 机制）持有 services 类型（IpcNamespace/Pipe/MsgQueue/ShmSegment/Semaphore/Message/WaitQueue/WaitQueueItem + IPC_MAX_* 常量，均定义于 services/ipc/types.rs）| 命名空间是 framework 机制（§6.6），其数据类型 = 机制类型 | **类型所有权反转**：迁回 framework，services re-export（合法 services→framework）——DECISION-A 式反转 |
+| config 常量壳（11 文件）| `framework::config::{PAGE_SIZE, MAX_CPUS}` 等被 iobuf/cpu_local/smp/rcu/irq/mm 等 framework 机制大量使用；`config::procfs/caps/validate` 被 framework/tests 使用 | 页大小/最大 CPU 等 = 机制常量 | **常量迁回 framework**，services config re-export |
+| 其余壳（proc/debug/barrier/wasm 等）| 同构——壳为 framework 消费 services 项的兼容层 | 逐项判定 | 分批所有权反转 |
+
+**裁决请求**：壳删除的正确执行路径 = **DECISION-A 式所有权反转**（机制项迁回 framework，services 侧改 re-export 保持 API 兼容），而非机械删文件。是否确认此方向？若是，§7 壳删除批次将按"先迁移机制项到 framework → services re-export → 删除 framework 壳 → 清理引用"执行（每批验证链全绿）。
+
 ## 8. 批次实施计划
 
 描述：分 6 阶段，每阶段独立可验证（实施交委托人）。
@@ -406,6 +418,13 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 4. **char/virtio-blk 同步前置核实**（同 storage 标准：MSI-X/IRQ/_block 适配器/注册路径等值存在？）——半成品 → 转独立专项；完整 → 按 DECISION-G 直接接线。
 
 **状态**: [X]（裁决完成；storage 专项另立，主线转 §7 + §6.2 复核）
+
+### DECISION-I: virtio-blk IRQ + §7 施工顺序（长期最优，2026-09-12 审核员裁决）
+
+1. **virtio-blk IRQ**：**转专项补 I-42 路径**（services 补中断驱动 + framework 留 virtqueue 机制），**不接受轮询为功能等值**——轮询 CPU 占用/延迟不等值；丢 IRQ = 降级迁移，违反"不损失功能"铁律；与 storage 缺 MSI-X 转专项同一标准；Asterinas virtio-blk 中断驱动在 kernel。轮询仅作专项完成前过渡兜底，不作终态。
+2. **§7 施工顺序**：采纳**先 §6.5 壳删除（分批，每批双架构 0w0e + audit_services_boundary + host-tests）→ 再 trait 注入**。理由：壳删 -70 反向依赖清障、验证 services 顶层 API 完备、为 IpcStrategy 注册时序设计提供干净依赖面。**IpcStrategy trait 注入为 trait 化首战**（ipc 24 处最大头，13 处 FFI 集中）；注册时序（framework 机制先启 → services 注册 → 使用）单独评审。
+
+**状态**: [X]（裁决完成）
 
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
