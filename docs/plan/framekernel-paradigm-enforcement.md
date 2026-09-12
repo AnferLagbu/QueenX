@@ -659,6 +659,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 47→46。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过 ✅ / host-tests 全通过（fd 两套件 9+6 用例）✅ / QEMU x86_64 启动通过 ✅。
 
+### DECISION-J 第十二批执行记录：madvise_mlock 迁回 + 串联回归修复（commit 待定）
+
+- **madvise_mlock 迁回 framework**：`services/mm/madvise_mlock.rs`（sys_madvise/mlock/munlock/mlockall/munlockall/mincore，0 unsafe，依赖闭包全在 framework：errno/PAGE_SIZE/copy_user/vma_get_current_mm/userptr）为机制项迁回 `framework/proc/madvise_mlock.rs`（真实实现，同 io_uring/fd_alloc 模式）；services/mm/madvise_mlock.rs 改 glob re-export（framework/proc madvise_mlock 为 `pub mod`）。services/syscall/dispatch.rs 经 services::mm re-export 保持可用（合法方向）。
+- **关联消引**：framework/syscall/madvise_mlock.rs 原 re-export 自 services::mm，改指 framework/proc::madvise_mlock（glob）。
+- **serial 回归修复（DECISION-G §6.4 遗留 link 断裂）**：char serial 下沉 commit 9ba997e3 删除 `framework/driver/char/serial.rs` 时连带删除 `extern "C" serial_has_data/serial_getc`（原 L721/L764），但 framework/syscall 的 `sys_read(fd=0)` 仍经 `raw::read_serial_byte` 引用 → 链接 undefined reference，长期被 QEMU 增量链接掩盖。修复：移除 framework sys_read 串口 stdin 硬读分支（保留 x86_64 键盘 stdin，keyboard FFI 定义仍在 framework input 机制）+ 删 `raw::read_serial_byte`/serial extern 声明；`raw::write_u8` 加 `#[cfg(all(target_arch="x86_64", not(feature="kernel_test")))]`（仅 x86_64 键盘消费）。串口 stdin 待 devfs 桥接入 services char 权威（与 §6.2 SIMPLIFIED 一致，char 读写路径休眠）。
+- **pedantic 补齐（DECISION-K 遗留）**：audit quick 曾报 16 处 pedantic（15 missing_errors_doc + config/mod.rs match 单分支 + redundant closure），为 DECISION-K 批次产物（IpcStrategy/ConfigValidateHook trait 注入）。补齐 #Errors 文档（framework/ipc/strategy.rs 12 方法 + services 侧 register_default_ipc_strategy/register_default_config_validate_hook 两个注册函数）、config/mod.rs match→if-let + map_or 直接函数引用。
+- **引用计数**：framework 文件级反向依赖 46→44（madvise_mlock proc/syscall 两壳）。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic lib + kernel_test + host-test 三维）✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动到 Ring 3（VFS ready，串口 242 行）✅。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
