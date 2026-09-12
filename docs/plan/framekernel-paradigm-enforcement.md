@@ -258,6 +258,20 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **合计**：43 处收敛（ipc 24 为第一优先）+ 2 处正确形态 + 9 处另议 = 54 处；加壳 70 + 下沉 12 = **136 处全覆盖**。
 
+### §7 ipc 现状分析 + 收敛方案（2026-09-12 复核）
+
+> 实测 framework/ipc 的 services 引用重新归类（原表"24 处"含壳与测试，生产引用为 13 处 FFI 边界调用）：
+
+| 类别 | 文件 | 引用 | 处置 |
+|---|---|---|---|
+| 纯 re-export 壳 | types / sem / signal / scheduler_integration / async_ipc.rs | `pub use services::ipc::*` | §6.5 壳删除 |
+| **FFI 边界调 services（核心 13 处）** | pipe.rs（5：is_pipe_fd + 4 FFI）、shm.rs（4）、msgq.rs（4）| extern "C" 薄层持 namespace/UserPtr（framework 机制）→ 调 services `*_safe` | **trait 注入**：framework 定义 `IpcStrategy` 契约，services 实现 + OnceLock 注册（复用 pmm_trait/swap_trait 模式）；FFI 边界调 trait（framework→services 归零） |
+| cfg(test) | mod.rs tests（11）、stress_tests.rs | 测试访问 services 真实代码 | §7.3 另议（合理） |
+
+- **收敛方案（pipe 起）**：① framework/ipc 定义 `IpcStrategy` trait（方法签名含 `&mut IpcNamespace`/`&mut IpcId`/`pid` 等 framework 机制类型，与 `*_safe` 一一对应）；② services/ipc 实现 trait（内部调既有 `*_safe`）；③ framework 提供 `OnceLock<&'static dyn IpcStrategy>` 注册点 + `ipc_init` 期回调（boot 早期注册）；④ FFI 边界改调 trait（`IPC_STRATEGY.get().pipe_create(...)`），framework→services 引用归零；⑤ 验证链全绿。
+- **风险**：注册时序（boot 早期须先于首个 syscall）；trait 对象动态分派微开销（可接受，与 pmm_trait 同级）。
+- **进度**：本分析为 §7 ipc 施工前置。**§6.5 壳删除（types/sem/signal/scheduler_integration/async_ipc 5 壳 + 全仓 70 壳）是更低风险的首批收敛动作**，可与 trait 注入并行推进。
+
 ## 8. 批次实施计划
 
 描述：分 6 阶段，每阶段独立可验证（实施交委托人）。
