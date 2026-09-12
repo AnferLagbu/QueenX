@@ -413,6 +413,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **SIMPLIFIED（已登记）**：services blk 走 spin-loop 轮询（framework 版有 I-42 IRQ 事件驱动路径），功能等价、效率略低；IRQ 驱动为后续优化项。
 - **待登记**：services `transport::VirtioDevice` 与 framework `VirtioMmioDevice` 存在**传输层双份**（各自 IoMem 探测）——按服务对象准则 transport 属机制应保留 framework，services 版是否删除/改为薄代理留待 §7 反向依赖治理阶段裁决。
 
+### virtio-net 前置核实 + RX 迁业务记录（commit 待填）
+
+> 验证：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（RX 为硬件路径 host 无法功能测试，纯逻辑按 framework 同构迁移，实际验证依赖后续 aarch64/QEMU virt 冒烟）。
+
+- **前置核实结论**（DECISION-G 规则）：services `VirtioNetDriver` 的 **RX 数据路径是半成品**——`try_receive` 原实现"无法访问 DMA 缓冲区内容，返回 0 丢弃包，需维护 desc_idx→DmaBuffer 映射"（L453-475）→ 不满足"内容完整"，**该项属"从 framework 迁业务"（仍是 B 形态）**。
+- **RX 迁业务（已完成，0 unsafe）**：`services/driver/virtio/net.rs` 新增 `rx_buffers: [Option<DmaBuffer>; 32]`（desc_idx==槽位索引，同 framework `rx_buffers` 同构）+ `refill_rx()`（逐槽分配 DmaBuffer + 提交设备可写描述符）+ 重写 `try_receive`（pop used → 槽位校验 → `read_slice` 拷贝有效载荷 → 回收 + 同槽重提交）+ `refill_single_rx`（复用槽位缓冲区，取代原 `mem::forget` 泄漏式重填）。`new()` 初始化后预填 RX。
+- **接线待办（未做，需 framework 安全桥）**：framework net init `nic_probe_all`（net/init/probe.rs:75）经 `ChitinNetDevice` + `VIRTIO_NET_OPS_STATIC`（extern "C" NetOps 指针表，unsafe 转换到 framework `VirtioNet`）接入 smoltcp——services 0 unsafe 无法直接构造 NetOps，需 **framework NetOps 安全桥 trait**（同 char CharOps 桥模式）。且 net init 为机制，services 设备需经注册表分发。
+- **验证**：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计待跑 / host-tests 待跑（RX 为硬件路径，host 无法功能测试——纯逻辑已按 framework 同构迁移，实际验证依赖后续 aarch64/QEMU virt 冒烟）。
+
 ### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
 
 | 门槛 | 结果 |

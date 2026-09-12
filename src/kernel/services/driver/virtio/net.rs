@@ -142,6 +142,11 @@ pub struct VirtioNetDriver {
     rx_vq: VirtQueue,
     /// TX virtqueue (队列 1)
     tx_vq: VirtQueue,
+    /// RX 缓冲区表 (desc_idx → DmaBuffer), §6.4 迁业务 (framework rx_buffers 等价)
+    ///
+    /// 与 framework VirtioNet::rx_buffers 同构: `desc_idx == 槽位索引`
+    /// (refill 按序提交描述符, 设备按序消费, 回收后重提交复用同槽缓冲区).
+    rx_buffers: [Option<DmaBuffer>; 32],
 }
 
 impl VirtioNetDriver {
@@ -248,7 +253,7 @@ impl VirtioNetDriver {
             if link_up { "UP" } else { "DOWN" }
         );
 
-        Some(Self {
+        let mut net = Self {
             device,
             mac,
             link_up,
@@ -260,7 +265,11 @@ impl VirtioNetDriver {
             hdr_size,
             rx_vq,
             tx_vq,
-        })
+            rx_buffers: [const { None }; 32],
+        };
+        // 用空缓冲区预填 RX 队列 (§6.4 迁业务: framework refill_rx 等价)
+        net.refill_rx();
+        Some(net)
     }
 
     /// 设置 `DRIVER_OK` (设备进入 live 状态).
@@ -438,56 +447,82 @@ impl VirtioNetDriver {
         }
     }
 
-    #[expect(
-        clippy::manual_let_else,
-        reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-    )]
-    #[expect(
-        clippy::no_effect_underscore_binding,
-        reason = "no_effect_underscore_binding: let _ = expr 用于类型推导/副作用; 当前优先 expect"
-    )]
     /// 尝试接收一个网络包.
     ///
     /// 将包数据 (不含 `VirtIO` 头) 复制到 `buf`, 返回实际拷贝的字节数.
-    /// 无包可读时返回 0. 内部自动回收并重新填充 RX 描述符.
-    pub fn try_receive(&mut self, _buf: &mut [u8]) -> usize {
-        let result = match self.rx_vq.pop_used() {
-            Some(r) => r,
-            None => return 0,
+    /// 无包可读时返回 0. 内部自动回收并重新填充 RX 描述符 (§6.4 迁业务:
+    /// 完整数据路径, 维护 desc_idx → DmaBuffer 映射, 取代原"返回 0 丢弃"半成品).
+    pub fn try_receive(&mut self, buf: &mut [u8]) -> usize {
+        let Some((desc_idx, len)) = self.rx_vq.pop_used() else {
+            return 0;
         };
-        let (desc_idx, len) = result;
+        let buf_idx = desc_idx as usize;
 
-        // len 包含 VirtIO 头
-        if (len as usize) <= self.hdr_size || len > RX_BUFFER_SIZE as u32 {
-            // 异常包: 回收并重新填充
-            self.refill_single_rx(desc_idx);
+        if buf_idx >= self.rx_buffers.len() || self.rx_buffers[buf_idx].is_none() {
+            // 槽位无效: 回收描述符 (无缓冲区可重提交)
+            self.rx_vq.reclaim_desc(desc_idx);
             return 0;
         }
 
-        // 注意: 此处无法直接访问已提交的 DMA 缓冲区内容.
-        // 简化实现: 回收描述符并重新填充, 返回 0 表示包已消费.
-        // 完整数据路径需维护 desc_idx → DmaBuffer 映射表.
-        self.refill_single_rx(desc_idx);
+        let data_len = len as usize;
+        if data_len <= self.hdr_size || data_len > RX_BUFFER_SIZE {
+            // 异常包: 回收并复用同槽缓冲区重新填充
+            self.rx_vq.reclaim_desc(desc_idx);
+            self.refill_single_rx(buf_idx);
+            return 0;
+        }
 
-        // 实际包数据长度 (不含头)
-        let _data_len = (len as usize) - self.hdr_size;
-        0
+        // 从槽位 DMA 缓冲区拷贝有效载荷 (跳过 VirtIO 头)
+        let payload_len = data_len - self.hdr_size;
+        let copy_len = payload_len.min(buf.len());
+        if let Some(dma) = &self.rx_buffers[buf_idx] {
+            dma.read_slice(self.hdr_size, &mut buf[..copy_len]);
+        }
+
+        // 回收描述符并复用同槽缓冲区重新填充
+        self.rx_vq.reclaim_desc(desc_idx);
+        self.refill_single_rx(buf_idx);
+
+        copy_len
     }
 
-    /// 回收单个 RX 描述符并重新填充缓冲区.
-    fn refill_single_rx(&mut self, desc_idx: u16) {
-        self.rx_vq.reclaim_desc(desc_idx);
-        if let Some(dma) = DmaBuffer::new(RX_BUFFER_SIZE) {
+    /// 用空缓冲区填充 RX virtqueue (§6.4 迁业务: framework refill_rx 等价).
+    ///
+    /// 为每个空槽位分配 `DmaBuffer`, 提交设备可写描述符.
+    fn refill_rx(&mut self) {
+        for i in 0..self.rx_buffers.len() {
+            if self.rx_buffers[i].is_some() {
+                continue;
+            }
+            let Some(dma) = DmaBuffer::new(RX_BUFFER_SIZE) else {
+                slog_warn!(Driver, "virtio-net: RX 缓冲区分配失败 (slot {i})");
+                return;
+            };
+            let desc = self
+                .rx_vq
+                .prepare_desc(dma.phys_addr(), RX_BUFFER_SIZE as u32, true);
+            if desc == 0xFFFF {
+                return;
+            }
+            // desc_idx 即槽位索引 (refill 按序提交, 设备按序消费)
+            self.rx_buffers[desc as usize] = Some(dma);
+            self.rx_vq.submit(desc);
+        }
+        self.rx_vq.commit_and_kick();
+        self.device.notify_queue(RX_QUEUE_INDEX);
+    }
+
+    /// 回收单个 RX 描述符并复用同槽缓冲区重新填充.
+    fn refill_single_rx(&mut self, buf_idx: usize) {
+        if let Some(dma) = &self.rx_buffers[buf_idx] {
             let desc = self
                 .rx_vq
                 .prepare_desc(dma.phys_addr(), RX_BUFFER_SIZE as u32, true);
             if desc != 0xFFFF {
                 self.rx_vq.submit(desc);
-                // 保持 dma 不被 drop — 实际项目中需维护 DMA 缓冲区表
-                core::mem::forget(dma);
+                self.rx_vq.commit_and_kick();
+                self.device.notify_queue(RX_QUEUE_INDEX);
             }
         }
-        self.rx_vq.commit_and_kick();
-        self.device.notify_queue(RX_QUEUE_INDEX);
     }
 }
