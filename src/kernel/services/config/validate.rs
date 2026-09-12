@@ -251,6 +251,9 @@ static CONFIG_VALIDATE_HOOK: DefaultConfigValidateHook = DefaultConfigValidateHo
 /// 注册默认配置自检策略 (由 lib.rs 编排, framework config::init() 之前注册)
 ///
 /// 幂等性: 已注册时返回 `Err(())` (与 pmm/slab/swap policy 注册模式一致).
+///
+/// # Errors
+/// 当自检策略已注册时返回 `Err(())`.
 pub fn register_default_config_validate_hook() -> Result<(), ()> {
     register_config_validate_hook(&CONFIG_VALIDATE_HOOK).map_err(|_| ())
 }

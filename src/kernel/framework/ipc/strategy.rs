@@ -31,6 +31,9 @@ pub trait IpcStrategy: Send + Sync {
     fn is_pipe_fd(&self, fd: i32) -> bool;
 
     /// 创建管道 (策略: 分配槽位 + 初始化等待队列)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (槽位耗尽或参数非法).
     fn pipe_create(
         &self,
         ns: &mut IpcNamespace,
@@ -39,6 +42,9 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<(i32, i32), i32>;
 
     /// 管道读 (策略: 缓冲复制 + 唤醒写端)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (fd 非法/已关闭).
     fn pipe_read(
         &self,
         ns: &mut IpcNamespace,
@@ -48,6 +54,9 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<u32, i32>;
 
     /// 管道写 (策略: 缓冲复制 + 唤醒读端)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (fd 非法/已关闭/缓冲不足).
     fn pipe_write(
         &self,
         ns: &mut IpcNamespace,
@@ -57,11 +66,17 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<u32, i32>;
 
     /// 关闭管道 (策略: 释放槽位)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (fd 非法).
     fn pipe_close(&self, ns: &mut IpcNamespace, fd: i32) -> Result<(), i32>;
 
     // ── SHM ──
 
     /// 创建共享内存段 (策略: 分配槽位 + 物理页)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (槽位/物理页耗尽).
     fn shm_create(
         &self,
         ns: &mut IpcNamespace,
@@ -72,17 +87,29 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<IpcId, i32>;
 
     /// 附加共享内存段 (策略: 页表映射, 返回物理地址)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (id 非法/内存不足).
     fn shm_attach(&self, ns: &mut IpcNamespace, id: IpcId, pid: u32) -> Result<u64, i32>;
 
     /// 分离共享内存段 (策略: 解除映射)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (id 非法).
     fn shm_detach(&self, ns: &mut IpcNamespace, id: IpcId, pid: u32) -> Result<(), i32>;
 
     /// 销毁共享内存段 (策略: 释放资源)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (id 非法).
     fn shm_destroy(&self, ns: &mut IpcNamespace, id: IpcId) -> Result<(), i32>;
 
     // ── MsgQ ──
 
     /// 创建消息队列 (策略: 分配槽位 + 初始化链表)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (槽位耗尽或参数非法).
     fn msgq_create(
         &self,
         ns: &mut IpcNamespace,
@@ -92,6 +119,9 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<IpcId, i32>;
 
     /// 发送消息 (策略: 参数校验 + 容量检查 + 入队 + 唤醒)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (id 非法/队列满/无效消息).
     fn msgq_send(
         &self,
         ns: &mut IpcNamespace,
@@ -103,6 +133,9 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<(), i32>;
 
     /// 接收消息 (策略: 出队 + 数据复制)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (id 非法或空队列).
     fn msgq_recv(
         &self,
         ns: &mut IpcNamespace,
@@ -113,6 +146,9 @@ pub trait IpcStrategy: Send + Sync {
     ) -> Result<usize, i32>;
 
     /// 销毁消息队列 (策略: 释放消息链表 + 槽位)
+    ///
+    /// # Errors
+    /// 失败返回 `Err(errno)` (id 非法).
     fn msgq_destroy(&self, ns: &mut IpcNamespace, id: IpcId) -> Result<(), i32>;
 }
 

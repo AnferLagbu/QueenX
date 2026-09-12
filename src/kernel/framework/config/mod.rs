@@ -245,12 +245,12 @@ pub fn init() {
 
     // DECISION-K: 启动自检经 ConfigValidateHook trait 注入 (Option 可空,
     // 未注册跳过校验 + 日志 — validate 是启动增强, 逻辑错误降级原则)
-    let errors = match current_config_validate_hook() {
-        Some(h) => h.validate_system_config(),
-        None => {
-            klog_info!(Boot, "==== ConfigValidateHook 未注册, 跳过启动校验 ====");
-            0
-        }
+    // clippy: 单分支匹配改用 if-let (无行为变更)
+    let errors = if let Some(h) = current_config_validate_hook() {
+        h.validate_system_config()
+    } else {
+        klog_info!(Boot, "==== ConfigValidateHook 未注册, 跳过启动校验 ====");
+        0
     };
 
     if errors == 0 {
@@ -266,8 +266,9 @@ pub fn init() {
     // 演进 6: 软校验子系统初始化状态 (PCI/网络/...)
     // 注意: 此校验点位于 kernel_init 极早期, 此时 PCI/网络/驱动尚未初始化。
     // 这里记录为 0 错误是预期行为 — 真正的 driver 配置检查在它们各自的 init() 末尾调用。
+    // clippy: 消除冗余闭包 (直接函数引用)
     let driver_errors = current_config_validate_hook()
-        .map_or(0, |h| h.validate_drivers());
+        .map_or(0, ConfigValidateHook::validate_drivers);
     if driver_errors > 0 {
         klog_info!(
             Boot,

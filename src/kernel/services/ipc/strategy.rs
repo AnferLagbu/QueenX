@@ -130,6 +130,9 @@ static IPC_STRATEGY: DefaultIpcStrategy = DefaultIpcStrategy;
 /// 注册默认 IPC 策略 (由 lib.rs 编排调用, 早于任何 IPC syscall)
 ///
 /// 幂等性: 已注册时返回 `Err(())` (与 pmm/slab/swap policy 注册模式一致).
+///
+/// # Errors
+/// 当策略已注册时返回 `Err(())`.
 pub fn register_default_ipc_strategy() -> Result<(), ()> {
     crate::kernel::framework::ipc::strategy::register_ipc_strategy(&IPC_STRATEGY).map_err(|_| ())
 }
