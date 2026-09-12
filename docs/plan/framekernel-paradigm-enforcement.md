@@ -430,6 +430,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **SIMPLIFIED（已登记）**：services blk 走 spin-loop 轮询（framework 版有 I-42 IRQ 事件驱动路径），功能等价、效率略低；IRQ 驱动为后续优化项。
 - **待登记**：services `transport::VirtioDevice` 与 framework `VirtioMmioDevice` 存在**传输层双份**（各自 IoMem 探测）——按服务对象准则 transport 属机制应保留 framework，services 版是否删除/改为薄代理留待 §7 反向依赖治理阶段裁决。
 
+### char/virtio-blk 前置核实结果（同 storage 标准，回报裁决，2026-09-12）
+
+> 审核员要求：按 storage 标准核实 char/virtio-blk 的 services 实现是否"IRQ 路径 / _block 适配器 / 注册路径等值存在"，结果回报后定"直接接线 or 转专项"。
+
+| 子项 | IRQ 路径 | 适配器/注册路径 | 结论 |
+|---|---|---|---|
+| char（vga/serial）| **不适用**——vga/serial 为轮询 console，framework 原实现同样无 IRQ（串口轮询）；services 无缺失 | 注册路径已建：`char_init` → Chitin ✓（9ba997e3）| ✅ **直接接线成立** |
+| virtio-blk | **缺失**——framework VirtioBlk 有 I-42 `enable_irq`（IRQ 事件驱动完成），services VirtioBlkDriver 仅 `ack_interrupt`（清中断状态），I/O 走 spin-loop 轮询 | 适配器已建：`impl BlockDevice` ✓ + 注册路径 `blk_init` ✓（e47c04ad）| ⚠ **按严格标准 IRQ 路径不等值** |
+
+**裁决请求**：virtio-blk 的 IRQ 路径（I-42）是否必须迁 services（→ 转专项，补 IRQ 完成路径）？还是接受 spin-loop 轮询为"功能等值、效率略低"（维持直接接线，SIMPLIFIED 已登记为后续优化项）？framework virtio-net 亦无 IRQ（同为轮询）可作旁证。
+
 ### storage 前置核实记录（步骤 1 续核，2026-09-12）
 
 > 按 DECISION-G 规则核实 services storage 内容自足性，结论：**services storage 为"并行实现但内容不等价"（Phase 2.1.3/2.1.4 迁移半成品）——不满足"直接接线"，属"从 framework 迁业务"（B 形态），且迁移量显著大于 char/virtio**。
