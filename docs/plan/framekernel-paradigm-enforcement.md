@@ -636,6 +636,19 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 49→48。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过 ✅ / host-tests 98 套件全通过 ✅（memory_pressure_extraction_test 8 用例过）/ QEMU 未跑（纯壳删除不触 boot）。
 
+### DECISION-K 项 2 执行记录：ConfigValidateHook trait 注入（validate 壳收口）
+
+> 按 DECISION-K 项 2：validate 壳（re-export services validate_*）改为 `ConfigValidateHook` trait 注入，并入统一"机制 init 后立即注册策略"启动契约；未注册语义 **Option 可空**（跳过校验 + 日志，不 panic）。
+
+- **ConfigError 迁回 framework**：`ConfigError` 为 `ConfigValidateHook` trait 返回类型（机制持有）→ 迁回 `framework/config/error.rs`（0 unsafe，纯类型 + Display）；services/config/error.rs 改经 framework 顶层显式 re-export；services/config/validate.rs 的 ConfigError 引用改回 framework（services→framework 合法）。
+- **framework 侧（契约 + 注册点）**：新增 `framework/config/validate_hook.rs` —— `ConfigValidateHook` trait（4 方法：validate_system_config/validate_drivers 返回 u32，validate_pci_subsystem/validate_network_subsystem 返回 `Result<(), ConfigError>`）+ OnceLock 注册点 + `current_config_validate_hook()`（Option，未注册 None）；mod.rs 顶层 re-export trait + 注册/获取入口。
+- **services 侧（实现 + 注册）**：services/config/validate.rs 新增 `DefaultConfigValidateHook` impl（包装既有 validate_* 函数，保持策略权威）+ `register_default_config_validate_hook()`（幂等）。
+- **framework 消费点改造**：config::init() 的 validate_system_config/validate_drivers 改经 hook（未注册跳过 + 日志）；driver/bus/pci.rs 与 net/init.rs 的 validate_pci_subsystem/validate_network_subsystem 改经 hook（Option 可空，未注册跳过自检）。
+- **删壳**：framework/config/validate.rs 删除；mod.rs 移除 validate_* 顶层 re-export；framework/tests/test_config.rs 的 validate_memory_config/validate_cross_module_consistency 改 services::config::validate 路径（§7.3 允许）。
+- **注册时序**：lib.rs kernel_init 0.05 节注册点（klog + canary 后、framework config::init() 之前，`// ConfigValidateHook 注册契约点 (DECISION-K)`）。
+- **引用计数**：framework 文件级反向依赖 48→47。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过 ✅ / host-tests 98 套件全通过 ✅ / **QEMU x86_64 启动通过**（config::init 编排改动，实测正常）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

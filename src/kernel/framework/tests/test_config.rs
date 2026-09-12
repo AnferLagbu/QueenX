@@ -13,13 +13,16 @@ use crate::kernel::framework::config::{
     PAGE_SHIFT, PAGE_SIZE, SCHED_BOOST_INTERVAL, SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_3_QUANTUM,
     SCHED_RT_WATCHDOG_TICKS, SLAB_DEFAULT_SIZE, SLAB_GENERAL_CACHE_NUM, SLAB_MAX_OBJECT_SIZE,
     SLAB_MIN_OBJECT_SIZE, USER_CODE_BASE, USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
-    get_config_summary, print_config_table, validate_cross_module_consistency,
-    validate_memory_config,
+    get_config_summary, print_config_table,
 };
-// DECISION-J: CFS_*/ConfigError 为 services 策略项 (framework 侧壳已删), tests 经
+// DECISION-J/K: CFS_*/ConfigError/validate_* 为 services 策略项 (framework 侧
+// validate 壳已删, ConfigError 迁回 framework 后 services 侧 re-export), tests 经
 // services 公共 API 访问 (§7.3 允许 framework/tests 访问 services)
 use crate::kernel::services::config::{
     CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
+};
+use crate::kernel::services::config::validate::{
+    validate_cross_module_consistency, validate_memory_config,
 };
 use crate::kernel::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;

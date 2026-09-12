@@ -511,6 +511,13 @@ pub extern "C" fn kernel_init() {
     );
     crate::klog_boot_info!("Boot stack canary verified");
 
+    // 0.05. ConfigValidateHook 注册契约点 (DECISION-K 项 2: 机制 init 后立即注册策略)
+    // 注册在 framework config::init() 之前 — services validate 依赖闭包轻 (smp/arch
+    // 查询 + slog), 可极早注册; 未注册时 config::init() 跳过校验 + 日志 (启动增强,
+    // 逻辑错误降级原则, 不 panic)。
+    crate::kernel::services::config::validate::register_default_config_validate_hook()
+        .expect("config validate hook registered (kernel_init 早期契约点)");
+
     // 0.1. Config validation — 验证系统配置一致性
     // Must be called after klog_init for error reporting
     crate::kernel::framework::config::init();

@@ -3,13 +3,20 @@
 //! ## 迁移记录
 //!
 //! 策略代码于 2026-06-17 从 framework::config::validate 迁移至此。
-//! framework 层仅保留 re-export 保持调用方兼容。
+//! framework 层经 ConfigValidateHook trait 注入 (DECISION-K) 调用本模块策略。
+//!
+//! ## DECISION-J (2026-09-12)
+//!
+//! `ConfigError` 迁回 `framework/config/error.rs` (ConfigValidateHook 返回类型);
+//! `validate_*` 函数经 `ConfigValidateHook` 实现 (`DefaultConfigValidateHook`) 注册,
+//! framework config::init()/pci/net 自检经 trait 调用。
 
-use crate::kernel::services::config::ConfigError;
+use crate::kernel::framework::config::ConfigError;
 use crate::kernel::framework::config::{
     HUGE_PAGE_2M_SIZE, KERNEL_STACK_SIZE, MAX_CPUS, PAGE_SIZE, SLAB_DEFAULT_SIZE, USER_CODE_BASE,
     USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
 };
+use crate::kernel::framework::config::{ConfigValidateHook, register_config_validate_hook};
 use crate::slog_err;
 
 /// 校验 CPU 配置.
@@ -211,4 +218,39 @@ pub fn validate_system_config() -> u32 {
 #[inline]
 fn log_config_error(e: &ConfigError) {
     slog_err!(Boot, "CONFIG: {}", e);
+}
+
+// ============================================================================
+// ConfigValidateHook 实现 (DECISION-K 项 2: framework 经 trait 调用启动自检)
+// ============================================================================
+
+/// 默认配置自检策略 — 包装本模块 `validate_*` 函数
+pub struct DefaultConfigValidateHook;
+
+impl ConfigValidateHook for DefaultConfigValidateHook {
+    fn validate_system_config(&self) -> u32 {
+        validate_system_config()
+    }
+
+    fn validate_drivers(&self) -> u32 {
+        validate_drivers()
+    }
+
+    fn validate_pci_subsystem(&self) -> Result<(), ConfigError> {
+        validate_pci_subsystem()
+    }
+
+    fn validate_network_subsystem(&self) -> Result<(), ConfigError> {
+        validate_network_subsystem()
+    }
+}
+
+/// 全局默认配置自检策略实例
+static CONFIG_VALIDATE_HOOK: DefaultConfigValidateHook = DefaultConfigValidateHook;
+
+/// 注册默认配置自检策略 (由 lib.rs 编排, framework config::init() 之前注册)
+///
+/// 幂等性: 已注册时返回 `Err(())` (与 pmm/slab/swap policy 注册模式一致).
+pub fn register_default_config_validate_hook() -> Result<(), ()> {
+    register_config_validate_hook(&CONFIG_VALIDATE_HOOK).map_err(|_| ())
 }

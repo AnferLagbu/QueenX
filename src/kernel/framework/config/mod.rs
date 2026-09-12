@@ -52,6 +52,7 @@
 
 mod capacity;
 mod caps;
+mod error;
 mod kaslr;
 // I-预存: `framework::config::memory` 需要从外部测试模块访问, 之前设为私有导致
 // `tests::mod` 在 kernel_test build 下编译失败 (E0603). 改 `pub` 暴露给 `framework` 内的
@@ -60,13 +61,15 @@ pub mod boot_image;
 pub mod memory;
 mod sched;
 mod slab;
-mod validate;
+// DECISION-K: validate 壳 (re-export services validate_*) 改为 ConfigValidateHook trait 注入
+mod validate_hook;
 
 // ============================================================================
 // 重新导出: 子模块 (便于测试与外部使用)
 // ============================================================================
 
 pub use caps::{ConfigSummary, KernelCapabilities, get_config_summary};
+pub use error::ConfigError;
 
 // ============================================================================
 // 重新导出: 常量 (保持外部 `use crate::kernel::framework::config::XXX` 路径完全不变)
@@ -92,13 +95,11 @@ pub use slab::{
 };
 
 // ============================================================================
-// 重新导出: 验证函数
+// 重新导出: 验证策略 (DECISION-K: validate_* 经 ConfigValidateHook trait 注入)
 // ============================================================================
 
-pub use validate::{
-    validate_cpu_config, validate_cross_module_consistency, validate_drivers,
-    validate_interrupt_config, validate_memory_config, validate_network_subsystem,
-    validate_pci_subsystem, validate_system_config,
+pub use validate_hook::{
+    ConfigValidateHook, current_config_validate_hook, register_config_validate_hook,
 };
 
 // 演进 9: KASLR 配置接入 (validate_kaslr_offset 为 services 策略校验, 由 services::config 提供)
@@ -242,7 +243,15 @@ pub fn init() {
         on_off(caps.barrier)
     );
 
-    let errors = validate_system_config();
+    // DECISION-K: 启动自检经 ConfigValidateHook trait 注入 (Option 可空,
+    // 未注册跳过校验 + 日志 — validate 是启动增强, 逻辑错误降级原则)
+    let errors = match current_config_validate_hook() {
+        Some(h) => h.validate_system_config(),
+        None => {
+            klog_info!(Boot, "==== ConfigValidateHook 未注册, 跳过启动校验 ====");
+            0
+        }
+    };
 
     if errors == 0 {
         klog_info!(Boot, "==== Configuration OK ====");
@@ -257,7 +266,8 @@ pub fn init() {
     // 演进 6: 软校验子系统初始化状态 (PCI/网络/...)
     // 注意: 此校验点位于 kernel_init 极早期, 此时 PCI/网络/驱动尚未初始化。
     // 这里记录为 0 错误是预期行为 — 真正的 driver 配置检查在它们各自的 init() 末尾调用。
-    let driver_errors = validate_drivers();
+    let driver_errors = current_config_validate_hook()
+        .map_or(0, |h| h.validate_drivers());
     if driver_errors > 0 {
         klog_info!(
             Boot,

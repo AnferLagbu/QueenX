@@ -575,8 +575,11 @@ pub extern "C" fn qx_net_init() {
         raw::klog_init("--- Network Subsystem Ready ---");
 
         // 演进 6: 网络 init 完成后做 driver 维度自检
-        if let Err(e) = crate::kernel::framework::config::validate_network_subsystem() {
-            crate::klog_drv_warn!("Network validation: {}", e);
+        // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
+        if let Some(hook) = crate::kernel::framework::config::current_config_validate_hook() {
+            if let Err(e) = hook.validate_network_subsystem() {
+                crate::klog_drv_warn!("Network validation: {}", e);
+            }
         }
 
         crate::kernel::framework::barrier::recovery::recovery_domain_register(
