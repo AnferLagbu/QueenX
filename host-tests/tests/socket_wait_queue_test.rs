@@ -24,7 +24,7 @@ fn read_src(rel: &str) -> String {
 
 #[test]
 fn wait_queue_module_exists() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     assert!(
         src.contains("pub struct SocketWaitQueue") && src.contains("pub struct SocketWaitQueueTable"),
         "P2-I-41: wait_queue.rs 必须定义 SocketWaitQueue + SocketWaitQueueTable"
@@ -33,7 +33,7 @@ fn wait_queue_module_exists() {
 
 #[test]
 fn socket_wait_queue_exposes_required_api() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     let required = [
         "pub const fn new()",
         "pub fn mark_waiting",
@@ -52,7 +52,7 @@ fn socket_wait_queue_exposes_required_api() {
 
 #[test]
 fn wake_reason_distinguishes_three_states() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     let variants = ["Readable", "Writable", "Closed"];
     for v in variants {
         assert!(
@@ -64,7 +64,7 @@ fn wake_reason_distinguishes_three_states() {
 
 #[test]
 fn socket_wait_queue_table_bounded_at_16() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     // 表格内 16 个 SocketWaitQueue
     assert!(
         src.contains("queues: [SocketWaitQueue; 16]"),
@@ -84,7 +84,7 @@ fn socket_wait_queue_table_bounded_at_16() {
 
 #[test]
 fn global_instance_exported() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     assert!(
         src.contains("pub static SOCKET_WAIT_QUEUES"),
         "P2-I-41: 必须暴露全局表 SOCKET_WAIT_QUEUES"
@@ -146,7 +146,7 @@ fn wait_queue_module_registered_in_net_mod() {
 
 #[test]
 fn wait_queue_uses_irqspinlock_not_spin() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     assert!(
         src.contains("use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock as Mutex")
             || src.contains("use crate::kernel::framework::sync::IrqSpinLock as Mutex"),
@@ -156,7 +156,7 @@ fn wait_queue_uses_irqspinlock_not_spin() {
 
 #[test]
 fn unit_tests_inside_wait_queue_module() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     let test_count = src.matches("#[test]").count();
     assert!(
         test_count >= 4,
@@ -166,7 +166,7 @@ fn unit_tests_inside_wait_queue_module() {
 
 #[test]
 fn wake_without_pending_does_not_count() {
-    let src = read_src("src/kernel/services/net/wait_queue.rs");
+    let src = read_src("src/kernel/framework/net/wait_queue.rs");
     // 行为契约: try_wake 无人等待时 wake_count 不递增
     let test_block = src
         .rsplit_once("#[cfg(test)]")

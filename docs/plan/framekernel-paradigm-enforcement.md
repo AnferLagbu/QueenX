@@ -532,6 +532,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 58→53。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯壳删除不触 boot，合并冒烟）。
 
+### DECISION-J 第八批执行记录：net 3 壳治理（wait_queue/netfilter 反转 + route 合并反转）
+
+> 逐项调研 framework 消费点后判定：wait_queue 的 `SOCKET_WAIT_QUEUES` 全局表被 framework net/init `poll_network` 机制直接消费（host-test 注释亦声明应归 framework）；netfilter 的 `sys_nf_*` 被 syscall dispatch 调用（同 io/iouring）；route 的 `RouteEntry` 被 framework smoltcp 同步机制消费 + `sys_route_*` 被 syscall dispatch 调用——三项均反转归位。
+
+- **wait_queue 反转**：`SocketWaitQueue`/`SocketWaitQueueTable`/`SOCKET_WAIT_QUEUES` 迁回 framework/net/wait_queue.rs（0 unsafe）。services glob re-export。**host-test 同步**：`socket_wait_queue_test.rs` 8 处源路径 `services/net/wait_queue.rs` → `framework/net/wait_queue.rs`。
+- **netfilter 反转**：`NfRule`/`NfHook`/`nf_*`/`sys_nf_*` 迁回 framework/net/netfilter.rs（依赖闭包 `sync::IrqSpinLock`+`syscall::Errno` 在 framework 内）。services glob re-export。
+- **route 合并反转**：原 framework/net/route.rs 已有 smoltcp 同步逻辑（`sync_route_to_smoltcp`/`rebuild_smoltcp_routes`，依赖 raw::stack_mut），壳部分 re-export services 路由表 CRUD——**合并**：路由表 CRUD/CIDR 匹配/syscall/类型（`RouteEntry`/`MAX_ROUTES`/`RouteQueryResult`）并入 framework 文件，删除 re-export 块；services 版 L110/L132 的 `framework::net::route::sync_route_to_smoltcp` 等改同文件直接调用。services glob re-export。**双向引用解除**（services↔framework 绕圈消除）。
+- **引用计数**：framework 文件级反向依赖 53→50。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯机制归位不触 boot 主路径，合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
