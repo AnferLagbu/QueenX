@@ -413,7 +413,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **SIMPLIFIED（已登记）**：services blk 走 spin-loop 轮询（framework 版有 I-42 IRQ 事件驱动路径），功能等价、效率略低；IRQ 驱动为后续优化项。
 - **待登记**：services `transport::VirtioDevice` 与 framework `VirtioMmioDevice` 存在**传输层双份**（各自 IoMem 探测）——按服务对象准则 transport 属机制应保留 framework，services 版是否删除/改为薄代理留待 §7 反向依赖治理阶段裁决。
 
-### virtio-net 前置核实 + RX 迁业务记录（commit 待填）
+### virtio-net 前置核实 + RX 迁业务记录（commit 3d0010d6）
 
 > 验证：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（RX 为硬件路径 host 无法功能测试，纯逻辑按 framework 同构迁移，实际验证依赖后续 aarch64/QEMU virt 冒烟）。
 
