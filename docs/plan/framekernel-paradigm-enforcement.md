@@ -413,7 +413,19 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **SIMPLIFIED（已登记）**：services blk 走 spin-loop 轮询（framework 版有 I-42 IRQ 事件驱动路径），功能等价、效率略低；IRQ 驱动为后续优化项。
 - **待登记**：services `transport::VirtioDevice` 与 framework `VirtioMmioDevice` 存在**传输层双份**（各自 IoMem 探测）——按服务对象准则 transport 属机制应保留 framework，services 版是否删除/改为薄代理留待 §7 反向依赖治理阶段裁决。
 
-### virtio-net 前置核实 + RX 迁业务记录（commit 3d0010d6）
+### storage 前置核实记录（步骤 1 续核，2026-09-12）
+
+> 按 DECISION-G 规则核实 services storage 内容自足性，结论：**services storage 为"并行实现但内容不等价"（Phase 2.1.3/2.1.4 迁移半成品）——不满足"直接接线"，属"从 framework 迁业务"（B 形态），且迁移量显著大于 char/virtio**。
+
+| 子项 | 核实结果 | 结论 |
+|---|---|---|
+| services nvme.rs | 依赖 framework C-FFI 机制（`nvme_submit_*_cmd`/`nvme_alloc_*`/`nvme_copy_*`，DMA/队列提交=机制留 framework 合理）+ `fw_nvme::NvmeCommand/Completion`（wire 类型）+ `fw_storage::nvme_read_identify_*`（解析 helper=业务，需迁 services）；**缺 MSI-X/IRQ 路径**（framework 版有 enable_msix + I-42 事件驱动） | 迁业务：identify helper + MSI-X |
+| services ahci.rs | 仅依赖 IoMem/PhysAddr（自足 ✓）；**缺 _block 适配器与接线**（framework ahci_block.rs 是 active 注册） | 迁业务：_block 适配器 + 接线 |
+| services ata.rs | **桩模块**（AtaController 极简）；framework ata.rs 是真实 PIO 驱动（C-FFI + BlockDevice 适配） | 迁业务：真实 ATA 驱动 |
+| services storage 整体 | **无 `impl BlockDevice`、无 `impl Driver`、无 init/注册入口**——控制器实现（队列/identify/I/O）与注册路径（_block 适配器）分离，注册全在 framework | 需补齐注册路径 |
+| framework storage_init | x86_64 巨大函数（PCI 扫描 + AHCI/NVMe 创建 + **MSI-X 接入** + MSIX-03 测试钩子 + I-42）；aarch64 已空操作（virtio-blk 迁出） | 退位后 x86_64 需迁出业务 |
+
+**风险提示**：storage 下沉若操之过急将**丢失功能**——MSI-X 中断驱动 NVMe（B07）、I-42 IRQ 路径、ATA PIO 真实驱动、MSIX-03 测试钩子均在 framework 侧且 services 无等价实现。**建议作为独立专项工程推进**（子步：identify helper 迁 services → services 补 _block 适配器 + MSI-X → 接线 → QEMU 存储冒烟），或与 §6.2/§7 并行规划。
 
 > 验证：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（RX 为硬件路径 host 无法功能测试，纯逻辑按 framework 同构迁移，实际验证依赖后续 aarch64/QEMU virt 冒烟）。
 
