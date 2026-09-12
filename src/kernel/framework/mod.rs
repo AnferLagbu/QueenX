@@ -94,7 +94,6 @@ pub mod sync;
 pub mod syscall;
 pub mod tests;
 pub mod timer;
-pub mod wasm;
 
 pub mod cpu_local;
 pub mod frame;

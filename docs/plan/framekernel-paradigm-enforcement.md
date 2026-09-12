@@ -524,6 +524,14 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 62→58。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯常量/类型归位不触 boot，合并冒烟）。
 
+### DECISION-J 第七批执行记录：wasm 5 壳删除
+
+> 调研确认：framework 生产代码（非壳自身）对 `framework::wasm` 无任何消费；wasm 解释器 + wasi 为 services 完全自足实现（services/wasm 内部 + wasi 消费）。属"framework 无生产消费的纯转发壳" → 删除壳（同 config error/procfs 模式）。
+
+- **删除壳**：framework/wasm/{mod,types,leb128,module,runtime,interpreter}.rs 全删（mod.rs 仅模块声明 + 文档）；framework/mod.rs 移除 `pub mod wasm;`；audit_services_boundary.py 黑名单残留条目 `framework::wasm` 同步移除（F2 黑名单维护）。
+- **引用计数**：framework 文件级反向依赖 58→53。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯壳删除不触 boot，合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

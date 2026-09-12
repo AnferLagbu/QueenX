@@ -134,7 +134,6 @@ SAFE_FRAMEWORK_APIS = [
     'framework::irq',
     'framework::syscall',
     'framework::timer',
-    'framework::wasm',
     'framework::sched',
     'framework::tests',
     'framework::frame',        # Frame
