@@ -402,7 +402,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **SIMPLIFIED（已登记）**：注册走 `chitin_register_driver` 无 CharOps 读写绑定——Chitin char 读写路径当前无生产消费者（休眠）；待 devfs char 读写接入时按 §6.2 补 framework 安全桥 trait。
 - **验证**：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（fs_permissions_regression_test 单跑 28s 通过，为慢二进制非挂起）。
 
-### virtio 子类接线实施记录（步骤 4 第二批，commit 待填）
+### virtio 子类接线实施记录（步骤 4 第二批，commit e47c04ad）
 
 > 验证：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅ / QEMU x86_64 完整启动到 Ring 3（blk_init 探测 0 设备干净跳过，Chitin 计数不变）。
 
