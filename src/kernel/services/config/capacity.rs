@@ -1,49 +1,16 @@
 #![deny(unsafe_code)]
-//! @SAFE: 本文件不含 unsafe 代码。纯常量定义。
-//! 系统容量常量 — services 层策略主体
+//! @SAFE: 本文件不含 unsafe 代码。纯 re-export。
+//! 系统容量常量 — services 侧 re-export 兼容层
 //!
-//! ## T6-9 迁移记录
+//! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
-//! 原属 framework/config/capacity.rs, 2026-06-16 提取到 services.
-//! 纯常量定义, 0 unsafe, 0 外部依赖.
-//! framework 仅保留 re-export.
+//! 原常量定义 (MAX_CPUS/MAX_IRQS/MAX_PROCESSES 等) 按统一判据"机制持有的数据
+//! 结构/常量归 framework"迁回 `framework/config/capacity.rs` (被 framework
+//! smp/cpu_local/rcu/irq 机制直接消费)。framework/config 子模块为私有, 故经
+//! 其顶层 re-export (`framework::config::MAX_CPUS` 等) 显式转发, 保持 services
+//! 侧 API 兼容 (services→framework 合法方向)。
 
-//! 系统容量常量: 进程/线程/IRQ/文件/会话
-//!
-//! 所有 per-XXX 数组大小必须以此模块为唯一权威来源。
-
-// ============================================================================
-// CPU / 中断容量
-// ============================================================================
-
-/// 内核支持的最大 CPU 数.
-/// 用于 `static [T; MAX_CPUS]` 类 per-CPU 数组.
-pub const MAX_CPUS: usize = 1024;
-
-/// 支持的最大 IRQ 号.
-pub const MAX_IRQS: usize = 256;
-
-// ============================================================================
-// 进程 / 线程容量
-// ============================================================================
-
-/// 全系统最大进程数.
-///
-/// 权威: `proc::process::ProcessTable` 的数组大小, 决定 PID 空间.
-pub const MAX_PROCESSES: usize = 256;
-
-/// 全系统最大线程数.
-pub const MAX_THREADS: usize = 128;
-
-/// 单个进程的最大线程数.
-pub const MAX_THREADS_PER_PROCESS: usize = 16;
-
-// ============================================================================
-// 文件 / 会话容量
-// ============================================================================
-
-/// 单个进程的最大文件描述符数.
-pub const MAX_OPEN_FILES: usize = 32;
-
-/// 最大登录会话数.
-pub const MAX_SESSIONS: usize = 16;
+pub use crate::kernel::framework::config::{
+    MAX_CPUS, MAX_IRQS, MAX_OPEN_FILES, MAX_PROCESSES, MAX_SESSIONS, MAX_THREADS,
+    MAX_THREADS_PER_PROCESS,
+};

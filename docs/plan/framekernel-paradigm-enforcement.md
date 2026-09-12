@@ -453,6 +453,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **状态**: [X]（裁决完成）
 
+### DECISION-J 第二批执行记录：config 常量反转（memory + capacity）
+
+> 依据 DECISION-J 统一判据（机制持有的常量归 framework）：`framework::config::{PAGE_SIZE, MAX_CPUS}` 等被 framework arch/mm/smp/cpu_local/rcu/irq 机制直接消费，属机制常量，迁回；services 侧改 re-export 保 API 兼容。本次为第二批发货（第一批 = ipc 类型，3519410e）。
+
+- **迁回 framework**：`framework/config/memory.rs` 由 re-export 壳改为真实 20 项常量定义（PAGE_SIZE/PAGE_SHIFT/HUGE_PAGE_{2M,1G}_{SIZE,SHIFT}/USER_STACK_{SIZE,GUARD,TOP,MAX_SIZE}/USER_KSTACK_SIZE/USER_CODE_BASE/ASLR_{STACK,MMAP,HEAP,PIE}_BITS/USER_{MMAP,HEAP,PIE}_BASE/KERNEL_STACK_SIZE）+ 保留既有 ASLR 运行时函数与 kernel_test；`framework/config/capacity.rs` 由 re-export 壳改为真实 8 项常量定义（MAX_CPUS/MAX_IRQS/MAX_PROCESSES/MAX_THREADS/MAX_THREADS_PER_PROCESS/MAX_OPEN_FILES/MAX_SESSIONS）。均 0 unsafe，依赖闭包为空（纯常量）。
+- **services 改 re-export**：`services/config/{memory,capacity}.rs` 改为从 `framework::config` **顶层**显式 re-export（`pub use crate::kernel::framework::config::{PAGE_SIZE, ...}`）。**关键约束**：framework/config 的 memory/capacity 子模块为私有（`mod capacity;`），services 无法路径访问 → 必须经 framework/config/mod.rs 既有顶层 re-export（L75-L85）转发；与 ipc 的 `pub mod types` 可直接 glob re-export 不同——两种 re-export 模式差异已确立。
+- **策略逻辑未随迁**：ASLR 运行时函数本就保留在 framework/config/memory.rs；services 侧无策略逻辑需迁。
+- **引用计数**：framework 文件级反向依赖 79→76、精确行数 137→135（memory/capacity 两壳引用消除；config 下仍余 8 壳待第三批：boot_image/caps/error/kaslr/procfs/sched/slab/validate）。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过（services 0 unsafe、6 不变式 PASS、注释/C 命名 0 违规）✅ / host-tests 全量通过 ✅ / QEMU 未跑（纯常量归位不触 boot，与下一批壳删除合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
