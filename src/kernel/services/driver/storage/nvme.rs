@@ -32,7 +32,6 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.3 任务: `NVMe` 存储控制器迁移
 
-use crate::kernel::framework::driver::storage as fw_storage;
 use crate::kernel::framework::driver::storage::nvme as fw_nvme;
 use crate::kernel::framework::iomem::IoMem;
 use crate::kernel::framework::mm::PhysAddr;
@@ -505,6 +504,51 @@ pub struct NvmeIdentifyNamespace {
 }
 
 // ============================================================================
+// Identify 数据解析 (§6.4 storage 专项 0 号子步: 从 framework 迁业务)
+// ============================================================================
+
+/// 解析 Identify Controller 数据 (纯函数, 输入为 DMA 缓冲区内字节切片).
+///
+/// 提取:
+/// - `nn` — Namespace Count (offset 516, LE u32)
+/// - `mn` — Model Number (offset 24, 40 字节, 空终止 ASCII)
+///
+/// 数据长度不足时返回 `None`.
+pub fn parse_identify_controller(data: &[u8]) -> Option<(u32, [u8; 40])> {
+    if data.len() < 520 {
+        return None;
+    }
+    let nn = u32::from_le_bytes([data[516], data[517], data[518], data[519]]);
+    let mut model = [0u8; 40];
+    model.copy_from_slice(&data[24..64]);
+    Some((nn, model))
+}
+
+/// 解析 Identify Namespace 数据 (纯函数, 输入为 DMA 缓冲区内字节切片).
+///
+/// 返回 `(nsze, flbas, lbaf_data_at_index)`:
+/// - `nsze` — Namespace Size (offset 0, LE u64)
+/// - `flbas` — Formatted LBA size (offset 26)
+/// - `lbaf_data` — LBA Format 0..15 数据 (offset 128 + lbaf_idx*4, LE u32)
+///
+/// 数据长度不足 192 字节 (LBA Format 表最末项可达 offset 188..192) 时返回 `None`.
+pub fn parse_identify_namespace(data: &[u8]) -> Option<(u64, u8, u32)> {
+    if data.len() < 192 {
+        return None;
+    }
+    let nsze = u64::from_le_bytes(data[0..8].try_into().ok()?);
+    let flbas = data[26];
+    let lbaf_idx = (flbas & 0x0F) as usize;
+    let lbaf_data = if lbaf_idx < 16 {
+        let off = 128 + lbaf_idx * 4;
+        u32::from_le_bytes(data[off..off + 4].try_into().ok()?)
+    } else {
+        0
+    };
+    Some((nsze, flbas, lbaf_data))
+}
+
+// ============================================================================
 // NVMe 控制器 (services 层安全驱动)
 // ============================================================================
 
@@ -862,8 +906,15 @@ impl NvmeController {
 
         let success = result.is_ok();
         if success {
-            // 通过 framework safe wrapper 读取 Identify Controller 数据
-            if let Some((nn, model)) = fw_storage::nvme_read_identify_controller(vaddr) {
+            // §6.4 storage 专项 0 号子步: 经 framework DMA 拷贝读取数据字节,
+            // 解析 (纯函数) 在 services 层完成
+            let mut data = [0u8; 520];
+            crate::kernel::framework::driver::storage::nvme_copy_from_dma(
+                data.as_mut_ptr(),
+                vaddr,
+                520,
+            );
+            if let Some((nn, model)) = parse_identify_controller(&data) {
                 self.namespace_count = nn;
 
                 let len = model.iter().position(|&c| c == 0).unwrap_or(40);
@@ -905,9 +956,15 @@ impl NvmeController {
 
         let success = result.is_ok();
         if success {
-            // 通过 framework safe wrapper 读取 Identify Namespace 数据
-            if let Some((nsze, flbas, lbaf_data)) = fw_storage::nvme_read_identify_namespace(vaddr)
-            {
+            // §6.4 storage 专项 0 号子步: 经 framework DMA 拷贝读取数据字节,
+            // 解析 (纯函数) 在 services 层完成
+            let mut data = [0u8; 192];
+            crate::kernel::framework::driver::storage::nvme_copy_from_dma(
+                data.as_mut_ptr(),
+                vaddr,
+                192,
+            );
+            if let Some((nsze, flbas, lbaf_data)) = parse_identify_namespace(&data) {
                 self.namespace_size_lba = nsze;
 
                 let lbaf_idx = (flbas & 0xF) as usize;
@@ -1253,5 +1310,66 @@ mod tests {
         assert_eq!(qp.id(), 0);
         assert_eq!(qp.depth(), 64);
         assert!(!qp.is_created());
+    }
+
+    // §6.4 storage 专项 0 号子步: identify 解析 (从 framework 迁业务) 纯函数测试
+
+    #[test]
+    fn test_parse_identify_controller() {
+        // 构造 520 字节 Identify Controller 数据: mn (offset 24) = "QueenX NVMe",
+        // nn (offset 516) = 3 (LE u32)
+        let mut data = [0u8; 520];
+        let model = b"QueenX NVMe";
+        data[24..24 + model.len()].copy_from_slice(model);
+        data[516] = 3;
+        data[517] = 0;
+        data[518] = 0;
+        data[519] = 0;
+
+        let (nn, mn) = parse_identify_controller(&data).expect("长度足够应解析成功");
+        assert_eq!(nn, 3);
+        assert_eq!(&mn[..model.len()], model);
+        assert_eq!(mn[model.len()], 0); // 空终止
+    }
+
+    #[test]
+    fn test_parse_identify_controller_short_buffer() {
+        let data = [0u8; 100]; // 不足 520
+        assert!(parse_identify_controller(&data).is_none());
+    }
+
+    #[test]
+    fn test_parse_identify_namespace() {
+        // 构造 192 字节 Identify Namespace 数据: nsze (offset 0) = 1_048_576 (LE u64),
+        // flbas (offset 26) = 2 (LBA 格式索引 2), lbaf[2] (offset 128+8) = 0x00010000 (LBADS=9 → 512B)
+        let mut data = [0u8; 192];
+        data[0..8].copy_from_slice(&1_048_576u64.to_le_bytes());
+        data[26] = 2;
+        data[136] = 0x00;
+        data[137] = 0x00;
+        data[138] = 0x01;
+        data[139] = 0x00;
+
+        let (nsze, flbas, lbaf_data) =
+            parse_identify_namespace(&data).expect("长度足够应解析成功");
+        assert_eq!(nsze, 1_048_576);
+        assert_eq!(flbas, 2);
+        assert_eq!(lbaf_data, 0x0001_0000);
+    }
+
+    #[test]
+    fn test_parse_identify_namespace_lbaf_beyond_table() {
+        // flbas = 0x10 → lbaf_idx = 0 (flbas & 0xF), 走合法路径
+        let mut data = [0u8; 192];
+        data[26] = 0x10;
+        let (_, flbas, lbaf_data) = parse_identify_namespace(&data).unwrap();
+        assert_eq!(flbas, 0x10);
+        assert_eq!(lbaf_data, 0); // lbaf[0] 未设置 → 0
+    }
+
+    #[test]
+    fn test_parse_identify_namespace_short_buffer() {
+        let data = [0u8; 100]; // 不足 192
+        assert!(parse_identify_namespace(&data).is_none());
     }
 }

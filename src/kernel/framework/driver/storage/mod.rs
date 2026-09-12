@@ -841,43 +841,6 @@ pub fn nvme_copy_from_dma(dst: *mut u8, src_vaddr: u64, len: usize) {
     }
 }
 
-/// 从 DMA 缓冲区读取 Identify Controller 数据
-///
-/// 返回 `(namespace_count, model_string_truncated_to_40)` — 0 表示失败
-pub fn nvme_read_identify_controller(vaddr: u64) -> Option<(u32, [u8; 40])> {
-    if vaddr == 0 {
-        return None;
-    }
-    // SAFETY: vaddr 由 DMA 分配保证有效; 读取 offset 516 (nn 字段) 和 24..64 (mn 字段)
-    unsafe {
-        let nn = core::ptr::read_volatile((vaddr as *const u32).add(129)); // offset 516/4=129
-        let mut model = [0u8; 40];
-        core::ptr::copy_nonoverlapping((vaddr as *const u8).add(24), model.as_mut_ptr(), 40);
-        Some((nn, model))
-    }
-}
-
-/// 从 DMA 缓冲区读取 Identify Namespace 数据
-///
-/// 返回 `(nsze, flbas, lbaf_data_at_index)` — None 表示失败
-pub fn nvme_read_identify_namespace(vaddr: u64) -> Option<(u64, u8, u32)> {
-    if vaddr == 0 {
-        return None;
-    }
-    // SAFETY: vaddr 由 DMA 分配保证有效; 读取 nsze (offset 0), flbas (offset 26), LBA 格式
-    unsafe {
-        let nsze = core::ptr::read_volatile(vaddr as *const u64);
-        let flbas = core::ptr::read_volatile((vaddr as *const u8).add(26));
-        let lbaf_idx = (flbas & 0xF) as usize;
-        let lbaf_data = if lbaf_idx < 16 {
-            core::ptr::read_volatile((vaddr as *const u32).add(32 + lbaf_idx)) // offset 128/4=32
-        } else {
-            0
-        };
-        Some((nsze, flbas, lbaf_data))
-    }
-}
-
 /// 清零 DMA 缓冲区
 pub fn nvme_zero_dma(vaddr: u64, len: usize) {
     // SAFETY: vaddr 由 DMA 分配保证有效

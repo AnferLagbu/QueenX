@@ -376,6 +376,23 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **状态**: [X]（复核登记 + 方向裁决完成；§6.4 施工按直接方案 B 执行）
 
+### DECISION-H: storage 转独立专项（内容自足性核实发现半成品，2026-09-12 审核员裁决）
+
+> **前置核实结论**（委托人）：services storage 是 Phase 2.1.3/2.1.4 的"并行实现但内容不等价"半成品——缺 MSI-X/IRQ 路径（NVMe B07）、I-42 IRQ、ATA PIO 真实驱动、MSIX-03 验收钩子、`_block` 适配器与注册路径；services/driver/mod.rs 头注自认"迁移中"。**不符合"直接接线"前置**（DECISION-G 的"不完整"分支）。
+
+**裁决**：
+1. **storage 从 §6.4 剥离为独立专项工程**（framework 迁业务路径，非接线路径）：
+   - 0 号子步（立即）：`nvme_read_identify_*` 解析 helper 迁 services（纯逻辑 + host 测试）
+   - services 补 `_block` 适配器 + `impl BlockDevice` + Chitin 注册路径
+   - services 补 MSI-X/IRQ（NVMe B07）+ I-42 中断路径
+   - framework `storage_init`（x86_64 大函数：PCI 扫描 + MSI-X + 验收钩子）整体退位
+   - 接线 + QEMU 存储冒烟 + audit_services_boundary
+2. **方案 C（强行接线）排除**：丢 MSI-X/I-42/ATA PIO/验收钩子，违反"不损失功能"原则。
+3. **主线程行（不阻塞）**：§7 反向依赖治理（核心目标，独立于 driver 双份）；§6.2 复核。
+4. **char/virtio-blk 同步前置核实**（同 storage 标准：MSI-X/IRQ/_block 适配器/注册路径等值存在？）——半成品 → 转独立专项；完整 → 按 DECISION-G 直接接线。
+
+**状态**: [X]（裁决完成；storage 专项另立，主线转 §7 + §6.2 复核）
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
@@ -426,6 +443,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | framework storage_init | x86_64 巨大函数（PCI 扫描 + AHCI/NVMe 创建 + **MSI-X 接入** + MSIX-03 测试钩子 + I-42）；aarch64 已空操作（virtio-blk 迁出） | 退位后 x86_64 需迁出业务 |
 
 **风险提示**：storage 下沉若操之过急将**丢失功能**——MSI-X 中断驱动 NVMe（B07）、I-42 IRQ 路径、ATA PIO 真实驱动、MSIX-03 测试钩子均在 framework 侧且 services 无等价实现。**建议作为独立专项工程推进**（子步：identify helper 迁 services → services 补 _block 适配器 + MSI-X → 接线 → QEMU 存储冒烟），或与 §6.2/§7 并行规划。
+
+### storage 专项 0 号子步实施记录（identify 解析迁 services，commit 待填）
+
+> 审核员裁决（2026-09-12）：storage 走 A 独立专项；0 号子步 = `nvme_read_identify_*` 解析 helper 迁 services（纯逻辑、可 host 测试、零风险）。
+
+- **迁出（framework 删业务）**：删除 `framework/driver/storage/mod.rs` 的 `nvme_read_identify_controller` / `nvme_read_identify_namespace`（volatile 裸读 + 解析，-2 unsafe 块）。
+- **迁入（services 纯函数）**：`services/driver/storage/nvme.rs` 新增 `parse_identify_controller(data: &[u8]) -> Option<(u32, [u8; 40])>`（nn@516 LE u32 + mn@24 40B）与 `parse_identify_namespace(data: &[u8]) -> Option<(u64, u8, u32)>`（nsze@0 LE u64 + flbas@26 + lbaf_data@128+idx*4；长度检查 192B 覆盖 LBA 表末项）。输入从裸 vaddr 改为字节切片 → 0 unsafe。
+- **调用点改造**：`identify_controller` / `identify_namespace` 经 `nvme_copy_from_dma` 拷 DMA 字节到栈数组（520/192）后调用纯解析（与既有 read 路径一致，plain-copy 读 DMA）。
+- **边界修复（测试驱动发现）**：原 framework 实现 lbaf_idx=15 时读 offset 188..192 但无界检查——services 版显式要求 192B，杜绝越界 panic。
+- **host 测试（实际运行）**：新增 `host-tests/tests/storage_identify_parse_host_test.rs`（7 用例：controller 全解析/短缓冲/空缓冲 + namespace 全解析/lbaf_idx 15/lbaf 越表/短缓冲）直接 import 内核真实函数（B08-12 路线 C）→ **全部通过**。services nvme.rs 内 cfg(test) 同语义单测同步补齐（该文件既有 dormant 单测风格，kernel_test 构建下不可直接 cargo test——build-std 冲突，实测 `cargo test -p queenx` 失败，属既有工程问题另议）。
+- **验证**：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量 ✅ / QEMU x86_64 启动 ✅。
 
 > 验证：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（RX 为硬件路径 host 无法功能测试，纯逻辑按 framework 同构迁移，实际验证依赖后续 aarch64/QEMU virt 冒烟）。
 
