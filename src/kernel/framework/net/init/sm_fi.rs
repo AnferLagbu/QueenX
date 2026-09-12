@@ -277,8 +277,8 @@ pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) 
         }
 
         // V2: 使用集中分配器获取 FD
-        let fd = match crate::kernel::services::proc::fd_alloc::alloc_fd(
-            crate::kernel::services::proc::fd_alloc::FdSubsystem::Smoltcp,
+        let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
+            crate::kernel::framework::proc::fd_alloc::FdSubsystem::Smoltcp,
         ) {
             Some(f) => f,
             None => return -E_NFILE,

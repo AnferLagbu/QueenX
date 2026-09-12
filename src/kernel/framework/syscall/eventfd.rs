@@ -116,15 +116,15 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
     let semaphore = (flags & EFD_SEMAPHORE) != 0;
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::kernel::services::proc::fd_alloc::alloc_fd(
-        crate::kernel::services::proc::fd_alloc::FdSubsystem::EventFd,
+    let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
+        crate::kernel::framework::proc::fd_alloc::FdSubsystem::EventFd,
     ) {
         Some(f) => f,
         None => return Errno::EMFILE.as_ret(),
     };
 
     // V2: FD 编号由 alloc_fd 计算 (底层使用 fd_at(EventFd, slot))
-    let slot = match crate::kernel::services::proc::fd_alloc::idx_of(fd) {
+    let slot = match crate::kernel::framework::proc::fd_alloc::idx_of(fd) {
         Some((_sub, s)) => s,
         None => return Errno::EBADF.as_ret(),
     };

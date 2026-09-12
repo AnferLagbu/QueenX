@@ -204,14 +204,14 @@ pub fn sys_signalfd(fd: i32, mask_ptr: u64, flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD (底层使用 fd_at(SignalFd, slot))
-    let new_fd = match crate::kernel::services::proc::fd_alloc::alloc_fd(
-        crate::kernel::services::proc::fd_alloc::FdSubsystem::SignalFd,
+    let new_fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
+        crate::kernel::framework::proc::fd_alloc::FdSubsystem::SignalFd,
     ) {
         Some(f) => f,
         None => return Errno::EMFILE.as_ret(),
     };
 
-    let slot = match crate::kernel::services::proc::fd_alloc::idx_of(new_fd) {
+    let slot = match crate::kernel::framework::proc::fd_alloc::idx_of(new_fd) {
         Some((_sub, s)) => s,
         None => return Errno::EBADF.as_ret(),
     };

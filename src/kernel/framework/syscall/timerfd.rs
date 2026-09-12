@@ -162,14 +162,14 @@ pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::kernel::services::proc::fd_alloc::alloc_fd(
-        crate::kernel::services::proc::fd_alloc::FdSubsystem::TimerFd,
+    let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
+        crate::kernel::framework::proc::fd_alloc::FdSubsystem::TimerFd,
     ) {
         Some(f) => f,
         None => return Errno::EMFILE.as_ret(),
     };
 
-    let slot = match crate::kernel::services::proc::fd_alloc::idx_of(fd) {
+    let slot = match crate::kernel::framework::proc::fd_alloc::idx_of(fd) {
         Some((_sub, s)) => s,
         None => return Errno::EBADF.as_ret(),
     };
