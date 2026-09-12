@@ -615,6 +615,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 53→50。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯机制归位不触 boot 主路径，合并冒烟）。
 
+### DECISION-J 第九批执行记录：fs 系列第一小批 — procfs 壳删除
+
+> fs 系列按 DECISION-K 项 5 方向推进（机制类型迁回 + inode trait 注入不连带迁回）。本批先处理最简单的 procfs 壳：调研确认 framework 生产代码对 `framework::fs::procfs` **零消费**（仅 framework/tests 经 services 路径），属"framework 无生产消费的纯转发壳" → 删壳（同 wasm/config error 模式）。ramfs/devfs/hvfs/flock/inotify 因依赖闭包复杂（services dcache/inode 深度耦合），按 DECISION-K 归后续专项。
+
+- **删除壳**：framework/fs/procfs/{mod.rs,procfs.rs} 全删（mod.rs 仅 `pub mod procfs; pub use procfs::*;` 转发）；framework/fs/mod.rs 移除 `pub mod procfs;`；audit_coupling.py fs 内部白名单移除 `framework::fs::procfs` 条目。
+- **services 侧不变**：`services::fs::procfs`（含 framework/tests 用的 `init_global`）保持 services 权威，路径引用本就直连 services 无需改。
+- **引用计数**：framework 文件级反向依赖 50→49。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings ✅ / audit.sh 全过（含 coupling 无循环）✅ / host-tests 98 套件全通过 ✅ / QEMU 未跑（纯壳删除不触 boot）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：
