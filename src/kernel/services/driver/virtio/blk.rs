@@ -252,6 +252,22 @@ impl VirtioBlkDriver {
         slog_info!(Driver, "virtio-blk: DRIVER_OK 已设置");
     }
 
+    /// 完成设备初始化并进入 live (§6.4 直接方案 B: 注册前调用).
+    ///
+    /// 等价于 framework VirtioBlk::new 的收尾: 配置 vq0 MMIO 寄存器
+    /// (desc/avail/used 物理地址) + 设置 DRIVER_OK.
+    pub fn finalize(&mut self) {
+        let vq_index = 0u16;
+        self.device.select_queue(vq_index);
+        self.device.setup_queue_addrs(
+            self.vq.desc_paddr(),
+            self.vq.avail_paddr(),
+            self.vq.used_paddr(),
+        );
+        self.device.set_queue_ready();
+        self.set_driver_ok();
+    }
+
     /// 获取 MMIO 设备引用 (用于 `VirtQueue` 配置).
     pub fn device(&self) -> &VirtioDevice {
         &self.device
@@ -539,4 +555,32 @@ pub struct BlkGeometry {
     pub heads: u8,
     /// 每磁道扇区数
     pub sectors: u8,
+}
+
+// ============================================================================
+// BlockDevice trait 实现 (§6.4 直接方案 B: services 权威注册)
+// ============================================================================
+
+impl crate::kernel::framework::chitin::BlockDevice for VirtioBlkDriver {
+    fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
+        match self.read_sector(sector, buf) {
+            Ok(()) => 0,
+            Err(()) => -1,
+        }
+    }
+
+    fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
+        match self.write_sector(sector, buf) {
+            Ok(()) => 0,
+            Err(()) => -1,
+        }
+    }
+
+    fn blk_is_present(&self) -> bool {
+        true
+    }
+
+    fn blk_total_sectors(&self) -> u64 {
+        self.capacity_sectors
+    }
 }

@@ -393,7 +393,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - 但**读写路径** `ChitinOps::Char(&CharOps)` 是 `extern "C" fn(driver_data: *mut u8, ...)` 指针表（framework/chitin/proto_char.rs:11-24），实现体需 unsafe 指针转换（framework 侧 serial.rs:687/718）→ **services 0 unsafe 无法直接构造** → 需 framework 提供**安全桥 trait**（framework 定义 `CharDeviceOps` + 构造 CharOps 的机制函数，unsafe 转换留在 framework；services impl trait）——即 §7.4 trait 注入模式，与审核员裁决一致。
 - 接线编排：crate root `src/rust/src/lib.rs` 是合法双向编排者（L763 调 `framework::driver::init_all()`、L833 调 `services::syscall::init()`）→ char_init 迁至 services 后由 lib.rs 调用，framework init_all 移除 char 项。
 
-### char 子类接线实施记录（步骤 4 首批，commit 待填）
+### char 子类接线实施记录（步骤 4 首批，commit 9ba997e3）
 
 - **services 侧（新增权威）**：`services/driver/char/serial.rs` + `vga.rs` 各加 `impl Driver`（name/device_type/init/shutdown 全 safe）；`services/driver/char/mod.rs` 新增 `char_init()`（x86_64）将 VgaConsole + COM1 SerialPort 注册进 Chitin（`chitin_register_driver`，合法方向）。
 - **framework 退位**：删除 `framework/driver/char/{serial,vga}.rs`；`char/mod.rs` 仅保留 aarch64 pl011；`driver/mod.rs` 移除 char serial/vga 顶层 re-export（VgaColor/SerialPort/BaudRate/RingBuffer 等）与 init_all 中 x86_64 char 项。
@@ -401,6 +401,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **测试同步**：framework/tests/driver.rs 移除 serial 测试块（framework serial 已删，纯逻辑测试迁 host-tests 为后续项）；tests/driver_test.rs 的 vga/serial 输出改走 services VgaConsole/SerialPort（§7.3 允许 framework/tests 访问 services）。
 - **SIMPLIFIED（已登记）**：注册走 `chitin_register_driver` 无 CharOps 读写绑定——Chitin char 读写路径当前无生产消费者（休眠）；待 devfs char 读写接入时按 §6.2 补 framework 安全桥 trait。
 - **验证**：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅（fs_permissions_regression_test 单跑 28s 通过，为慢二进制非挂起）。
+
+### virtio 子类接线实施记录（步骤 4 第二批，commit 待填）
+
+> 验证：双架构 0w0e ✅ / clippy -D pedantic 双架构 0 ✅ / 核心审计全 0 ✅ / host-tests 全量通过 ✅ / QEMU x86_64 完整启动到 Ring 3（blk_init 探测 0 设备干净跳过，Chitin 计数不变）。
+
+- **前置核实**：services `virtio/blk.rs` 自足（0 unsafe，经 `transport::VirtioDevice` 安全代理 + framework `queue::{DmaBuffer,VirtQueue}` DMA 机制；完整 I/O 路径）→ **直接接线**。
+- **services 侧（新增权威）**：`services/driver/virtio/blk.rs` 新增 `finalize()`（vq0 MMIO 配置 + DRIVER_OK，等价 framework `VirtioBlk::new` 收尾）+ `impl BlockDevice`（blk_read/write/is_present/total_sectors，IoMem/VirtQueue 均为 framework unsafe Send+Sync → 0 unsafe 可实现）；`services/driver/virtio/mod.rs` 新增 `blk_init()`（探测 virtio-mmio 区域，为块设备建 `VirtioBlkDriver`，finalize 后经 `proto_block::register_block_device` 注册）。
+- **framework 退位**：删除 `framework/driver/virtio/blk.rs`；`virtio/mod.rs` 移除 `pub mod blk`（保留 `VirtioMmioDevice` 传输机制 + `queue` DMA 环机制）；**aarch64 `storage_init` 变空操作**（原 virtio-blk 探测注册迁 services；x86_64 storage_init 走 PCI AHCI/NVMe 不受影响；klog imports + 旧 #[expect] 随之 cfg 门控/清理）。
+- **接线**：`lib.rs` init_all 后新增 `services::driver::virtio::blk_init()`（双架构；HvFS 块扫描之前，x86_64 无 virtio-mmio 即跳过）。
+- **SIMPLIFIED（已登记）**：services blk 走 spin-loop 轮询（framework 版有 I-42 IRQ 事件驱动路径），功能等价、效率略低；IRQ 驱动为后续优化项。
+- **待登记**：services `transport::VirtioDevice` 与 framework `VirtioMmioDevice` 存在**传输层双份**（各自 IoMem 探测）——按服务对象准则 transport 属机制应保留 framework，services 版是否删除/改为薄代理留待 §7 反向依赖治理阶段裁决。
 
 ### 阶段 1 首批（syscall brk/canary/posix_timer 下沉）验证结果
 

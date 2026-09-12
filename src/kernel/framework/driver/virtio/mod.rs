@@ -35,7 +35,6 @@
 //! QEMU virt aarch64 将 virtio-mmio 设备放置在 0x0a000000 起始地址,
 //! 每个设备之间步长 0x200 字节.
 
-pub mod blk;
 pub mod net;
 pub mod queue;
 

@@ -765,6 +765,9 @@ pub extern "C" fn kernel_init() {
         // 由 crate root (合法双向编排者) 调用 services char_init 注册进 Chitin.
         #[cfg(target_arch = "x86_64")]
         crate::kernel::services::driver::char::char_init();
+        // §6.4 直接方案 B: virtio-blk 权威迁 services (aarch64 QEMU -M virt 主战场;
+        // x86_64 走 PCI AHCI/NVMe, 此调用探测 virtio-mmio 无设备即跳过)
+        crate::kernel::services::driver::virtio::blk_init();
         crate::klog_boot_info!("Driver subsystem initialized");
         {
             let chitin_count = crate::kernel::framework::chitin::chitin_count() as u64;

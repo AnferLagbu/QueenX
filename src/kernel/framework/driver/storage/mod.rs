@@ -35,7 +35,11 @@ use crate::kernel::framework::iomem::IoMem;
 #[cfg(target_arch = "x86_64")]
 use crate::kernel::framework::mm::PAGE_SIZE;
 use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+// x86_64 storage_init (PCI AHCI/NVMe/ATA) 使用 klog; aarch64 storage_init 现为空操作
+// (§6.4 virtio-blk 迁 services), 故门控避免 aarch64 未使用导入
+#[cfg(target_arch = "x86_64")]
 use crate::klog_info;
+#[cfg(target_arch = "x86_64")]
 use crate::klog_warn;
 use alloc::vec::Vec;
 
@@ -498,53 +502,21 @@ pub fn storage_init() -> framework::Result<()> {
     }
 }
 
-/// AArch64 存储初始化 — 通过 virtio-mmio 发现块设备。
+/// AArch64 存储初始化 — 空操作 (§6.4 直接方案 B)
+///
+/// aarch64 (QEMU -M virt) 的 virtio-blk 探测/注册已迁
+/// `services::driver::virtio::blk_init` (services 权威, 由 crate root lib.rs 编排)。
+/// 此函数保持签名以兼容 `init_all` 调用链。
 #[cfg(not(target_arch = "x86_64"))]
 #[expect(
     clippy::missing_errors_doc,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
-#[expect(
-    clippy::uninlined_format_args,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    reason = "签名保持 Result 以兼容 init_all 调用链; 恒 Ok(()) 无真实错误路径"
 )]
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    reason = "签名保持 Result 以兼容 init_all 调用链 (let _ = storage_init())"
 )]
 pub fn storage_init() -> framework::Result<()> {
-    use crate::kernel::framework::driver::virtio::{self, VIRTIO_ID_BLOCK};
-
-    // 扫描 virtio-mmio 区域，寻找块设备
-    let devices = virtio::probe_all();
-    let mut blk_count = 0u32;
-
-    for dev in devices {
-        if dev.device_id == VIRTIO_ID_BLOCK {
-            if let Some(mut blk) = virtio::blk::VirtioBlk::new(dev) {
-                // I-42: 尝试注册 IRQ 中断驱动路径; 失败时退到 spin-loop 轮询.
-                if let Err(e) = blk.enable_irq() {
-                    klog_warn!(
-                        Driver,
-                        "virtio-blk: IRQ registration failed: {}, using poll mode",
-                        e
-                    );
-                }
-                let blk_name = alloc::format!("virtio-blk{}", blk_count);
-                let name_leaked: &'static str = blk_name.leak();
-                let mmio_base = blk.device.iomem.phys().as_u64();
-                crate::kernel::framework::chitin::proto_block::register_block_device(
-                    name_leaked,
-                    blk,
-                    Some(mmio_base as u64),
-                );
-                blk_count += 1;
-                klog_info!(Driver, "virtio-blk: registered device #{}", blk_count);
-            }
-        }
-    }
-
-    klog_info!(Driver, "storage: {} virtio-blk device(s) found", blk_count);
     Ok(())
 }
 
