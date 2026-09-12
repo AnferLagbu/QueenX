@@ -79,8 +79,10 @@ pub mod async_ipc;
 pub mod scheduler_integration;
 /// T6-9: 信号量实现 (原 framework/ipc/sem.rs)
 pub mod sem;
-/// T6-9: 信号机制实现 (原 framework/ipc/signal.rs)
+/// 信号机制实现 (原 framework/ipc/signal.rs)
 pub mod signal;
+/// DECISION-I: IpcStrategy trait 默认实现与注册
+pub mod strategy;
 pub mod types;
 
 /// IPC 资源 ID (services 层视图, 内核 `IpcId = u32` 的包装)

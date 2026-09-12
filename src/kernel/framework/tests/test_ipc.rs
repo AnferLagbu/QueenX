@@ -1,12 +1,11 @@
 use super::check;
-use crate::kernel::framework::ipc::sem;
 use crate::kernel::framework::ipc::types::{
     IPC_MAX_MSG_QUEUES, IPC_MAX_PIPES, IPC_MAX_SEMAPHORES, IPC_MAX_SHM_SEGS, IpcId, IpcNamespace,
     MsgQueue, Pipe, Semaphore, ShmSegment,
 };
-// T6-1: pipe/shm 策略函数已迁移到 services
+// T6-1: pipe/shm 策略函数已迁移到 services; DECISION-J: sem 壳已删, 亦走 services
 use crate::kernel::framework::tests::{TestResult, runner};
-use crate::kernel::services::ipc::{pipe, shm};
+use crate::kernel::services::ipc::{pipe, sem, shm};
 use crate::register_tests_inner;
 
 // J-01 (2026-09-08): large_stack_arrays expect 仅在裸机 (非测试模式) 生效 —

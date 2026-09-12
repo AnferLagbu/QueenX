@@ -743,6 +743,12 @@ pub extern "C" fn kernel_init() {
         crate::kernel::framework::fs::vfs::init();
         crate::klog_boot_info!("VFS ready");
 
+        // 9-0.5. IPC 策略注册 (DECISION-I: framework 机制先启 → services 注册 → 使用)
+        // 注册时机: scheduler 之后、任何用户态 IPC syscall 之前; 首次注册必成功,
+        // 失败即编程错误 (未注册时 FFI 边界 current_ipc_strategy() 会 panic).
+        crate::kernel::services::ipc::strategy::register_default_ipc_strategy()
+            .expect("ipc strategy registered before user IPC");
+
         // 9-1. UDS (AF_UNIX) — Phase C.3
         crate::kernel::services::net::unix::uds_init();
         crate::klog_boot_info!("UDS subsystem initialized");

@@ -9,12 +9,13 @@
 //! - FFI 函数通过 `RacyCell::get_mut()` 安全访问全局 IPC_NAMESPACE.
 //! - 用户空间指针通过 `UserReadPtr/WritePtr/RefMut` 安全访问.
 
+use crate::kernel::framework::ipc::strategy::current_ipc_strategy;
 use crate::kernel::framework::proc::process_get_current_pid;
 use crate::kernel::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
 
 /// 判断 fd 是否为 pipe fd (公开接口, 供 sendfile/splice 使用)
 pub fn is_pipe_fd(fd: i32) -> bool {
-    crate::kernel::services::ipc::pipe::is_pipe_fd(fd)
+    current_ipc_strategy().is_pipe_fd(fd)
 }
 
 /// POSIX `pipe(pipefd)` 内核实现。
@@ -36,7 +37,7 @@ pub unsafe extern "C" fn ipc_pipe_create(pipefd: *mut i32) -> i32 {
     let next_id = super::NEXT_IPC_ID.get_mut();
     let current_pid = process_get_current_pid();
 
-    match crate::kernel::services::ipc::pipe::pipe_create_safe(ns, next_id, current_pid) {
+    match current_ipc_strategy().pipe_create(ns, next_id, current_pid) {
         Ok((rfd, wfd)) => {
             // SAFETY: pipefd 已校验非空; 调用方保证其指向用户态内存中
             // 至少 2 个有效的 i32 值.
@@ -65,7 +66,8 @@ pub unsafe extern "C" fn ipc_pipe_read(fd: i32, buf: *mut u8, count: u32) -> i32
     // SAFETY: buf 已校验非空; 调用方保证其指向用户态内存中
     // 至少 `count` 个有效字节.
     let mut user_buf = unsafe { UserWritePtr::new(buf, count as usize) };
-    crate::kernel::services::ipc::pipe::pipe_read_safe(ns, fd, user_buf.as_mut_slice(), count)
+    current_ipc_strategy()
+        .pipe_read(ns, fd, user_buf.as_mut_slice(), count)
         .map_or(-1, |n| n as i32)
 }
 
@@ -84,7 +86,8 @@ pub unsafe extern "C" fn ipc_pipe_write(fd: i32, buf: *const u8, count: u32) -> 
     // SAFETY: buf 已校验非空; 调用方保证其指向用户态内存中
     // 至少 `count` 个有效字节.
     let user_buf = unsafe { UserReadPtr::new(buf, count as usize) };
-    crate::kernel::services::ipc::pipe::pipe_write_safe(ns, fd, user_buf.as_slice(), count)
+    current_ipc_strategy()
+        .pipe_write(ns, fd, user_buf.as_slice(), count)
         .map_or(-1, |n| n as i32)
 }
 
@@ -92,7 +95,7 @@ pub unsafe extern "C" fn ipc_pipe_write(fd: i32, buf: *const u8, count: u32) -> 
 #[unsafe(no_mangle)]
 pub extern "C" fn ipc_pipe_close(fd: i32) -> i32 {
     let ns = super::IPC_NAMESPACE.get_mut();
-    match crate::kernel::services::ipc::pipe::pipe_close_safe(ns, fd) {
+    match current_ipc_strategy().pipe_close(ns, fd) {
         Ok(()) => 0,
         Err(_) => -1,
     }

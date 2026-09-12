@@ -10,6 +10,7 @@
 //! - FFI 函数通过 `UserReadPtr/WritePtr/RefMut` 安全访问用户空间内存.
 
 use super::types::{IpcId, MSG_MAX_SIZE, Message};
+use crate::kernel::framework::ipc::strategy::current_ipc_strategy;
 use crate::kernel::framework::proc::process_get_current_pid;
 use crate::kernel::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
 
@@ -128,7 +129,9 @@ pub extern "C" fn ipc_msgq_create(perm: i32) -> IpcId {
     let ns = super::IPC_NAMESPACE.get_mut();
     let next_id = super::NEXT_IPC_ID.get_mut();
     let pid = process_get_current_pid();
-    crate::kernel::services::ipc::msgq::msgq_create_safe(ns, next_id, perm, pid).unwrap_or(0)
+    current_ipc_strategy()
+        .msgq_create(ns, next_id, perm, pid)
+        .unwrap_or(0)
 }
 
 /// FFI: 发送消息。
@@ -156,14 +159,7 @@ pub unsafe extern "C" fn ipc_msgq_send(id: IpcId, type_: u64, data: *const u8, s
         .as_ref()
         .map(super::super::userptr::UserReadPtr::as_slice);
 
-    match crate::kernel::services::ipc::msgq::msgq_send_safe(
-        ns,
-        id,
-        type_,
-        data_slice,
-        size as usize,
-        pid,
-    ) {
+    match current_ipc_strategy().msgq_send(ns, id, type_, data_slice, size as usize, pid) {
         Ok(()) => 0,
         Err(_) => -1,
     }
@@ -222,7 +218,8 @@ pub unsafe extern "C" fn ipc_msgq_recv(
         .as_mut()
         .map(super::super::userptr::UserRefMut::as_mut);
 
-    crate::kernel::services::ipc::msgq::msgq_recv_safe(ns, id, type_ref, data_ref, size_ref)
+    current_ipc_strategy()
+        .msgq_recv(ns, id, type_ref, data_ref, size_ref)
         .map_or(-1, |n| n as i64)
 }
 
@@ -231,7 +228,7 @@ pub unsafe extern "C" fn ipc_msgq_recv(
 #[unsafe(no_mangle)]
 pub extern "C" fn ipc_msgq_destroy(id: IpcId) -> i32 {
     let ns = super::IPC_NAMESPACE.get_mut();
-    match crate::kernel::services::ipc::msgq::msgq_destroy_safe(ns, id) {
+    match current_ipc_strategy().msgq_destroy(ns, id) {
         Ok(()) => 0,
         Err(_) => -1,
     }

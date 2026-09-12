@@ -493,6 +493,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 70→66、精确行数 132→129；ipc 目录生产代码反向依赖仅剩 pipe.rs(5)/shm.rs(4)/msgq.rs(4) FFI 边界 13 处——**DECISION-I IpcStrategy trait 注入对象**（下一批）。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过（含 kernel_test/host-test clippy 维）✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（纯壳删除不触 boot，与 trait 注入批次合并冒烟）。
 
+### DECISION-I 首战执行记录：IpcStrategy trait 注入（ipc FFI 13 处收敛）
+
+> DECISION-I 裁决："IpcStrategy trait 注入为 trait 化首战（ipc 24 处最大头，13 处 FFI 集中）；注册时序单独评审"。本次完成 trait 注入主体，注册时序设计留待评审（见下）。
+
+- **framework 侧（契约 + 注册点）**：新增 `framework/ipc/strategy.rs` —— `IpcStrategy` trait（13 方法：pipe×5 / shm×4 / msgq×4，签名对齐 services `*_safe`，引用 framework 类型 `IpcNamespace`/`IpcId`）+ `static IPC_STRATEGY: OnceLock<&dyn IpcStrategy>` + `register_ipc_strategy()` + `current_ipc_strategy()`（**无内建回退**：策略方法依赖 services 实现，framework 无法安全回退，未注册即调用 panic——与 `services::ipc::global()` 的 expect 契约一致，IPC FFI 仅在 syscall 时触发）。mod.rs 顶层 re-export trait + 注册/获取入口。
+- **services 侧（实现 + 注册）**：新增 `services/ipc/strategy.rs` —— `DefaultIpcStrategy` impl（包装 `pipe/shm/msgq` 的 `*_safe`，保持 T6 权威）+ `register_default_ipc_strategy()`（幂等，`let _ =` 风格，`#![deny(unsafe_code)]`）。
+- **FFI 边界改造**：pipe.rs(5)/shm.rs(4)/msgq.rs(4) 共 13 处 `crate::kernel::services::ipc::*::*_safe` 改经 `current_ipc_strategy().*` 调用，framework→services 直接引用归零（ipc 生产代码）。
+- **注册时序（待评审，DECISION-I 要求单独评审）**：lib.rs kernel_init 编排中、VFS init 后 / UDS 前插入 `register_default_ipc_strategy().expect(...)`。时序论证：framework ipc 机制（IPC_NAMESPACE）由启动早期初始化 → services 注册在 scheduler 之后 → FFI 仅在用户态 IPC syscall 时触发（用户态启动远晚于注册点）。**评审点**：注册是否应更贴近 framework ipc_init 时机（更早）？`current_ipc_strategy()` 未注册 panic 是否可接受（vs 返回 Err）？
+- **引用计数**：framework 文件级反向依赖 66→63、精确行数 129→116（ipc FFI 13 处消除）。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过 ✅ / host-tests 97 套件全通过 ✅ / QEMU 未跑（本次含 lib.rs 启动编排改动，QEMU 冒烟与后续批次合并执行）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

@@ -53,6 +53,9 @@ pub mod msgq;
 /// 动态 IPC 命名空间
 pub mod dynamic;
 
+/// IPC 策略 trait (DECISION-I: framework 定义契约, services 注册实现)
+pub mod strategy;
+
 // ============================================================================
 // 全局状态
 // ============================================================================
@@ -128,6 +131,9 @@ pub use types::{
 // 调度器集成 (block_current_thread/block_with_timeout/wake_*) 与异步 IPC
 // (AsyncMsgSender/Receiver 等) 为 services 策略项, framework 侧壳已删 (DECISION-J),
 // 由 `services::ipc::{scheduler_integration, async_ipc}` 提供。
+
+// DECISION-I: IpcStrategy trait 与注册/获取入口 (FFI 边界与 services 注册共用)
+pub use strategy::{IpcStrategy, current_ipc_strategy, register_ipc_strategy};
 
 // ============================================================================
 // 压力测试与边界测试
