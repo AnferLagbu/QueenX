@@ -1,14 +1,19 @@
 #![deny(unsafe_code)]
-//! @SAFE: 本文件不含 unsafe 代码。纯常量定义。
-//! 调度器常量 — services 层策略主体
+//! @SAFE: 本文件不含 unsafe 代码。纯常量 + re-export。
+//! 调度器常量 — services 侧 CFS 策略常量 + SCHED re-export 兼容层
 //!
-//! ## T6-9 迁移记录
+//! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
-//! 原属 framework/config/sched.rs, 2026-06-16 提取到 services.
-//! 纯常量定义, 0 unsafe, 0 外部依赖.
-//! framework 仅保留 re-export.
+//! 原 CFS_*/SCHED_* 常量于 T6-9 (2026-06-16) 迁至此处。按统一判据"机制持有的
+//! 数据结构/常量归 framework"反转：`SCHED_*` 被 framework proc 调度机制消费,
+//! 迁回 `framework/config/sched.rs` (经其顶层 re-export 显式转发); `CFS_*` 仅被
+//! services proc/sched_policy 策略消费, 留在此处。保持 services 侧 API 兼容
+//! (services→framework 合法方向)。
 
-//! 调度器常量: CFS 目标延迟/粒度/Deadline/调度级别量子
+pub use crate::kernel::framework::config::{
+    SCHED_BOOST_INTERVAL, SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM,
+    SCHED_LEVEL_3_QUANTUM, SCHED_RT_WATCHDOG_TICKS,
+};
 
 // ============================================================================
 // CFS (Completely Fair Scheduler) 常量
@@ -38,25 +43,3 @@ pub const CFS_DL_MIN_PERIOD: u64 = 10;
 
 /// Deadline 调度器最大利用率 (百分比).
 pub const CFS_DL_MAX_UTILIZATION_PCT: u64 = 95;
-
-// ============================================================================
-// 通用调度器常量
-// ============================================================================
-
-/// 调度级别 0 量子 (最高优先级, 实时).
-pub const SCHED_LEVEL_0_QUANTUM: u32 = 80;
-
-/// 调度级别 1 量子.
-pub const SCHED_LEVEL_1_QUANTUM: u32 = 60;
-
-/// 调度级别 2 量子.
-pub const SCHED_LEVEL_2_QUANTUM: u32 = 40;
-
-/// 调度级别 3 量子 (最低优先级, idle).
-pub const SCHED_LEVEL_3_QUANTUM: u32 = 20;
-
-/// 调度器提升检查间隔 (tick 数).
-pub const SCHED_BOOST_INTERVAL: u64 = 1000;
-
-/// 实时调度器看门狗超时 (tick 数).
-pub const SCHED_RT_WATCHDOG_TICKS: u64 = 500;

@@ -5,7 +5,7 @@
 //! 策略代码于 2026-06-17 从 framework::config::validate 迁移至此。
 //! framework 层仅保留 re-export 保持调用方兼容。
 
-use crate::kernel::framework::config::ConfigError;
+use crate::kernel::services::config::ConfigError;
 use crate::kernel::framework::config::{
     HUGE_PAGE_2M_SIZE, KERNEL_STACK_SIZE, MAX_CPUS, PAGE_SIZE, SLAB_DEFAULT_SIZE, USER_CODE_BASE,
     USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
@@ -200,7 +200,7 @@ pub fn validate_system_config() -> u32 {
     }
 
     // KASLR 偏移自检
-    if let Err(msg) = crate::kernel::framework::config::validate_kaslr_offset() {
+    if let Err(msg) = crate::kernel::services::config::kaslr::validate_kaslr_offset() {
         errors += 1;
         slog_err!(Boot, "CONFIG: KASLR: {}", msg);
     }

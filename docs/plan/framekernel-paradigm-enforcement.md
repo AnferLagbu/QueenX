@@ -463,6 +463,23 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：framework 文件级反向依赖 79→76、精确行数 137→135（memory/capacity 两壳引用消除；config 下仍余 8 壳待第三批：boot_image/caps/error/kaslr/procfs/sched/slab/validate）。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过（services 0 unsafe、6 不变式 PASS、注释/C 命名 0 违规）✅ / host-tests 全量通过 ✅ / QEMU 未跑（纯常量归位不触 boot，与下一批壳删除合并冒烟）。
 
+### DECISION-J 第三批执行记录：config 其余 8 壳（caps/kaslr/sched/slab/boot_image 反转 + error/procfs 删壳 + validate 保留）
+
+> 逐项调研 framework 机制消费点后按统一判据处理。**关键调研结论**：SCHED_\* 与 CFS_\* 分属不同消费方（前者被 framework proc 机制消费、后者仅 services sched_policy 消费）→ 拆分归属；KernelCapabilities 被 framework mm/vmm_x86_64 KPTI 决策直接消费 → 机制类型。
+
+- **迁回 framework（5 壳真实定义 + services re-export）**：
+  - `config/caps.rs`：`ConfigSummary`/`KernelCapabilities`(+`detect`) 迁回（0 unsafe，依赖闭包为空）；services re-export。
+  - `config/kaslr.rs`：`KASLR_*` 常量 + `KASLR_BASE_OFFSET` 全局状态 + `set/get/is_aligned` 迁回（机制持有全局状态）；`validate_kaslr_offset`（启动自检，返回 services `KernelError`）**留 services**——注意 framework 顶层以 `is_kaslr_aligned` 别名暴露 `is_aligned`，services 侧用 `is_kaslr_aligned as is_aligned` 还原名称保 API 兼容。
+  - `config/sched.rs`：**拆分**——`SCHED_*`（6 项，被 framework proc user_proc/scheduler_ex 消费）迁回；`CFS_*`（7 项，仅 services proc/sched_policy 消费）留 services；services/config/sched.rs 变混合（CFS_* 定义 + SCHED_* re-export），sched_policy.rs 导入改 services::config。
+  - `config/slab.rs`：`SLAB_*` 4 常量迁回（被 framework mm/slab 机制消费），`SLAB_DEFAULT_SIZE` 改引用 framework 自身 `PAGE_SIZE`。
+  - `config/boot_image.rs`：`encode_boot_image`/`read_boot_image`/`BOOT_IMAGE`/`encoded_len` 全部迁回（被 framework config::init() 机制消费，依赖闭包 `get_config_summary`+`IrqSpinLock` 全在 framework 内）；services glob re-export。
+- **删除壳（services 独有策略项，调用点改 services 路径）**：
+  - `config/error.rs`：`ConfigError` 为 services validate 策略返回类型，framework 生产代码不消费 → **删壳**；validate.rs/tests 改 `services::config::ConfigError`。
+  - `config/procfs.rs`：`read_sys_config` 等为 /proc 用户态接口服务，framework 无生产消费 → **删壳** + 移除 `pub mod procfs`；services/fs/procfs_core.rs + framework/tests 改 `services::config::procfs` 路径。
+- **保留壳（后续 trait 注入批次）**：`config/validate.rs`（`validate_system_config`/`validate_drivers` 被 framework config::init() 调用，需 ConfigValidateHook trait 注入，按 DECISION-I「先壳删 → 再 trait 注入」顺序留待 ipc 之后的批次）。
+- **引用计数**：framework 文件级反向依赖 76→70、精确行数 135→132；config 目录仅剩 validate.rs 壳。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit.sh 核心审计全过（services 0 unsafe、6 不变式 PASS、SAFETY 覆盖 0 缺漏、注释/C 命名 0 违规）✅ / host-tests 全量通过 ✅ / QEMU 未跑（常量/类型归位不触 boot，与下一批壳删除合并冒烟）。
+
 ### 前置核实执行记录（步骤 1，2026-09-12）
 
 > 对 11 项 services 影子逐项核实"内容自足性"（0 unsafe / 硬件经 IoMem/IoPort/DmaStream/Chitin 机制 API / 业务自含不依赖 framework 内部）：

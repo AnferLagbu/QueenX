@@ -22,14 +22,17 @@
 //! config/
 //!   capacity.rs   进程/线程/IRQ/文件/会话容量
 //!   memory.rs     内存布局常量
-//!   sched.rs      调度常量
+//!   sched.rs      调度常量 (SCHED_*)
 //!   slab.rs       slab 配置
-//!   error.rs      ConfigError
-//!   validate.rs   validate_* 函数
+//!   validate.rs   validate_* 函数 (re-export, 待 trait 注入)
 //!   caps.rs       ConfigSummary, KernelCapabilities
-//!   procfs.rs     /proc/sys/config 接口
+//!   boot_image.rs 启动镜像编码
+//!   kaslr.rs      KASLR 配置
 //!   mod.rs        入口 + re-exports + init
 //! ```
+//!
+//! > DECISION-J (2026-09-12): error (ConfigError) 与 procfs (read_sys_config)
+//! > 为 services 策略项, framework 侧壳已删除, 由 services::config 提供。
 //!
 //! ## 调用方式
 //!
@@ -49,14 +52,12 @@
 
 mod capacity;
 mod caps;
-mod error;
 mod kaslr;
 // I-预存: `framework::config::memory` 需要从外部测试模块访问, 之前设为私有导致
 // `tests::mod` 在 kernel_test build 下编译失败 (E0603). 改 `pub` 暴露给 `framework` 内的
 // 跨模块访问, 外部边界 (services) 通过 `framework::config::*` 公共 API 间接使用.
 pub mod boot_image;
 pub mod memory;
-pub mod procfs;
 mod sched;
 mod slab;
 mod validate;
@@ -66,7 +67,6 @@ mod validate;
 // ============================================================================
 
 pub use caps::{ConfigSummary, KernelCapabilities, get_config_summary};
-pub use error::ConfigError;
 
 // ============================================================================
 // 重新导出: 常量 (保持外部 `use crate::kernel::framework::config::XXX` 路径完全不变)
@@ -84,10 +84,8 @@ pub use memory::{
     aslr_mmap_base, aslr_pie_base, aslr_random_offset, aslr_stack_top,
 };
 pub use sched::{
-    CFS_BOOST_INTERVAL, CFS_DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD, CFS_DL_MIN_RUNTIME,
-    CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, SCHED_BOOST_INTERVAL,
-    SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM, SCHED_LEVEL_3_QUANTUM,
-    SCHED_RT_WATCHDOG_TICKS,
+    SCHED_BOOST_INTERVAL, SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM,
+    SCHED_LEVEL_3_QUANTUM, SCHED_RT_WATCHDOG_TICKS,
 };
 pub use slab::{
     SLAB_DEFAULT_SIZE, SLAB_GENERAL_CACHE_NUM, SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE,
@@ -103,10 +101,10 @@ pub use validate::{
     validate_pci_subsystem, validate_system_config,
 };
 
-// 演进 9: KASLR 配置接入
+// 演进 9: KASLR 配置接入 (validate_kaslr_offset 为 services 策略校验, 由 services::config 提供)
 pub use kaslr::{
     KASLR_ALIGN, KASLR_BASE_OFFSET, KASLR_DEFAULT_OFFSET, KASLR_ENABLED, KASLR_MAX_OFFSET,
-    get_kaslr_offset, is_aligned as is_kaslr_aligned, set_kaslr_offset, validate_kaslr_offset,
+    get_kaslr_offset, is_aligned as is_kaslr_aligned, set_kaslr_offset,
 };
 
 // ============================================================================

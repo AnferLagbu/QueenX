@@ -1,54 +1,13 @@
 #![deny(unsafe_code)]
-//! @SAFE: 本文件不含 unsafe 代码。纯类型定义与编译期检测。
-//! 内核能力与配置摘要类型 — services 层策略主体
+//! @SAFE: 本文件不含 unsafe 代码。纯 re-export。
+//! 内核能力与配置摘要类型 — services 侧 re-export 兼容层
 //!
-//! ## T6-9 迁移记录
+//! ## DECISION-J 归属反转记录 (2026-09-12)
 //!
-//! 原属 framework/config/caps.rs, 2026-06-16 提取到 services.
-//! 纯类型定义与编译期检测, 0 unsafe, 0 外部依赖.
-//! framework 仅保留 re-export + 运行时查询函数.
+//! 原类型定义 (`ConfigSummary`/`KernelCapabilities`) 按统一判据"机制持有的数据
+//! 结构/常量归 framework"迁回 `framework/config/caps.rs` (被 framework
+//! mm/vmm_x86_64 KPTI 决策与 config 机制直接消费)。framework/config 的 caps 子
+//! 模块为私有, 故经其顶层 re-export (`framework::config::ConfigSummary` 等) 显式
+//! 转发, 保持 services 侧 API 兼容 (services→framework 合法方向)。
 
-/// 配置摘要结构.
-#[derive(Debug, Clone, Copy)]
-pub struct ConfigSummary {
-    pub max_cpus: usize,
-    pub actual_cpus: u32,
-    pub max_irqs: usize,
-    pub max_processes: usize,
-    pub max_threads: usize,
-    pub apic_enabled: bool,
-    pub ioapic_enabled: bool,
-    pub page_size: u64,
-    /// 演进 9: 运行时 KASLR 偏移 (由 bootloader/entry 设置).
-    pub kaslr_offset: u64,
-    pub capabilities: KernelCapabilities,
-}
-
-/// 编译期 + 运行时能力标志.
-#[derive(Debug, Clone, Copy)]
-pub struct KernelCapabilities {
-    /// 编译期启用了 SMP.
-    pub smp: bool,
-    /// Preempt-RT 内核.
-    pub preempt: bool,
-    /// 内核地址空间布局随机化.
-    pub kaslr: bool,
-    /// `x86_64` KPTI 缓解措施.
-    pub kpti: bool,
-    /// `QueenX` Barrier 子系统已编译入.
-    pub barrier: bool,
-}
-
-impl KernelCapabilities {
-    /// 从编译期 `cfg` 标志检测能力.
-    pub const fn detect() -> Self {
-        Self {
-            smp: cfg!(feature = "smp"),
-            preempt: cfg!(feature = "preempt"),
-            kaslr: cfg!(feature = "kaslr"),
-            // 测试模式下禁用 KPTI: 避免 KPTI 初始化修改共享页表导致 bitmap 映射被破坏
-            kpti: cfg!(all(target_arch = "x86_64", not(feature = "kernel_test"))),
-            barrier: cfg!(feature = "barrier"),
-        }
-    }
-}
+pub use crate::kernel::framework::config::{ConfigSummary, KernelCapabilities};

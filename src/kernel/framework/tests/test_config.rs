@@ -8,7 +8,6 @@
 
 use super::{assert_eq_test, check};
 use crate::kernel::framework::config::{
-    CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
     HUGE_PAGE_1G_SHIFT, HUGE_PAGE_2M_SHIFT, KERNEL_STACK_SIZE, KernelCapabilities, MAX_CPUS,
     MAX_IRQS, MAX_OPEN_FILES, MAX_PROCESSES, MAX_SESSIONS, MAX_THREADS, MAX_THREADS_PER_PROCESS,
     PAGE_SHIFT, PAGE_SIZE, SCHED_BOOST_INTERVAL, SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_3_QUANTUM,
@@ -16,6 +15,11 @@ use crate::kernel::framework::config::{
     SLAB_MIN_OBJECT_SIZE, USER_CODE_BASE, USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
     get_config_summary, print_config_table, validate_cross_module_consistency,
     validate_memory_config,
+};
+// DECISION-J: CFS_*/ConfigError 为 services 策略项 (framework 侧壳已删), tests 经
+// services 公共 API 访问 (§7.3 允许 framework/tests 访问 services)
+use crate::kernel::services::config::{
+    CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
 };
 use crate::kernel::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
@@ -183,7 +187,7 @@ fn test_print_config_table_no_panic() -> TestResult {
 
 fn test_procfs_read_sys_config_basic() -> TestResult {
     let mut buf = [0u8; 1024];
-    let n = crate::kernel::framework::config::procfs::read_sys_config(&mut buf);
+    let n = crate::kernel::services::config::procfs::read_sys_config(&mut buf);
     check!(n > 0, "should write something");
     check!(n <= buf.len(), "should not overflow");
 
@@ -198,7 +202,7 @@ fn test_procfs_read_sys_config_basic() -> TestResult {
 fn test_procfs_read_sys_config_truncation_safe() -> TestResult {
     // 极小缓冲区, 验证不会越界写
     let mut buf = [0u8; 16];
-    let n = crate::kernel::framework::config::procfs::read_sys_config(&mut buf);
+    let n = crate::kernel::services::config::procfs::read_sys_config(&mut buf);
     check!(n <= buf.len(), "truncated output must not exceed buf len");
     check!(n > 0, "should write at least 16 bytes before truncating");
     TestResult::Pass
@@ -206,7 +210,7 @@ fn test_procfs_read_sys_config_truncation_safe() -> TestResult {
 
 fn test_procfs_read_sys_config_zero_size() -> TestResult {
     let mut buf = [0u8; 0];
-    let n = crate::kernel::framework::config::procfs::read_sys_config(&mut buf);
+    let n = crate::kernel::services::config::procfs::read_sys_config(&mut buf);
     assert_eq_test!(n, 0, "zero-size buf -> zero write");
     TestResult::Pass
 }

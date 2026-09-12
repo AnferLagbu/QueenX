@@ -16,7 +16,7 @@ use crate::kernel::framework::proc::Pid;
 // CFS Constants
 // ============================================================================
 
-pub use crate::kernel::framework::config::{
+pub use crate::kernel::services::config::{
     CFS_BOOST_INTERVAL as CFS_BOOST_INTERVAL_TICKS,
     CFS_DL_MAX_UTILIZATION_PCT as DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD as DL_MIN_PERIOD_TICKS,
     CFS_DL_MIN_RUNTIME as DL_MIN_RUNTIME_TICKS, CFS_MIN_GRANULARITY as MIN_GRANULARITY_TICKS,

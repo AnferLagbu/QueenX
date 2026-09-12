@@ -653,11 +653,11 @@ impl ProcfsData {
         }
 
         if name == "sys/config" {
-            return crate::kernel::framework::config::procfs::read_sys_config(buf) as i32;
+            return crate::kernel::services::config::procfs::read_sys_config(buf) as i32;
         }
 
         if name == "sys/config.json" {
-            return crate::kernel::framework::config::procfs::read_sys_config_json(buf) as i32;
+            return crate::kernel::services::config::procfs::read_sys_config_json(buf) as i32;
         }
 
         // TD-09 V2: /proc/sys/klog/sinks — 运行时 sink 列表
