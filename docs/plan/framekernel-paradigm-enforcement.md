@@ -444,7 +444,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **风险提示**：storage 下沉若操之过急将**丢失功能**——MSI-X 中断驱动 NVMe（B07）、I-42 IRQ 路径、ATA PIO 真实驱动、MSIX-03 测试钩子均在 framework 侧且 services 无等价实现。**建议作为独立专项工程推进**（子步：identify helper 迁 services → services 补 _block 适配器 + MSI-X → 接线 → QEMU 存储冒烟），或与 §6.2/§7 并行规划。
 
-### storage 专项 0 号子步实施记录（identify 解析迁 services，commit 待填）
+### storage 专项 0 号子步实施记录（identify 解析迁 services，commit 05c9a648）
 
 > 审核员裁决（2026-09-12）：storage 走 A 独立专项；0 号子步 = `nvme_read_identify_*` 解析 helper 迁 services（纯逻辑、可 host 测试、零风险）。
 
