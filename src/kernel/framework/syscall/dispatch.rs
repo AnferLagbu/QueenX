@@ -531,16 +531,14 @@ fn sys_read(fd: i32, buf: *mut u8, count: u64) -> i64 {
         {
             #[cfg(target_arch = "x86_64")]
             {
+                // 键盘 stdin: keyboard_has_data/get_char 由 framework input 机制提供。
+                // 串口 stdin 随 DECISION-G §6.4 char 下沉移除 (framework 不再持有串口 FFI,
+                // 控制台输入待 devfs 桥接入 services char 权威)。
                 if let Some(c) = raw::read_keyboard_byte() {
                     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                     unsafe { raw::write_u8(buf, c) };
                     return 1;
                 }
-            }
-            if let Some(c) = raw::read_serial_byte(0) {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe { raw::write_u8(buf, c) };
-                return 1;
             }
         }
         return 0;

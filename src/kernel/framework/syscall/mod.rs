@@ -111,14 +111,6 @@ pub(crate) mod raw {
         static _kernel_end: u8;
     }
 
-    // 串口 (COM1/COM2) — kernel_test 模式下不接触真实硬件
-    #[cfg(not(feature = "kernel_test"))]
-    // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-    unsafe extern "C" {
-        fn serial_has_data(com: i32) -> bool;
-        fn serial_getc(com: i32) -> i32;
-    }
-
     // x86_64 专属: 键盘 — kernel_test 模式下不接触真实硬件
     #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
     // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
@@ -144,7 +136,7 @@ pub(crate) mod raw {
     /// 写一个 u8 到用户指针。
     /// # Safety
     /// 调用方必须先调用 `check_user_ptr(ptr as u64)` 验证指针合法。
-    #[cfg(not(feature = "kernel_test"))]
+    #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
     pub unsafe fn write_u8(ptr: *mut u8, val: u8) {
         // SAFETY: 调用方已通过 `check_user_ptr` 验证 ptr 指向有效且对齐的
         // 用户空间地址 (1 字节自然对齐)；write_volatile 防止编译器优化掉
@@ -269,23 +261,6 @@ pub(crate) mod raw {
         unsafe {
             if keyboard_has_data() {
                 let c = keyboard_get_char();
-                if c > 0 { Some(c as u8) } else { None }
-            } else {
-                None
-            }
-        }
-    }
-
-    /// 从串口读取一个字节。None 表示无数据。
-    /// # Safety
-    /// FFI 调用，需在中断上下文。
-    #[cfg(not(feature = "kernel_test"))]
-    pub fn read_serial_byte(com: i32) -> Option<u8> {
-        // SAFETY: serial_has_data 与 serial_getc 是 C-ABI 函数，调用方
-        // 保证 com 端口已通过 ioport_register 注册。
-        unsafe {
-            if serial_has_data(com) {
-                let c = serial_getc(com);
                 if c > 0 { Some(c as u8) } else { None }
             } else {
                 None
