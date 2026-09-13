@@ -18,7 +18,7 @@ use super::types::{
     QX_SENDFILE, QX_SENDMSG, QX_SENDTO, QX_SETNS, QX_SETRLIMIT, QX_SETSOCKOPT, QX_SHUTDOWN,
     QX_SOCKET, QX_SPLICE, QX_TCGETPGRP, QX_TCSETPGRP, QX_TGKILL, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
     QX_UEFI, QX_UNSHARE, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
-    SYS_mremap, SYS_read, SYS_write,
+    SYS_read, SYS_write,
 };
 // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
 #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
@@ -38,12 +38,6 @@ use crate::kernel::framework::constants::limits::FB_MMAP_ADDR_MAX;
 #[inline]
 fn try_fd(a0: u64) -> Option<i32> {
     i32::try_from(a0).ok()
-}
-
-/// 用户态寄存器值 → 标志 (i32) 严格转换 (mode/flags 等)
-#[inline]
-fn try_flags(a: u64) -> Option<i32> {
-    i32::try_from(a).ok()
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -223,28 +217,6 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
             || -(Errno::EINVAL as i64),
             |fd| dispatch!(sys_write(fd, a1 as *const u8, a2), b"write\0"),
         ),
-
-        // ==================== 内存管理 ====================
-        SYS_mremap => {
-            use crate::kernel::framework::mm::vma_get_current_mm;
-            vma_get_current_mm().map_or(-1, |mm| {
-                // flags (a3) 是 i32 (Linux mremap flags); 严格校验
-                try_flags(a3).map_or_else(
-                    || -(Errno::EINVAL as i64),
-                    |flags| {
-                        dispatch!(
-                            match crate::kernel::services::mm::mremap::mremap_syscall(
-                                mm, a0, a1, a2, flags,
-                            ) {
-                                Ok(addr) => addr as i64,
-                                Err(e) => e.as_ret(),
-                            },
-                            b"mremap\0"
-                        )
-                    },
-                )
-            })
-        }
 
         // ==================== 信号 ====================
         QX_RT_SIGRETURN => dispatch!(sys_rt_sigreturn(), b"rt_sigreturn\0"),

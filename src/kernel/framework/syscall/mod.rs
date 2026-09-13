@@ -11,8 +11,6 @@ pub mod futex;
 pub mod info;
 pub mod io;
 pub mod madvise_mlock;
-pub mod mmap;
-pub mod mprotect;
 pub mod sendfile;
 pub mod signalfd;
 pub mod timerfd;

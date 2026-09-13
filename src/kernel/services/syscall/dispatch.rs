@@ -528,8 +528,8 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
 fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::kernel::services::syscall::types::{
         SYS_brk, SYS_get_mempolicy, SYS_getcpu, SYS_madvise, SYS_migrate_pages, SYS_mincore,
-        SYS_mlock, SYS_mlockall, SYS_mmap, SYS_mprotect, SYS_munlock, SYS_munlockall, SYS_munmap,
-        SYS_set_mempolicy,
+        SYS_mlock, SYS_mlockall, SYS_mmap, SYS_mprotect, SYS_mremap, SYS_munlock, SYS_munlockall,
+        SYS_munmap, SYS_set_mempolicy,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -545,6 +545,22 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
             a0, a1, a2 as i32, a3 as i32, a4 as i32, a5,
         ),
         SYS_munmap => crate::kernel::services::mm::mmap::munmap_syscall_entry(a0, a1),
+        SYS_mremap => {
+            // mremap (DECISION-J 第十八批: 自 framework dispatch 迁入, 策略主体本就在 services)
+            use crate::kernel::framework::mm::vma_get_current_mm;
+            match vma_get_current_mm() {
+                Some(mm) => match i32::try_from(a3) {
+                    Ok(flags) => match crate::kernel::services::mm::mremap::mremap_syscall(
+                        mm, a0, a1, a2, flags,
+                    ) {
+                        Ok(addr) => addr as i64,
+                        Err(e) => e.as_ret(),
+                    },
+                    Err(_) => Errno::EINVAL.as_ret(),
+                },
+                None => -1,
+            }
+        }
 
         // 内存建议与锁定
         SYS_madvise => crate::kernel::services::mm::madvise_mlock::sys_madvise(a0, a1, a2),

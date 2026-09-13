@@ -26,9 +26,9 @@ use crate::kernel::framework::fs::VFS_MANAGER;
 use crate::kernel::framework::fs::VFS_MAX_FDS;
 use crate::kernel::framework::fs::vfs as vfs_api;
 use crate::kernel::framework::ipc::IPC_NAMESPACE;
+use crate::kernel::framework::ipc::current_ipc_strategy;
 use crate::kernel::framework::ipc::pipe as ipc_pipe;
 use crate::kernel::framework::syscall::Errno;
-use crate::kernel::services::ipc::pipe as svc_pipe;
 
 /// sendfile 传输的 bounce buffer 大小 (8KB)
 const BOUNCE_SIZE: usize = 8192;
@@ -108,6 +108,11 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         return Errno::EBADF.as_ret();
     }
 
+    // pipe 写端需要 IPC 策略 (DECISION-I); 未注册时降级 ENOSYS
+    let Some(svc) = current_ipc_strategy() else {
+        return Errno::ENOSYS.as_ret();
+    };
+
     // 读取用户空间 offset (若提供)
     let mut offset: u64 = if offset_ptr != 0 {
         if !crate::kernel::framework::syscall::raw::check_user_buf(offset_ptr, 8) {
@@ -144,9 +149,9 @@ pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i
         let nwritten = if out_is_vfs {
             vfs_api::vfs_write_internal(out_fd as u32, bounce.as_ptr(), nread as u32)
         } else {
-            // pipe 写端
+            // pipe 写端 (DECISION-I: 策略经 IpcStrategy trait)
             let ns = IPC_NAMESPACE.get_mut();
-            svc_pipe::pipe_write_safe(ns, out_fd, &bounce[..nread_usize], nread as u32)
+            svc.pipe_write(ns, out_fd, &bounce[..nread_usize], nread as u32)
                 .map_or(-1, |n| n as i32)
         };
 
@@ -234,6 +239,11 @@ pub fn sys_splice(
         return Errno::EBADF.as_ret();
     }
 
+    // pipe 读写需要 IPC 策略 (DECISION-I); 未注册时降级 ENOSYS
+    let Some(svc) = current_ipc_strategy() else {
+        return Errno::ENOSYS.as_ret();
+    };
+
     // pipe → pipe 不支持 (v1)
     if in_is_pipe && out_is_pipe {
         return Errno::EINVAL.as_ret();
@@ -248,7 +258,7 @@ pub fn sys_splice(
         // 1. 从 fd_in 读取到 bounce buffer
         let nread = if in_is_pipe {
             let ns = IPC_NAMESPACE.get_mut();
-            svc_pipe::pipe_read_safe(ns, fd_in, &mut bounce[..chunk], chunk as u32)
+            svc.pipe_read(ns, fd_in, &mut bounce[..chunk], chunk as u32)
                 .map_or(-1, |n| n as i32)
         } else {
             // VFS 文件读取
@@ -263,7 +273,7 @@ pub fn sys_splice(
         // 2. 从 bounce buffer 写入 fd_out
         let nwritten = if out_is_pipe {
             let ns = IPC_NAMESPACE.get_mut();
-            svc_pipe::pipe_write_safe(ns, fd_out, &bounce[..nread_usize], nread as u32)
+            svc.pipe_write(ns, fd_out, &bounce[..nread_usize], nread as u32)
                 .map_or(-1, |n| n as i32)
         } else {
             vfs_api::vfs_write_internal(fd_out as u32, bounce.as_ptr(), nread as u32)

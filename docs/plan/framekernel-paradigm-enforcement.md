@@ -550,6 +550,10 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **全量核查（裁决第 4 条）**：对 DECISION-J 全部反转批次跑完整 boundary 审计——**HIGH 0 / CRITICAL 0**，无其他漏豁免项。剩余 2 MEDIUM 为 services 内部 inter-module 依赖白名单（`proc→mm`、`timer→syscall`），非 framework 边界穿透、非本裁决范畴（预存）。
 - **流程修正（裁决第 3 条）**：验证链补 `audit_services_boundary.py` 单独运行为每批强制项（audit quick 不含 boundary 维=盲区）。本批起执行。
 - **验证**：boundary 审计 `>>> services 边界检查通过 <<<` ✅。
+- **审查结论（DECISION-N 闭环，无遗留）**：豁免 2 条与黑名单精确匹配、两文件纯 re-export 壳前提成立、全量核查 HIGH 0、提交范围无越界、流程修正已登记。
+- **2 MEDIUM 预存项登记（审查建议 1）**（services 内部 inter-module 依赖，非 F2 framework 边界穿透，后续架构演进时留意，不即时处理）：
+  1. `services/proc/oomd.rs:23` — `proc→mm`：`use services::mm::memory_pressure::{MemoryPressure, update_pressure}`（oomd 压力监控消费 mm 压力信号）
+  2. `services/timer/posix_timer.rs:50` — `timer→syscall`：`use services::syscall::posix_timer as syscall_ptimer`（posix_timer 实现由 timer 与 syscall 两层共享）
 
 ### DECISION-J 第十四批执行记录：driver/power 迁回（DECISION-M 方案 B 实施）
 
@@ -598,6 +602,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **边界审计**：新壳触发 1 HIGH（`framework::syscall::types` 在黑名单），按 DECISION-N 既定模式（纯 re-export 代理壳）加入 PROXY_ALLOWANCE；boundary 复核通过。
 - **引用计数**：生产反向依赖 30→28 文件、53→49 行（audit_reverse_deps.py 口径）；syscall 目录生产引用仅剩 dispatch.rs（mremap_syscall + ExecveResult）+ sendfile.rs（svc_pipe）+ clone.rs（NamespaceSet::clone_from）+ mmap.rs/mprotect.rs 壳。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
+
+### DECISION-J 第十八批执行记录：syscall 目录收尾（mremap 迁 services + sendfile 走 IpcStrategy + 死壳删除）
+
+> 调研确认 syscall 目录剩余 4 类生产引用：① mmap.rs/mprotect.rs 壳（T6-17 迁移遗留，全 kernel grep 确认 **0 消费者**——消费方早已直走 `services::mm::mmap`）；② dispatch.rs SYS_mremap 分支调 `services::mm::mremap::mremap_syscall`（策略主体在 services，framework 仅做参数校验转发——与 dispatch_mm 的 mmap/munmap/mprotect 系列完全平行）；③ sendfile.rs 3 处 `svc_pipe::pipe_{read,write}_safe`（IpcStrategy trait 已有 `pipe_read/pipe_write` 同语义方法）；④ QX_EXECVE 的 `ExecveResult::from_ret`（errno 白名单过滤策略，留待 execve 分发迁移专项）。
+
+- **死壳删除**：`framework/syscall/mmap.rs` + `mprotect.rs` 删除（0 消费者），mod.rs 移除声明。host-tests 无源路径引用。
+- **SYS_mremap 迁 services dispatch_mm**：framework dispatch 删分支（连带 try_flags helper——唯一消费者）；services/dispatch.rs dispatch_mm 加 SYS_mremap 分支（vma_get_current_mm + i32 严格校验语义不变，services→framework 合法方向）。分发顺序不变：framework 先问 services 分发器，回退才走 framework match。
+- **sendfile 走 IpcStrategy**：sys_sendfile/sys_splice 3 处 pipe 读写改走 `current_ipc_strategy().pipe_{read,write}`（trait 方法签名 `Result<u32, i32>`，原 `.map_or(-1, ...)` 丢弃错误码语义不变）；策略未注册降级 ENOSYS（DECISION-K 降级契约）。framework→services 引用清零。
+- **边界审计**：boundary 通过，无新增违规。
+- **引用计数**：生产反向依赖 28→25 文件、49→45 行。syscall 目录生产引用仅剩 dispatch.rs（QX_EXECVE ExecveResult）1 处。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅（含 pedantic manual_let_else 修正）/ audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
