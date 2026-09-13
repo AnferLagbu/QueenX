@@ -1,5 +1,5 @@
 use super::check;
-use crate::kernel::framework::fs::devfs::devfs::{DEVFS_DATA, DEVFS_MAX_DEVICES};
+use crate::kernel::framework::fs::devfs::{DEVFS_DATA, DEVFS_MAX_DEVICES};
 use crate::kernel::framework::tests::{TestResult, runner};
 use crate::kernel::services::fs::devfs;
 use crate::register_tests_inner;

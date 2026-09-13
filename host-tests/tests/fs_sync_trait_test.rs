@@ -80,7 +80,8 @@ fn ramfs_inherits_default() {
 
 #[test]
 fn devfs_inherits_default() {
-    let src = read_src("src/kernel/services/fs/devfs.rs");
+    // DECISION-J 第二十一批: devfs 实现迁回 framework/fs/devfs/mod.rs
+    let src = read_src("src/kernel/framework/fs/devfs/mod.rs");
     let impl_block = src
         .rsplit_once("impl FileSystem for DevfsData")
         .map(|(_, b)| b)

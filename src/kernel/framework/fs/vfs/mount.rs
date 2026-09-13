@@ -8,7 +8,7 @@
 use super::api::ptr_to_str;
 use super::types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
 use super::vfs::VFS_MANAGER;
-use crate::kernel::framework::fs::devfs::devfs::{DEVFS_DATA, DevfsData};
+use crate::kernel::framework::fs::devfs::{DEVFS_DATA, DevfsData};
 use crate::kernel::framework::fs::hvfs::hvfs::get_hvfs;
 use crate::kernel::framework::fs::ramfs::ramfs::{RAMFS_DATA, RamFsData};
 

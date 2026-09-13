@@ -135,7 +135,8 @@ fn ramfs_has_native_inode() {
 
 #[test]
 fn devfs_has_native_inode() {
-    let src = read_file("services/fs/devfs.rs");
+    // DECISION-J 第二十一批: devfs 实现迁回 framework/fs/devfs/mod.rs
+    let src = read_file("framework/fs/devfs/mod.rs");
     assert!(src.contains("pub struct DevFsInode"), "DevFS 必须有原生 DevFsInode");
     assert!(src.contains("impl Inode for DevFsInode"), "DevFsInode 必须 impl Inode");
 }

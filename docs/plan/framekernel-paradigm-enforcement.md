@@ -543,6 +543,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **状态**: [X]（裁决完成；豁免+核查交委托人）
 
+### DECISION-O: 两预存问题处置（§12.5 登记，2026-09-12 审核员裁决）
+
+> **背景**：委托人 §12.5 登记 2 预存问题：① `audit_volatile_access` 报 `pmm.rs:1212 bitmap_size.get()` 非 volatile（本批未触碰 mm）；② proc 残余 `cfs.rs` 常量 re-export 与 `oomd.rs MemoryPressure` 仍在反向依赖清单（proc 批残留）。
+
+**裁决**：
+1. **问题① pmm.rs:1212 = 审计误报（预存）**：`bitmap_size` 是 buddy 元数据字段（初始化后只读普通内存值，非 MMIO/共享 volatile 场景），`.get()` 普通读正确。处置：登记待 mm 专项核实 audit_volatile_access 规则后定性（误报→修脚本/豁免；真有共享语义→mm 批修）。不阻塞本批。
+2. **问题② proc 残留 = 真实反向依赖欠账（本工程 DECISION-J proc 批未清干净）**：实证 `framework/proc/oomd.rs:29` 直接 `use services::mm::memory_pressure::{MemoryPressure, update_pressure}`（framework→services 反向）+ cfs.rs 双向 re-export 混乱。处置（**登记回 proc 批收尾，不顺手在 fs 批改**）：按 DECISION-J 统一判据——`MemoryPressure` 类型**归 framework**（被机制 oomd 使用 = 机制持有的类型），`update_pressure` 算法留 services（策略实现）；cfs 双向 re-export 收敛为单向（framework 壳删或理顺方向）。
+3. **原则**：① 属无关预存（§12.5 记录待专项）；② 属本工程欠账（§9.3 范畴，proc 批补清，不跨批顺手改——外科手术原则）。
+
+**状态**: [X]（裁决完成；proc 批收尾 + mm 专项登记交委托人）
+
 ### DECISION-N 执行记录：PROXY_ALLOWANCE 豁免 + 全量核查（2026-09-13）
 
 - **豁免实施**：`scripts/audit_services_boundary.py` PROXY_ALLOWANCE 新增 2 条（与现有 5 条同质，仅 re-export 代理壳）：`('src/kernel/services/sync/types.rs', 'framework::sync::types')`、`('src/kernel/services/barrier/reset_config.rs', 'framework::barrier::reset')`。
@@ -637,6 +648,21 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **host-test 同步**：cfs_btreemap_bench_test.rs（I-34 BTreeMap 静态契约读 framework/proc/cfs.rs）+ framework_spinlock_migration_test.rs（P1-I-17 cgroup OnceLock 断言读 framework/proc/cgroup.rs）。
 - **引用计数**：生产反向依赖 20→16 文件、39→35 行。**proc 目录壳清零**（仅剩 dispatch.rs QX_EXECVE 1 处真实调用，留 execve 分发迁移专项）。
 - **验证**：双架构 0w0e ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
+
+### DECISION-J 第二十一批执行记录：fs 系壳批 A（flock/devfs/inotify 反转 + ramfs/hvfs 专项判定）
+
+> fs 系 5 壳逐项闭包调研后分治：flock/devfs/inotify 闭包闭合 → 反转归位；ramfs 闭包不闭合、hvfs 体量大 → 各归专项批（与 §"fs 系列" 依赖闭包调研结论一致）。
+
+**本批（3 文件 2187 行）**：
+- **flock.rs**（728 行，自 services/fs/flock.rs）：flock/POSIX 锁表被 framework VFS 机制内联消费（vfs/path.rs inode 释放路径调用 `posix_lock_release_inode`），锁表属 VFS 机制状态 — 反转。依赖闭包仅 IrqSpinLock 别名（framework::sync 直引）+ core 原子，0 unsafe。services 改 glob 壳。
+- **devfs.rs → framework/fs/devfs/mod.rs**（863 行）：DevFS 设备表被 framework VFS 挂载机制直接消费（vfs/mount.rs 引用 `DEVFS_DATA`/`DevfsData`）— 反转。闭包闭合关键：Inode trait 已于 B09-12 迁回 `framework::fs::vfs::inode`（services::fs::inode 仅 re-export）+ `services::sync::once::OnceCell` 实为 `framework::sync::OnceLock` 别名 — 三处 services 引用全部可 framework 本地化，0 unsafe。删除 `framework/fs/devfs/devfs.rs` 旧壳层，mount.rs/test_devfs.rs 改直路径；services 改 glob 壳。
+- **inotify.rs**（596 行，自 services/fs/inotify.rs）：inotify 实例表/事件队列被 framework VFS 机制内联消费（vfs/path.rs 与 vfs/handle.rs 文件操作路径直接调用 `inotify_notify`）— 反转，`sys_inotify_read`（用户缓冲区 unsafe 写入，SAFETY 逐块标注）一并归位。闭包闭合：Errno（framework::errno）、fd_alloc（framework::proc::fd_alloc，第十九批已迁回）均 framework 项。services 改 glob 壳。
+- **ramfs 专项判定**：ramfs_core 闭包**不闭合**——`impl FileSystem for RamFsData` 构造 services 具象 `RamFsInode`（3 处）+ 依赖 `services::fs::dcache`（inode 缓存）+ `services::fs::vfs_types`，迁移将连带拖入 inode 具象层与 dcache 子系统 → 按 §"fs 系列"调研结论归专项批（backend_trait 注入方向，同 DECISION-K 项 5）。
+- **hvfs 专项判定**：29 文件 ZFS 风格大型实现 + framework 仅消费 `hvfs::hvfs::{get_hvfs, hvfs_hotplug_register}` 挂载集成点 → 单列专项批（本批不动，18 行壳保留）。
+- **host-test 同步**：fd_allocator_unified_test.rs（INOTIFY_FD_BASE/fd_at 断言改读 framework/fs/vfs/inotify.rs）+ fs_sync_trait_test.rs + test_runner_init_test.rs + plan_b_inode_test.rs（devfs 源码断言改读 framework/fs/devfs/mod.rs）。
+- **引用计数**：生产反向依赖 16→13 文件、35→31 行（ramfs 1 行 + hvfs 18 行留专项）。
+- **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy 双架构 0 warning（pedantic lib + kernel_test + host-test 三维）✅ / audit quick 全过 ✅ / boundary + coupling + safety_coverage 100% + static_mut + repr_c + feature_semantics 全过 ✅ / host-tests 98 套件 749 通过 0 失败（debug+release 双档）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready）✅。预存问题登记：audit_volatile_access 报 pmm.rs:1212 `bitmap_size.get()` 非 volatile 访问（本批未触碰 mm 子树，待专项处置）。
+
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
