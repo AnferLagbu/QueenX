@@ -15,7 +15,6 @@ use super::{
     MAX_SM_FD, NET_STATE, Ordering, get_max_sockets, is_network_initialized, process_dhcp_events,
     raw, socket_set,
 };
-use crate::kernel::services::net::unix as uds_svc;
 use smoltcp::socket::{tcp, udp};
 use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint, Ipv4Address, Ipv6Address};
 
@@ -35,6 +34,27 @@ const E_CONNRESET: i32 = 104;
 const E_NOTCONN: i32 = 107;
 const E_CONNREFUSED: i32 = 111;
 const E_NODEV: i32 = 19;
+const E_NOPROTOOPT: i32 = 92;
+
+// ============================================================================
+// UDS setsockopt 策略注册契约 (DECISION-K 统一模式: 机制 init 后注册策略)
+// ============================================================================
+
+/// UDS `SO_PASSCRED` setsockopt 策略钩子 — services UDS 实现注册, framework 消费
+///
+/// framework `sm_setsockopt` (机制 FFI) 识别 `SO_PASSCRED` 路由需求后,
+/// 经由此钩子委托 `services::net::unix::uds_setsockopt` (策略实现),
+/// framework 不反向依赖 services 具象 UDS 模块 (第二十六批反转).
+static UDS_SETOPT_HOOK: crate::kernel::framework::sync::OnceLock<fn(i32, bool) -> i32> =
+    crate::kernel::framework::sync::OnceLock::new();
+
+/// 注册 UDS setsockopt 策略钩子 (由 `services::net::unix::uds_init` 调用)
+///
+/// # Errors
+/// 钩子已被注册过时返回 Err (幂等语义由调用方忽略重复注册)。
+pub fn register_uds_setsockopt_hook(hook: fn(i32, bool) -> i32) -> Result<(), fn(i32, bool) -> i32> {
+    UDS_SETOPT_HOOK.set(hook)
+}
 
 // ============================================================================
 // W4.4: smoltcp wire 类型 ↔ NetStack trait 抽象类型的翻译 helper
@@ -956,7 +976,13 @@ pub unsafe extern "C" fn sm_setsockopt(
                 return -22; // EINVAL
             }
             let val = core::ptr::read_unaligned(_optval as *const i32);
-            return uds_svc::uds_setsockopt(_fd, val != 0);
+            // 第二十六批: UDS 策略经注册钩子委托 (未注册 fail-closed, 早期
+            // 启动无用户态进程, -ENOPROTOOPT 窗口安全; 符号与全文件
+            // 负 errno 返回惯例一致)
+            return match UDS_SETOPT_HOOK.get() {
+                Some(&hook) => hook(_fd, val != 0),
+                None => -E_NOPROTOOPT,
+            };
         }
         0
     }

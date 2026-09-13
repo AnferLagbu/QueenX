@@ -81,12 +81,16 @@ impl CasIndex {
     }
 
     pub fn ref_dec(&self, hash: &CasHash) -> u64 {
+        // 锁序统一: hash_to_dva → ref_counts (与 insert/invalidate 一致).
+        // 回归背景 (第二十六批预存问题修复): 此前清零分支先持 ref_counts 再取
+        // hash_to_dva, 与 insert 的持锁顺序相反, 并发交错即 ABBA 死锁
+        // (host-tests hvfs_stress_test 两测试线程互等复现).
+        let mut index = self.hash_to_dva.lock();
         let mut refs = self.ref_counts.lock();
         if let Some(count) = refs.get_mut(hash) {
             *count = count.saturating_sub(1);
             if *count == 0 {
                 refs.remove(hash);
-                let mut index = self.hash_to_dva.lock();
                 index.remove(hash);
                 return 0;
             }

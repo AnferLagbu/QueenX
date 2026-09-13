@@ -739,6 +739,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：生产反向依赖 **9→2 文件、10→2 行**（credo 三壳 + ebpf verifier + execve 分发五项清零；剩余 hdmi 壳、sm_fi UDS 委托均属 HDMI 专项批）。
 - **验证**：双架构 build.sh all Passed ✅ / clippy pedantic -D warnings 四维（x86_64+aarch64 × kernel_test+host-test）0 ✅ / 核心审计 12 项全过（boundary + safety_coverage + deadlock_matrix + coupling + comment_language + once_cell + c_naming + invariants + repr_c + volatile_access + static_mut + reverse_deps 2 文件/2 行与登记一致）✅ / host-tests 98 套件全过（e04 共享测试集 336 passed/7 skipped/0 failed，修复后单独+全量双跑验证）✅ / QEMU x86_64 完整启动至 Ring 3 ✅。
 
+### DECISION-K 项 5 执行记录：第二十六批 sm_fi UDS 委托反转（SO_PASSCRED 钩子注册契约）
+
+> 落实 §7 net 剩余的 sm_fi 项：`framework/net/init/sm_fi.rs` 对 `services::net::unix` 的最后一处生产反向依赖（`sm_setsockopt` 的 `SO_PASSCRED` 路由直调 `uds_svc::uds_setsockopt`，1 import + 1 调用点）。**生产反向依赖 2→1 文件、2→1 行**（仅剩 HDMI 壳，归 HDMI 专项批）。
+
+**本批（钩子注册契约）**：
+- **framework 侧**：sm_fi.rs 新增 `UDS_SETOPT_HOOK: OnceLock<fn(i32, bool) -> i32>` + `register_uds_setsockopt_hook()`（DECISION-K 统一模式，同 `register_hvfs_fs`/`register_pressure_classifier` idiom）；`sm_setsockopt` 的 `SO_PASSCRED` 路由改经钩子委托，未注册时 fail-closed 返回 `E_NOPROTOOPT`（-92，命名常量，与文件内 errno 常量族一致）——未注册窗口仅存在于启动早期（Ring 3 前），无用户态进程可触达，窗口安全。
+- **services 侧**：`services::net::unix::uds_init()` 注册钩子（`uds_setsockopt` fn pointer，重复注册 Err 忽略幂等）；注册调用以 `#[cfg(not(feature = "kernel_test"))]` 门控——与 `framework::net::init` 模块门控对齐（kernel_test 下 init FFI 层整体不存在，sm_setsockopt 消费点同样不存在，两侧一致）。
+- **接线无新增**：`lib.rs` 步骤 9-1 已有 `uds_init()` 调用（UDS subsystem initialized），注册契约无需改动启动序列。
+- **预存问题修复（本批阻塞项）**：`services/fs/hvfs/dedup.rs` `CasIndex::ref_dec` 清零分支先持 `ref_counts` 再取 `hash_to_dva`，与 `insert` 的持锁顺序（`hash_to_dva → ref_counts`）相反，并发交错即 ABBA 死锁——host-tests `hvfs_stress_test` 双测试线程互等挂起复现，阻塞本批 host-tests 门槛。修复：锁序统一为 `hash_to_dva → ref_counts`（与 insert/invalidate 一致）；新增回归测试 `stress_cas_concurrent_insert_refdec_no_abba`（双线程各 200 轮高频交错两条持锁路径，独立 hash 保证断言确定性）。
+- **引用计数**：生产反向依赖 **2→1 文件、2→1 行**（sm_fi 项清零；剩余 hdmi 壳 1 行，属 HDMI 平行实现统一专项批，方案 A services 收敛已授权）。
+- **验证**：双架构 build.sh all Passed ✅ / quick 审计链全过（clippy pedantic lib + kernel_test/host-test 两 feature 维 0 warning + 6 不变式 + TCB 边界）✅ / audit_reverse_deps 1 文件/1 行与登记一致 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅ / host-tests 98 套件全过（含 hvfs_stress_test 专项单套 10 轮压测稳定）✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。

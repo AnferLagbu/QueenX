@@ -265,6 +265,14 @@ fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
 
 pub fn uds_init() {
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
+    // 注册契约 (DECISION-K 统一模式: 机制 init 后注册策略, 第二十六批):
+    // framework sm_setsockopt 的 SO_PASSCRED 路由经此钩子委托本模块,
+    // framework 不再反向依赖 services::net::unix. 重复注册 Err 忽略 (幂等).
+    // cfg 对齐 framework::net::init 门控 (kernel_test 下 init FFI 层不存在).
+    #[cfg(not(feature = "kernel_test"))]
+    {
+        let _ = crate::kernel::framework::net::init::register_uds_setsockopt_hook(uds_setsockopt);
+    }
 }
 
 /// 创建一个新的 UDS 套接字, 返回其 FD

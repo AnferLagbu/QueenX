@@ -60,6 +60,41 @@ fn stress_cas_dedup_50_ref_inc_dec() {
 }
 
 #[test]
+fn stress_cas_concurrent_insert_refdec_no_abba() {
+    // 回归测试 (第二十六批): CAS 双锁 ABBA 死锁修复.
+    // 修复前 `ref_dec` 清零分支先持 `ref_counts` 再取 `hash_to_dva`, 与
+    // `insert` (hash_to_dva → ref_counts) 持锁顺序相反, 两路径并发交错即互等.
+    // 本测试两线程分别高频执行两条持锁路径 (各自独立 hash, 断言确定性),
+    // 修复前该负载下死锁挂起; 修复后锁序统一应稳定通过.
+    use std::thread;
+
+    let dec = thread::spawn(|| {
+        let cas = dedup::get_cas();
+        for i in 0..200u64 {
+            let hash = dedup::sha256(format!("abba-dec-{}", i).as_bytes());
+            let mut bp = bp::HvBlockPointer::null();
+            bp.set_birth(i);
+            cas.insert(hash, bp);
+            assert_eq!(cas.ref_count(&hash), 1, "abba-dec-{} count", i);
+            assert_eq!(cas.ref_dec(&hash), 0, "abba-dec-{} dec", i);
+            assert!(!cas.is_known(&hash), "abba-dec-{} known", i);
+        }
+    });
+    let ins = thread::spawn(|| {
+        let cas = dedup::get_cas();
+        for i in 0..200u64 {
+            let hash = dedup::sha256(format!("abba-ins-{}", i).as_bytes());
+            let mut bp = bp::HvBlockPointer::null();
+            bp.set_birth(i);
+            cas.insert(hash, bp);
+            assert!(cas.lookup(&hash).is_some(), "abba-ins-{} lookup", i);
+        }
+    });
+    dec.join().expect("dec 线程 panic");
+    ins.join().expect("ins 线程 panic");
+}
+
+#[test]
 fn stress_zap_hash_collision_256() {
     let z = zap::HvZap::with_capacity(256);
     for i in 0..256 {
