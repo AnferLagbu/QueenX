@@ -70,9 +70,13 @@ def check_direct_access_violations(content, field_name, accesses):
         if line_text.strip().startswith('//'):
             continue
         # 排除 init-only 路径 (count_free_pages 仅在 init 时调用, 非热路径)
+        # 注意: 取窗口内最近 (最后一个) fn 而非最左 fn — re.search 取最左,
+        # 当包裹函数较短时, 上一个函数头 (如 fn test_bit) 也会落入 500 字符
+        # 窗口, 导致豁免判定失配 (2026-09-13 pmm.rs:1212 误报根因,
+        # DECISION-O ① mm 专项核实修正; fail-closed 路径不变)
         fn_search_start = max(0, m.start() - 500)
-        fn_match = re.search(r'fn\s+(\w+)', content[fn_search_start:m.start()])
-        if fn_match and fn_match.group(1) == 'count_free_pages':
+        fn_matches = re.findall(r'fn\s+(\w+)', content[fn_search_start:m.start()])
+        if fn_matches and fn_matches[-1] == 'count_free_pages':
             continue
         has_volatile = 'read_volatile' in context or 'addr_of' in context
         has_raw_ptr = 'self as *const Self as *const u8' in context or 'p.add(' in context

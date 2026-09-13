@@ -677,6 +677,20 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy 双架构 0 warning ✅ / 核心审计 8/8（boundary/safety_coverage/deadlock_matrix/coupling/comment_language/once_cell/c_naming/invariants）+ audit_reverse_deps ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅。预存 flaky 登记（§12.5，与本批无关）：host-tests/fsx_integration_test 的 test_fsx_stress 在系统高负载（并行跑多任务）下偶发 30 errors 阈值 panic，独占串行跑稳定通过（errors: 0）——host 侧 std 压力模拟器时序敏感，不触及本批内核改动，待单开处置。**交集确认依据（审核要求补充）**：fsx 依赖面为 `std::{collections, fs, path, sync::atomic}` 自包含模拟器（host-tests/src/fsx.rs，进程内 FsxFs 模拟 + 临时目录，零 `src/kernel` 源码引用、不编译内核）；对照本批 12 文件改动清单（framework mm/config/proc + services mm/config + plan + host-test 契约）——两清单无重叠，零交集坐实（对第二十一批 fs 系改动同理成立）。**处置方向（审核确认，待单开）**：定性 = flaky test（时序敏感，高负载下模拟时序偏移致 errors 超阈值），非内核 bug；单开方案选项：① 阈值容差放宽（30 errors 阈值 vs 负载灵敏度）② CI 标注 serial + 重试机制 ③ 模拟器时序隔离（固定 tick）；优先级 = 建议优先单开（flaky 污染 §2.3 host-tests 门槛，影响后续批次验收稳定性）。
 
 
+### mm 专项 ① 执行记录：pmm.rs:1212 volatile 误报根因核实 + audit_volatile_access 规则修正（DECISION-O ①）
+
+> 执行 DECISION-O ① 裁决登记的"待 mm 专项核实 audit_volatile_access 规则"。
+
+**误报根因（复现坐实）**：`check_direct_access_violations` 的 fn 上下文豁免判定用 `re.search` 取 500 字符回溯窗口内**最左** `fn`——当包裹函数较短时，上一个函数头也会落入窗口（`fn test_bit` 距访问点 485 字符 < 500），遮蔽真正的包裹函数 `count_free_pages`（距 273 字符），豁免失配 → 1212 行误报。漂移触发源：`#[expect(clippy::cast_possible_truncation)]` 属性行加入后把 test_bit 头推过窗口边界。
+
+**误报定性核实成立**：`bitmap_size: Cell<usize>` 唯一 `.get()` 点在 `count_free_pages`（init-only 非热路径），唯一 `.set()` 点在 `init_bitmap`；bitmap 位操作本体已走 MetaStore 裸指针路径（pmm.rs L1184-1186：该 LTO 错位面整体消除）+ `#[repr(C)]` 布局防御——DECISION-O ① "buddy 元数据普通内存读、非 volatile 场景" 定性成立，代码无需改动。
+
+**规则修正**：豁免判定改取窗口内**最近**（最后一个）`fn`（`re.findall(...)[-1]`），精确化包裹函数识别；fail-closed 路径不变，并做负向验证（假豁免名下 1212 仍报 violation）。修复后 4/4 高风险字段全过，exit 0。
+
+**观察项登记（不擅自实施）**：脚本自注释"Atomic 形态天然免疫 LTO 字段错位，优于 UnsafeCell+get()"——`bitmap_size` 可迁 `AtomicUsize`（load/store）消除 direct 模式对文本启发式豁免的依赖，属代码改动超出本专项"规则核实"范围，留委托人裁决单开。
+
+**验证**：audit_volatile_access 4/4 通过 + fail-closed 负向验证 ✅（其余验证门槛不受影响——本批仅改审计脚本，无内核代码改动）。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。
