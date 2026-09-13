@@ -763,7 +763,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **本批施工**：删除 `framework/driver/display/hdmi/` 整目录（8 文件：1 re-export 壳 + 7 未挂载孤儿，-1537 行）。
 
 - **验证**：audit_reverse_deps **0 文件/0 行**（测试上下文 15 文件/52 行按 §7.3 豁免不计数）✅ / 双架构 build.sh all ✅ / quick 审计链 ✅ / host-tests 98 套件 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅（孤儿不参与编译，编译产物零变化，全链为门槛形式性复核）。
-- **审计盲区登记（§12.5 报告待裁决）**：`audit_deadlock_matrix.py` 扫描范围仅 `src/kernel/framework`（L26-27），services 子树锁序不在审计范围——第二十六批 hvfs ABBA 死锁正因此漏检；是否扩展扫描范围待用户裁决。
+- **审计盲区扩展（用户裁决通过）**：`audit_deadlock_matrix.py` 扫描范围由仅 framework 扩展为 **framework + services 双子树**（368→718 文件）——扩展背景：第二十六批 hvfs ABBA 死锁位于 services 子树，原单根扫描不可见（fail-closed：不可检查 = 漏检）。同步增强：`services::sync::irq_lock::IrqSpinLock`（framework IrqSpinLock 的 services 层类型别名）纳入安全锁识别，覆盖全路径字段声明与 `as Mutex` 别名导入两种形态。扩展后**零新增发现**（唯一 HIGH 为 framework smp_init.rs `AP_STARTUP_LOCK` 预存人工审查项，扩展前已存在）。注：脚本 AB-BA 环检测仍为其文档声明的未实现项（需 lockdep-style 锁序声明机制），本次扩展不改变该边界。
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 

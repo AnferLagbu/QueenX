@@ -23,8 +23,13 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-BASE = Path('src/kernel/framework')
-SRC_ROOT = Path('src/kernel/framework')
+# 扫描范围 (2026-09-13 用户裁决扩展): framework + services 双子树.
+# 扩展背景: 第二十六批 hvfs/dedup.rs ABBA 死锁位于 services 子树, 原单根
+# 扫描对 services 锁使用不可见 (fail-closed 原则: 不可检查 = 漏检).
+BASES = [
+    Path('src/kernel/framework'),
+    Path('src/kernel/services'),
+]
 
 # 中断上下文的函数白名单 (这些函数中使用的 spin::Mutex 视为高风险)
 INTERRUPT_CONTEXT_FUNCS = [
@@ -150,16 +155,20 @@ def scan_file(filepath):
 
     # 安全锁字段模式: 标记这些字段为 IRQ 安全 (即 .lock() 不会产生 CRITICAL 警告)
     # B01-06 返工: 同样支持带路径的形式
+    # 2026-09-13 扩展: services::sync::irq_lock::IrqSpinLock 为 framework
+    # IrqSpinLock 的类型别名 (services 层 re-export), 全路径声明同样视为安全.
     safe_lock_field_pattern = re.compile(
         r'\b(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*'
-        r'(?:crate::kernel::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::)?'
+        r'(?:crate::kernel::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
+        r'crate::kernel::services::sync::irq_lock::|services::sync::irq_lock::)?'
         r'IrqSpinLock|FrameworkIrqSpinLock|'
         r'(?:crate::)?sync(?:::\s*\w+\s*)*::\s*'
         r'IrqSpinLock\b',
     )
     safe_lock_static_pattern = re.compile(
         r'\bstatic\s+(\w+)\s*:\s*'
-        r'(?:crate::kernel::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::)?'
+        r'(?:crate::kernel::framework::sync::irq_spinlock::|framework::sync::irq_spinlock::|'
+        r'crate::kernel::services::sync::irq_lock::|services::sync::irq_lock::)?'
         r'IrqSpinLock|FrameworkIrqSpinLock|'
         r'(?:crate::)?sync(?:::\s*\w+\s*)*::\s*'
         r'IrqSpinLock\b',
@@ -256,6 +265,21 @@ def scan_file(filepath):
                 # 末段以 Mutex/RwLock/Once/OnceCell 结尾, 或自定义名 (SpinMutex 等)
                 # 一律视为 unsafe. 详细分类暂不强制.
                 bare_aliases[alias] = 'unsafe'
+            continue
+        # 2026-09-13 扩展: services::sync 是 framework::sync 的 re-export 层
+        # (DECISION-K 边界), 形如
+        # `use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;`
+        # 的导入按末段类型分类: IrqSpinLock → safe, 其余 → unsafe.
+        m_use_services = re.search(
+            r'use\s+(?:crate::)?kernel::services::sync'
+            r'(?:::\s*\w+\s*)*'
+            r'::\s*(\w+)\s*(?:\s+as\s+(\w+))?\s*;',
+            line,
+        )
+        if m_use_services:
+            orig = m_use_services.group(1)
+            alias = m_use_services.group(2) or orig
+            bare_aliases[alias] = 'safe' if orig == 'IrqSpinLock' else 'unsafe'
             continue
         # pub type SpinMutex = spin::mutex::SpinMutex<T>;
         m_type = pub_type_alias.search(line)
@@ -533,12 +557,18 @@ def generate_report(issues, file_count):
 
 
 def main():
-    if not BASE.exists():
-        print(f'ERROR: {BASE} not found', file=sys.stderr)
-        sys.exit(2)
+    for base in BASES:
+        if not base.exists():
+            print(f'ERROR: {base} not found', file=sys.stderr)
+            sys.exit(2)
 
-    print(f'扫描 {BASE} ...')
-    issues, file_count = scan_directory(BASE)
+    issues = []
+    file_count = 0
+    for base in BASES:
+        print(f'扫描 {base} ...')
+        root_issues, root_files = scan_directory(base)
+        issues.extend(root_issues)
+        file_count += root_files
     report = generate_report(issues, file_count)
     print(report)
 
