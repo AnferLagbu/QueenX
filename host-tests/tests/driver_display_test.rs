@@ -8,7 +8,7 @@
 //!   - DisplayPort LinkRate/LaneCount 协商
 //!
 //! 追踪: I-22
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 //!
 //! ## B08-21 迁移 (2026-09-06)
 //! 删除本地 `PixelFormat` / `Color` / `DisplayMode` / `LinkRate` / `LaneCount`

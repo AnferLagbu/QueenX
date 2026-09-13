@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! iobuf 容量计算与页对齐单元测试
 //!
 //! 模拟 framework/iobuf::IobRegion::alloc 的前置逻辑 (总容量 + 页数).

@@ -1,6 +1,6 @@
 [package]
 name = "smoltcp"
-version = "0.13.1"
+version = "0.14.0"
 edition = "2024"
 rust-version = "1.91"
 authors = ["whitequark <whitequark@whitequark.org>"]
@@ -17,7 +17,7 @@ license = "0BSD"
 autoexamples = false
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(ci_forbid_unused)'] }
 
 [dependencies]
 managed = { version = "0.8", default-features = false, features = ["map"] }
@@ -25,7 +25,7 @@ byteorder = { version = "1.0", default-features = false }
 log = { version = "0.4.4", default-features = false, optional = true }
 libc = { version = "0.2.18", optional = true }
 bitflags = { version = "1.0", default-features = false }
-defmt = { version = "0.3.8", optional = true, features = ["ip_in_core"] }
+defmt = { version = "1", optional = true, features = ["ip_in_core"] }
 cfg-if = "1.0.0"
 heapless = "0.9"
 
@@ -95,6 +95,9 @@ defmt = ["dep:defmt", "heapless/defmt"]
 "socket-tcp-reno" = []
 
 "packetmeta-id" = []
+
+# Enables segmentation offload support.
+"segmentation-offload" = []
 
 "async" = []
 

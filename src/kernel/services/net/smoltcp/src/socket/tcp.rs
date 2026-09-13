@@ -7,6 +7,7 @@ use core::fmt::Display;
 use core::task::Waker;
 use core::{fmt, mem};
 
+use crate::phy::PacketMeta;
 #[cfg(feature = "async")]
 use crate::socket::WakerRegistration;
 use crate::socket::{Context, PollAt};
@@ -40,8 +41,7 @@ impl Display for ListenError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for ListenError {}
+impl core::error::Error for ListenError {}
 
 /// Error returned by [`Socket::connect`]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -60,8 +60,7 @@ impl Display for ConnectError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for ConnectError {}
+impl core::error::Error for ConnectError {}
 
 /// Error returned by [`Socket::send`]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -78,8 +77,7 @@ impl Display for SendError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for SendError {}
+impl core::error::Error for SendError {}
 
 /// Error returned by [`Socket::recv`]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -98,8 +96,7 @@ impl Display for RecvError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for RecvError {}
+impl core::error::Error for RecvError {}
 
 /// A TCP socket ring buffer.
 pub type SocketBuffer<'a> = RingBuffer<'a, u8>;
@@ -197,6 +194,11 @@ impl RttEstimator {
         Duration::from_millis(self.rto as _)
     }
 
+    #[cfg(feature = "socket-tcp-cubic")]
+    fn smoothed_rtt(&self) -> u32 {
+        if self.have_measurement { self.srtt } else { 0 }
+    }
+
     fn sample(&mut self, new_rtt: u32) {
         if self.have_measurement {
             // RFC 6298 (2.3) When a subsequent RTT measurement R' is made, a host MUST set (...)
@@ -248,12 +250,7 @@ impl RttEstimator {
         }
     }
 
-    fn on_retransmit(&mut self) {
-        if self.timestamp.is_some() {
-            tcp_trace!("rtte: abort sampling due to retransmit");
-        }
-        self.timestamp = None;
-
+    fn on_rto(&mut self) {
         // RFC 6298 (5.5) The host MUST set RTO <- RTO * 2 ("back off the timer").  The
         // maximum value discussed in (2.5) above may be used to provide
         // an upper bound to this doubling operation.
@@ -271,6 +268,13 @@ impl RttEstimator {
             self.have_measurement = false;
             tcp_trace!("rtte: too many retransmissions, clearing srtt, rttvar.");
         }
+    }
+
+    fn on_retransmit(&mut self) {
+        if self.timestamp.is_some() {
+            tcp_trace!("rtte: abort sampling due to retransmit");
+        }
+        self.timestamp = None;
     }
 }
 
@@ -517,6 +521,8 @@ pub struct Socket<'a> {
     /// The number of packets received directly after
     /// each other which have the same ACK number.
     local_rx_dup_acks: u8,
+    /// If a fast retransmit needs to occur
+    pending_fast_retransmit: bool,
 
     /// Duration for Delayed ACK. If None no ACKs will be delayed.
     ack_delay: Option<Duration>,
@@ -550,6 +556,15 @@ pub struct Socket<'a> {
 }
 
 const DEFAULT_MSS: usize = 536;
+
+/// Minimum MSS we accept from the remote, same value as Linux's `TCP_MIN_SND_MSS`.
+/// Without it, a peer advertising a tiny MSS could force segments to carry little
+/// or no payload once the TCP options length is subtracted from the effective MSS,
+/// stalling the connection in an endless stream of empty segments.
+///
+/// Must exceed the maximum possible length of the TCP options (currently 12, for
+/// timestamps) so that every segment carries some payload.
+const MIN_REMOTE_MSS: usize = 48;
 
 impl<'a> Socket<'a> {
     #[allow(unused_comparisons)] // small usize platforms always pass rx_capacity check
@@ -598,6 +613,7 @@ impl<'a> Socket<'a> {
             local_rx_last_ack: None,
             local_rx_last_seq: None,
             local_rx_dup_acks: 0,
+            pending_fast_retransmit: false,
             ack_delay: Some(ACK_DELAY_DEFAULT),
             ack_delay_timer: AckDelayTimer::Idle,
             challenge_ack_timer: Instant::from_secs(0),
@@ -1377,6 +1393,18 @@ impl<'a> Socket<'a> {
         self.tx_buffer.len()
     }
 
+    /// Number of octets transmitted but not yet ACKed.
+    fn flight_size(&self) -> usize {
+        self.remote_last_seq - self.local_seq_no
+    }
+
+    fn cwnd_remaining(&self) -> usize {
+        self.congestion_controller
+            .inner()
+            .window()
+            .saturating_sub(self.flight_size())
+    }
+
     /// Return the amount of octets queued in the receive buffer. This value can be larger than
     /// the slice read by the next `recv` or `peek` call because it includes all queued octets,
     /// and not only the octets that may be returned as a contiguous slice.
@@ -1755,10 +1783,48 @@ impl<'a> Socket<'a> {
                         overlap_start - window_start,
                     )
                 } else {
+                    // Out-of-window RSTs are silently dropped, per RFC 9293
+                    // (3.10.7.4) and RFC 5961 (3.2): no reply is sent, and the
+                    // TIME-WAIT timer below is not refreshed. RST senders don't
+                    // need a reply to make progress.
+                    if repr.control == TcpControl::Rst {
+                        net_debug!("dropping out-of-window RST");
+                        return None;
+                    }
+
                     // If we're in the TIME-WAIT state, restart the TIME-WAIT timeout, since
                     // the remote end may not have realized we've closed the connection.
                     if self.state == State::TimeWait {
                         self.timer.set_for_close(cx.now());
+                    }
+
+                    // Segments carrying data are exempt from challenge ACK rate
+                    // limiting: an out-of-window data segment is a retransmission
+                    // whose ACK was lost, or a window probe, and per RFC 9293
+                    // (3.10.7.4, 3.8.6.1) it should elicit an ACK so the remote
+                    // can make progress. Withholding these ACKs strands the
+                    // remote in retransmission backoff or persist state. The
+                    // rate limit exists to break ACK loops between desynced
+                    // peers, and exempting data segments cannot sustain such a
+                    // loop: the remote paces them with its retransmission and
+                    // persist timers, and the data it may send in response to a
+                    // duplicate ACK of ours (fast recovery) is bounded by its
+                    // send window, which never advances during a desync.
+                    //
+                    // The exemption covers FIN (a retransmitted final segment is
+                    // the same lost-ACK situation) but not SYN: a SYN in a
+                    // synchronized state is a challenge ACK situation (RFC 5961
+                    // 4.2), and challenge ACKs should be throttled (RFC 5961 7).
+                    // One per second is ample for a restarted peer to complete
+                    // the challenge exchange, since it retransmits its SYN on
+                    // its own timer.
+                    if !repr.payload.is_empty()
+                        && matches!(
+                            repr.control,
+                            TcpControl::None | TcpControl::Psh | TcpControl::Fin
+                        )
+                    {
+                        return Some(self.ack_reply(ip_repr, repr));
                     }
 
                     return self.challenge_ack_reply(cx, ip_repr, repr);
@@ -1792,11 +1858,6 @@ impl<'a> Socket<'a> {
 
                 ack_all = self.remote_last_seq <= ack_number;
             }
-
-            self.rtte.on_ack(cx.now(), ack_number);
-            self.congestion_controller
-                .inner_mut()
-                .on_ack(cx.now(), ack_len, &self.rtte);
         }
 
         // Disregard control flags we don't care about or shouldn't act on yet.
@@ -1842,14 +1903,13 @@ impl<'a> Socket<'a> {
             (State::Listen, TcpControl::Syn) => {
                 tcp_trace!("received SYN");
                 if let Some(max_seg_size) = repr.max_seg_size {
-                    if max_seg_size == 0 {
-                        tcp_trace!("received SYNACK with zero MSS, ignoring");
-                        return None;
+                    // Treat a zero MSS as if the option were absent, like Linux does.
+                    if max_seg_size != 0 {
+                        self.remote_mss = (max_seg_size as usize).max(MIN_REMOTE_MSS);
+                        self.congestion_controller
+                            .inner_mut()
+                            .set_mss(self.remote_mss);
                     }
-                    self.congestion_controller
-                        .inner_mut()
-                        .set_mss(max_seg_size as usize);
-                    self.remote_mss = max_seg_size as usize
                 }
 
                 self.tuple = Some(Tuple {
@@ -1896,14 +1956,13 @@ impl<'a> Socket<'a> {
                     tcp_trace!("received SYN");
                 }
                 if let Some(max_seg_size) = repr.max_seg_size {
-                    if max_seg_size == 0 {
-                        tcp_trace!("received SYNACK with zero MSS, ignoring");
-                        return None;
+                    // Treat a zero MSS as if the option were absent, like Linux does.
+                    if max_seg_size != 0 {
+                        self.remote_mss = (max_seg_size as usize).max(MIN_REMOTE_MSS);
+                        self.congestion_controller
+                            .inner_mut()
+                            .set_mss(self.remote_mss);
                     }
-                    self.remote_mss = max_seg_size as usize;
-                    self.congestion_controller
-                        .inner_mut()
-                        .set_mss(self.remote_mss);
                 }
 
                 self.remote_seq_no = repr.seq_number + 1;
@@ -2033,14 +2092,10 @@ impl<'a> Socket<'a> {
             // TODO: When flow control is implemented,
             // refractor the following block within that implementation
 
-            // Detect and react to duplicate ACKs by:
-            // 1. Check if duplicate ACK and change self.local_rx_dup_acks accordingly
-            // 2. If exactly 3 duplicate ACKs received, set for fast retransmit
-            // 3. Update the last received ACK (self.local_rx_last_ack)
             match self.local_rx_last_ack {
                 // Duplicate ACK if payload empty and ACK doesn't move send window ->
-                // Increment duplicate ACK count and set for retransmit if we just received
-                // the third duplicate ACK
+                // Increment duplicate ACK count, notify congestion controller and
+                // set for retransmit if we just received the third duplicate ACK
                 Some(last_rx_ack)
                     if repr.payload.is_empty()
                         && last_rx_ack == ack_number
@@ -2049,11 +2104,6 @@ impl<'a> Socket<'a> {
                 {
                     // Increment duplicate ACK count
                     self.local_rx_dup_acks = self.local_rx_dup_acks.saturating_add(1);
-
-                    // Inform congestion controller of duplicate ACK
-                    self.congestion_controller
-                        .inner_mut()
-                        .on_duplicate_ack(cx.now());
 
                     net_debug!(
                         "received duplicate ACK for seq {} (duplicate nr {}{})",
@@ -2070,19 +2120,41 @@ impl<'a> Socket<'a> {
                         self.timer.set_for_fast_retransmit();
                         net_debug!("started fast retransmit");
                     }
+
+                    // Notify of duplicate ACK
+                    let in_flight = self.flight_size();
+                    self.congestion_controller.inner_mut().on_dup_ack(
+                        cx.now(),
+                        self.remote_mss,
+                        in_flight,
+                    );
                 }
-                // No duplicate ACK -> Reset state and update last received ACK
+
+                // No duplicate ACK means we reset the duplicate ACK count
+                // and notify the congestion controller of the fresh ACK
                 _ => {
                     if self.local_rx_dup_acks > 0 {
                         self.local_rx_dup_acks = 0;
                         net_debug!("reset duplicate ACK count");
                     }
                     self.local_rx_last_ack = Some(ack_number);
+
+                    // Notify of fresh ACK
+                    self.rtte.on_ack(cx.now(), ack_number);
+                    let new_flight_size = self.flight_size().saturating_sub(ack_len);
+                    self.congestion_controller.inner_mut().on_ack(
+                        cx.now(),
+                        ack_len,
+                        new_flight_size,
+                        &self.rtte,
+                    );
                 }
             };
+
             // We've processed everything in the incoming segment, so advance the local
             // sequence number past it.
             self.local_seq_no = ack_number;
+
             // During retransmission, if an earlier segment got lost but later was
             // successfully received, self.local_seq_no can move past self.remote_last_seq.
             // Do not attempt to retransmit the latter segments; not only this is pointless
@@ -2225,6 +2297,11 @@ impl<'a> Socket<'a> {
     }
 
     fn seq_to_transmit(&self, cx: &mut Context) -> bool {
+        // Fast retransmits should always send, even if later congestion checks would disallow
+        if self.pending_fast_retransmit && !self.tx_buffer.is_empty() {
+            return true;
+        }
+
         let ip_header_len = match self.tuple.unwrap().local.addr {
             #[cfg(feature = "proto-ipv4")]
             IpAddress::Ipv4(_) => crate::wire::IPV4_HEADER_LEN,
@@ -2232,11 +2309,15 @@ impl<'a> Socket<'a> {
             IpAddress::Ipv6(_) => crate::wire::IPV6_HEADER_LEN,
         };
 
-        // Max segment size we're able to send due to MTU limitations.
-        let local_mss = cx.ip_mtu() - ip_header_len - TCP_HEADER_LEN;
+        // The effective max segment size, taking into account the options and the local and remote limits.
+        let options_len = if self.tsval_generator.is_some() {
+            12
+        } else {
+            0
+        };
 
-        // The effective max segment size, taking into account our and remote's limits.
-        let effective_mss = local_mss.min(self.remote_mss);
+        let local_mss = cx.ip_mtu() - ip_header_len - TCP_HEADER_LEN;
+        let effective_mss = local_mss.min(self.remote_mss).saturating_sub(options_len);
 
         // Have we sent data that hasn't been ACKed yet?
         let data_in_flight = self.remote_last_seq != self.local_seq_no;
@@ -2251,14 +2332,14 @@ impl<'a> Socket<'a> {
             self.local_seq_no + core::cmp::min(self.remote_win_len, self.tx_buffer.len());
 
         // Max amount of octets we can send.
-        let max_send = if max_send_seq >= self.remote_last_seq {
+        let capped_send_seq = if max_send_seq >= self.remote_last_seq {
             max_send_seq - self.remote_last_seq
         } else {
             0
         };
 
-        // Compare max_send with the congestion window.
-        let max_send = max_send.min(self.congestion_controller.inner().window());
+        // compare max bytes allowed by cwnd with max bytes allowed by remote
+        let max_send = capped_send_seq.min(self.cwnd_remaining());
 
         // Can we send at least 1 octet?
         let mut can_send = max_send != 0;
@@ -2351,7 +2432,7 @@ impl<'a> Socket<'a> {
 
     pub(crate) fn dispatch<F, E>(&mut self, cx: &mut Context, emit: F) -> Result<(), E>
     where
-        F: FnOnce(&mut Context, (IpRepr, TcpRepr)) -> Result<(), E>,
+        F: FnOnce(&mut Context, PacketMeta, (IpRepr, TcpRepr)) -> Result<(), E>,
     {
         if self.tuple.is_none() {
             return Ok(());
@@ -2390,14 +2471,36 @@ impl<'a> Socket<'a> {
             // If a timeout expires, we should abort the connection.
             net_debug!("timeout exceeded");
             self.set_state(State::Closed);
-        } else if !self.seq_to_transmit(cx) && self.timer.should_retransmit(cx.now()) {
-            // If a retransmit timer expired, we should resend data starting at the last ACK.
-            net_debug!("retransmitting");
+        } else if self.timer.should_retransmit(cx.now()) {
+            if let Timer::Retransmit { .. } = self.timer {
+                // If a retransmit timer expired, we should resend data starting at the last ACK.
+                net_debug!("retransmitting after rto");
 
-            // Rewind "last sequence number sent", as if we never
-            // had sent them. This will cause all data in the queue
-            // to be sent again.
-            self.remote_last_seq = self.local_seq_no;
+                // Inform the congestion controller that we're retransmitting and should enter the slow start state
+                let in_flight = self.flight_size();
+                self.congestion_controller
+                    .inner_mut()
+                    .on_rto(cx.now(), in_flight);
+
+                // Rewind "last sequence number sent", as if we never
+                // had sent them. This will cause all data in the queue
+                // to be sent again.
+                self.remote_last_seq = self.local_seq_no;
+
+                // Inform RTTE, so that it can can handle RTO backoff
+                self.rtte.on_rto();
+            } else {
+                // If a fast rentrasmit timer expired, we should resend only the earliest unAcked segment
+                net_debug!("retransmitting for fast-retransmit");
+
+                // Inform the congestion controller that we're doing a fast retransmit and should enter the fast recovery state
+                let in_flight = self.flight_size();
+                self.congestion_controller
+                    .inner_mut()
+                    .on_loss(cx.now(), in_flight);
+
+                self.pending_fast_retransmit = true;
+            }
 
             // Clear the `should_retransmit` state. If we can't retransmit right
             // now for whatever reason (like zero window), this avoids an
@@ -2407,11 +2510,6 @@ impl<'a> Socket<'a> {
 
             // Inform RTTE, so that it can avoid bogus measurements.
             self.rtte.on_retransmit();
-
-            // Inform the congestion controller that we're retransmitting.
-            self.congestion_controller
-                .inner_mut()
-                .on_retransmit(cx.now());
         }
 
         #[cfg(feature = "socket-tcp-pause-synack")]
@@ -2478,6 +2576,15 @@ impl<'a> Socket<'a> {
 
         let mut is_zero_window_probe = false;
 
+        #[cfg_attr(
+            not(feature = "segmentation-offload"),
+            expect(
+                unused_mut,
+                reason = "The default is not mutated if the segmentation offload feature is not enabled."
+            )
+        )]
+        let mut packet_meta = PacketMeta::default();
+
         match self.state {
             // We transmit an RST in the CLOSED state. If we ended up in the CLOSED state
             // with a specified endpoint, it means that the socket was aborted.
@@ -2515,37 +2622,102 @@ impl<'a> Socket<'a> {
                 // Extract as much data as the remote side can receive in this packet
                 // from the transmit buffer.
 
-                // Right edge of window, ie the max sequence number we're allowed to send.
-                let win_right_edge = self.local_seq_no + self.remote_win_len;
-
-                // Max amount of octets we're allowed to send according to the remote window.
-                let mut win_limit = if win_right_edge >= self.remote_last_seq {
-                    win_right_edge - self.remote_last_seq
-                } else {
-                    // This can happen if we've sent some data and later the remote side
-                    // has shrunk its window so that data is no longer inside the window.
-                    // This should be very rare and is strongly discouraged by the RFCs,
-                    // but it does happen in practice.
-                    // http://www.tcpipguide.com/free/t_TCPWindowManagementIssues.htm
-                    0
-                };
-
-                // To send a zero-window-probe, force the window limit to at least 1 byte.
-                if win_limit == 0 && self.timer.should_zero_window_probe(cx.now()) {
-                    win_limit = 1;
-                    is_zero_window_probe = true;
-                }
-
-                // Maximum size we're allowed to send. This can be limited by 3 factors:
+                // Maximum size we're allowed to send. This can be limited by 4 factors:
                 // 1. remote window
                 // 2. MSS the remote is willing to accept, probably determined by their MTU
                 // 3. MSS we can send, determined by our MTU.
-                let size = win_limit
-                    .min(self.remote_mss)
-                    .min(cx.ip_mtu() - ip_repr.header_len() - TCP_HEADER_LEN);
+                // 4. Our congestion window
+                let options_len = repr.header_len() - TCP_HEADER_LEN;
+                let local_mss = cx.ip_mtu() - ip_repr.header_len() - TCP_HEADER_LEN;
+                let effective_mss = local_mss.min(self.remote_mss).saturating_sub(options_len);
 
-                let offset = self.remote_last_seq - self.local_seq_no;
-                repr.payload = self.tx_buffer.get_allocated(offset, size);
+                let offset = if self.pending_fast_retransmit {
+                    let size = effective_mss.min(self.tx_buffer.len());
+                    repr.seq_number = self.local_seq_no;
+                    repr.payload = self.tx_buffer.get_allocated(0, size);
+
+                    self.pending_fast_retransmit = false;
+
+                    0
+                } else {
+                    // Right edge of window, ie the max sequence number we're allowed to send.
+                    let win_right_edge = self.local_seq_no + self.remote_win_len;
+
+                    // Max amount of octets we're allowed to send according to the remote window.
+                    let mut win_limit = if win_right_edge >= self.remote_last_seq {
+                        win_right_edge - self.remote_last_seq
+                    } else {
+                        // This can happen if we've sent some data and later the remote side
+                        // has shrunk its window so that data is no longer inside the window.
+                        // This should be very rare and is strongly discouraged by the RFCs,
+                        // but it does happen in practice.
+                        // http://www.tcpipguide.com/free/t_TCPWindowManagementIssues.htm
+                        0
+                    };
+
+                    // To send a zero-window-probe, force the window limit to at least 1 byte.
+                    if win_limit == 0 && self.timer.should_zero_window_probe(cx.now()) {
+                        win_limit = 1;
+                        is_zero_window_probe = true;
+                    }
+
+                    // Maximum size we're allowed to send. This can be limited by 4 factors:
+                    // 1. remote window
+                    // 2. congestion window
+                    // 3. MSS the remote is willing to accept, probably determined by their MTU
+                    // 4. MSS we can send, determined by our MTU.
+                    //
+                    // If the device supports its offload, segmentation that is needed
+                    // to comply with the latter two will be handled by the device based on the
+                    // metadata we provide.
+
+                    #[cfg(not(feature = "segmentation-offload"))]
+                    let device_limit = effective_mss;
+
+                    #[cfg(feature = "segmentation-offload")]
+                    let device_limit = {
+                        let segmentation_caps = cx.segmentation_caps();
+                        match ip_repr.version() {
+                            #[cfg(feature = "proto-ipv4")]
+                            crate::wire::IpVersion::Ipv4 => segmentation_caps.tcpv4,
+                            #[cfg(feature = "proto-ipv6")]
+                            crate::wire::IpVersion::Ipv6 => segmentation_caps.tcpv6,
+                        }
+                        .map(|buf_size| {
+                            let pre_ip_header_len = cx.max_transmission_unit() - cx.ip_mtu();
+                            buf_size.get()
+                                - pre_ip_header_len
+                                - ip_repr.header_len()
+                                - TCP_HEADER_LEN
+                                - options_len
+                        })
+                        .unwrap_or(effective_mss)
+                    };
+
+                    let size = if is_zero_window_probe {
+                        // Zero-window probes are exempt from the congestion window: they
+                        // are sent precisely when normal transmission is impossible, and
+                        // an empty segment elicits no reply, so capping the probe to a
+                        // zero length would stall the connection if a window update from
+                        // the remote got lost.
+                        win_limit.min(device_limit)
+                    } else {
+                        win_limit.min(device_limit).min(self.cwnd_remaining())
+                    };
+
+                    let offset = self.flight_size();
+                    repr.payload = self.tx_buffer.get_allocated(offset, size);
+
+                    #[cfg(feature = "segmentation-offload")]
+                    if repr.payload.len() > effective_mss {
+                        packet_meta.segmentation_offload_size =
+                            core::num::NonZeroU16::try_from(u16::try_from(effective_mss).unwrap())
+                                .unwrap()
+                                .into();
+                    }
+
+                    offset
+                };
 
                 // If we've sent everything we had in the buffer, follow it with the PSH or FIN
                 // flags, depending on whether the transmit half of the connection is open.
@@ -2586,7 +2758,7 @@ impl<'a> Socket<'a> {
             tcp_trace!(
                 "tx buffer: sending {} octets at offset {}",
                 repr.payload.len(),
-                self.remote_last_seq - self.local_seq_no
+                self.flight_size()
             );
         }
         if repr.control != TcpControl::None || repr.payload.is_empty() {
@@ -2616,7 +2788,7 @@ impl<'a> Socket<'a> {
         // to not waste time waiting for the retransmit timer on packets that we know
         // for sure will not be successfully transmitted.
         ip_repr.set_payload_len(repr.buffer_len());
-        emit(cx, (ip_repr, repr))?;
+        emit(cx, packet_meta, (ip_repr, repr))?;
 
         // We've sent something, whether useful data or a keep-alive packet, so rewind
         // the keep-alive timer.
@@ -2647,7 +2819,11 @@ impl<'a> Socket<'a> {
         }
 
         // We've sent a packet successfully, so we can update the internal state now.
-        self.remote_last_seq = repr.seq_number + repr.segment_len();
+        // Use max() so a fast-retransmit segment (whose seq_number is local_seq_no, well
+        // behind the current frontier) doesn't rewind the tracked "highest sent" sequence.
+        self.remote_last_seq = self
+            .remote_last_seq
+            .max(repr.seq_number + repr.segment_len());
         self.remote_last_ack = repr.ack_number;
         self.remote_last_win = repr.window_len;
 
@@ -2909,7 +3085,7 @@ mod test {
         let mut sent = 0;
         let result = socket
             .socket
-            .dispatch(&mut socket.cx, |_, (ip_repr, tcp_repr)| {
+            .dispatch(&mut socket.cx, |_, _, (ip_repr, tcp_repr)| {
                 assert_eq!(ip_repr.next_header(), IpProtocol::Tcp);
                 assert_eq!(ip_repr.src_addr(), LOCAL_ADDR.into());
                 assert_eq!(ip_repr.dst_addr(), REMOTE_ADDR.into());
@@ -2930,7 +3106,7 @@ mod test {
         socket.cx.set_now(timestamp);
 
         let mut fail = false;
-        let result: Result<(), ()> = socket.socket.dispatch(&mut socket.cx, |_, _| {
+        let result: Result<(), ()> = socket.socket.dispatch(&mut socket.cx, |_, _, _| {
             fail = true;
             Ok(())
         });
@@ -3273,6 +3449,40 @@ mod test {
                 }]
             );
         }
+    }
+
+    #[test]
+    fn test_listen_syn_tiny_mss_is_clamped() {
+        let mut s = socket_listen();
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ,
+                ack_number: None,
+                max_seg_size: Some(10),
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::SynReceived);
+        assert_eq!(s.remote_mss, MIN_REMOTE_MSS);
+    }
+
+    #[test]
+    fn test_listen_syn_zero_mss_is_ignored() {
+        let mut s = socket_listen();
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ,
+                ack_number: None,
+                max_seg_size: Some(0),
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::SynReceived);
+        assert_eq!(s.remote_mss, DEFAULT_MSS);
     }
 
     #[test]
@@ -3683,6 +3893,74 @@ mod test {
             }
         );
         assert_eq!(s.tuple, Some(TUPLE));
+    }
+
+    #[test]
+    fn test_connect_synack_tiny_mss_is_clamped() {
+        let mut s = socket();
+        s.local_seq_no = LOCAL_SEQ;
+        s.socket
+            .connect(&mut s.cx, REMOTE_END, LOCAL_END.port)
+            .unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: LOCAL_SEQ,
+                ack_number: None,
+                max_seg_size: Some(BASE_MSS),
+                window_scale: Some(0),
+                sack_permitted: true,
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ,
+                ack_number: Some(LOCAL_SEQ + 1),
+                max_seg_size: Some(10),
+                window_scale: Some(0),
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::Established);
+        assert_eq!(s.remote_mss, MIN_REMOTE_MSS);
+    }
+
+    #[test]
+    fn test_connect_synack_zero_mss_is_ignored() {
+        let mut s = socket();
+        s.local_seq_no = LOCAL_SEQ;
+        s.socket
+            .connect(&mut s.cx, REMOTE_END, LOCAL_END.port)
+            .unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: LOCAL_SEQ,
+                ack_number: None,
+                max_seg_size: Some(BASE_MSS),
+                window_scale: Some(0),
+                sack_permitted: true,
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ,
+                ack_number: Some(LOCAL_SEQ + 1),
+                max_seg_size: Some(0),
+                window_scale: Some(0),
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::Established);
+        assert_eq!(s.remote_mss, DEFAULT_MSS);
     }
 
     #[test]
@@ -4814,6 +5092,237 @@ mod test {
     }
 
     #[test]
+    fn test_old_data_ack_not_rate_limited() {
+        let mut s = socket_established();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            }
+        );
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 58,
+                ..RECV_TEMPL
+            }]
+        );
+        s.recv(|data| {
+            assert_eq!(data, b"abcdef");
+            (6, ())
+        })
+        .unwrap();
+        // The remote retransmits data we already acknowledged, e.g. because
+        // the ACK above was lost. Each retransmission must elicit a duplicate
+        // ACK, even within the challenge ACK rate limit window: withholding it
+        // strands the remote in retransmission backoff.
+        send!(
+            s,
+            time 100,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                ..RECV_TEMPL
+            })
+        );
+        send!(
+            s,
+            time 200,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                ..RECV_TEMPL
+            })
+        );
+    }
+
+    #[test]
+    fn test_bad_seq_rst_dropped_silently() {
+        let mut s = socket_established();
+        // Out-of-window RSTs are silently dropped, per RFC 9293 (3.10.7.4)
+        // and RFC 5961 (3.2): no challenge ACK, no state change.
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Rst,
+                seq_number: REMOTE_SEQ + 1 + 256,
+                ack_number: Some(LOCAL_SEQ + 1),
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::Established);
+
+        // A payload doesn't make it eligible for the data segment exemption
+        // from challenge ACK rate limiting either: still no reply.
+        send!(
+            s,
+            time 100,
+            TcpRepr {
+                control: TcpControl::Rst,
+                seq_number: REMOTE_SEQ + 1 + 256,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::Established);
+    }
+
+    #[test]
+    fn test_bad_seq_syn_with_data_rate_limited() {
+        let mut s = socket_established();
+        // An out-of-window SYN carrying data must not be exempt from challenge
+        // ACK rate limiting: RFC 5961 (4.2) says challenge ACKs sent in
+        // response to SYNs should be throttled.
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ + 1 + 256,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                ..RECV_TEMPL
+            })
+        );
+
+        // The second one within the rate limit window gets no reply.
+        send!(
+            s,
+            time 100,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ + 1 + 256,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::Established);
+    }
+
+    #[test]
+    fn test_established_options_reduce_payload_when_local_mss_limited() {
+        const EFFECTIVE_MSS: usize = 64;
+
+        // construct socket where remote MSS is less than local MSS
+        let mut s = socket_established();
+        s.set_tsval_generator(Some(|| 1));
+        s.remote_mss = EFFECTIVE_MSS;
+
+        // Payload should contain 12 bytes less due to timestamp
+        s.send_slice(&[0; EFFECTIVE_MSS]).unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &[0; EFFECTIVE_MSS - 12],
+                timestamp: Some(TcpTimestampRepr::new(1, 0)),
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
+    fn test_established_options_reduce_payload_when_remote_mss_limited() {
+        const EFFECTIVE_MSS: usize = BASE_MSS as usize;
+
+        // construct socket where remote MSS is more than local MSS
+        let mut s = socket_established_with_buffer_sizes(EFFECTIVE_MSS, 64);
+        s.set_tsval_generator(Some(|| 1));
+        s.remote_mss = 9999;
+        s.remote_win_len = 9999;
+
+        // Payload should contain 12 bytes less due to timestamp
+        s.send_slice(&[0; EFFECTIVE_MSS]).unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &[0; EFFECTIVE_MSS - 12],
+                timestamp: Some(TcpTimestampRepr::new(1, 0)),
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
+    fn test_established_tiny_mss_with_options_makes_progress() {
+        // Connect with timestamps enabled to a remote advertising an absurdly
+        // small MSS. Without the MIN_SND_MSS clamp, an MSS smaller than the
+        // options length would result in an effective MSS of zero, sending
+        // empty segments in a loop without ever making progress.
+        let mut s = socket();
+        s.set_tsval_generator(Some(|| 1));
+        s.local_seq_no = LOCAL_SEQ;
+        s.socket
+            .connect(&mut s.cx, REMOTE_END, LOCAL_END.port)
+            .unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: LOCAL_SEQ,
+                ack_number: None,
+                max_seg_size: Some(BASE_MSS),
+                window_scale: Some(0),
+                sack_permitted: true,
+                timestamp: Some(TcpTimestampRepr::new(1, 0)),
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ,
+                ack_number: Some(LOCAL_SEQ + 1),
+                max_seg_size: Some(10),
+                window_scale: Some(0),
+                timestamp: Some(TcpTimestampRepr::new(500, 1)),
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.state, State::Established);
+        assert_eq!(s.remote_mss, MIN_REMOTE_MSS);
+
+        s.send_slice(&[0; 64]).unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &[0; MIN_REMOTE_MSS - 12],
+                timestamp: Some(TcpTimestampRepr::new(1, 500)),
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
     fn test_established_fin() {
         let mut s = socket_established();
         send!(
@@ -4956,12 +5465,43 @@ mod test {
     #[test]
     fn test_established_rst_bad_seq() {
         let mut s = socket_established();
+        // Out-of-window RSTs are dropped silently, per RFC 9293 (3.10.7.4)
+        // and RFC 5961 (3.2).
         send!(
             s,
             TcpRepr {
                 control: TcpControl::Rst,
                 seq_number: REMOTE_SEQ, // Wrong seq
                 ack_number: None,
+                ..SEND_TEMPL
+            }
+        );
+
+        assert_eq!(s.state, State::Established);
+
+        // An in-window RST still resets the connection.
+        send!(
+            s,
+            time 2000,
+            TcpRepr {
+                control: TcpControl::Rst,
+                seq_number: REMOTE_SEQ + 1, // Correct seq
+                ack_number: None,
+                ..SEND_TEMPL
+            }
+        );
+
+        assert_eq!(s.state, State::Closed);
+    }
+
+    #[test]
+    fn test_established_bad_seq_challenge_ack_updated() {
+        let mut s = socket_established();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ, // Wrong seq
+                ack_number: Some(LOCAL_SEQ + 1),
                 ..SEND_TEMPL
             },
             Some(TcpRepr {
@@ -4984,16 +5524,15 @@ mod test {
             }
         );
 
-        // Send wrong rst again, check that the challenge ack is correctly updated
+        // Send the wrong seq again, check that the challenge ack is correctly updated
         // The ack number must be updated even if we don't call dispatch on the socket
         // See https://github.com/smoltcp-rs/smoltcp/issues/338
         send!(
             s,
             time 2000,
             TcpRepr {
-                control: TcpControl::Rst,
                 seq_number: REMOTE_SEQ, // Wrong seq
-                ack_number: None,
+                ack_number: Some(LOCAL_SEQ + 1),
                 ..SEND_TEMPL
             },
             Some(TcpRepr {
@@ -5898,6 +6437,113 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "socket-tcp-reno")]
+    fn test_congestion_window_limits_data_in_flight() {
+        let mut s = socket_established_with_buffer_sizes(8192, 64);
+        s.set_congestion_control(CongestionControl::Reno);
+        s.remote_win_len = 65535;
+        s.remote_mss = 1024;
+
+        let data = [b'x'; 8192];
+        s.send_slice(&data[..]).unwrap();
+
+        // Reno's initial congestion window is 2048 bytes: only two
+        // 1024-byte segments may be in flight, the rest must wait for ACKs.
+        recv!(s, time 0, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+        recv!(s, time 0, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + 1024,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+        recv_nothing!(s, time 0);
+
+        // ACKing one segment frees congestion window space and grows
+        // cwnd (slow start), allowing further segments out.
+        send!(s, time 10, TcpRepr {
+            seq_number: REMOTE_SEQ + 1,
+            ack_number: Some(LOCAL_SEQ + 1 + 1024),
+            window_len: 65535,
+            ..SEND_TEMPL
+        });
+        recv!(s, time 10, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + 2048,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+    }
+
+    #[test]
+    #[cfg(feature = "socket-tcp-reno")]
+    fn test_congestion_window_doesnt_limit_fast_retransmit() {
+        let mut s = socket_established_with_buffer_sizes(8192, 64);
+        s.set_congestion_control(CongestionControl::Reno);
+        s.remote_win_len = 65535;
+        s.remote_mss = 1024;
+
+        // Normal ACK of previously received segment
+        send!(s, time 0, TcpRepr {
+            seq_number: REMOTE_SEQ + 1,
+            ack_number: Some(LOCAL_SEQ + 1),
+            window_len: 65535,
+            ..SEND_TEMPL
+        });
+
+        let data = [b'x'; 8192];
+        s.send_slice(&data[..]).unwrap();
+
+        // Reno's initial congestion window is 2048 bytes, allowing 2 segments
+        recv!(s, time 0, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+
+        recv!(s, time 0, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + 1024,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+        recv_nothing!(s, time 0);
+
+        // Send three duplicate ACKS, treating the first segment as lost
+        send!(s, time 10, TcpRepr {
+            seq_number: REMOTE_SEQ + 1,
+            ack_number: Some(LOCAL_SEQ + 1),
+            window_len: 65535,
+            ..SEND_TEMPL
+        });
+        send!(s, time 10, TcpRepr {
+            seq_number: REMOTE_SEQ + 1,
+            ack_number: Some(LOCAL_SEQ + 1),
+            window_len: 65535,
+            ..SEND_TEMPL
+        });
+        send!(s, time 10, TcpRepr {
+            seq_number: REMOTE_SEQ + 1,
+            ack_number: Some(LOCAL_SEQ + 1),
+            window_len: 65535,
+            ..SEND_TEMPL
+        });
+
+        // A fast retrnasmit should be sent and not be blocked by congestion control
+        recv!(s, time 20, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+    }
+
+    #[test]
     fn test_data_retransmit_bursts() {
         let mut s = socket_established();
         s.remote_mss = 6;
@@ -6289,7 +6935,7 @@ mod test {
     #[test]
     fn test_fast_retransmit_after_triple_duplicate_ack() {
         let mut s = socket_established();
-        s.remote_mss = 6;
+        s.remote_mss = 3;
 
         // Normal ACK of previously received segment
         send!(s, time 0, TcpRepr {
@@ -6300,91 +6946,79 @@ mod test {
 
         // Send a long string of text divided into several packets
         // because of previously received "window_len"
-        s.send_slice(b"xxxxxxyyyyyywwwwwwzzzzzz").unwrap();
+        s.send_slice(b"aaaBBBcccDDDeeeFFF").unwrap();
+
         // This packet is lost
         recv!(s, time 1000, Ok(TcpRepr {
             seq_number: LOCAL_SEQ + 1,
             ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"xxxxxx"[..],
-            ..RECV_TEMPL
-        }));
-        recv!(s, time 1005, Ok(TcpRepr {
-            seq_number: LOCAL_SEQ + 1 + 6,
-            ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"yyyyyy"[..],
-            ..RECV_TEMPL
-        }));
-        recv!(s, time 1010, Ok(TcpRepr {
-            seq_number: LOCAL_SEQ + 1 + (6 * 2),
-            ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"wwwwww"[..],
-            ..RECV_TEMPL
-        }));
-        recv!(s, time 1015, Ok(TcpRepr {
-            seq_number: LOCAL_SEQ + 1 + (6 * 3),
-            ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"zzzzzz"[..],
+            payload:    &b"aaa"[..],
             ..RECV_TEMPL
         }));
 
-        // First duplicate ACK
+        // These packets arrive
+        recv!(s, time 1005, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + 3,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload:    &b"BBB"[..],
+            ..RECV_TEMPL
+        }));
+        recv!(s, time 1010, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + (3 * 2),
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload:    &b"ccc"[..],
+            ..RECV_TEMPL
+        }));
+        recv!(s, time 1015, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + (3 * 3),
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload:    &b"DDD"[..],
+            ..RECV_TEMPL
+        }));
+
+        // Duplicate ACKs trigger fast rentramsit after 3rd successive one
         send!(s, time 1050, TcpRepr {
             seq_number: REMOTE_SEQ + 1,
             ack_number: Some(LOCAL_SEQ + 1),
             ..SEND_TEMPL
         });
-        // Second duplicate ACK
         send!(s, time 1055, TcpRepr {
             seq_number: REMOTE_SEQ + 1,
             ack_number: Some(LOCAL_SEQ + 1),
             ..SEND_TEMPL
         });
-        // Third duplicate ACK
-        // Should trigger a fast retransmit of dropped packet
         send!(s, time 1060, TcpRepr {
             seq_number: REMOTE_SEQ + 1,
             ack_number: Some(LOCAL_SEQ + 1),
             ..SEND_TEMPL
         });
 
-        // Fast retransmit packet
+        // Fast retransmit should have triggered
         recv!(s, time 1100, Ok(TcpRepr {
             seq_number: LOCAL_SEQ + 1,
             ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"xxxxxx"[..],
+            payload:    &b"aaa"[..],
             ..RECV_TEMPL
         }));
 
+        // Transmission should continue as normal after re-transitting the first segment
         recv!(s, time 1105, Ok(TcpRepr {
-            seq_number: LOCAL_SEQ + 1 + 6,
+            seq_number: LOCAL_SEQ + 1 + (3 * 4),
             ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"yyyyyy"[..],
+            payload:    &b"eee"[..],
             ..RECV_TEMPL
         }));
         recv!(s, time 1110, Ok(TcpRepr {
-            seq_number: LOCAL_SEQ + 1 + (6 * 2),
+            seq_number: LOCAL_SEQ + 1 + (3 * 5),
             ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"wwwwww"[..],
+            payload:    &b"FFF"[..],
             ..RECV_TEMPL
         }));
-        recv!(s, time 1115, Ok(TcpRepr {
-            seq_number: LOCAL_SEQ + 1 + (6 * 3),
-            ack_number: Some(REMOTE_SEQ + 1),
-            payload:    &b"zzzzzz"[..],
-            ..RECV_TEMPL
-        }));
-
-        // After all was send out, enter *normal* retransmission,
-        // don't stay in fast retransmission.
-        assert!(match s.timer {
-            Timer::Retransmit { expires_at, .. } => expires_at > Instant::from_millis(1115),
-            _ => false,
-        });
 
         // ACK all received segments
         send!(s, time 1120, TcpRepr {
             seq_number: REMOTE_SEQ + 1,
-            ack_number: Some(LOCAL_SEQ + 1 + (6 * 4)),
+            ack_number: Some(LOCAL_SEQ + 1 + (3 * 5)),
             ..SEND_TEMPL
         });
     }
@@ -6932,6 +7566,94 @@ mod test {
         );
     }
 
+    #[cfg(feature = "segmentation-offload")]
+    #[test]
+    fn test_segmentation_offload() {
+        use crate::tests::segmentation_offload::MAX_SEGMENTABLE_SIZE;
+        use crate::wire;
+
+        let (interface, _, _) =
+            crate::tests::segmentation_offload::setup_segmenting(crate::phy::Medium::Ip);
+        let mut s = TestSocket {
+            cx: interface.inner,
+            ..socket_listen()
+        };
+        s.tx_buffer = SocketBuffer::new(vec![0; 2 * MAX_SEGMENTABLE_SIZE]);
+
+        send!(
+            s,
+            TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: REMOTE_SEQ,
+                ack_number: None,
+                window_scale: Some(2),
+                ..SEND_TEMPL
+            }
+        );
+        recv!(
+            s,
+            [TcpRepr {
+                control: TcpControl::Syn,
+                seq_number: LOCAL_SEQ,
+                ack_number: Some(REMOTE_SEQ + 1),
+                max_seg_size: Some(BASE_MSS),
+                window_scale: Some(0),
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: u16::MAX,
+                ..SEND_TEMPL
+            }
+        );
+
+        s.send_slice(&[0; 2 * MAX_SEGMENTABLE_SIZE][..]).unwrap();
+
+        // We want to ensure that the size of the unsegmented packets exceed the
+        // maximum allowed by the length field in the IP headers to check if the
+        // relevant code incorrectly assumes that the length fits into the
+        // field.
+        let ip_header_len = match s.local_endpoint().unwrap().addr {
+            #[cfg(feature = "proto-ipv4")]
+            IpAddress::Ipv4(_) => {
+                assert!(MAX_SEGMENTABLE_SIZE > usize::from(u16::MAX));
+                wire::IPV4_HEADER_LEN
+            }
+            #[cfg(feature = "proto-ipv6")]
+            IpAddress::Ipv6(_) => {
+                assert!(MAX_SEGMENTABLE_SIZE - wire::IPV6_HEADER_LEN > usize::from(u16::MAX));
+                wire::IPV6_HEADER_LEN
+            }
+        };
+        let payload = vec![0; MAX_SEGMENTABLE_SIZE - ip_header_len - TCP_HEADER_LEN];
+        assert!(
+            payload.len() > usize::from(BASE_MSS),
+            "the payload is not large enough to require segmentation!"
+        );
+
+        recv!(
+            s,
+            [
+                TcpRepr {
+                    seq_number: LOCAL_SEQ + 1,
+                    ack_number: Some(REMOTE_SEQ + 1),
+                    payload: payload.as_slice(),
+                    ..RECV_TEMPL
+                },
+                TcpRepr {
+                    seq_number: LOCAL_SEQ + payload.len() + 1,
+                    ack_number: Some(REMOTE_SEQ + 1),
+                    payload: payload.as_slice(),
+                    ..RECV_TEMPL
+                }
+            ]
+        );
+    }
+
     #[test]
     fn test_recv_out_of_recv_win() {
         let mut s = socket_established();
@@ -7141,6 +7863,66 @@ mod test {
         );
         send!(
             s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1 + 6,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"123456"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 0,
+                ..RECV_TEMPL
+            })
+        );
+    }
+
+    #[test]
+    fn test_zero_window_ack_not_rate_limited() {
+        let mut s = socket_established();
+        s.rx_buffer = SocketBuffer::new(vec![0; 6]);
+        s.assembler = Assembler::new();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            }
+        );
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 0,
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1 + 6,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"123456"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 0,
+                ..RECV_TEMPL
+            })
+        );
+        // The remote retransmits into the zero window again within a second,
+        // e.g. because the ACK above was lost. The ACK must not be withheld by
+        // challenge ACK rate limiting: it is the remote's only way to learn
+        // the window state, and a data segment cannot cause an ACK loop.
+        send!(
+            s,
+            time 100,
             TcpRepr {
                 seq_number: REMOTE_SEQ + 1 + 6,
                 ack_number: Some(LOCAL_SEQ + 1),
@@ -7544,6 +8326,60 @@ mod test {
                 ..RECV_TEMPL
             }]
         );
+    }
+
+    #[test]
+    #[cfg(feature = "socket-tcp-reno")]
+    fn test_zero_window_probe_not_capped_by_cwnd() {
+        let mut s = socket_established_with_buffer_sizes(8192, 64);
+        s.set_congestion_control(CongestionControl::Reno);
+        s.remote_win_len = 65535;
+        s.remote_mss = 1024;
+
+        let data = [b'x'; 4096];
+        s.send_slice(&data[..]).unwrap();
+
+        // Reno's initial cwnd is 2048: two segments fill the congestion window
+        // exactly, leaving cwnd_remaining() == 0.
+        recv!(s, time 0, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+        recv!(s, time 0, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + 1024,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1024],
+            ..RECV_TEMPL
+        }));
+        recv_nothing!(s, time 0);
+
+        // The remote closes its window without acknowledging anything new, so
+        // no congestion window space is freed either.
+        send!(s, time 10, TcpRepr {
+            seq_number: REMOTE_SEQ + 1,
+            ack_number: Some(LOCAL_SEQ + 1),
+            window_len: 0,
+            ..SEND_TEMPL
+        });
+
+        // Arm the probe timer. (Set directly because the ACK above carries no
+        // new data; in real traffic this state is reached e.g. when the
+        // controller shrinks cwnd below the flight size while probing.)
+        s.timer
+            .set_for_zero_window_probe(Instant::from_millis(10), Duration::from_millis(100));
+
+        // The probe must carry 1 byte of data past the window edge even though
+        // the congestion window is exhausted: an empty probe occupies no
+        // sequence space and elicits no reply, so the connection would stall
+        // if the remote's window update got lost.
+        recv!(s, time 110, Ok(TcpRepr {
+            seq_number: LOCAL_SEQ + 1 + 2048,
+            ack_number: Some(REMOTE_SEQ + 1),
+            payload: &data[..1],
+            ..RECV_TEMPL
+        }));
     }
 
     #[test]
@@ -7994,7 +8830,7 @@ mod test {
 
         s.set_hop_limit(Some(0x2a));
         assert_eq!(
-            s.socket.dispatch(&mut s.cx, |_, (ip_repr, _)| {
+            s.socket.dispatch(&mut s.cx, |_, _, (ip_repr, _)| {
                 assert_eq!(ip_repr.hop_limit(), 0x2a);
                 Ok::<_, ()>(())
             }),
@@ -8580,6 +9416,43 @@ mod test {
                 seq_number: LOCAL_SEQ + 1 + 6 + 6 + 6,
                 ack_number: Some(REMOTE_SEQ + 1),
                 payload: &b"ccc"[..],
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
+    fn test_nagle_works_with_reduced_payload_from_options() {
+        const EFFECTIVE_MSS: usize = 64;
+
+        let mut s = socket_established_with_buffer_sizes(256, 64);
+        s.set_nagle_enabled(true);
+        s.set_tsval_generator(Some(|| 1));
+        s.remote_mss = EFFECTIVE_MSS;
+
+        // Send small segment to "arm" Nagle's
+        s.send_slice(b"abcdef").unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"abcdef"[..],
+                timestamp: Some(TcpTimestampRepr::new(1, 0)),
+                ..RECV_TEMPL
+            }]
+        );
+
+        // A full segment (once options are accounted for) should not be delayed and contain 12 bytes less due to timestamp
+        s.send_slice(&[0; EFFECTIVE_MSS - 12]).unwrap();
+        recv!(
+            s,
+            time 0,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1 + 6,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &[0; EFFECTIVE_MSS - 12],
+                timestamp: Some(TcpTimestampRepr::new(1, 0)),
                 ..RECV_TEMPL
             }]
         );

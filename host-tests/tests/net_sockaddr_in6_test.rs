@@ -8,7 +8,7 @@
 //!   - `endpoint_from_smol` 支持 IpAddress::Ipv6 → NetEndpoint::new_v6
 //!
 //! 追踪: DECISION-032 (IPv4/IPv6 双栈)
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 
 use std::fs;
 

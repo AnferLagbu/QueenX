@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-11/12/13: 把 idt/handlers.rs、idt/idt.rs、timer/mod.rs 里的 5 处
 // "TODO(TRACK-…): 使用 klog 替代/输出" 占位全部接上 klog 宏.
 //

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! init 启动子系统单元测试 (host 模拟)
 
 use queenx_tests::{

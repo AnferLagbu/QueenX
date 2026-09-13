@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-18: services::fs::ramfs::FsError 收敛到 KernelError (TD-08 V4 fs域)
 //
 // 验收:

@@ -204,7 +204,7 @@ impl Interface {
     /// Create a network interface using the previously provided configuration.
     ///
     /// # Panics
-    /// This function panics if the [`Config::hardware_address`] does not match
+    /// This function panics if the [`Config::hardware_addr`] does not match
     /// the medium of the device.
     pub fn new(config: Config, device: &mut (impl Device + ?Sized), now: Instant) -> Self {
         let caps = device.capabilities();
@@ -213,6 +213,18 @@ impl Interface {
             caps.medium,
             "The hardware address does not match the medium of the interface."
         );
+
+        #[cfg(feature = "segmentation-offload")]
+        // Segmentation offload requires checksum offload.
+        if [caps.segmentation.tcpv4, caps.segmentation.tcpv6]
+            .iter()
+            .any(Option::is_some)
+        {
+            assert!(
+                !caps.checksum.tcp.tx(),
+                "Device capabilities are inconsistent."
+            )
+        }
 
         let mut rand = Rand::new(config.random_seed);
 
@@ -416,7 +428,7 @@ impl Interface {
     /// Enable or disable the AnyIP capability.
     ///
     /// AnyIP allowins packets to be received
-    /// locally on IP addresses other than the interface's configured [ip_addrs].
+    /// locally on IP addresses other than the interface's configured [`ip_addrs`](Self::ip_addrs).
     /// When AnyIP is enabled and a route prefix in [`routes`](Self::routes) specifies one of
     /// the interface's [`ip_addrs`](Self::ip_addrs) as its gateway, the interface will accept
     /// packets addressed to that prefix.
@@ -772,13 +784,11 @@ impl Interface {
                     })
                 }
                 #[cfg(feature = "socket-tcp")]
-                Socket::Tcp(socket) => socket.dispatch(&mut self.inner, |inner, (ip, tcp)| {
-                    respond(
-                        inner,
-                        PacketMeta::default(),
-                        Packet::new(ip, IpPayload::Tcp(tcp)),
-                    )
-                }),
+                Socket::Tcp(socket) => {
+                    socket.dispatch(&mut self.inner, |inner, meta, (ip, tcp)| {
+                        respond(inner, meta, Packet::new(ip, IpPayload::Tcp(tcp)))
+                    })
+                }
                 #[cfg(feature = "socket-dhcpv4")]
                 Socket::Dhcpv4(socket) => {
                     socket.dispatch(&mut self.inner, |inner, (ip, udp, dhcp)| {
@@ -833,6 +843,17 @@ impl InterfaceInner {
     #[allow(unused)] // unused depending on which sockets are enabled
     pub(crate) fn checksum_caps(&self) -> ChecksumCapabilities {
         self.caps.checksum.clone()
+    }
+
+    #[cfg(feature = "segmentation-offload")]
+    #[allow(unused)] // unused depending on which sockets are enabled
+    pub(crate) fn segmentation_caps(&self) -> crate::phy::SegmentationCapabilities {
+        self.caps.segmentation.clone()
+    }
+
+    #[allow(unused)] // unused depending on which sockets are enabled
+    pub(crate) fn max_transmission_unit(&self) -> usize {
+        self.caps.max_transmission_unit
     }
 
     #[allow(unused)] // unused depending on which sockets are enabled
@@ -1279,7 +1300,15 @@ impl InterfaceInner {
                 #[allow(unused_variables)]
                 let _ = repr;
                 // If we have an IPv4 packet, then we need to check if we need to fragment it.
-                if total_ip_len > self.caps.ip_mtu() {
+                let should_fragment = total_ip_len > self.caps.ip_mtu();
+
+                // If the second condition is false (i.e. the metadata includes a target segment
+                // size), the packet will be segmented by the device and fragmentation on our side
+                // is not necessary.
+                #[cfg(feature = "segmentation-offload")]
+                let should_fragment = should_fragment && meta.segmentation_offload_size.is_none();
+
+                if should_fragment {
                     #[cfg(feature = "proto-ipv4-fragmentation")]
                     {
                         net_debug!("start fragmentation");

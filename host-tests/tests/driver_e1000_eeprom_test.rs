@@ -1,7 +1,7 @@
 //! driver: e1000 EEPROM 读取集成测试
 //!
 //! 追踪: I-40
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 //!
 //! ## B08-21 处置 (2026-09-06): host 不可测, 平行实现已移除
 //!

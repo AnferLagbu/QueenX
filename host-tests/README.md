@@ -95,14 +95,14 @@ criterion_main!(benches);
 //!   - ...
 //!
 //! 追踪: <追踪编号> (I-XX / P0-I-XX / P1-I-XX / P2-I-XX / P3-I-XX / TD-XX / B2.1 / W6 / DECISION-NNN)
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 
 #![allow(dead_code)]  // 仅当有 helper 函数但非测试路径时
 ```
 
 **硬要求**:
 - ✅ 全部用 `//!` (内联文档注释), 不用 `//`
-- ✅ 全部带 `SPDX-License-Identifier: Apache-2.0` (auto-format by CI)
+- ✅ 全部带 `SPDX-License-Identifier: MPL-2.0` (auto-format by CI)
 - ✅ 显式列"验收点", 评审时按点对
 - ✅ "追踪"链接到具体维护条目, 便于历史回溯
 

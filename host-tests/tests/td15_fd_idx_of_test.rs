@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-15: TD-02 V4 — fd_alloc::idx_of 集中反查 + 4 子系统本地 fd_to_idx 迁移
 //
 // 验收:

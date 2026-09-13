@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-16: services::proc::signal 错误类型收敛到 KernelError 单一来源
 //
 // 验收:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-09: klog 多 sink 抽象 + 注册表契约测试.
 //
 // 验收:

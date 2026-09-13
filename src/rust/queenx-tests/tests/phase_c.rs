@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! Phase C 单元测试 (host 模拟)
 //!
 //! 覆盖: C1 mmap flags / C2 ELF header / C3 userland / C4 sysfs

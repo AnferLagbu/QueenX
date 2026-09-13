@@ -628,7 +628,7 @@ impl Repr {
         }
     }
 
-    /// Parse an Internet Protocol packet and return an [IpRepr] containing either an Internet
+    /// Parse an Internet Protocol packet and return an [`IpRepr`](Repr) containing either an Internet
     /// Protocol version 4 or Internet Protocol version 6 packet. Delegates the parsing to the
     /// specific Internet Protocol parsing function. Includes [ChecksumCapabilities] to handle
     /// Internet Protocol version 4 parsing.
@@ -770,35 +770,37 @@ pub mod checksum {
     }
 
     /// Compute an RFC 1071 compliant checksum (without the final complement).
-    pub fn data(mut data: &[u8]) -> u16 {
-        let mut accum = 0;
+    pub fn data(data: &[u8]) -> u16 {
+        // We calculate the sum in native-endian before converting to big-endian at the end
+        // see RFC 1071 section 2.(B) for details
+        let mut accum: u32 = 0;
 
-        // For each 32-byte chunk...
-        const CHUNK_SIZE: usize = 32;
-        while data.len() >= CHUNK_SIZE {
-            let mut d = &data[..CHUNK_SIZE];
-            // ... take by 2 bytes and sum them.
-            while d.len() >= 2 {
-                accum += NetworkEndian::read_u16(d) as u32;
-                d = &d[2..];
-            }
-
-            data = &data[CHUNK_SIZE..];
+        // We manually unroll this hot loop.
+        // When optimizing for size (as is common for microcontrollers) the compiler will not unroll
+        // this. Manually unrolling allows us to do more work per loop tax (compare and branch).
+        // It does not seem to affect the auto-vectorization on bigger machines.
+        let (chunks, mut rem) = data.as_chunks::<4>();
+        for chunk in chunks {
+            let val_0 = u16::from_ne_bytes(chunk[..2].try_into().unwrap());
+            let val_1 = u16::from_ne_bytes(chunk[2..4].try_into().unwrap());
+            accum += val_0 as u32;
+            accum += val_1 as u32;
         }
 
-        // Sum the rest that does not fit the last 32-byte chunk,
-        // taking by 2 bytes.
-        while data.len() >= 2 {
-            accum += NetworkEndian::read_u16(data) as u32;
-            data = &data[2..];
+        // Handle 2 bytes of tail, if present.
+        if rem.len() >= 2 {
+            let val = u16::from_ne_bytes(rem[..2].try_into().unwrap());
+            accum += val as u32;
+            rem = &rem[2..];
         }
 
         // Add the last remaining odd byte, if any.
-        if let Some(&value) = data.first() {
-            accum += (value as u32) << 8;
+        if let Some(&value) = rem.first() {
+            accum += u16::from_ne_bytes([value, 0]) as u32;
         }
 
-        propagate_carries(accum)
+        let collapsed = propagate_carries(accum);
+        u16::to_be(collapsed)
     }
 
     /// Combine several RFC 1071 compliant checksums.

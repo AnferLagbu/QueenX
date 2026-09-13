@@ -101,7 +101,10 @@ impl InterfaceInner {
         #[allow(unused_variables)]
         frag: &'a mut FragmentsBuffer,
     ) -> Option<Packet<'a>> {
-        #[allow(unused_mut)]
+        // QX-local: 上游 0.14.0 bug — proto-ipv4-fragmentation 路径在下方赋值
+        // payload_len, 但声明为不可变且 #[allow(unused_mut)] 掩盖了矛盾. 改为 mut;
+        // 未启用 fragmentation 时保持 allow 避免 unused_mut warning.
+        #[cfg_attr(not(feature = "proto-ipv4-fragmentation"), allow(unused_mut))]
         let mut ipv4_repr = check!(Ipv4Repr::parse(ipv4_packet, &self.caps.checksum));
         if !self.is_unicast_v4(ipv4_repr.src_addr) && !ipv4_repr.src_addr.is_unspecified() {
             // Discard packets with non-unicast source addresses but allow unspecified

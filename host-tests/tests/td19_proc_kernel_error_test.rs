@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-19: services::proc::ElfError / MlockError / ProcError 收敛到 KernelError (TD-08 V5)
 //
 // 验收:

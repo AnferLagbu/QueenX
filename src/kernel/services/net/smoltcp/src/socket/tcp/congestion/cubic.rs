@@ -1,35 +1,74 @@
-use crate::time::Instant;
+use crate::{socket::tcp::RttEstimator, time::Instant};
 
 use super::Controller;
 
 // Constants for the Cubic congestion control algorithm.
-// See RFC 8312.
+// See RFC 9438.
 const BETA_CUBIC: f64 = 0.7;
 const C: f64 = 0.4;
+// RFC 9438 §4.3: α_cubic = 3(1-β)/(1+β). ~0.5294 for β=0.7.
+const ALPHA_CUBIC: f64 = 3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC);
+
+const DEFAULT_MSS: usize = 1024;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Cubic {
-    cwnd: usize,     // Congestion window
-    min_cwnd: usize, // The minimum size of congestion window
-    w_max: usize,    // Window size just before congestion
-    recovery_start: Option<Instant>,
-    rwnd: usize, // Remote window
-    last_update: Instant,
+    w_max: usize, // window size prior to loss
+    cwnd: usize,
+    mss: usize,
     ssthresh: usize,
+    rwnd: usize,
+    k: f64,            // cubic curve offset in seconds; depends only on w_max and mss
+    w_est: f64,        // RFC 9438 §4.3 reno-friendly window, integrated per ACK
+    cwnd_prior: usize, // cwnd at the most recent congestion event; gates α_cubic
+
+    recovery_start: Option<Instant>,
+    in_fast_recovery: bool,
+    // Set on RTO, cleared when new data is ACKed. While set, further RTOs
+    // are retransmissions of the same segment and must not reduce ssthresh
+    // again (RFC 5681 section 3.1).
+    in_rto_recovery: bool,
+    idle_start: Option<Instant>, // RFC 9438 §4.2: when in-flight last hit 0
 }
 
 impl Cubic {
     pub fn new() -> Cubic {
-        Cubic {
-            cwnd: 1024 * 2,
-            min_cwnd: 1024 * 2,
-            w_max: 1024 * 2,
-            recovery_start: None,
-            rwnd: 64 * 1024,
-            last_update: Instant::from_millis(0),
+        let mut cubic = Cubic {
+            w_max: DEFAULT_MSS * 2,
+            cwnd: DEFAULT_MSS * 2,
+            mss: DEFAULT_MSS,
+            rwnd: 64 * DEFAULT_MSS,
             ssthresh: usize::MAX,
+            k: 0.0,
+            w_est: (DEFAULT_MSS * 2) as f64,
+            cwnd_prior: DEFAULT_MSS * 2,
+
+            recovery_start: None,
+            in_fast_recovery: false,
+            in_rto_recovery: false,
+            idle_start: None,
+        };
+        cubic.recompute_k();
+        cubic
+    }
+
+    // K = cbrt(w_max * (1 - beta) / C) ^ 1/3
+    fn recompute_k(&mut self) {
+        let c_as_bytes = C * self.mss as f64;
+        let k3 = (self.w_max as f64) * (1.0 - BETA_CUBIC) / c_as_bytes;
+        self.k = cube_root(k3);
+    }
+
+    // RFC 9438 §4.2: subtract the most recent idle period from t by sliding
+    // recovery_start forward by the idle duration.
+    fn absorb_idle(&mut self, now: Instant) {
+        if let (Some(idle), Some(start)) = (self.idle_start, self.recovery_start)
+            && now >= idle
+        {
+            self.recovery_start = Some(start + (now - idle));
         }
+        self.idle_start = None;
     }
 }
 
@@ -38,16 +77,166 @@ impl Controller for Cubic {
         self.cwnd
     }
 
-    fn on_retransmit(&mut self, now: Instant) {
-        self.w_max = self.cwnd;
-        self.ssthresh = self.cwnd >> 1;
-        self.recovery_start = Some(now);
+    fn on_ack(&mut self, now: Instant, len: usize, in_flight: usize, rtt: &RttEstimator) {
+        let segment = len.min(self.mss);
+
+        self.absorb_idle(now);
+
+        if in_flight == 0 {
+            self.idle_start = Some(now);
+        }
+
+        // RFC 9438 only acts on ACKs of new data. The socket also notifies us
+        // of accepted segments that acknowledge nothing (window updates, data
+        // segments from the remote): those must not exit fast recovery nor
+        // grow the window.
+        if len == 0 {
+            return;
+        }
+
+        // New data was ACKed: a timer-based loss episode, if any, is over.
+        self.in_rto_recovery = false;
+
+        // First new-data-ack exits fast recovery and deflates `cwnd`
+        if self.in_fast_recovery {
+            self.in_fast_recovery = false;
+            self.cwnd = self.ssthresh;
+            self.w_est = self.cwnd as f64;
+            return;
+        } else if self.cwnd < self.ssthresh {
+            // Slow start: increase `cwnd` by 1 MSS per ACK.
+            self.cwnd = self
+                .cwnd
+                .saturating_add(segment)
+                .min(self.rwnd)
+                .max(self.mss);
+            return;
+        }
+
+        // ca: RFC 9438 §4.2 and §4.3: Calculate W_cubic and W_est. Use whichever grows faster.
+        let recovery_start = match self.recovery_start {
+            Some(t) => t,
+            None => {
+                // RFC 9438 §4.8: set W_max = cwnd and K = 0 at start of CA
+                self.w_max = self.cwnd;
+                self.k = 0.0;
+                self.w_est = self.cwnd as f64;
+                self.recovery_start = Some(now);
+                now
+            }
+        };
+
+        // Elapsed time since the start of the recovery phase, in microseconds so the
+        // cubic curve still advances between ACKs on sub-millisecond-RTT links.
+        let t = now.total_micros() - recovery_start.total_micros();
+        if t < 0 {
+            return;
+        }
+
+        // RFC 9438 §4.3: use cubic function to get suggested cwnd.
+        // W_cubic(t) = C(t - K)^3 + w_max, evaluated at the current time t.
+        let c_as_bytes = C * self.mss as f64;
+        // QX-local: no_std 目标无 f64::powi (core_float_math unstable), 立方展开数学等价.
+        let t_sec = t as f64 / 1_000_000.0 - self.k;
+        let w_cubic = c_as_bytes * t_sec * t_sec * t_sec + self.w_max as f64;
+
+        // RFC 9438 §4.3: advance our reno-like suggested cwnd.
+        // When cwnd exceeds prior cwnd, change α_cubic to match Reno's AIMD.
+        let w_est = {
+            let alpha = if self.w_est >= self.cwnd_prior as f64 {
+                1.0
+            } else {
+                ALPHA_CUBIC
+            };
+
+            self.w_est += alpha * self.mss as f64 * segment as f64 / self.cwnd as f64;
+            self.w_est
+        };
+
+        // RFC 9438 §4.3: use the suggested window that grows fastest.
+        if w_cubic < w_est {
+            self.cwnd = (w_est as usize).min(self.rwnd).max(self.mss);
+            return;
+        }
+
+        // RFC 9438 §4.2: the congestion window target is W_cubic one RTT into the future.
+        let w_cubic_target = {
+            // srtt is in millis so floor at 1ms to ensure sub-ms RTTs don't ruin the lookahead.
+            let srtt = (rtt.smoothed_rtt() as u64 * 1000).max(1000);
+
+            let t_ahead = (t as f64 + srtt as f64) / 1_000_000.0;
+            // QX-local: no_std 目标无 f64::powi (core_float_math unstable), 立方展开数学等价.
+            let dt = t_ahead - self.k;
+            let raw = c_as_bytes * dt * dt * dt + self.w_max as f64;
+            raw.min(1.5 * self.cwnd as f64) // clamp to avoid increasing faster than slow-start would
+        };
+
+        // TODO: clamps to 0 on small w_cubic_target (i.e. close to plateau)
+        // add additional counter (linux `cwnd_cnt`?) to track "lost" bytes
+        let increment = (w_cubic_target as usize).saturating_sub(self.cwnd) * segment / self.cwnd;
+        self.cwnd = (self.cwnd + increment).min(self.rwnd).max(self.mss);
     }
 
-    fn on_duplicate_ack(&mut self, now: Instant) {
-        self.w_max = self.cwnd;
-        self.ssthresh = self.cwnd >> 1;
-        self.recovery_start = Some(now);
+    fn on_dup_ack(&mut self, _now: Instant, len: usize, _in_flight: usize) {
+        if self.in_fast_recovery {
+            self.cwnd = self.cwnd.saturating_add(len).min(self.rwnd).max(self.mss);
+        }
+    }
+
+    fn post_transmit(&mut self, now: Instant, _len: usize) {
+        self.absorb_idle(now);
+    }
+
+    fn on_loss(&mut self, now: Instant, in_flight: usize) {
+        self.idle_start = None;
+        // Only cut window size on first entrance to fast recovery.
+        if !self.in_fast_recovery {
+            // RFC 9438 §4.3: remember the cwnd at this congestion event so W_est can
+            // detect when it has recovered and switch α_cubic to 1.
+            self.cwnd_prior = self.cwnd;
+
+            // TODO: Make this optional?
+            // RFC recommends (SHOULD) disabling if only a single CUBIC flow is on a network.
+            //
+            // RFC 9483.4.7: Fast Convergence
+            // If loss happened at a smaller cwnd than before, it indicates a new flow.
+            // Reduce the cubic plateau more than usual to create headroom.
+            self.w_max = if self.cwnd < self.w_max {
+                ((self.cwnd as f64) * (1.0 + BETA_CUBIC) / 2.0) as usize
+            } else {
+                self.cwnd
+            };
+
+            self.ssthresh = ((in_flight as f64 * BETA_CUBIC) as usize).max(2 * self.mss);
+            self.cwnd = self.ssthresh.min(self.rwnd).saturating_add(3 * self.mss);
+
+            self.recovery_start = Some(now);
+            self.in_fast_recovery = true;
+            self.recompute_k();
+        }
+    }
+
+    fn on_rto(&mut self, _now: Instant, in_flight: usize) {
+        // RFC 5681: when the retransmission timer fires for a segment that has
+        // already been retransmitted by the timer (no new data was ACKed since
+        // the previous RTO), ssthresh is held constant.
+        if !self.in_rto_recovery {
+            self.ssthresh = ((in_flight as f64 * BETA_CUBIC) as usize).max(2 * self.mss);
+            self.in_rto_recovery = true;
+        }
+
+        self.cwnd = self.mss;
+        self.cwnd_prior = in_flight;
+
+        // RFC 9438 §4.8: defer W_max and K reset to the start of the next CA stage.
+        self.recovery_start = None;
+        self.in_fast_recovery = false;
+        self.idle_start = None;
+    }
+
+    fn set_mss(&mut self, mss: usize) {
+        self.mss = mss;
+        self.recompute_k();
     }
 
     fn set_remote_window(&mut self, remote_window: usize) {
@@ -55,100 +244,69 @@ impl Controller for Cubic {
             self.rwnd = remote_window;
         }
     }
-
-    fn on_ack(&mut self, _now: Instant, len: usize, _rtt: &crate::socket::tcp::RttEstimator) {
-        // Slow start.
-        if self.cwnd < self.ssthresh {
-            self.cwnd = self
-                .cwnd
-                .saturating_add(len)
-                .min(self.rwnd)
-                .max(self.min_cwnd);
-        }
-    }
-
-    fn pre_transmit(&mut self, now: Instant) {
-        let Some(recovery_start) = self.recovery_start else {
-            self.recovery_start = Some(now);
-            return;
-        };
-
-        let now_millis = now.total_millis();
-
-        // If the last update was less than 100ms ago, don't update the congestion window.
-        if self.last_update > recovery_start && now_millis - self.last_update.total_millis() < 100 {
-            return;
-        }
-
-        // Elapsed time since the start of the recovery phase.
-        let t = now_millis - recovery_start.total_millis();
-        if t < 0 {
-            return;
-        }
-
-        // K = (w_max * (1 - beta) / C)^(1/3)
-        let k3 = ((self.w_max as f64) * (1.0 - BETA_CUBIC)) / C;
-        let k = if let Some(k) = cube_root(k3) {
-            k
-        } else {
-            return;
-        };
-
-        // cwnd = C(T - K)^3 + w_max
-        let s = t as f64 / 1000.0 - k;
-        let s = s * s * s;
-        let cwnd = C * s + self.w_max as f64;
-
-        self.last_update = now;
-
-        self.cwnd = (cwnd as usize).max(self.min_cwnd).min(self.rwnd);
-    }
-
-    fn set_mss(&mut self, mss: usize) {
-        self.min_cwnd = mss;
-    }
 }
 
-#[inline]
-fn abs(a: f64) -> f64 {
-    if a < 0.0 { -a } else { a }
-}
-
-/// Calculate cube root by using the Newton-Raphson method.
-fn cube_root(a: f64) -> Option<f64> {
-    if a <= 0.0 {
-        return None;
+/// Efficient cube root using f64 bit tricks and Newton-Raphson.
+///
+/// a = mantissa * 2^e
+///
+/// cbrt(a) = cbrt(mantissa * 2^e)
+/// cbrt(a) = cbrt(mantissa) * cbrt(2^e)
+/// -> cbrt(2^e) = 2^(e/3)
+///     -> e = 3q + r
+///   -> 2^(e/3) = 2^(3q + r)
+///   -> 2^(e/3) = 2^q * 2^(r/3)
+/// cbrt(a) = cbrt(mantissa) * 2^q * 2^(r/3)
+///
+/// Floats are constructed from a mantissa and expontnet component.
+/// Cbrt of a float can be achieved by cbrt of these two components.
+///
+/// The mantissa is always between 1 and 2, putting the cbrt between 1
+/// and 1.2599. The slope of the curve between those two points is
+/// almost a straight line, so a linear interpolatoin between those
+/// two points gives an error less than 2%.
+///
+///
+/// The exponent `e` of `2^e` has two parts, tt's quotient and remainder: `e = 3q + r`.
+/// Which means cbrt `2^e` is cbrt `2^3q * 2^r` which becomes `2^q * 2^(r/3)`.
+///
+/// The remainder operation means `r` can only be 0, 1, or 2, so we can calaculate
+/// `2^(r/3)` ahead of time.
+///
+/// Multiplying everything gets us a pretty close answer to the true cbrt.
+/// `cbrt(a) = cbrt(mantissa) * 2^q * 2^(r/3)`
+///
+/// One or two Newton-Raphson iterations reduce any error enough not to matter.
+fn cube_root(a: f64) -> f64 {
+    if !(a >= f64::MIN_POSITIVE && a.is_finite()) {
+        return 0.0;
     }
 
-    let (tolerance, init) = if a < 1_000.0 {
-        (1.0, 8.879040017426005) // cube_root(700.0)
-    } else if a < 1_000_000.0 {
-        (5.0, 88.79040017426004) // cube_root(700_000.0)
-    } else if a < 1_000_000_000.0 {
-        (50.0, 887.9040017426004) // cube_root(700_000_000.0)
-    } else if a < 1_000_000_000_000.0 {
-        (500.0, 8879.040017426003) // cube_root(700_000_000_000.0)
-    } else if a < 1_000_000_000_000_000.0 {
-        (5000.0, 88790.40017426001) // cube_root(700_000_000_000.0)
-    } else {
-        (50000.0, 887904.0017426) // cube_root(700_000_000_000_000.0)
-    };
+    const POW2_REM_OVER_3: [f64; 3] = [1.0, 1.2599210498948732, 1.5874010519681994];
 
-    let mut x = init; // initial value
-    let mut n = 20; // The maximum iteration
-    loop {
-        let next_x = (2.0 * x + a / (x * x)) / 3.0;
-        if abs(next_x - x) < tolerance {
-            return Some(next_x);
-        }
-        x = next_x;
+    // decompose a into IEEE-754 components
+    let bits = a.to_bits();
 
-        if n == 0 {
-            return Some(next_x);
-        }
+    // extract mantissa, get rough cbrt using linear interpolation
+    let m = f64::from_bits((bits & 0x000F_FFFF_FFFF_FFFF) | 0x3FF0_0000_0000_0000);
+    // QX-local: no_std 目标无 f64::mul_add (core_float_math unstable), 普通乘加 (FMA 精度差异 <1 ULP, 无影响).
+    let cbrt_m = m * 0.2599 + 0.7401;
 
-        n -= 1;
-    }
+    // extract exponent, break into quotient and remainder
+    // e = 3q + r where r ∈ {0, 1, 2}
+    let e = (((bits >> 52) & 0x7FF) as i64) - 1023;
+    let q = e.div_euclid(3);
+    let r = e.rem_euclid(3) as usize;
+
+    // calculate 2^q efficiently by constructing f64 from bits
+    let pow2q = f64::from_bits(((q + 1023) as u64) << 52);
+
+    // add cbrt mantissa and other component back in:
+    // cbrt mantiassa * 2^q * 2^(r/3)
+    let x = cbrt_m * pow2q * POW2_REM_OVER_3[r];
+
+    // a single iteration should bring us close enough
+    (2.0 * x + a / (x * x)) / 3.0
 }
 
 #[cfg(test)]
@@ -157,152 +315,328 @@ mod test {
 
     use super::*;
 
+    const MSS: usize = 1024;
+
+    fn ack(cubic: &mut Cubic, len: usize, now: Instant) {
+        cubic.on_ack(now, len, cubic.window().saturating_sub(MSS), &rtte())
+    }
+
+    fn rtte() -> RttEstimator {
+        RttEstimator::default()
+    }
+
     #[test]
-    fn test_cubic() {
-        let remote_window = 64 * 1024 * 1024;
-        let now = Instant::from_millis(0);
+    fn congestion_avoidance_works() {
+        let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
+        cubic.w_max = MSS * 32;
+        cubic.recompute_k();
 
-        for i in 0..10 {
-            for j in 0..9 {
-                let mut cubic = Cubic::new();
-                // Set remote window.
-                cubic.set_remote_window(remote_window);
+        // Post-fast-recovery state: cwnd = ssthresh ≈ w_max * beta.
+        cubic.cwnd = (MSS * 32 * 7) / 10;
+        cubic.ssthresh = cubic.cwnd;
+        cubic.recovery_start = Some(Instant::from_millis(0));
 
-                cubic.set_mss(1480);
+        // CA at small time intervals should grow by less than 1 MSS per ACK.
+        for i in 1..10 {
+            let initial_cwnd = cubic.window();
+            ack(&mut cubic, MSS, Instant::from_millis(i));
+            assert!(cubic.window() < initial_cwnd + MSS);
+        }
 
-                if i & 1 == 0 {
-                    cubic.on_retransmit(now);
-                } else {
-                    cubic.on_duplicate_ack(now);
-                }
+        // CA approaches w_max as t approaches K, and exceeds it past K.
+        let pre = cubic.window();
+        for i in 0..60 {
+            ack(&mut cubic, MSS, Instant::from_millis(i * 100));
+        }
+        assert!(cubic.window() >= cubic.w_max);
+        assert!(cubic.window() > pre);
 
-                cubic.pre_transmit(now);
+        // RFC 9438 §4.2: the target is clamped to 1.5 * cwnd
+        let pre = cubic.window();
+        ack(&mut cubic, MSS, Instant::from_millis(100_000));
+        assert!(cubic.window() <= pre + MSS);
 
-                let mut n = i;
-                for _ in 0..j {
-                    n *= i;
-                }
+        // CA should still cap at the receive window once enough ACKs accrue.
+        for i in 0..200 {
+            ack(&mut cubic, MSS, Instant::from_millis(100_000 + i * 100));
+        }
+        assert_eq!(cubic.window(), cubic.rwnd);
+    }
 
-                let elapsed = Instant::from_millis(n);
-                cubic.pre_transmit(elapsed);
+    #[test]
+    fn fast_recovery_works() {
+        let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
+        cubic.cwnd = MSS * 32;
 
-                let cwnd = cubic.window();
-                println!("Cubic: elapsed = {}, cwnd = {}", elapsed, cwnd);
+        // duplicate ACKs before fast recovery should do nothing
+        let initial_cwnd = cubic.window();
+        for _ in 0..3 {
+            cubic.on_dup_ack(Instant::from_millis(0), MSS, initial_cwnd);
+        }
+        assert_eq!(cubic.window(), initial_cwnd);
 
-                assert!(cwnd >= cubic.min_cwnd);
-                assert!(cubic.window() <= remote_window);
+        // we enter fast recovery upon minor loss (three duplicate ACKs).
+        // ssthresh = flight_size * beta_cubic, cwnd = ssthresh + 3*MSS, recovery_start = now.
+        // w_max = cwnd since the prior w_max (initial 2*MSS) is below cwnd.
+        let in_flight = initial_cwnd / 2;
+        let expected_ssthresh = (in_flight as f64 * BETA_CUBIC) as usize;
+        cubic.on_loss(Instant::from_millis(0), in_flight);
+        assert_eq!(cubic.ssthresh, expected_ssthresh);
+        assert_eq!(cubic.cwnd, expected_ssthresh + 3 * MSS);
+        assert_eq!(cubic.w_max, initial_cwnd);
+        assert!(cubic.in_fast_recovery);
+        assert_eq!(cubic.recovery_start, Some(Instant::from_millis(0)));
+
+        // in fast recovery, each dup-ACK should increase the cwnd by 1 MSS
+        let initial_cwnd = cubic.window();
+        for i in 0..3 {
+            for _ in 0..3 {
+                let initial_cwnd = cubic.window();
+                cubic.on_dup_ack(Instant::from_millis(i), MSS, initial_cwnd);
+                assert_eq!(cubic.window(), initial_cwnd + MSS);
             }
+
+            // multiple loss events (trip-dup-ack) should not trigger additional fast recovery reductions
+            let initial_cwnd = cubic.window();
+            let initial_ssthresh = cubic.ssthresh;
+            let initial_w_max = cubic.w_max;
+            cubic.on_loss(Instant::from_millis(i), initial_cwnd);
+            assert_eq!(cubic.window(), initial_cwnd);
+            assert_eq!(cubic.ssthresh, initial_ssthresh);
+            assert_eq!(cubic.w_max, initial_w_max);
         }
+        assert_eq!(cubic.window(), initial_cwnd + MSS * 9);
+
+        // a non-duplicate ACK exits fast recovery and deflates cwnd to ssthresh
+        ack(&mut cubic, MSS, Instant::from_millis(10));
+        assert_eq!(cubic.window(), cubic.ssthresh);
+        assert!(!cubic.in_fast_recovery);
     }
 
     #[test]
-    fn cubic_time_inversion() {
+    fn zero_length_ack_does_not_exit_fast_recovery() {
         let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
+        cubic.cwnd = MSS * 32;
 
-        let t1 = Instant::from_micros(0);
-        let t2 = Instant::from_micros(i64::MAX);
-
-        cubic.on_retransmit(t2);
-        cubic.pre_transmit(t1);
+        cubic.on_loss(Instant::from_millis(0), cubic.cwnd);
+        assert!(cubic.in_fast_recovery);
 
         let cwnd = cubic.window();
-        println!("Cubic:time_inversion: cwnd: {}, cubic: {cubic:?}", cwnd);
+        let ssthresh = cubic.ssthresh;
 
-        assert!(cwnd >= cubic.min_cwnd);
-        assert!(cwnd <= cubic.rwnd);
+        // Accepted segments that acknowledge no new data (window updates,
+        // data segments from the remote) must not end fast recovery or
+        // change the window.
+        ack(&mut cubic, 0, Instant::from_millis(1));
+        assert!(cubic.in_fast_recovery);
+        assert_eq!(cubic.window(), cwnd);
+        assert_eq!(cubic.ssthresh, ssthresh);
+
+        // The first ACK of new data still exits and deflates.
+        ack(&mut cubic, MSS, Instant::from_millis(2));
+        assert!(!cubic.in_fast_recovery);
+        assert_eq!(cubic.window(), ssthresh);
     }
 
     #[test]
-    fn cubic_long_elapsed_time() {
+    fn repeated_rto_holds_ssthresh() {
         let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
+        cubic.cwnd = MSS * 32;
 
-        let t1 = Instant::from_millis(0);
-        let t2 = Instant::from_micros(i64::MAX);
+        // First RTO reduces ssthresh based on the flight size.
+        cubic.on_rto(Instant::from_millis(0), MSS * 32);
+        let ssthresh = cubic.ssthresh;
+        assert_eq!(ssthresh, (32.0 * MSS as f64 * BETA_CUBIC) as usize);
 
-        cubic.on_retransmit(t1);
-        cubic.pre_transmit(t2);
+        // Until new data is ACKed, further RTOs are retransmissions of the
+        // same segment and must hold ssthresh constant instead of collapsing
+        // it towards the minimum.
+        cubic.on_rto(Instant::from_millis(1), MSS);
+        assert_eq!(cubic.ssthresh, ssthresh);
 
-        let cwnd = cubic.window();
-        println!("Cubic:long_elapsed_time: cwnd: {}", cwnd);
-
-        assert!(cwnd >= cubic.min_cwnd);
-        assert!(cwnd <= cubic.rwnd);
+        // Once new data is ACKed, the next RTO is a fresh loss detection
+        // and reduces ssthresh again.
+        ack(&mut cubic, MSS, Instant::from_millis(2));
+        cubic.on_rto(Instant::from_millis(3), MSS * 4);
+        assert_eq!(cubic.ssthresh, (4.0 * MSS as f64 * BETA_CUBIC) as usize);
     }
 
     #[test]
-    fn cubic_last_update() {
+    fn slow_start_works() {
         let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
+        cubic.cwnd = MSS * 32;
+        cubic.ssthresh = MSS * 16;
 
-        let t1 = Instant::from_millis(0);
-        let t2 = Instant::from_millis(100);
-        let t3 = Instant::from_millis(199);
-        let t4 = Instant::from_millis(20000);
+        // we enter slow start upon major loss (an RTO)
+        // window resets to MSS, ssthresh becomes a fraction of the inflight bytes,
+        // recovery_start is cleared so any later CA uses a fresh epoch,
+        // and w_max is preserved (RFC 9438 §4.8 defers it to the next CA stage).
+        let w_max_before_rto = cubic.w_max;
+        let inflight = cubic.window();
+        cubic.on_rto(Instant::from_millis(0), inflight);
+        assert_eq!(cubic.ssthresh, (inflight as f64 * BETA_CUBIC) as usize);
+        assert_eq!(cubic.window(), MSS);
+        assert!(!cubic.in_fast_recovery);
+        assert_eq!(cubic.recovery_start, None);
+        assert_eq!(cubic.w_max, w_max_before_rto);
 
-        cubic.on_retransmit(t1);
+        // slow start grows by at most the MSS per ack
+        let initial_cwnd = cubic.window();
+        for i in 0..10 {
+            let initial_cwnd = cubic.window();
+            let now = Instant::from_millis(i);
+            ack(&mut cubic, MSS * 2, now);
+            assert_eq!(cubic.window(), initial_cwnd + MSS);
+        }
+        assert_eq!(cubic.window(), initial_cwnd + MSS * 10);
 
-        cubic.pre_transmit(t2);
-        let cwnd2 = cubic.window();
+        // slow start uses the number of ACKed bytes if they're less than the MSS
+        let initial_cwnd = cubic.window();
+        for i in 0..10 {
+            let initial_cwnd = cubic.window();
+            let now = Instant::from_millis(10 + i);
+            ack(&mut cubic, MSS / 2, now);
+            assert_eq!(cubic.window(), initial_cwnd + MSS / 2);
+        }
+        assert_eq!(cubic.window(), initial_cwnd + MSS / 2 * 10);
 
-        cubic.pre_transmit(t3);
-        let cwnd3 = cubic.window();
-
-        cubic.pre_transmit(t4);
-        let cwnd4 = cubic.window();
-
-        println!(
-            "Cubic:last_update: cwnd2: {}, cwnd3: {}, cwnd4: {}",
-            cwnd2, cwnd3, cwnd4
-        );
-
-        assert_eq!(cwnd2, cwnd3);
-        assert_ne!(cwnd2, cwnd4);
+        // slow start transitions to congestion avoidance at ssthresh
+        let initial_cwnd = cubic.window();
+        cubic.ssthresh = initial_cwnd + MSS;
+        ack(&mut cubic, MSS, Instant::from_millis(30));
+        assert_eq!(cubic.window(), initial_cwnd + MSS);
+        assert_eq!(cubic.ssthresh, initial_cwnd + MSS);
     }
 
     #[test]
-    fn cubic_slow_start() {
+    fn progress_to_ca_via_rto() {
         let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
 
-        let t1 = Instant::from_micros(0);
+        let mut time = 0;
 
-        let cwnd = cubic.window();
-        let ack_len = 1024;
+        // slow start from default state
+        let initial_cwnd = cubic.window();
+        for _ in 0..30 {
+            time += 1;
+            ack(&mut cubic, MSS, Instant::from_millis(time));
+        }
+        assert_eq!(cubic.window(), initial_cwnd + MSS * 30);
+        assert!(cubic.window() < cubic.ssthresh);
 
-        cubic.on_ack(t1, ack_len, &RttEstimator::default());
+        // rto: cwnd resets to MSS and sstresh reduces
+        let rto_cwnd = cubic.window();
+        cubic.on_rto(Instant::from_millis(time), rto_cwnd);
+        assert_eq!(cubic.window(), MSS);
+        assert_eq!(cubic.ssthresh, (rto_cwnd as f64 * BETA_CUBIC) as usize);
 
-        assert!(cubic.window() > cwnd);
+        // slow start again until cwnd reaches new ssthresh
+        while cubic.window() < cubic.ssthresh {
+            time += 1;
+            let initial_cwnd = cubic.window();
+            ack(&mut cubic, MSS, Instant::from_millis(time));
+            assert_eq!(cubic.window(), initial_cwnd + MSS);
+        }
+        assert!(cubic.window() >= cubic.ssthresh);
+        assert!(cubic.window() < cubic.ssthresh + MSS);
 
-        for i in 1..1000 {
-            let t2 = Instant::from_micros(i);
-            cubic.on_ack(t2, ack_len * 100, &RttEstimator::default());
-            assert!(cubic.window() <= cubic.rwnd);
+        // ca: first CA ACK starts a fresh epoch with W_max = cwnd and K = 0.
+        time += 1;
+        let cwnd_at_ca_entry = cubic.window();
+        ack(&mut cubic, MSS, Instant::from_millis(time));
+        assert_eq!(cubic.w_max, cwnd_at_ca_entry);
+        assert_eq!(cubic.k, 0.0);
+        assert!(cubic.window() >= cwnd_at_ca_entry);
+    }
+
+    #[test]
+    fn progress_to_ca_via_loss() {
+        let mut cubic = Cubic::new();
+        cubic.set_mss(MSS);
+
+        let mut time = 0;
+
+        // slow start from default state
+        let initial_cwnd = cubic.window();
+        for _ in 0..30 {
+            time += 1;
+            ack(&mut cubic, MSS, Instant::from_millis(time));
+        }
+        assert_eq!(cubic.window(), initial_cwnd + MSS * 30);
+        assert!(cubic.window() < cubic.ssthresh);
+
+        // dup ACKs: ssthresh = cwnd * beta, cwnd = ssthresh + 3*MSS, recovery_start = now
+        time += 1;
+        let loss_cwnd = cubic.window();
+        let expected_ssthresh = (loss_cwnd as f64 * BETA_CUBIC) as usize;
+        cubic.on_loss(Instant::from_millis(time), loss_cwnd);
+        assert_eq!(cubic.ssthresh, expected_ssthresh);
+        assert_eq!(cubic.window(), expected_ssthresh + 3 * MSS);
+        assert!(cubic.in_fast_recovery);
+        assert_eq!(cubic.recovery_start, Some(Instant::from_millis(time)));
+
+        // inflate cwnd on each duplicate ACK
+        for _ in 0..9 {
+            time += 1;
+            let initial_cwnd = cubic.window();
+            cubic.on_dup_ack(Instant::from_millis(time), MSS, cubic.cwnd);
+            assert_eq!(cubic.window(), initial_cwnd + MSS);
         }
 
-        let t3 = Instant::from_micros(2000);
+        // non-duplicate ACK deflates cwnd to ssthresh
+        time += 1;
+        ack(&mut cubic, MSS, Instant::from_millis(time));
+        assert_eq!(cubic.window(), expected_ssthresh);
+        assert!(!cubic.in_fast_recovery);
 
-        let cwnd = cubic.window();
-        cubic.on_retransmit(t3);
-        assert_eq!(cwnd >> 1, cubic.ssthresh);
+        // ca: subsequent ACKs follow the cubic curve
+        time += 1;
+        let initial_cwnd = cubic.window();
+        ack(&mut cubic, MSS, Instant::from_millis(time));
+        assert!(cubic.window() >= initial_cwnd);
     }
 
     #[test]
-    fn cubic_pre_transmit() {
+    fn fast_convergence_reduces_w_max() {
         let mut cubic = Cubic::new();
-        cubic.pre_transmit(Instant::from_micros(2000));
+        cubic.set_mss(MSS);
+        cubic.w_max = MSS * 50;
+        cubic.cwnd = MSS * 30;
+
+        // Loss while cwnd < w_max (a new competing flow) should pull w_max down.
+        let w_max_prev = cubic.w_max;
+        cubic.on_loss(Instant::from_millis(0), cubic.cwnd);
+        assert!(cubic.w_max < w_max_prev);
     }
 
     #[test]
     fn test_cube_root() {
-        for n in (1..1000000).step_by(99) {
-            let a = n as f64;
-            let a = a * a * a;
-            let result = cube_root(a);
-            println!("cube_root({a}) = {}", result.unwrap());
-        }
-    }
+        let mut max_err = 0.0;
+        let mut max_err_at = 0;
+        let mut max_err_expected = 0.0;
+        let mut max_err_found = 0.0;
 
-    #[test]
-    #[should_panic]
-    fn cube_root_zero() {
-        cube_root(0.0).unwrap();
+        for i in (1..1_000_000).step_by(99) {
+            let found = cube_root(i as f64);
+            let expected = cube_root((i as f64) * (i as f64) * (i as f64));
+            let err = (found - expected).abs() / expected;
+
+            if err > max_err {
+                max_err = err;
+                max_err_at = i;
+                max_err_found = found;
+                max_err_expected = expected;
+            }
+        }
+
+        assert!(
+            max_err < 0.0005,
+            "cube_root({max_err_at}) = {max_err_found}, expected ~{max_err_expected}, rel err {max_err:.3e}"
+        );
     }
 }

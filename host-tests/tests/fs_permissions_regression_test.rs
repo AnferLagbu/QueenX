@@ -19,7 +19,7 @@
 //! host 上不可直接调用. 完整路径回归保留在 QEMU 集成测试.
 //!
 //! 追踪: B06-02 / B06-03 / B06-07
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 
 use std::sync::OnceLock;
 

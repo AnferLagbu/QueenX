@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // B07-21/22: 分册 7 网络凭据与 pwm_set 权限回归
 //
 // 验收 (B07-01/02/03/05):

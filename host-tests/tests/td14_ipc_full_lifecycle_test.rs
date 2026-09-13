@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-14: services::ipc shm/msgq/sem 三子系统公开 API 完整性契约测试.
 //
 // 验收:

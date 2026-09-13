@@ -49,8 +49,7 @@ impl core::fmt::Display for StartQueryError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for StartQueryError {}
+impl core::error::Error for StartQueryError {}
 
 /// Error returned by [`Socket::get_query_result`]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -71,8 +70,7 @@ impl core::fmt::Display for GetQueryResultError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for GetQueryResultError {}
+impl core::error::Error for GetQueryResultError {}
 
 /// State for an in-progress DNS query.
 ///
@@ -284,7 +282,7 @@ impl<'a> Socket<'a> {
     /// Start a query with a raw (wire-format) DNS name.
     /// `b"\x09rust-lang\x03org\x00"`
     ///
-    /// You probably want to use [`start_query`] instead.
+    /// You probably want to use [`start_query`](Self::start_query) instead.
     pub fn start_query_raw(
         &mut self,
         cx: &mut Context,

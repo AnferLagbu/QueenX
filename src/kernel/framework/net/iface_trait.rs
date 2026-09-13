@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! 网络协议栈抽象 — Framekernel Safe API
 //!
 //! ## 定位

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! Credo 私有存储子系统 syscall — services 层安全代理
 //!
 //! ## 职责

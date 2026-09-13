@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! Phase B 单元测试 (host 模拟)
 //!
 //! 覆盖: B1 Futex / B2 Page Cache / B3 Swap / B4 ACPI/MSI

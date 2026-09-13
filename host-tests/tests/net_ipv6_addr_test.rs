@@ -9,7 +9,7 @@
 //!   - 内置单元测试覆盖 IPv6 构造/转换/match
 //!
 //! 追踪: DECISION-032 (IPv4/IPv6 双栈)
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 
 use std::fs;
 

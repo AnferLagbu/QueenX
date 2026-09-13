@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-20: services 域 NetError / IpcError / SyncError / PiMutexError /
 //        DevTreeError / ChitinError / StorageError / PwmError /
 //        AuditError / SessionError 收敛到 KernelError (TD-08 V6)

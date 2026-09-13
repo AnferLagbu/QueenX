@@ -4,7 +4,7 @@
 //! 100~256 次循环下的正确性与性能特征. 集成测试视角, 不依赖真实硬件.
 //!
 //! 追踪: I-05
-//! SPDX-License-Identifier: Apache-2.0
+//! SPDX-License-Identifier: MPL-2.0
 //!
 //! ## 与单元测试的分工
 //! - 单元测试 (`src/hvfs/*`) 验证各模块基本行为

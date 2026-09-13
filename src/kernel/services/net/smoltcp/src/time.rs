@@ -105,8 +105,11 @@ impl Instant {
 #[cfg(feature = "std")]
 impl From<::std::time::Instant> for Instant {
     fn from(other: ::std::time::Instant) -> Instant {
-        let elapsed = other.elapsed();
-        Instant::from_micros((elapsed.as_secs() * 1_000000) as i64 + elapsed.subsec_micros() as i64)
+        static REFERENTIAL: ::std::sync::LazyLock<::std::time::Instant> =
+            ::std::sync::LazyLock::new(::std::time::Instant::now);
+
+        let n = other.saturating_duration_since(*REFERENTIAL);
+        Self::from_micros(n.as_secs() as i64 * 1000000 + n.subsec_micros() as i64)
     }
 }
 
@@ -393,6 +396,21 @@ mod test {
         assert_eq!(
             epoc,
             ::std::time::UNIX_EPOCH + ::std::time::Duration::from_secs(2085955200)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_instant_conversions_from_std_instant() {
+        let std_now = ::std::time::Instant::now();
+
+        let before = Instant::from(std_now);
+        ::std::thread::sleep(::std::time::Duration::from_millis(5));
+        let after = Instant::from(std_now);
+
+        assert_eq!(
+            before, after,
+            "converting the same std Instant twice should yield the same result"
         );
     }
 

@@ -178,6 +178,7 @@ pub use self::ieee802154::{
     FrameVersion as Ieee802154FrameVersion, Pan as Ieee802154Pan, Repr as Ieee802154Repr,
 };
 
+pub use self::ip::checksum;
 pub use self::ip::{
     Address as IpAddress, Cidr as IpCidr, Endpoint as IpEndpoint,
     ListenEndpoint as IpListenEndpoint, Protocol as IpProtocol, Repr as IpRepr,
@@ -303,8 +304,7 @@ pub use self::ipsec_esp::{Packet as IpSecEspPacket, Repr as IpSecEspRepr};
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Error;
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

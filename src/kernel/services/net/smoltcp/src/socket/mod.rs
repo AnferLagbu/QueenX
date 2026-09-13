@@ -54,7 +54,7 @@ pub(crate) enum PollAt {
 /// It is usually more convenient to use [SocketSet::get] instead.
 ///
 /// [AnySocket]: trait.AnySocket.html
-/// [SocketSet::get]: struct.SocketSet.html#method.get
+/// [SocketSet::get]: ../iface/struct.SocketSet.html#method.get
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum Socket<'a> {

@@ -154,11 +154,14 @@ impl<'a, H> PacketBuffer<'a, H> {
             }
         }
 
+        let metadata_slot = self.metadata_ring.enqueue_one()?;
+
+        // Only call f once we know that we will succeed
         let (size, _) = self
             .payload_ring
             .enqueue_many_with(|data| (f(&mut data[..max_size]), ()));
 
-        *self.metadata_ring.enqueue_one()? = PacketMetadata::packet(size, header);
+        *metadata_slot = PacketMetadata::packet(size, header);
 
         Ok(size)
     }
@@ -391,6 +394,30 @@ mod test {
         assert!(buffer.enqueue(4, ()).is_ok());
         assert!(buffer.dequeue().is_ok());
         assert!(buffer.enqueue(5, ()).is_ok());
+    }
+
+    #[test]
+    fn test_enqueue_fallible_full_metadata_fn_not_called() {
+        // Fill the metadata buffer except 1 byte and then make room at the start
+        let mut buffer = PacketBuffer::new(vec![PacketMetadata::EMPTY; 4], vec![0u8; 16]);
+
+        assert!(buffer.enqueue(12, ()).is_ok());
+        assert!(buffer.enqueue(1, ()).is_ok());
+        assert!(buffer.enqueue(1, ()).is_ok());
+        assert!(buffer.enqueue(1, ()).is_ok());
+        let dequeued_buf = buffer.dequeue().unwrap();
+        assert_eq!(dequeued_buf.1.len(), 12);
+
+        // At this point there is room at the start of the payload storage
+        // and 1 byte at the end of the payload storage
+        // but only one metadata slot.
+        assert!(
+            buffer
+                .enqueue_with_infallible(5, (), |_| {
+                    panic!("This enqueue should fail and this closure should not be called")
+                })
+                .is_err()
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-08: services 层统一错误类型 `KernelError` (Single Source of Truth).
 //
 // 验收:

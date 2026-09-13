@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: Apache-2.0 OR MIT
+# SPDX-License-Identifier: MPL-2.0
 # Copyright (c) 2026 QueenX Contributors
 #
 # check_bench_regression.py — 对比当前 framekernel-bench 结果与 baseline.json

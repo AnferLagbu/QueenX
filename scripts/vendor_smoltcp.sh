@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-License-Identifier: GPL-2.0
+# SPDX-License-Identifier: MPL-2.0
 # vendor_smoltcp.sh — smoltcp 第三方库 vendored 同步脚本
 #
 # 功能:
@@ -100,8 +100,10 @@ fetch_upstream_src_hash() {
         log_err "上游 $tag 仓库无 src/ 目录"
         return 1
     fi
-    find "$tmp/smoltcp/src" -type f -name '*.rs' -print0 | \
-        sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+    # 相对路径 + LC_ALL=C: 与 audit_smoltcp_purity.py 检查 5 的
+    # `cd <clone>/smoltcp && LC_ALL=C find src ...` 计算方式保持 byte 级一致
+    (cd "$tmp/smoltcp" && LC_ALL=C find src -type f -name '*.rs' -print0 | \
+        LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
 }
 
 # ============================================================================
@@ -128,16 +130,18 @@ cmd_verify() {
         log_info "读取锁文件: $SMOLTCP_LOCKFILE"
         # shellcheck disable=SC1090
         source "$SMOLTCP_LOCKFILE"
-        log_info "锁文件 tag=$SMOLTCP_TAG sha=$SMOLTCP_SHA"
-        log_info "锁文件 src/ SHA256: $SMOLTCP_SRC_HASH"
+        log_info "锁文件 tag=$SMOLTCP_TAG sha=$SMOLTCP_SHA mode=${SMOLTCP_LOCK_MODE:-?}"
 
-        if [ "$vendored_hash" = "$SMOLTCP_SRC_HASH" ]; then
+        # LOCALIZED_VENDORED 模式: 本地 hash 对比 LOCAL_SRC_HASH (含本地化文件),
+        # 上游 UPSTREAM_SRC_HASH 由 audit_smoltcp_purity.py 联网复核
+        local local_src_hash="${SMOLTCP_LOCAL_SRC_HASH:-}"
+        if [ "$vendored_hash" = "$local_src_hash" ]; then
             log_ok "vendored 源与锁文件一致 ✓"
             return 0
         else
             log_err "vendored 源与锁文件不一致 ✗"
             log_err "  vendored: $vendored_hash"
-            log_err "  锁文件:  $SMOLTCP_SRC_HASH"
+            log_err "  锁文件:   ${local_src_hash:-缺失}"
             return 1
         fi
     else
@@ -168,21 +172,35 @@ cmd_lock() {
     fi
     log_info "tag=$tag sha=$sha"
 
-    local src_hash
-    src_hash=$(fetch_upstream_src_hash "$tag")
-    log_info "上游 src/ SHA256: $src_hash"
+    local upstream_src_hash
+    upstream_src_hash=$(fetch_upstream_src_hash "$tag")
+    log_info "上游 src/ SHA256: $upstream_src_hash"
 
     local vendored_hash
     vendored_hash=$(compute_vendored_hash)
     log_info "本地 vendored src/ SHA256: $vendored_hash"
 
-    if [ "$vendored_hash" != "$src_hash" ]; then
-        log_warn "本地 vendored 与上游不一致 (可能本地化修改)"
-        log_warn "  vendored: $vendored_hash"
-        log_warn "  上游:     $src_hash"
-        log_warn "若确认为预期, 使用 SMOLTCP_FORCE=1 强制锁定"
-        if [ "${SMOLTCP_FORCE:-0}" != "1" ]; then
-            return 1
+    # LOCALIZED_VENDORED 模式 (默认): 本地允许含本地化文件 (lint/SAFETY 注释),
+    # 因此本地 hash 不必等于上游 hash — 差异由 SMOLTCP_LOCALIZED_FILES 清单约束.
+    # 非本地化模式: 本地必须与上游 byte-level 一致, 否则拒绝锁定.
+    local lock_mode="${SMOLTCP_LOCK_MODE:-LOCALIZED_VENDORED}"
+    local localized_files="${SMOLTCP_LOCALIZED_FILES:-}"
+    if [ "$vendored_hash" != "$upstream_src_hash" ]; then
+        if [ "$lock_mode" = "LOCALIZED_VENDORED" ]; then
+            if [ -z "$localized_files" ]; then
+                log_warn "本地与上游不一致但 SMOLTCP_LOCALIZED_FILES 为空"
+                log_warn "若存在本地化文件, 请通过环境变量 SMOLTCP_LOCALIZED_FILES 提供清单"
+            else
+                log_info "本地与上游不一致 (LOCALIZED_VENDORED, 差异由本地化清单约束)"
+            fi
+        else
+            log_warn "本地 vendored 与上游不一致"
+            log_warn "  vendored: $vendored_hash"
+            log_warn "  上游:     $upstream_src_hash"
+            log_warn "非 LOCALIZED_VENDORED 模式要求本地与上游一致"
+            if [ "${SMOLTCP_FORCE:-0}" != "1" ]; then
+                return 1
+            fi
         fi
     fi
 
@@ -192,27 +210,39 @@ cmd_lock() {
     cat > "$SMOLTCP_LOCKFILE" <<EOF
 # smoltcp vendored 锁文件
 # 由 scripts/vendor_smoltcp.sh lock 自动生成
-# 用于 CI 验证 vendored 源与上游 byte-level 一致
+# 用于 CI 验证 vendored 源与上游 byte-level 一致 (排除本地化部分)
 #
 # 关联: docs/plan/smoltcp-framekernel-wrapper.md §同步机制
+# 模式: $lock_mode
 
-# 上游 tag (semver, 形如 v0.13.0)
+# 上游 tag (semver, 形如 v0.13.1)
 SMOLTCP_TAG=$tag
 
 # 上游 tag 对应 commit SHA
 SMOLTCP_SHA=$sha
 
 # 上游 src/ 目录下所有 .rs 文件的合并 SHA256
-SMOLTCP_SRC_HASH=$src_hash
+SMOLTCP_UPSTREAM_SRC_HASH=$upstream_src_hash
+
+# 本地 vendored 实际 src/ 合并 SHA256 ($lock_mode 模式下含本地化文件)
+SMOLTCP_LOCAL_SRC_HASH=$vendored_hash
 
 # 锁定时间 (ISO 8601, 仅供人类阅读, CI 不读取)
 SMOLTCP_LOCKED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# 锁定模式 (LOCALIZED_VENDORED / PURITY)
+SMOLTCP_LOCK_MODE=$lock_mode
+
+# 本地化文件清单 (LOCALIZED_VENDORED 模式, 空格分隔的相对路径)
+SMOLTCP_LOCALIZED_FILES="$localized_files"
 EOF
 
     log_ok "锁文件已写入: $SMOLTCP_LOCKFILE"
     log_ok "  tag:  $tag"
     log_ok "  sha:  $sha"
-    log_ok "  hash: $src_hash"
+    log_ok "  upstream hash: $upstream_src_hash"
+    log_ok "  local hash:    $vendored_hash"
+    log_ok "  mode:          $lock_mode"
 }
 
 # ============================================================================
@@ -235,11 +265,13 @@ cmd_status() {
     if [ -f "$SMOLTCP_LOCKFILE" ]; then
         # shellcheck disable=SC1090
         source "$SMOLTCP_LOCKFILE"
-        echo "  锁文件:         $SMOLTCP_LOCKFILE"
-        echo "  锁文件 tag:     $SMOLTCP_TAG"
-        echo "  锁文件 sha:     $SMOLTCP_SHA"
-        echo "  锁文件 hash:    $SMOLTCP_SRC_HASH"
-        echo "  锁定时间:       $SMOLTCP_LOCKED_AT"
+        echo "  锁文件:          $SMOLTCP_LOCKFILE"
+        echo "  锁文件 tag:      ${SMOLTCP_TAG:-?}"
+        echo "  锁文件 sha:      ${SMOLTCP_SHA:-?}"
+        echo "  上游 hash:       ${SMOLTCP_UPSTREAM_SRC_HASH:-?}"
+        echo "  本地 hash:       ${SMOLTCP_LOCAL_SRC_HASH:-?}"
+        echo "  锁定时间:        ${SMOLTCP_LOCKED_AT:-?}"
+        echo "  锁定模式:        ${SMOLTCP_LOCK_MODE:-?}"
     else
         echo "  锁文件:         (未生成)"
     fi

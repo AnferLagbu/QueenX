@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: MPL-2.0
 // TD-17: services::proc::table::TableError 收敛到 KernelError (TD-08 V3 proc域)
 //
 // 验收:

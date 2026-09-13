@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: MPL-2.0
 //! services/mm/mremap 参数验证单元测试
 
 use queenx_tests::{
