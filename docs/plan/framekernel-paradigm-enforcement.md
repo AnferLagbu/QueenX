@@ -574,6 +574,20 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **sm_fi 剩余**：`uds_svc`（`services::net::unix`）委托留待 UDS/SocketStrategy 委托 trait 注入专项。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic 三维）✅ / host-tests 全通过（双栈套件 6/6）✅ / QEMU x86_64 完整启动到 Ring 3 ✅ / 边界审计无新增违规（2 HIGH/2 MEDIUM 均为预存，与本批前一致）✅。
 
+### DECISION-J 第十六批执行记录：ipc 专项收口 + 生产口径计数工具（audit_reverse_deps.py）
+
+> ipc 实测现状：IpcStrategy trait 注入（DECISION-I）完成后，framework/ipc 生产代码反向依赖已归零——剩余 14 处全部为 cfg(test) 测试代码（mod.rs 内联 tests 12 处 + stress_tests.rs 2 处）。文档 §7.3/L256/L268 已裁决"测试载体访问 services 真实代码属合理，不纳入整治"，本批落地该口径。
+
+- **口径修正**：裸 grep 计数（39 文件/81 行）混淆生产与测试上下文。新增 [audit_reverse_deps.py](../../scripts/audit_reverse_deps.py)（fail-closed）区分两类：
+  - **生产反向依赖（验收对象）**：30 文件 / 53 行
+  - **测试上下文引用（§7.3 合理，不纳入）**：9 文件 / 28 行（ipc/mod.rs tests 12 + ipc/stress_tests.rs 2 + framework/tests/ 7 文件 14）
+  - 对账：30+9=39 文件、53+28=81 行，与裸 grep 精确一致 ✅
+- **测试上下文判定规则**（fail-closed：判定不了的按生产违规计）：① `framework/tests/` 目录整体（feature 门控测试载体）；② `#[cfg(test)] mod X;` 引入的外部文件；③ `#[cfg(test)] mod X { ... }` 内联块（花括号深度跟踪）。抽查确认 ipc/mod.rs tests 正确归类 + user_proc.rs L329/L339、clone.rs L131 生产引用不误判。
+- **ipc 专项结论**：生产反向依赖 0（DECISION-I trait 注入 + DECISION-J 类型反转完成），剩余测试项按 §7.3 合理保留。ipc 目录后续不再单列批次。
+- **工具定位**：audit_reverse_deps.py 为本工程验收计数工具（非 CI 门槛——生产未归零前纳入 audit.sh 会直接打破 CI，待生产归零后再议纳入）。
+- **剩余生产 30 文件分布**（下一批对象）：壳 re-export 类（credo 4/hvfs 18 行/devfs/ramfs/flock/inotify/cgroup/namespace/oomd/fd_table/rlimit/seccomp/session/types/mmap/mprotect/syscall types 等约 24 文件）+ 真实调用点（dispatch.rs 4、dispatch_trait.rs 1、clone.rs 1、sched_ops.rs 1、identity.rs 2、inotify.rs 1、sendfile.rs 1、user_proc.rs 2）。
+- **验证**：脚本自身行为验证（归类单测 + 全量对账）✅；不触内核编译，无重跑验证链必要（audit quick 最近一轮全绿后无内核代码变更）。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。
