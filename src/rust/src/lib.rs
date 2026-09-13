@@ -755,6 +755,12 @@ pub extern "C" fn kernel_init() {
         crate::klog_boot_info!("Scheduler ready");
 
         // 9. VFS
+        // services::fs::init() — FsBackend 策略 + VFS poll 策略 + HvFS
+        // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
+        // 此前 services::fs::init() 无调用者, make_ramfs_inode 钩子 (第二十三批)
+        // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
+        // 在生产环境被回退策略拦截 — 本行注册为回归修复。
+        crate::kernel::services::fs::init();
         crate::kernel::framework::fs::vfs::init();
         crate::klog_boot_info!("VFS ready");
 
@@ -807,12 +813,12 @@ pub extern "C" fn kernel_init() {
         // HvFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
         #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
         {
-            let hvfs = crate::kernel::framework::fs::hvfs::hvfs::get_hvfs();
+            let hvfs = crate::kernel::services::fs::hvfs::hvfs::get_hvfs();
             // init() 会自动扫描所有块设备, 发现 QueenX 签名的磁盘并挂载
             hvfs.init();
 
             if hvfs.is_disk_mode() {
-                crate::kernel::framework::fs::hvfs::hvfs::get_hvfs()
+                crate::kernel::services::fs::hvfs::hvfs::get_hvfs()
                     .spa
                     .disk_present
                     .store(true, core::sync::atomic::Ordering::Release);
@@ -821,7 +827,7 @@ pub extern "C" fn kernel_init() {
                     b"hvfs".as_ptr(),
                 );
                 if r == 0 {
-                    let n_drives = crate::kernel::framework::fs::hvfs::hvfs::get_hvfs()
+                    let n_drives = crate::kernel::services::fs::hvfs::hvfs::get_hvfs()
                         .drives_discovered
                         .lock()
                         .len() as u64;

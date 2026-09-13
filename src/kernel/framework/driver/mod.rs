@@ -205,8 +205,8 @@ pub fn init_all() {
 
     hotplug::hotplug_init();
 
-    // 注册 HvFS 热插拔监听器
-    crate::kernel::framework::fs::hvfs::hvfs::hvfs_hotplug_register();
+    // HvFS 热插拔监听器注册已反转至 services::fs::init (DECISION-K 项 6:
+    // 注册点前置, framework driver 不再反向调用 services hvfs)
 
     let _ = crate::kernel::framework::chitin::devtree_probe_composites();
 

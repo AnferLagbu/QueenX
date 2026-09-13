@@ -234,8 +234,8 @@ fn test_slab_cache_index_selection() -> TestResult {
 fn test_zil_crc32_deterministic() -> TestResult {
     // CRC32 在 zil_persist.rs 中定义; 通过 roundtrip 测试
     let data = b"Hello, ZIL!";
-    let c1 = crate::kernel::framework::fs::hvfs::zil_persist::crc32_test_wrapper(data);
-    let c2 = crate::kernel::framework::fs::hvfs::zil_persist::crc32_test_wrapper(data);
+    let c1 = crate::kernel::services::fs::hvfs::zil_persist::crc32_test_wrapper(data);
+    let c2 = crate::kernel::services::fs::hvfs::zil_persist::crc32_test_wrapper(data);
     assert_eq_test!(c1, c2, "crc32 deterministic");
     check!(c1 != 0, "crc32 non-zero");
     TestResult::Pass

@@ -6,10 +6,10 @@
 //! (`#[no_mangle]` 全局符号不受模块位置影响).
 
 use super::api::ptr_to_str;
+use super::backend_trait::hvfs_fs;
 use super::types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
 use super::vfs::VFS_MANAGER;
 use crate::kernel::framework::fs::devfs::{DEVFS_DATA, DevfsData};
-use crate::kernel::framework::fs::hvfs::hvfs::get_hvfs;
 use crate::kernel::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
 
 static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -57,9 +57,10 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
             }
         }
         FsType::HvFs => {
-            let hvfs = get_hvfs();
-            if !hvfs.is_initialized() {
-                hvfs.init();
+            // HvFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
+            // 未注册 (services::fs::init 之前) 时静默跳过, 挂载在下方 hvfs_fs() 处 fail-closed
+            if let Some(fs) = hvfs_fs() {
+                let _ = fs.fs_init();
             }
         }
         FsType::DevFs => {
@@ -97,7 +98,11 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
             crate::klog_boot_info!("[VFS] vfs_mount_internal: RamFsData ref created");
             fs_ref
         }
-        FsType::HvFs => get_hvfs(),
+        FsType::HvFs => match hvfs_fs() {
+            Some(fs) => fs,
+            // fail-closed: services::fs::init 注册前 HvFS 不可挂载
+            None => return KernelError::NotInitialized.as_i32(),
+        },
         FsType::DevFs => {
             // SAFETY: DEVFS_DATA 是全局静态变量, &DEVFS_DATA 生命周期为 'static
             unsafe { &*(&DEVFS_DATA as *const DevfsData) }
@@ -235,17 +240,17 @@ pub extern "C" fn vfs_format_internal(path: *const u8, fs_type: *const u8) -> i3
 
     // Parse filesystem type
     if fs_type_str == "hvfs" || fs_type_str == "HvFS" {
-        let hvfs = get_hvfs();
-        let (drive_id, part_start) = hvfs.drives_discovered.lock().first().copied().unwrap_or((
-            hvfs.disk_drive.load(core::sync::atomic::Ordering::Acquire),
-            hvfs.partition_start
-                .load(core::sync::atomic::Ordering::Acquire),
-        ));
-        hvfs.format_drive(drive_id, part_start);
-        if hvfs.is_disk_mode() {
-            return 0;
+        // DECISION-K 项 6: 格式化策略经 FileSystem::fs_format 分发 (services 实装),
+        // framework 不再直接访问 HvFS 内部字段
+        match hvfs_fs() {
+            Some(fs) => {
+                if fs.fs_format().is_ok() {
+                    return 0;
+                }
+                return -1;
+            }
+            None => return -1,
         }
-        return -1;
     } else if fs_type_str == "ramfs" || fs_type_str == "RamFS" {
         // RamFS 无需格式化, 始终为内存文件系统
         return 0;

@@ -2,14 +2,14 @@
 use crate::register_tests_inner;
 
 use super::{assert_eq_test, check};
-use crate::kernel::framework::fs::hvfs::arc::{HvArc, HvArcBufType, HvArcKey};
-use crate::kernel::framework::fs::hvfs::bp::{HvBlockPointer, HvCksumType, HvDva};
-use crate::kernel::framework::fs::hvfs::checksum::HvChecksum;
-use crate::kernel::framework::fs::hvfs::dmu::{HvDmuObject, HvObjType};
-use crate::kernel::framework::fs::hvfs::spa::{HV_SPA_MAGIC, HvSpaConfig, HvUberblock};
-use crate::kernel::framework::fs::hvfs::txg::HvTxgGroup;
-use crate::kernel::framework::fs::hvfs::zap::HvZap;
-use crate::kernel::framework::fs::hvfs::zil::{HvZil, HvZilRecord};
+use crate::kernel::services::fs::hvfs::arc::{HvArc, HvArcBufType, HvArcKey};
+use crate::kernel::services::fs::hvfs::bp::{HvBlockPointer, HvCksumType, HvDva};
+use crate::kernel::services::fs::hvfs::checksum::HvChecksum;
+use crate::kernel::services::fs::hvfs::dmu::{HvDmuObject, HvObjType};
+use crate::kernel::services::fs::hvfs::spa::{HV_SPA_MAGIC, HvSpaConfig, HvUberblock};
+use crate::kernel::services::fs::hvfs::txg::HvTxgGroup;
+use crate::kernel::services::fs::hvfs::zap::HvZap;
+use crate::kernel::services::fs::hvfs::zil::{HvZil, HvZilRecord};
 use crate::kernel::framework::tests::{TestResult, runner};
 
 fn test_bp_null() -> TestResult {

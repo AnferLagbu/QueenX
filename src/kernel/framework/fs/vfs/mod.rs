@@ -43,4 +43,7 @@ pub use inotify::{
     sys_inotify_rm_watch,
 };
 // T-05: 后端决策策略 re-export
-pub use backend_trait::{FallbackFsBackend, FsBackend, current_fs_backend, register_fs_backend};
+pub use backend_trait::{
+    FallbackFsBackend, FsBackend, current_fs_backend, hvfs_fs, register_fs_backend,
+    register_hvfs_fs,
+};

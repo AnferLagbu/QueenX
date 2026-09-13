@@ -24,7 +24,7 @@
 //! - 文件系统注册表管理
 
 use crate::kernel::framework::fs::vfs::inode::Inode;
-use crate::kernel::framework::fs::vfs::types::KernelError;
+use crate::kernel::framework::fs::vfs::types::{FileSystem, KernelError};
 
 /// 文件系统后端决策接口 — services 实现, framework 调用
 ///
@@ -111,5 +111,35 @@ pub fn current_fs_backend() -> &'static dyn FsBackend {
     match FS_BACKEND.get() {
         Some(&p) => p,
         None => &FALLBACK_BACKEND,
+    }
+}
+
+// ============================================================================
+// HvFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
+// ============================================================================
+
+/// 全局 HvFS FileSystem 注册表 — `services::fs::init` 注册 `HvfsData` 实例
+static HVFS_FS: crate::kernel::framework::sync::OnceLock<&'static dyn FileSystem> =
+    crate::kernel::framework::sync::OnceLock::new();
+
+/// 注册 HvFS FileSystem 实例 (由 `services::fs::init` 调用)
+///
+/// framework 挂载/格式化路径经 `hvfs_fs()` 消费 trait object,
+/// 不再反向依赖 services 具象 `HvfsData`.
+/// # Errors
+/// 已被注册过时返回 Err。
+pub fn register_hvfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn FileSystem> {
+    match HVFS_FS.set(fs) {
+        Ok(()) => Ok(()),
+        Err(existing) => Err(existing),
+    }
+}
+
+/// 获取注册的 HvFS FileSystem (未注册时返回 None — fail-closed)
+#[inline]
+pub fn hvfs_fs() -> Option<&'static dyn FileSystem> {
+    match HVFS_FS.get() {
+        Some(&fs) => Some(fs),
+        None => None,
     }
 }

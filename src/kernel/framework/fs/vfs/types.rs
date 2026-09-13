@@ -506,6 +506,17 @@ pub trait FileSystem: Send + Sync {
     fn fs_removexattr(&self, _rel_path: &str, _name: &str, _pwm: u64) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
+    /// 格式化底层介质 (HvFS 磁盘模式使用).
+    ///
+    /// 封装原 framework fsformat 路径对 HvFS 内部字段 (drives_discovered/
+    /// disk_drive/partition_start) 的直接访问, 归位 services 策略
+    /// (DECISION-K 项 6: 注入归零).
+    ///
+    /// # Errors
+    /// 默认实现返回 `NotSupported`; 介质格式化失败或不支持时返回 `KernelError`.
+    fn fs_format(&self) -> KernelResult<()> {
+        Err(KernelError::NotSupported)
+    }
 }
 
 // ============================================================================

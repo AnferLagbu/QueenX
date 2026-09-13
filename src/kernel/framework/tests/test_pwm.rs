@@ -213,8 +213,8 @@ fn test_viable_floor() -> TestResult {
 
 #[cfg(target_arch = "x86_64")]
 fn test_pwmentry_cow_bp() -> TestResult {
-    use crate::kernel::framework::fs::hvfs::bp::HvBlockPointer;
-    use crate::kernel::framework::fs::hvfs::dmu::HvDmuObject;
+    use crate::kernel::services::fs::hvfs::bp::HvBlockPointer;
+    use crate::kernel::services::fs::hvfs::dmu::HvDmuObject;
 
     let mut obj = HvDmuObject::new_file(1, 0);
     let bp = HvBlockPointer::null();

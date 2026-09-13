@@ -162,6 +162,72 @@ fn test_vfs_snapshot_restore() -> TestResult {
     TestResult::Pass
 }
 
+// ============================================================================
+// DECISION-K 项 6 回归测试 (第二十四批): services::fs::init 注册激活
+//
+// 回归背景: services::fs::init 此前全库无调用者, 第二十三批 ramfs 回迁引入
+// 的 make_ramfs_inode 钩子恒命中 FallbackFsBackend → Err(NotInitialized),
+// ramfs open/create 生产路径被回退策略拦截.
+// ============================================================================
+
+fn test_fs_backend_registered_make_inode() -> TestResult {
+    // 激活注册 (幂等: 重复注册 Err 被忽略)
+    crate::kernel::services::fs::init();
+    // 钩子必须返回真实 Inode — FallbackFsBackend 恒 Err, 本断言锁定回归
+    let result = crate::kernel::framework::fs::vfs::backend_trait::current_fs_backend()
+        .make_ramfs_inode(0, 0);
+    check!(
+        result.is_ok(),
+        "make_ramfs_inode 命中回退策略 — services::fs::init 未生效"
+    );
+    TestResult::Pass
+}
+
+fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
+    use crate::kernel::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
+    use crate::kernel::framework::fs::FileSystem;
+
+    crate::kernel::services::fs::init();
+    // 建根目录 (幂等): RAMFS_DATA 初始为空, resolve_path("/") 需先 mount
+    crate::kernel::framework::fs::ramfs::init();
+
+    // 在 RamFS 根目录建文件 (锁内操作, 作用域结束释放锁)
+    let created = {
+        let mut ramfs = RAMFS_DATA.lock();
+        ramfs.create_file("/", "backend_reg_t", 0)
+    };
+    check!(created.is_some(), "create_file 应成功");
+    let _node_id = match created {
+        Some(id) => id,
+        None => return TestResult::Fail("create_file 失败"),
+    };
+
+    // SAFETY: 全局 static RAMFS_DATA 拥有 RamFsData, 裸指针提升后生命周期为
+    // 'static (mount.rs 同款手法); fs_open 内部自行加锁, 此处不持锁调用, 无死锁
+    let fs: &'static RamFsData =
+        unsafe { &*(&*RAMFS_DATA.lock() as *const RamFsData) };
+
+    // fs_open → make_inode 钩子 → services RamFsInode (回归路径本体)
+    let opened = fs.fs_open("/backend_reg_t", 0, 0);
+    check!(
+        opened.is_ok(),
+        "fs_open 应经 backend 钩子返回 Inode (命中 Fallback 即回归)"
+    );
+    TestResult::Pass
+}
+
+fn test_hvfs_fs_registered() -> TestResult {
+    crate::kernel::services::fs::init();
+    let fs = match crate::kernel::framework::fs::vfs::backend_trait::hvfs_fs() {
+        Some(fs) => fs,
+        None => return TestResult::Fail("hvfs_fs() 未注册 — services::fs::init 未生效"),
+    };
+    check!(fs.name() == "hvfs", "hvfs name mismatch");
+    // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),
+    // 语义等价性由 fsformat 路径代码搬移保证, QEMU boot 覆盖挂载分发链路
+    TestResult::Pass
+}
+
 pub fn register_vfs_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -178,6 +244,11 @@ pub fn register_vfs_tests() {
             "fd_alloc_free": test_vfs_fd_alloc_free,
             "cwd": test_vfs_cwd,
             "snapshot_restore": test_vfs_snapshot_restore,
+        },
+        "vfs::backend": {
+            "fs_backend_registered_make_inode": test_fs_backend_registered_make_inode,
+            "ramfs_fs_open_via_backend_hook": test_ramfs_fs_open_via_backend_hook,
+            "hvfs_fs_registered": test_hvfs_fs_registered,
         },
     }
 }

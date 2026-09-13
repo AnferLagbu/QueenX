@@ -485,6 +485,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
    - fs 机制持有的具体类型（framework 全局表/句柄）→ 迁回（DECISION-J 模式）；策略留 services；
    - credo：framework 留 C ABI + 安全原语（csprng/audit/identity/secure_boot），策略（auth/policy/grants/sessions）留 services，持有类型迁回；
    - proc：framework 留进程表/调度器机制，策略（sched_policy/seccomp/session）留 services，跨层策略经 ProcStrategy trait 注入。
+6. **hvfs 注入归零（2026-09-13 委托人选定方案 B）**：hvfs 29 文件 ZFS 风格实现整体留 services（不进 framework，TCB 最小化）；framework 挂载/格式化消费点改经 `register_hvfs_fs` 注册表 + `FileSystem::fs_format` trait 分发（未注册 fail-closed）；`services::fs::init()` 注册契约统一承载 FsBackend/VFS poll/HvFS/热插拔四项注册。
 
 **状态**: [X]（评审完成）
 
@@ -702,6 +703,22 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **host-test 同步**：fs_sync_trait_test.rs（ramfs_inherits_default 源码断言改读 framework/fs/ramfs/mod.rs）+ plan_b_inode_test.rs（ramfs_implements_fs_resolve_inode 同步）。
 - **引用计数**：生产反向依赖 **11→10 文件、29→28 行**（ramfs 壳清零；剩余 hvfs 18 行/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
 - **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy pedantic 三维（lib + kernel_test + host-test）0 warning ✅ / audit quick 全过 ✅ / 独立审计 boundary + coupling + deadlock_matrix + safety_coverage + volatile_access + repr_c + static_mut + audit_reverse_deps 全过 ✅ / host-tests 98 套件全过（含 fsx，串行 0 失败）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready，钩子注册时序实测无恙）✅。
+
+### DECISION-K 项 6 执行记录：第二十四批 hvfs 专项批（注入归零方案 B + services::fs::init 注册契约）
+
+> 落实第二十一批 hvfs 专项判定（29 文件 ZFS 风格实现 + framework 仅消费挂载集成点）。方案对比后委托人选定**方案 B：注入归零**——hvfs 业务实现整体留 services（不拖 29 文件进 framework，TCB 最小化），framework 消费点改经注册表/trait 分发。同批修复回归：`services::fs::init()` 此前未接入内核初始化序列，`ServicesFsBackend` 注册（含 ramfs 钩子）在生产路径未生效。
+
+**本批（注入归零 + 注册契约 + 回归修复）**：
+- **backend_trait 注册表**：新增 `HVFS_FS: OnceLock<&'static dyn FileSystem>` + `register_hvfs_fs()`（幂等）/ `hvfs_fs() -> Option<&'static dyn FileSystem>`；未注册语义 Option 可空（对齐 DECISION-K 项 2 降级先例，mount/format 路径未注册返回 `NotInitialized`，fail-closed）。
+- **FileSystem trait 扩展**：新增 `fs_format()` 默认方法（默认 `NotSupported`）；services `hvfs_inode.rs` 实装格式化逻辑（驱动发现 + format_drive，代码自 mount.rs 原位搬移）。
+- **mount.rs 消费点反转**：HvFS 挂载分支 `get_hvfs()` → `hvfs_fs()`（未注册 fail-closed）；format 路径改 `fs.fs_format()` trait 分发——framework 对 `services::fs::hvfs` 直接依赖清零。
+- **driver 直调反转**：`framework/driver/mod.rs` 删除 `hvfs_hotplug_register()` 直调，hotplug 监听随注册契约统一由 services 侧发起。
+- **删壳**：`framework/fs/hvfs/mod.rs` 18 行 re-export 壳删除，缩为 10 行模块仅保留 `arc_safe`（unsafe 封装机制留 framework，业务全在 services）；framework 测试（test_hvfs/test_hvfs_ext）改经 `services::fs::hvfs` 路径（§7.3 允许）。
+- **注册契约（回归修复核心）**：新增 `services::fs::init()`（幂等）——注册 `ServicesFsBackend`/VFS poll 策略/`register_hvfs_fs(get_hvfs())`/`hvfs_hotplug_register()` 四项；`lib.rs` VFS init 之前插入调用（`// FsBackend/HvFS 注册契约点`）。依据：与 IpcStrategy/ConfigValidateHook 同一"机制 init 后立即注册策略"启动契约；注册零依赖（OnceLock 存指针），策略方法惰性调用。
+- **回归测试**：test_vfs.rs 新增 3 用例——`fs_backend_registered_make_inode`（锁 make_ramfs_inode 命中 services 钩子，Fallback 即回归）/ `ramfs_fs_open_via_backend_hook`（fs_open 全链路经钩子返回 RamFsInode）/ `hvfs_fs_registered`（注册表 + name 断言；fs_format 有底层 IO 副作用不入单测，由 QEMU boot 覆盖挂载分发）。
+- **host-test 修复**：`ramfs_fs_open_via_backend_hook` 首跑 FAIL（create_file 返回 None）——根因 `RAMFS_DATA` 初始为空、根目录未建，测试内补 `framework::fs::ramfs::init()`（幂等 mount("/")）修复；e04 共享测试集恢复 0 failed。
+- **引用计数**：生产反向依赖 **10→9 文件、28→10 行**（hvfs 18 行壳清零，为单文件最大降幅项；剩余 credo sha256/types 壳、hdmi 壳、sm_fi、ebpf verifier、execve 分发等已登记专项项）。
+- **验证**：双架构 build.sh all Passed 5/0 ✅ / clippy -D warnings 双架构 0 ✅ / 核心审计 11 项全过（boundary + safety_coverage + deadlock_matrix + coupling + comment_language + once_cell + c_naming + invariants + repr_c + volatile_access + static_mut）✅ / audit_reverse_deps 9 文件/10 行与登记一致 ✅ / host-tests 98 套件全过（e04 共享测试集 336 passed/7 skipped/0 failed）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready，注册时序实测无恙）✅。
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 

@@ -144,6 +144,23 @@ impl crate::kernel::framework::fs::FileSystem for HvfsData {
         Ok(())
     }
 
+    fn fs_format(&self) -> crate::kernel::framework::fs::KernelResult<()> {
+        // DECISION-K 项 6: 封装原 framework fsformat 路径的字段级访问,
+        // 磁盘选择策略 (已发现驱动器优先, 回退启动盘) 归 services.
+        let (drive_id, part_start) = self.drives_discovered.lock().first().copied().unwrap_or((
+            self.disk_drive
+                .load(core::sync::atomic::Ordering::Acquire),
+            self.partition_start
+                .load(core::sync::atomic::Ordering::Acquire),
+        ));
+        self.format_drive(drive_id, part_start);
+        if self.is_disk_mode() {
+            Ok(())
+        } else {
+            Err(crate::kernel::framework::fs::KernelError::NotSupported)
+        }
+    }
+
     fn fs_open(
         &self,
         rel_path: &str,

@@ -65,7 +65,9 @@ pub mod xattr;
 // ============================================================================
 
 use crate::kernel::framework::fs::vfs::api as vfs_api;
-use crate::kernel::framework::fs::vfs::backend_trait::{FsBackend, register_fs_backend};
+use crate::kernel::framework::fs::vfs::backend_trait::{
+    FsBackend, register_fs_backend, register_hvfs_fs,
+};
 use crate::kernel::framework::fs::vfs::inode::Inode;
 use crate::kernel::services::fs::vfs_types::KernelError;
 
@@ -105,8 +107,18 @@ impl FsBackend for ServicesFsBackend {
     }
 }
 
-/// `services::fs` 初始化 — 注册策略到 framework
+/// `services::fs` 初始化 — 注册策略到 framework (由 crate root 编排点调用)
+///
+/// 注册内容 (DECISION-K 项 6 注册点前置):
+/// - FsBackend 挂载决策策略 (`register_fs_backend`)
+/// - VFS poll 策略 (`register_default_vfs_poll_policy`)
+/// - HvFS FileSystem 实例 (`register_hvfs_fs`) + 热插拔监听器
+///   (`hvfs_hotplug_register`, HOTPLUG_MANAGER 为自足 static, 时序仅要求
+///   早于首个热插拔中断事件 — kernel_init 早期注册满足)
 pub fn init() {
     static POLICY: ServicesFsBackend = ServicesFsBackend;
     let _ = register_fs_backend(&POLICY);
+    let _ = crate::kernel::services::fs::vfs_poll_policy::register_default_vfs_poll_policy();
+    let _ = register_hvfs_fs(crate::kernel::services::fs::hvfs::hvfs::get_hvfs());
+    crate::kernel::services::fs::hvfs::hvfs::hvfs_hotplug_register();
 }

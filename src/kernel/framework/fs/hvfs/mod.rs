@@ -1,28 +1,12 @@
-//! `HvFS` — framework 层 re-export 模块
+//! `HvFS` — framework 侧机制支持
 //!
-//! E6-6 阶段 2: `HvFS` 业务逻辑已迁移到 `services::fs::hvfs`.
+//! 具象 HvFS 实现 (ZFS 风格引擎, 29 文件) 归 `services::fs::hvfs`;
+//! framework 挂载/格式化路径经 `backend_trait::hvfs_fs()` 消费
+//! FileSystem trait object, 不再反向 re-export services 子模块
+//! (DECISION-K 项 6: 注入归零).
+//!
 //! 本模块仅保留:
-//! - `arc_safe`: ARC 缓存裸指针→切片的 safe 封装 (框架层必要 unsafe)
-//! - re-export: 透传 services 层公开类型, 保持外部引用兼容
+//! - `arc_safe`: ARC 缓存裸指针→切片的 safe 封装 (框架层必要 unsafe),
+//!   services `arc.rs` 反向依赖本模块 (services→framework 合法方向)
 
 pub mod arc_safe;
-
-// Re-export services 层 HvFS 公共类型
-pub use crate::kernel::services::fs::hvfs::arc;
-pub use crate::kernel::services::fs::hvfs::bp;
-pub use crate::kernel::services::fs::hvfs::checksum;
-pub use crate::kernel::services::fs::hvfs::compress;
-pub use crate::kernel::services::fs::hvfs::dataset;
-pub use crate::kernel::services::fs::hvfs::dedup;
-pub use crate::kernel::services::fs::hvfs::dmu;
-pub use crate::kernel::services::fs::hvfs::dva;
-pub use crate::kernel::services::fs::hvfs::hvfs;
-pub use crate::kernel::services::fs::hvfs::metaslab;
-pub use crate::kernel::services::fs::hvfs::raidz;
-pub use crate::kernel::services::fs::hvfs::snapshot;
-pub use crate::kernel::services::fs::hvfs::spa;
-pub use crate::kernel::services::fs::hvfs::txg;
-pub use crate::kernel::services::fs::hvfs::vdev;
-pub use crate::kernel::services::fs::hvfs::zap;
-pub use crate::kernel::services::fs::hvfs::zil;
-pub use crate::kernel::services::fs::hvfs::zil_persist;

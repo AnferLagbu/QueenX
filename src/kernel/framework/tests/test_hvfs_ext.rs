@@ -2,14 +2,14 @@
 use crate::register_tests_inner;
 
 use super::check;
-use crate::kernel::framework::fs::hvfs::arc::{HvArc, HvArcBufType, HvArcKey};
-use crate::kernel::framework::fs::hvfs::bp::{HvBlockPointer, HvCompType};
-use crate::kernel::framework::fs::hvfs::compress;
-use crate::kernel::framework::fs::hvfs::dataset::HvDataset;
-use crate::kernel::framework::fs::hvfs::dmu::{HvDmuObject, HvObjSet, HvObjType};
-use crate::kernel::framework::fs::hvfs::snapshot::{HvSnapshot, HvSnapshotManager};
-use crate::kernel::framework::fs::hvfs::txg::HvTxg;
-use crate::kernel::framework::fs::hvfs::zap::HvZap;
+use crate::kernel::services::fs::hvfs::arc::{HvArc, HvArcBufType, HvArcKey};
+use crate::kernel::services::fs::hvfs::bp::{HvBlockPointer, HvCompType};
+use crate::kernel::services::fs::hvfs::compress;
+use crate::kernel::services::fs::hvfs::dataset::HvDataset;
+use crate::kernel::services::fs::hvfs::dmu::{HvDmuObject, HvObjSet, HvObjType};
+use crate::kernel::services::fs::hvfs::snapshot::{HvSnapshot, HvSnapshotManager};
+use crate::kernel::services::fs::hvfs::txg::HvTxg;
+use crate::kernel::services::fs::hvfs::zap::HvZap;
 use crate::kernel::framework::tests::{TestResult, runner};
 
 fn test_dmu_objset_alloc() -> TestResult {
