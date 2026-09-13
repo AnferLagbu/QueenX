@@ -12,6 +12,9 @@ allow = [
     # B07-06 (DECISION-078): ed25519-dalek/curve25519-dalek/subtle 采用
     # "BSD-3-Clause OR Apache-2.0" 双许可, 引入真实 Ed25519 验证需要放行.
     "BSD-3-Clause",
+    # 项目自身许可证 2026-09 起由 MIT 转为 MPL-2.0 (LICENSE 同步),
+    # 放行 MPL-2.0 以接纳该许可的依赖 (当前依赖树暂无 MPL-2.0, 预防性放行).
+    "MPL-2.0",
 ]
 private = { ignore = true }
 
