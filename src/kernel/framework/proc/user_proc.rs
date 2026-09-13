@@ -326,7 +326,7 @@ pub(crate) mod raw {
         )]
         /// 检查进程是否在运行状态 (Running = 2)
         pub fn is_running(&self) -> bool {
-            use crate::kernel::services::proc::types::ProcessState;
+            use crate::kernel::framework::proc::types::ProcessState;
             ProcessState::from_u32(self.load_state()).is_alive()
         }
 
@@ -336,7 +336,7 @@ pub(crate) mod raw {
         )]
         /// 检查进程是否已退出 (Zombie = 4 或 Terminated = 5)
         pub fn is_exited(&self) -> bool {
-            use crate::kernel::services::proc::types::ProcessState;
+            use crate::kernel::framework::proc::types::ProcessState;
             let state = ProcessState::from_u32(self.load_state());
             matches!(state, ProcessState::Zombie | ProcessState::Terminated)
         }

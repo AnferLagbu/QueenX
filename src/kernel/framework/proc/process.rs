@@ -16,10 +16,10 @@ use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering
 // 进程级 FD 分配策略 (P1-I-01 提取)
 // ============================================================================
 //
-// D8: FdTable 分配策略 (first-fit, 上限 64) 已提取到 services::proc::fd_table.
-// framework 仅保留 re-export, 避免大规模调用方修改.
+// D8: FdTable 分配策略 (first-fit, 上限 64) 经 DECISION-J (2026-09-13) 反转
+// 迁回 framework/proc/fd_table.rs (Process 机制字段归 framework).
 // 详见 [docs/plan/maintenance-2026-06-11.md] (P1-I-01).
-pub use crate::kernel::services::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS};
+pub use crate::kernel::framework::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS};
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
 unsafe extern "C" {

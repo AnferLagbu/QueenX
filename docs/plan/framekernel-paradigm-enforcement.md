@@ -614,6 +614,19 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：生产反向依赖 28→25 文件、49→45 行。syscall 目录生产引用仅剩 dispatch.rs（QX_EXECVE ExecveResult）1 处。
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅（含 pedantic manual_let_else 修正）/ audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
 
+### DECISION-J 第十九批执行记录：proc 系壳批 A（types/fd_table/oomd/rlimit/seccomp 反转）
+
+> 调研确认 9 个 proc 壳全部有 framework 生产消费（scheduler tick → OOMD、dispatch → session、user_proc → ProcessState、process.rs → FdTable、clone.rs → NamespaceSet、顶层 re-export 链 → rlimit/seccomp/cgroup），按 DECISION-J 统一判据全部反转。分 2 批执行（9 文件共 3965 行）。
+
+**本批（5 文件 1348 行）**：
+- **纯壳反转 4 个**：`types.rs`（388 行，PID/TID/ProcessState/Priority/Context——进程机制核心类型）、`oomd.rs`（122 行，scheduler.rs:987 `OOMD.tick()` 直接驱动的机制组件，同 DECISION-M 判据）、`seccomp.rs`（407 行，SeccompState 挂 Process 机制状态 + seccomp_check 被 syscall 分发消费）— services 改 glob re-export 壳。
+- **半壳合并 1 个**：`rlimit.rs`——framework 壳原本就含 sys_getrlimit/sys_setrlimit（unsafe 用户指针入口），策略主体（RlimitTable/Rlimit/常量/check_*）自 services 迁回合并；顺带删除 services 侧无消费者的 getrlimit_syscall/setrlimit_syscall Result 包装（实际消费走 `services::proc::sysinfo::getrlimit_syscall` 独立实现）。
+- **fd_table.rs 新增反转**：`framework/proc/fd_table.rs`（137 行，FdTable 是 Process 机制字段）+ mod.rs 加 `pub mod fd_table` + process.rs L22 re-export 改引 framework 本地路径；services 改 glob 壳。
+- **消费点消引**：user_proc.rs L329/L339 `ProcessState` 改 framework 本地路径。
+- **host-test 同步**：`fd_table_extraction_test.rs` 整体改写为反转后口径（定义位置断言 services→framework、services 壳纯 re-export 断言、first-fit/close 行为断言读 framework 源）。
+- **引用计数**：生产反向依赖 25→20 文件、45→39 行。proc 壳剩 cfs/cgroup/namespace/session（第二十批）。
+- **验证**：双架构 0w0e ✅ / clippy 双架构 0 ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过（fd_table 套件 7/7 反转口径）✅ / QEMU x86_64 完整启动 ✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。

@@ -50,6 +50,7 @@ pub mod elf;
 /// D2: cgroup 资源控制器
 /// TD-02: 全局统一 FD 分配器与基址规划
 pub mod fd_alloc;
+pub mod fd_table;
 pub mod madvise_mlock;
 /// L-02: 机制 API 集中导出 — 供 services 层策略实现调用
 pub mod mechanism;
