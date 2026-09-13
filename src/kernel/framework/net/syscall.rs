@@ -14,7 +14,7 @@ use crate::kernel::framework::mm::{
 use crate::kernel::framework::net_socket;
 use crate::kernel::framework::userptr;
 
-use crate::kernel::services::net::socket::{Domain, SockAddrIn, SockType};
+use crate::kernel::framework::net::socket_types::{Domain, SockAddrIn, SockAddrUn, SockType};
 
 // ============================================================================
 // 用户空间数据搬运 (TCB)
@@ -167,7 +167,7 @@ pub fn raw_read_sun_family(ptr: u64) -> Result<u16, Errno> {
 pub fn raw_read_sockaddr_un(
     ptr: u64,
     addrlen: u32,
-) -> Result<crate::kernel::services::net::unix::SockAddrUn, Errno> {
+) -> Result<SockAddrUn, Errno> {
     if ptr == 0 || addrlen < 2 {
         return Err(Errno::EFAULT);
     }
@@ -196,7 +196,7 @@ pub fn raw_read_sockaddr_un(
     }
     let mut path = [0u8; 108];
     path[..nul_pos].copy_from_slice(&path_bytes[..nul_pos]);
-    Ok(crate::kernel::services::net::unix::SockAddrUn {
+    Ok(SockAddrUn {
         path,
         path_len: nul_pos as u16,
     })
@@ -211,7 +211,7 @@ pub fn raw_read_sockaddr_un(
 pub fn raw_write_sockaddr_un(
     ptr: u64,
     addrlen_ptr: u64,
-    addr: &crate::kernel::services::net::unix::SockAddrUn,
+    addr: &SockAddrUn,
 ) -> Result<(), Errno> {
     if ptr == 0 || addrlen_ptr == 0 {
         return Err(Errno::EFAULT);

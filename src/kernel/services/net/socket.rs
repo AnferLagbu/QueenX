@@ -54,61 +54,11 @@ fn map_net_error(e: crate::kernel::framework::net::iface_trait::NetError) -> Soc
 // 协议 / 类型
 // ============================================================================
 
-/// Socket 协议族
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-pub enum Domain {
-    /// Unix Domain (`AF_UNIX = 1`) — Phase C.3 新增
-    Unix = 1,
-    /// IPv4 (`AF_INET = 2`)
-    Inet = 2,
-    /// IPv6 (`AF_INET6 = 10`) — 双栈 (DECISION-032)
-    Inet6 = 10,
-}
-
-impl Domain {
-    pub fn from_i32(d: i32) -> Option<Self> {
-        match d {
-            1 => Some(Self::Unix),
-            2 => Some(Self::Inet),
-            10 => Some(Self::Inet6),
-            _ => None,
-        }
-    }
-}
-
-/// Socket 类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-pub enum SockType {
-    /// TCP 流 (`SOCK_STREAM = 1`)
-    Stream = 1,
-    /// UDP 数据报 (`SOCK_DGRAM = 2`)
-    Dgram = 2,
-}
-
-impl SockType {
-    pub fn from_i32(t: i32) -> Option<Self> {
-        match t {
-            1 => Some(Self::Stream),
-            2 => Some(Self::Dgram),
-            _ => None,
-        }
-    }
-}
-
-/// IPv4 Socket 地址 (端口 + 4 字节 IP)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SockAddrIn {
-    pub port: u16,
-    pub ip: [u8; 4],
-}
-
-impl SockAddrIn {
-    pub fn new(port: u16, ip: [u8; 4]) -> Self {
-        Self { port, ip }
-    }
-}
+// DECISION-J (2026-09-13): wire 类型 (Domain/SockType/SockAddrIn) 迁回
+// `framework::net::socket_types` — 用户态 ABI 协议类型由 framework TCB raw
+// 桥接 (net/syscall.rs) 从用户内存构造, 属机制的安全导出面。此处 re-export
+// 保持 API 兼容 (services→framework 合法方向)。
+pub use crate::kernel::framework::net::socket_types::{Domain, SockAddrIn, SockType};
 
 // ============================================================================
 // Socket API

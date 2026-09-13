@@ -2,7 +2,8 @@
 //!
 //! 验收:
 //!   - sm_socket (sm_fi.rs) 接受 domain=2 (AF_INET) 与 domain=10 (AF_INET6)
-//!   - services/net/socket.rs `Domain` 枚举含 `Inet6 = 10`
+//!   - framework/net/socket_types.rs `Domain` 枚举含 `Inet6 = 10`
+//!     (DECISION-J 2026-09-13: wire 类型迁回 framework, services 侧 re-export)
 //!   - services/net/syscall.rs bind/connect 按 family 分流 (2|10 → fw)
 //!   - framework/net/syscall.rs `raw_read_sockaddr_in6` 28 字节 copy-in
 //!   - SmoltcpNetStack (smoltcp_impl.rs) sockaddr 转换支持 V6 (28 字节)
@@ -13,7 +14,7 @@
 use std::fs;
 
 const SM_FI_RS: &str = "../src/kernel/framework/net/init/sm_fi.rs";
-const SOCKET_RS: &str = "../src/kernel/services/net/socket.rs";
+const SOCKET_RS: &str = "../src/kernel/framework/net/socket_types.rs";
 const SVC_SYSCALL_RS: &str = "../src/kernel/services/net/syscall.rs";
 const FW_SYSCALL_RS: &str = "../src/kernel/framework/net/syscall.rs";
 const SMOLTCP_IMPL_RS: &str = "../src/kernel/services/net/smoltcp_impl.rs";

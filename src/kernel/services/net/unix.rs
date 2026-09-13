@@ -22,7 +22,10 @@ pub const UDS_FD_BASE: i32 = crate::kernel::framework::proc::FdPlan::UDS.base;
 pub const MAX_UDS_FD: usize = 16;
 
 /// POSIX `sun_path` 最大长度
-pub const UNIX_PATH_MAX: usize = 108;
+///
+/// DECISION-J (2026-09-13): wire 常量迁回 `framework::net::socket_types`,
+/// 此处 re-export 保持 API 兼容。
+pub use crate::kernel::framework::net::socket_types::UNIX_PATH_MAX;
 
 /// 路径绑定表容量
 pub const UNIX_MAX_BINDINGS: usize = 32;
@@ -981,29 +984,11 @@ impl From<crate::kernel::services::error::KernelError> for UnixSocketError {
 pub type UnixResult<T> = Result<T, UnixSocketError>;
 
 /// `struct sockaddr_un` 包装
-#[derive(Debug, Clone, Copy)]
-pub struct SockAddrUn {
-    pub path: [u8; PATH_MAX],
-    pub path_len: u16,
-}
-
-impl SockAddrUn {
-    pub fn new(path: &[u8]) -> Option<Self> {
-        if path.is_empty() || path.len() > PATH_MAX {
-            return None;
-        }
-        let mut p = [0u8; PATH_MAX];
-        p[..path.len()].copy_from_slice(path);
-        Some(Self {
-            path: p,
-            path_len: path.len() as u16,
-        })
-    }
-
-    pub fn path_slice(&self) -> &[u8] {
-        &self.path[..self.path_len as usize]
-    }
-}
+///
+/// DECISION-J (2026-09-13): wire 类型迁回 `framework::net::socket_types` —
+/// 由 framework TCB raw 桥接 (net/syscall.rs::raw_read/write_sockaddr_un)
+/// 从用户内存构造, 属机制的安全导出面。此处 re-export 保持 API 兼容。
+pub use crate::kernel::framework::net::socket_types::SockAddrUn;
 
 // ============================================================================
 // 安全封装 API (保持原有调用方兼容)
