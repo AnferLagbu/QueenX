@@ -39,6 +39,8 @@ pub use memory_pressure::{PressureAwareAllocPolicy, register_pressure_aware_poli
 pub fn init() {
     // T-02: 注册 services 层分配决策策略
     let _ = memory_pressure::register_pressure_aware_policy();
+    // DECISION-O ②: 注册内存压力分级策略 (算法在 services, 状态在 framework)
+    let _ = memory_pressure::register_pressure_classifier();
     // T2-2: 注册 services 层 PMM 策略
     let _ = pmm_policy::register_default_pmm_policy();
     // T2-3: 注册 services 层 Slab 策略

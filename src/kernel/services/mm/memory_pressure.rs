@@ -1,10 +1,12 @@
 #![deny(unsafe_code)]
 //! 内存压力策略 (Memory Pressure) — services 层
 //!
-//! ## 框架责任分离
+//! ## 框架责任分离 (DECISION-O ② 2026-09-13)
 //!
-//! - **framework**: 原子原语 (AtomicU8/AtomicU64), OOM 触发, 进程控制
-//! - **services** (本模块): 压力分级阈值、级别判定、状态机转换策略
+//! - **framework** (`framework::mm::pressure`): MemoryPressure 类型, 压力状态
+//!   (CURRENT/PREV), `update_pressure` 包装, 分级策略注册口
+//! - **services** (本模块): 分级阈值, 级别判定算法 (`classify_pressure`),
+//!   压力感知分配策略 (`PressureAwareAllocPolicy`)
 //!
 //! ## 策略表 (与 Linux mempressure 对照)
 //!
@@ -23,76 +25,20 @@
 //!
 //! ## 关联
 //!
-//! - 移出: framework::mm::pressure (2026-06-11)
-//! - TCB 减面: [docs/plan/maintenance-2026-06-11.md](../../../../../../docs/plan/maintenance-2026-06-11.md) I-01 D9
+//! - 移出: framework::mm::pressure (2026-06-11, P1-I-01 D9) → DECISION-O ②
+//!   反转归位 (2026-09-13); 类型/状态/读取/包装经下方 re-export 保持 API 兼容
+//!   (services→framework 合法方向)
 
-use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+pub use crate::kernel::framework::mm::pressure::{
+    MemoryPressure, current_pressure, previous_pressure, update_pressure,
+};
 
-// ============================================================================
-// 内存压力级别
-// ============================================================================
-
-/// 内存压力级别
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MemoryPressure {
-    /// 正常: 内存充足
-    Normal = 0,
-    /// 警告: 建议进程主动释放 page cache
-    Warning = 1,
-    /// 严重: 阻塞新 mmap, 降 RSS Top-3 优先级
-    Critical = 2,
-    /// 紧急: SIGTERM → SIGKILL 序列
-    Emergency = 3,
-}
-
-impl MemoryPressure {
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            1 => Self::Warning,
-            2 => Self::Critical,
-            3 => Self::Emergency,
-            _ => Self::Normal,
-        }
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn is_critical(&self) -> bool {
-        matches!(self, Self::Critical | Self::Emergency)
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn is_emergency(&self) -> bool {
-        matches!(self, Self::Emergency)
-    }
-
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::Warning => "warning",
-            Self::Critical => "critical",
-            Self::Emergency => "emergency",
-        }
-    }
-}
+use core::sync::atomic::{AtomicU64, Ordering};
 
 // ============================================================================
 // 阈值 (可调, 默认保守值适合 256MB 内嵌)
 // ============================================================================
 
-static CURRENT_PRESSURE: AtomicU8 = AtomicU8::new(MemoryPressure::Normal as u8);
-/// 上一次压力级别 (由 `update_pressure` 在 swap 后写入)
-static PREV_PRESSURE: AtomicU8 = AtomicU8::new(MemoryPressure::Normal as u8);
 static FREE_PAGES_THRESHOLD_WARNING: AtomicU64 = AtomicU64::new(256);
 static FREE_PAGES_THRESHOLD_CRITICAL: AtomicU64 = AtomicU64::new(64);
 static FREE_PAGES_THRESHOLD_EMERGENCY: AtomicU64 = AtomicU64::new(16);
@@ -106,16 +52,11 @@ pub fn set_thresholds(warning: u64, critical: u64, emergency: u64) {
     }
 }
 
-/// 获取当前压力级别
-pub fn current_pressure() -> MemoryPressure {
-    MemoryPressure::from_u8(CURRENT_PRESSURE.load(Ordering::SeqCst))
-}
-
-/// 更新压力级别 (传入当前 `free_pages` / `total_pages`)
+/// 分级判定 — 纯策略函数 (注册进 `framework::mm::pressure`, 由 OOMD tick 经
+/// `update_pressure` 间接调用; 状态交换由 framework 完成)
 ///
-/// 策略: 4 级状态机, 返回 `(new, prev)` 供调用方决定是否记日志
-/// (services 层不直接 klog, 避免 unsafe 边界问题; framework wrapper 处理日志).
-pub fn update_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
+/// 策略: 4 级双阈值状态机 (绝对值 + 百分比).
+fn classify_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
     let ratio = if total_pages > 0 {
         free_pages * 100 / total_pages
     } else {
@@ -128,7 +69,7 @@ pub fn update_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
         FREE_PAGES_THRESHOLD_EMERGENCY.load(Ordering::Acquire),
     );
 
-    let new_pressure = if free_pages <= thr_emer || ratio <= 3 {
+    if free_pages <= thr_emer || ratio <= 3 {
         MemoryPressure::Emergency
     } else if free_pages <= thr_crit || ratio <= 10 {
         MemoryPressure::Critical
@@ -136,17 +77,17 @@ pub fn update_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
         MemoryPressure::Warning
     } else {
         MemoryPressure::Normal
-    };
-
-    let prev = CURRENT_PRESSURE.swap(new_pressure as u8, Ordering::SeqCst);
-    PREV_PRESSURE.store(prev, Ordering::SeqCst);
-
-    new_pressure
+    }
 }
 
-/// 读取上一次压力级别 (供 wrapper 做日志比较, 避免在 services 层使用 `klog_ffi`).
-pub fn previous_pressure() -> MemoryPressure {
-    MemoryPressure::from_u8(PREV_PRESSURE.load(Ordering::SeqCst))
+/// 注册分级策略到 framework (由 `services::mm::init` 调用). 只能注册一次.
+///
+/// # Errors
+///
+/// 当分级策略已被注册时返回 `Err(())`.
+pub fn register_pressure_classifier() -> Result<(), ()> {
+    crate::kernel::framework::mm::pressure::register_pressure_classifier(classify_pressure)
+        .map_err(|_| ())
 }
 
 pub fn is_pressure_critical() -> bool {

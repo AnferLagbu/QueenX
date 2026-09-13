@@ -663,6 +663,19 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：生产反向依赖 16→13 文件、35→31 行（ramfs 1 行 + hvfs 18 行留专项）。
 - **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy 双架构 0 warning（pedantic lib + kernel_test + host-test 三维）✅ / audit quick 全过 ✅ / boundary + coupling + safety_coverage 100% + static_mut + repr_c + feature_semantics 全过 ✅ / host-tests 98 套件 749 通过 0 失败（debug+release 双档）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready）✅。预存问题登记：audit_volatile_access 报 pmm.rs:1212 `bitmap_size.get()` 非 volatile 访问（本批未触碰 mm 子树，待专项处置）。
 
+### DECISION-O ② 执行记录：第二十二批 proc 批收尾（MemoryPressure 类型归位 + cfs 收敛单向）
+
+> 执行 DECISION-O ② 裁决（proc 批残留欠账，非跨批顺手改）：① oomd.rs 反向引用 services::mm::memory_pressure；② framework/proc/cfs.rs 反向别名 services::config 的 CFS_* 常量。两项均为 proc 系壳批（第十九/二十批）反转后暴露的残留欠账。
+
+**本批（MemoryPressure 反转 + classifier 注册注入）**：
+- **framework/mm/pressure.rs 新建（权威归位）**：MemoryPressure 类型 + CURRENT/PREV_PRESSURE 状态 + current_pressure/previous_pressure 读取原语 + `update_pressure` 包装归 framework（机制持有：OOMD 是 scheduler tick 直接驱动的机制组件，压力状态是机制状态，同 DECISION-M 判据）。分级算法留 services：framework 留 `register_pressure_classifier` 注册口（`OnceLock<fn(u64,u64)->MemoryPressure>`，同 alloc_trait 注册 idiom），未注册 fallback Normal（早期启动窗口，同 FallbackAllocPolicy 风格）。
+- **services/mm/memory_pressure.rs 改造**：删除类型/状态/update_pressure 定义，保留阈值（FREE_PAGES_THRESHOLD_*）+ `set_thresholds` + 纯函数 `classify_pressure`（4 级双阈值状态机）+ PressureAwareAllocPolicy；类型/读取/包装经 re-export 保持 API 兼容（services→framework 合法方向）。`services::mm::init` 增注册 `register_pressure_classifier`。
+- **framework/proc/oomd.rs**：引用源改 `framework::mm::pressure::{MemoryPressure, update_pressure}`，framework→services 引用清零。
+- **CFS 收敛单向**：`CFS_*` 7 常量权威自 services/config/sched.rs 迁回 framework/config/sched.rs（T6-9 迁出前提"仅被 services 消费"经 DECISION-J cfs 机制反转后失效——framework/proc/cfs.rs:338 + scheduler.rs + process.rs 均消费，按 DECISION-J 判据归机制常量）。framework/proc/cfs.rs 别名源改 framework::config；services/config/sched.rs 改纯 re-export；framework/config/mod.rs 顶层 re-export 扩 CFS_*。
+- **host-test 同步**：memory_pressure_extraction_test.rs 契约反转改写（P1-I-01 D9 验收项 → DECISION-O ② 契约：机制在 framework/分类器注册在 services/oomd 零 services 引用，4 级状态机与双阈值契约保持）；framework/tests/test_config.rs 过时注释同步。
+- **引用计数**：生产反向依赖 13→11 文件、31→29 行（oomd 1 行 + cfs 1 行清零；剩余为 hvfs 18 行/ramfs/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
+- **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy 双架构 0 warning ✅ / 核心审计 8/8（boundary/safety_coverage/deadlock_matrix/coupling/comment_language/once_cell/c_naming/invariants）+ audit_reverse_deps ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅。预存 flaky 登记（§12.5，与本批无关）：host-tests/fsx_integration_test 的 test_fsx_stress 在系统高负载（并行跑多任务）下偶发 30 errors 阈值 panic，独占串行跑稳定通过（errors: 0）——host 侧 std 压力模拟器时序敏感，不触及本批内核改动，待单开处置。
+
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 

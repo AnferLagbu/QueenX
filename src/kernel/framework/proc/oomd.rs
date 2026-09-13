@@ -24,9 +24,10 @@
 
 use crate::kernel::framework::mm::{self as mm_api};
 use crate::kernel::framework::proc::scheduler::TICK_COUNT;
-// DECISION-J: framework::mm 不再导出 MemoryPressure/update_pressure (pressure 壳已删),
-// 改从 services::mm::memory_pressure 引用 (services 权威)
-use crate::kernel::services::mm::memory_pressure::{MemoryPressure, update_pressure};
+// DECISION-O ②: 压力类型/状态/update_pressure 包装归 framework::mm::pressure
+// (机制持有, OOMD 是调度器 tick 直接驱动的机制组件); 分级算法经
+// register_pressure_classifier 由 services::mm::init 注入 — 消除反向依赖
+use crate::kernel::framework::mm::pressure::{MemoryPressure, update_pressure};
 use crate::slog_err;
 use crate::slog_info;
 use crate::slog_warn;

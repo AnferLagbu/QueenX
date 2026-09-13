@@ -15,9 +15,9 @@ use crate::kernel::framework::config::{
     SLAB_MIN_OBJECT_SIZE, USER_CODE_BASE, USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
     get_config_summary, print_config_table,
 };
-// DECISION-J/K: CFS_*/ConfigError/validate_* 为 services 策略项 (framework 侧
-// validate 壳已删, ConfigError 迁回 framework 后 services 侧 re-export), tests 经
-// services 公共 API 访问 (§7.3 允许 framework/tests 访问 services)
+// DECISION-O ②: CFS_* 权威归 framework/config/sched (机制常量), services 侧
+// 纯 re-export; ConfigError/validate_* 为 services 策略项, tests 经 services
+// 公共 API 访问 (§7.3 允许 framework/tests 访问 services)
 use crate::kernel::services::config::{
     CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
 };

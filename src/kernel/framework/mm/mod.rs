@@ -63,6 +63,8 @@ pub mod page_fault_policy;
 pub mod pcache;
 /// T2-2: PMM 策略决策 trait (阶数选择/碎片化/水位线)
 pub mod pmm_trait;
+/// DECISION-O ②: 内存压力机制 (类型/状态/update_pressure 包装 + 分级策略注册口)
+pub mod pressure;
 pub mod slab;
 /// T2-3: Slab 策略决策 trait (缓存大小选择/对象数计算/分配优先级)
 pub mod slab_trait;
