@@ -1,7 +1,8 @@
 //! Errno::from_ret 映射完整性契约测试 (B05-04)
 //!
-//! 权威实现: `src/kernel/services/syscall/types.rs::Errno` (re-export
-//! `framework::errno::Errno`) 的 `from_ret`. 本测试直接验证内核真实实现:
+//! 权威实现: `framework::errno::Errno` 的 `from_ret` (DECISION-J 2026-09-13:
+//! syscall/types 迁回 framework, services 侧 re-export 兼容). 本测试经
+//! services 公共 API 直接验证内核真实实现:
 //! 1. 所有已定义的 `Errno` 变体编号都能被 `from_ret` 正确往返映射
 //!    (返回的枚举编号与输入负返回码绝对值一致)
 //! 2. 未知错误码回退 `EINVAL` (POSIX 约定)

@@ -343,6 +343,9 @@ PROXY_ALLOWANCE = [
     ('src/kernel/services/sync/types.rs', 'framework::sync::types'),
     # barrier 子系统: reset_config.rs 代理 framework::barrier::reset::config
     ('src/kernel/services/barrier/reset_config.rs', 'framework::barrier::reset'),
+    # DECISION-J 第十七批: syscall/types.rs 代理 framework::syscall::types
+    # (syscall 编号表迁回 framework, services re-export 兼容层)
+    ('src/kernel/services/syscall/types.rs', 'framework::syscall::types'),
 ]
 
 

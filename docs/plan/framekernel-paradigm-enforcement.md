@@ -588,6 +588,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **剩余生产 30 文件分布**（下一批对象）：壳 re-export 类（credo 4/hvfs 18 行/devfs/ramfs/flock/inotify/cgroup/namespace/oomd/fd_table/rlimit/seccomp/session/types/mmap/mprotect/syscall types 等约 24 文件）+ 真实调用点（dispatch.rs 4、dispatch_trait.rs 1、clone.rs 1、sched_ops.rs 1、identity.rs 2、inotify.rs 1、sendfile.rs 1、user_proc.rs 2）。
 - **验证**：脚本自身行为验证（归类单测 + 全量对账）✅；不触内核编译，无重跑验证链必要（audit quick 最近一轮全绿后无内核代码变更）。
 
+### DECISION-J 第十七批执行记录：syscall 编号表迁回（types）
+
+> 调研确认：`services/syscall/types.rs`（878 行，T5-4 于 2026-06-16 自 framework 迁入）是**用户态 ABI 机制**——syscall 编号表（编号空间分配 DECISION-037 承载物，用户态程序直接依赖）+ `ENOSYS_RET` 分发回退哨兵 + `SyscallResult` 别名。被 framework dispatch/dispatch_trait 消费（3 处生产引用）+ services dispatch 消费，依赖闭包为空（纯 const + type alias，仅 re-export `framework::errno::Errno`）——按 DECISION-J 统一判据迁回（同 fd_alloc 编号机制模式），文档 L252 "收敛为 framework 常量" 的彻底执行（整体迁回避免双份事实源）。
+
+- **迁回 framework**：`framework/syscall/types.rs` 由 9 行壳改为完整定义（878 行，0 unsafe）；services 侧改 glob re-export 壳（framework/syscall 的 types 为 `pub mod`，同 fd_alloc 模式）。`Errno` 在 framework 版内 re-export 自 `framework::errno`（原行保留，API 兼容）。
+- **消费点**：framework/dispatch.rs L96（`SYS_rt_sigreturn`）、L208（`ENOSYS_RET`）+ dispatch_trait.rs L50（`ENOSYS_RET`）改本地 framework 路径；services/dispatch.rs L82 与 host-tests（td23/errno_from_ret）经 services 壳引用保持可用（合法方向，无需改）。
+- **host-test 注释同步**：errno_from_ret_test.rs 权威实现说明改指 `framework::errno::Errno`（原"services/types.rs::Errno"注释本已过时）；td23 的 `framework/syscall/types.rs::QX_SIGALTSTACK` 注释迁回后恰好变为正确，无需改。
+- **边界审计**：新壳触发 1 HIGH（`framework::syscall::types` 在黑名单），按 DECISION-N 既定模式（纯 re-export 代理壳）加入 PROXY_ALLOWANCE；boundary 复核通过。
+- **引用计数**：生产反向依赖 30→28 文件、53→49 行（audit_reverse_deps.py 口径）；syscall 目录生产引用仅剩 dispatch.rs（mremap_syscall + ExecveResult）+ sendfile.rs（svc_pipe）+ clone.rs（NamespaceSet::clone_from）+ mmap.rs/mprotect.rs 壳。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。

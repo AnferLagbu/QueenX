@@ -93,7 +93,7 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch
         // Linux x86_64 编号 15 / aarch64 编号 139
         #[cfg(target_arch = "x86_64")]
-        let is_rt_sigreturn = syscall_num == crate::kernel::services::syscall::types::SYS_rt_sigreturn;
+        let is_rt_sigreturn = syscall_num == crate::kernel::framework::syscall::types::SYS_rt_sigreturn;
         #[cfg(target_arch = "aarch64")]
         let is_rt_sigreturn = syscall_num == 139;
 
@@ -205,7 +205,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
     // L-01: 优先委托 services 层策略分发
     let svc_ret = super::dispatch_trait::current_syscall_dispatch().dispatch(num, args);
-    if svc_ret != crate::kernel::services::syscall::types::ENOSYS_RET {
+    if svc_ret != crate::kernel::framework::syscall::types::ENOSYS_RET {
         return svc_ret;
     }
 

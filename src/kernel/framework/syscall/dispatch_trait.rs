@@ -46,8 +46,8 @@ pub struct FallbackSyscallDispatch;
 
 impl SyscallDispatch for FallbackSyscallDispatch {
     fn dispatch(&self, _num: u64, _args: [u64; 6]) -> i64 {
-        // ENOSYS = 38, 返回 -38 (与 services 层 ENOSYS_RET 约定一致)
-        crate::kernel::services::syscall::types::ENOSYS_RET
+        // ENOSYS = 38, 返回 -38 (ENOSYS_RET 哨兵, DECISION-J 后定义于 framework types)
+        crate::kernel::framework::syscall::types::ENOSYS_RET
     }
 }
 
