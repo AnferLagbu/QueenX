@@ -331,6 +331,24 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - **validate 壳**：ConfigValidateHook trait 注入（DECISION-I 顺序，ipc 之后）
 - **待评审项**（2026-09-12 已评审，见 DECISION-K）：IpcStrategy 注册时序 / validate ConfigValidateHook / virtio-blk IRQ 专项 / storage 专项后续 / credо 与 proc 处理方式
 
+### 委托批次清单 X/Y/Z（2026-09-13 用户确认登记，可直接开工）
+
+> 承接 §6.4 未完成项（委托人所列 4 项）——方向全部已定（DECISION-G/H/F + 服务对象准则），无新决策点，剩余为排期执行。实施交委托人，审核员审查。
+
+| 批次 | 内容 | 前置 | 验收 |
+|---|---|---|---|
+| **X** | ① char serial/vga 接线（char 桥模式，`9ba997e3` 已验证）+ ② 前置核实表更新（L941-L943：virtio 两行标"已核实 L962/L1008"、storage 两行标"归 storage 专项"）| 无（桥模式已跑通）| 双架构 0w0e + clippy 0 + 核心审计 + host-tests + **QEMU 冒烟**（接线触启动路径）|
+| **Y** | ① storage 专项 5 子步（DECISION-H：0 号 identify helper → _block 适配器 → MSI-X/IRQ → storage_init 退位 → QEMU 存储冒烟）| 无（独立排期）| 每子步双架构 0w0e + host-tests + 专项 QEMU 存储冒烟 + audit_services_boundary |
+| **Z** | ③ transport 去重（services `VirtioDevice` 删/薄代理，framework `VirtioMmioDevice` 保留）→ ④ NetOps 安全桥（同 CharOps 桥模式，net 中断驱动路径）| ③ 是 ④ 前置（transport 单一化后桥接线更干净）| ③ 双架构 0w0e + 核心审计；④ 需**先出桥 trait 设计**（framework 定义 + unsafe 转换边界）交审核员审查后再实现，避免返工 |
+
+**执行顺序**：X / Y 可并行（独立）；Z 内部 ③→④ 串行。④ 为接线最后一步（依赖 nic_probe_all 接入点确认）。
+
+### 委托批次 X 执行记录（实施：AI）
+
+- **X-① char 接线**：核对确认已由 `9ba997e3` 落地——services 权威（serial/vga impl Driver + char_init 经 chitin_register_driver 注册）、framework 删双份仅留 aarch64 pl011、lib.rs:794 合法编排接线；CharOps 读写桥休眠（SIMPLIFIED 注明，devfs 接入时补桥）。本批无代码改动。
+- **X-② 核实表更新**：前置核实表 virtio 行标"**已核实**"（指向下文 virtio 净段两记录）、storage 两行标"**归 storage 专项**（DECISION-H，批次 Y）"。
+- **验证**：双架构 0w0e ✅ / clippy 三维 0 ✅ / 核心审计 ✅ / host-tests ✅ / QEMU x86_64 冒烟 ✅（本链同时为 `058cb518` smoltcp 0.14.0 升级后首次全量验证）。
+
 ## 9. 验证门槛
 
 描述：每阶段提交必须满足（§2.3 + 本工程专项）。
@@ -350,6 +368,12 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - B04-AUDIT-005（E1000 上移）→ 被 DECISION-B 回迁。
 - 分册 5/6 系列迁移（T1-T9/E6）→ 已下沉成果为本工程基础。
 - AGENTS.md §4.1 / explain-framekernel.md（2026-09-11 决策树补全）→ 判据来源。
+- **方案 D（登记，2026-09-13）：kernel 独立 crate 化（RA `#[path]` 误报根治）**
+  - 背景：`src/rust/src/lib.rs:188` `#[path = "../../kernel/mod.rs"] pub mod kernel;` 使 rust-analyzer 报 `unresolved module`（跨 crate 目录 `#[path]` 是 RA 已知解析缺陷），但 cargo 双架构 0 error（路径实际有效）。
+  - 方案：将 kernel 改为 workspace 独立 crate（成员 crate），lib.rs 以正常 `use` 依赖而非 `#[path]` 内嵌模块——RA 原生支持 crate 依赖，根治误报。
+  - 代价：Cargo.toml workspace 成员 + 全部 `crate::kernel::` 路径引用改写（大量），独立工程。
+  - 状态：**待后续单独立项**（非本工程范围；当前 RA 误报无害，cargo/CI 不受影响）。
+  - 关联：与分册 9 B09-19 孤儿测试治理无冲突；与 F/S 分层无冲突（纯工程结构改造）。
 
 ## 11. 中途问题与决策记录
 
@@ -938,9 +962,9 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 |---|---|---|---|
 | char | serial.rs | ✅ 0 unsafe；PIO 全经 `framework::ioport::IoPort`（new_safe）；业务自含 | **直接接线** |
 | char | vga.rs | ✅ 0 unsafe；MMIO/PIO 经 `IoMem::from_pci_bar` + `IoPort::new_safe`；业务自含 | **直接接线** |
-| virtio | blk.rs / net.rs | ⚠ 依赖 `framework::driver::virtio::queue::{DmaBuffer, VirtQueue}`（DMA 环机制，合法机制依赖）；blk/net 业务待完整核实 | 待续核 |
-| storage | nvme.rs | ⚠ 依赖 `fw_nvme::NvmeCommand/Completion`（wire 类型，机制可留）+ `fw_storage::nvme_read_identify_*`（解析 helper，业务）→ 解析 helper 需迁 services | **从 framework 迁业务**（解析 helper） |
-| storage | ahci.rs / ata.rs / mod.rs | 待核 | 待续核 |
+| virtio | blk.rs / net.rs | ⚠ 依赖 `framework::driver::virtio::queue::{DmaBuffer, VirtQueue}`（DMA 环机制，合法机制依赖）；blk/net 业务已完整核实（net RX 半成品迁业务执行记录见下文 virtio 净段） | **已核实**（下文 virtio 净段两记录） |
+| storage | nvme.rs | ⚠ 依赖 `fw_nvme::NvmeCommand/Completion`（wire 类型，机制可留）；identify 解析 helper 已迁 services（下文执行记录，7 用例 host-test 通过）；缺 MSI-X/IRQ 路径 | 归 **storage 专项**（DECISION-H，批次 Y） |
+| storage | ahci.rs / ata.rs / mod.rs | ahci 自足缺 _block 适配器；ata 为桩模块缺真实驱动；注册路径全在 framework（下文 storage 净段详表） | 归 **storage 专项**（DECISION-H，批次 Y） |
 
 **接线改造的关键耦合点（步骤 2/3 设计确认）**：
 - Chitin 注册安全路径 = `chitin_register_driver(name, proto, io_base, irq, Box<dyn Driver>)`，`Driver` trait **全 safe 方法**（framework/driver/framework.rs:287）→ **services 可 0 unsafe impl Driver 并注册**（合法方向）。
