@@ -52,12 +52,13 @@ fn bench_cfs_btreemap_1000_tasks_latency() {
 /// 验证 BTreeMap 是当前 CFS 数据结构 (防止误改)
 #[test]
 fn test_cfs_uses_btreemap_for_vrunqueue() {
-    // 静态契约: sched_policy.rs 必须仍使用 BTreeMap<(u64, Pid), ()>
+    // 静态契约: framework/proc/cfs.rs 必须仍使用 BTreeMap<(u64, Pid), ()>
+    // (DECISION-J 2026-09-13: sched_policy 反转迁回 framework/proc/cfs.rs)
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()
-        .join("src/kernel/services/proc/sched_policy.rs");
+        .join("src/kernel/framework/proc/cfs.rs");
     let src = std::fs::read_to_string(&path)
-        .expect("无法读取 sched_policy.rs");
+        .expect("无法读取 framework/proc/cfs.rs");
 
     assert!(
         src.contains("BTreeMap<(u64, Pid), ()>"),

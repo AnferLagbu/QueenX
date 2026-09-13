@@ -627,6 +627,17 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：生产反向依赖 25→20 文件、45→39 行。proc 壳剩 cfs/cgroup/namespace/session（第二十批）。
 - **验证**：双架构 0w0e ✅ / clippy 双架构 0 ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过（fd_table 套件 7/7 反转口径）✅ / QEMU x86_64 完整启动 ✅。
 
+### DECISION-J 第二十批执行记录：proc 系壳批 B（cfs/cgroup/namespace/session 反转）— proc 壳清零
+
+**本批（4 文件 2617 行）**：
+- **cfs.rs**（585 行，自 services/proc/sched_policy.rs）：CfsRunQueue/DlRunQueue 是 scheduler 机制运行队列状态，权重/vruntime/抢占判定全部操作队列内部字段（同 DECISION-M sys_pm_dispatch 判据：算法本质是机制状态操作）— 反转。services/proc/sched_policy.rs 改 glob 壳。
+- **cgroup.rs**（632 行）：cgroup 层级管理器是进程资源控制机制状态，被 framework proc 顶层导出消费 — 反转。
+- **namespace.rs**（827 行）：NamespaceSet 是 Process 结构体字段，被 framework syscall/clone.rs `clone_from` 消费 + proc 顶层导出（sys_setns/sys_unshare）— 反转。clone.rs L131 改 framework 本地路径。
+- **session.rs**（573 行）：会话/进程组是进程关系机制状态，sys_tcgetpgrp/sys_tcsetpgrp 被 framework syscall dispatch 直接消费 — 反转。
+- **host-test 同步**：cfs_btreemap_bench_test.rs（I-34 BTreeMap 静态契约读 framework/proc/cfs.rs）+ framework_spinlock_migration_test.rs（P1-I-17 cgroup OnceLock 断言读 framework/proc/cgroup.rs）。
+- **引用计数**：生产反向依赖 20→16 文件、39→35 行。**proc 目录壳清零**（仅剩 dispatch.rs QX_EXECVE 1 处真实调用，留 execve 分发迁移专项）。
+- **验证**：双架构 0w0e ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。

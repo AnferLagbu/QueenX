@@ -131,11 +131,12 @@ fn irq_spinlock_adopted_in_migrated_files() {
 #[test]
 fn cgroup_uses_framework_once_lock() {
     // P1-I-17 验收: cgroup 改用 OnceLock (项目自研) 替代 spin::Once
+    // (DECISION-J 2026-09-13: cgroup 反转迁回 framework/proc/cgroup.rs)
     let path = format!(
-        "{}/../src/kernel/services/proc/cgroup.rs",
+        "{}/../src/kernel/framework/proc/cgroup.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    let content = fs::read_to_string(&path).expect("read services/proc/cgroup.rs");
+    let content = fs::read_to_string(&path).expect("read framework/proc/cgroup.rs");
     assert!(
         content.contains("OnceLock"),
         "P1-I-17: cgroup.rs 必须用 OnceLock"

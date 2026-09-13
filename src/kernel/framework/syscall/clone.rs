@@ -128,7 +128,7 @@ pub fn sys_clone(
                     // 子进程已通过 fork 继承了父进程的 namespace
                     // 现在根据 CLONE_NEW* 创建新实例
                     let current_ns = p.namespaces.lock();
-                    crate::kernel::services::proc::NamespaceSet::clone_from(
+                    crate::kernel::framework::proc::NamespaceSet::clone_from(
                         &current_ns,
                         new_ns_flags,
                     )
