@@ -511,6 +511,37 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **状态**: [X]（裁决完成；barrier 项挂起待重构）
 
+### DECISION-M: sys_pm_dispatch 归属（framework→services→framework 循环消除，2026-09-12 审核员裁决）
+
+> **背景**：`framework/driver/power.rs` 机制壳 + `services/driver/power.rs` 策略主体（T4-4），`sys_pm → services::sys_pm_dispatch → framework::pm_suspend` 构成循环。类型+方法迁回 framework 无分歧（DECISION-F/J）。
+
+**裁决**：**采纳方案 B——`sys_pm_dispatch` 直接迁回 framework**，`sys_pm → sys_pm_dispatch → pm_suspend` 自闭环，0 反向依赖；services 侧改 re-export 壳或删。
+
+**依据**：
+1. **服务对象准则**：sys_pm_dispatch 仅被 framework sys_pm 调用（grep 全量确认）——机制直接调用 → 归机制。
+2. **无独立策略业务（抽查证实）**：`get_stats`/`ondemand_check`/`register_notifier` 全部操作 `self.per_cpu_stats`/`governor`/`thresholds`/`per_cpu_freq_idx`/`notifiers`（PmSubsystem 内部字段）——governor/C-state 算法无法脱离机制状态独立存在。
+3. **与 IpcStrategy 本质区别**：IpcStrategy 的 services 实现有真实业务算法（pipe/shm/msgq），故 trait 注入；sys_pm_dispatch 无独立业务，trait 注入=空转转发+新增复杂度（PmDispatch trait/OnceLock/注册点/时序门禁）。
+4. **先例一致**：fd_alloc/madvise_mlock 迁回 + services re-export 壳。
+5. **简约原则**（§12.3）。
+6. **循环消除**：framework→services→framework 自闭环。
+
+**演进预留**：未来 cpuidle governor 独立化（独立策略+可单独测试）时再下沉 services，trait 注入接口随时可加——现在归机制不堵死。
+
+**执行**：15 类型 + `sys_pm_dispatch` 迁回 `framework/driver/power.rs`（PmSubsystem 及组成、CpuIdleState/Stats、FreqGovernor/Level/CpuFreqDriver、SuspendNotifier、MAX_* 常量），services 改 `pub use framework::driver::power::*` 壳；验证：双架构 0w0e + audit_services_boundary 0 + power 反向依赖清零。
+
+**状态**: [X]（裁决完成；实施交委托人）
+
+### DECISION-J 第十四批执行记录：driver/power 迁回（DECISION-M 方案 B 实施）
+
+> 调研确认：`framework/driver/power.rs` 机制壳（PM_SUBSYSTEM static + pm_init/pm_idle/pm_suspend/sys_pm + 硬件操作），`services/driver/power.rs` 策略主体（15 类型 + sys_pm_dispatch，0 unsafe），`sys_pm → services::sys_pm_dispatch → framework::pm_suspend` 构成循环。按 DECISION-M 方案 B 迁回。
+
+- **迁回 framework**：`framework/driver/power.rs` 由 re-export 壳改为完整实现（合并 services 全部内容：CpuIdleState/CpuIdleStats/CpuIdleDriver/FreqGovernor/FreqLevel/CpuFreqDriver/SuspendNotifier/PmSubsystem + MAX_* 常量 + sys_pm_dispatch），保留原机制部分（PM_SUBSYSTEM/pm_init/pm_idle/pm_suspend/read_timestamp/arch_halt/arch_suspend_to_ram/arch_shutdown/sys_pm FFI），`sys_pm → sys_pm_dispatch → pm_suspend` 自闭环。
+- **services 改壳**：`services/driver/power.rs` 改 glob re-export `framework::driver::power::*`（framework/driver/power 为 `pub mod` + 顶层 `pub use power::*`，同 fd_alloc/madvise_mlock 模式）。
+- **消费点**：framework/proc/sched_ops.rs:125 `pm_init`、framework/syscall/dispatch.rs:384 `sys_pm`（路径不变）；services 内无其他消费方（grep 确认）。
+- **引用计数**：framework 文件级反向依赖 41→40、行数 87→85；driver/power.rs 反向依赖清零。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic 三维）✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动到 Ring 3（VFS ready，串口 242 行）✅。
+- **边界审计遗留（预存）**：`audit_services_boundary.py` 单独运行发现 2 个 HIGH 预存违规（`services/barrier/reset_config.rs` re-export `framework::barrier::reset::config`、`services/sync/types.rs` re-export `framework::sync::types`，均为 DECISION-J 第五/六批反转引入），与本批无关；audit quick 不含 boundary 维故未暴露。处置待用户裁决（§12.5）。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。
