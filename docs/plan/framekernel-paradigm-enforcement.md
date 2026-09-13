@@ -410,13 +410,13 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 1. **framework/driver/mod.rs `init_all` 全部接线 framework 侧驱动**（char/bus/storage/input/display/usb/hotplug，L197-226）——framework 驱动是 **active 权威实现**；services 侧驱动（storage/nvme+ahci、char/serial+vga、virtio/blk+net）是**真实实现但未接入启动路径**的影子（即既有 MIG-005 未理清的双份）。
 2. **services/usb×5（enumerate/hid/mass_storage/ring/usb_core）、chitin/devtree、driver/net/e1000、uefi、kexec、firmware** 均为 `pub use crate::kernel::framework::...::*` 的 **re-export 壳** → 属 §6.5 壳删除，**不是** §6.4 合并对象。
 3. **services/credo/grants+sessions、services/chitin/composite** 是 framework 机制（grant/session/composite 机制）之上的**策略层/安全代理**——按服务对象准则（安全导出面保留）是**正确形态**，framework 版本应保留，无"删业务"。
-4. **display/hdmi**：framework/driver/display/hdmi/（7 文件）是否孤儿待核（services/driver/display/hdmi.rs 权威）。
+4. **display/hdmi**：**已实证（第二十七批）**——framework/driver/display/hdmi/ 整目录未挂载（`display/mod.rs` 无 `pub mod hdmi;` 声明），mod.rs 壳 + 7 孤儿文件零外部消费者（目录外 `hdmi::` 引用均指向 services 权威实现），已按 §6.4 备注行预授权整目录删除。
 
 **处置**：§6.4 原表**暂缓执行**，分类改为：
 - 🔒 壳（→§6.5 删壳，非本阶段）：usb×5、chitin/devtree、e1000、uefi、kexec、firmware
 - 🔒 机制/策略正确形态（保留 framework，无重复）：credo/grant+session、chitin/composite
 - ⚠ 真双份（framework wired active + services 影子）：storage×7、char×2、virtio×2 —— **方向裁决：直接方案 B**（见下）
-- ⚠ display/hdmi（7 文件孤儿）待核
+- ✅ display/hdmi（7 文件孤儿）已实证为整目录未挂载死文件，第二十七批删除（方向 A services 收敛）
 
 **方向裁决（审核员，2026-09-12）——真双份 11 项执行"直接方案 B"，取消"先 A 后 B"**：
 - **理由**：services 影子是"真实实现但未接线"（内容完整）——直接 B = 接线切到 services + framework 留机制删业务，一步到位；"先 A"会误删可复用 services 实现，B 时仍需从 framework 迁回（重复搬移）。接线改造风险是 A 后 B 也必经的，A 只推迟不消除。
@@ -750,6 +750,20 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **预存问题修复（本批阻塞项）**：`services/fs/hvfs/dedup.rs` `CasIndex::ref_dec` 清零分支先持 `ref_counts` 再取 `hash_to_dva`，与 `insert` 的持锁顺序（`hash_to_dva → ref_counts`）相反，并发交错即 ABBA 死锁——host-tests `hvfs_stress_test` 双测试线程互等挂起复现，阻塞本批 host-tests 门槛。修复：锁序统一为 `hash_to_dva → ref_counts`（与 insert/invalidate 一致）；新增回归测试 `stress_cas_concurrent_insert_refdec_no_abba`（双线程各 200 轮高频交错两条持锁路径，独立 hash 保证断言确定性）。
 - **引用计数**：生产反向依赖 **2→1 文件、2→1 行**（sm_fi 项清零；剩余 hdmi 壳 1 行，属 HDMI 平行实现统一专项批，方案 A services 收敛已授权）。
 - **验证**：双架构 build.sh all Passed ✅ / quick 审计链全过（clippy pedantic lib + kernel_test/host-test 两 feature 维 0 warning + 6 不变式 + TCB 边界）✅ / audit_reverse_deps 1 文件/1 行与登记一致 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅ / host-tests 98 套件全过（含 hvfs_stress_test 专项单套 10 轮压测稳定）✅。
+
+### DECISION-K 项 5 执行记录：第二十七批 HDMI 专项批（孤儿目录删除，反向依赖归零）
+
+> 落实 §6.4 备注行预授权 + DECISION-G 项 4 待核闭环，方案 A（services 收敛）经用户授权。**生产反向依赖 1→0 文件/行——DECISION-J→K 反向依赖整治全序列（79 文件/137 行起点）归零达成。**
+
+**调研实证（删除依据）**：
+- **整目录未挂载**：`framework/driver/display/mod.rs` 无 `pub mod hdmi;` 声明——hdmi/mod.rs（re-export 壳）与 7 子文件（edid/vendor/port/pixel_clock/safety_audit/sync_tmds/timing，合计 1537 行）均不参与编译，为 HDMI 实现迁移 services 时遗留的死文件。
+- **消费面零依赖**：全库 `hdmi::` 引用（`services/driver/display/mod.rs` 声明、dp.rs 复用 VideoMode/lookup_dmt_timing、host-tests driver_display_test 消费 STANDARD_VIDEO_MODES）全部指向 services 权威实现；framework 路径零外部消费者（仅待删文件内部 doc 自引用）。
+- **平行实现差异盘点（删除损失评估）**：孤儿文件中 HdmiPort/MultiHdmiPorts trait、Intel/Amd/Synopsys vendor DPLL trait 骨架、`new_with_iomem_pixel_clock` 为 framework 侧独有，但均未接线、零消费者、休眠状态——按方案 A 不迁并，随目录删除；后续 vendor 实装时按 DECISION-K 注册契约模式在 services 侧重立。
+
+**本批施工**：删除 `framework/driver/display/hdmi/` 整目录（8 文件：1 re-export 壳 + 7 未挂载孤儿，-1537 行）。
+
+- **验证**：audit_reverse_deps **0 文件/0 行**（测试上下文 15 文件/52 行按 §7.3 豁免不计数）✅ / 双架构 build.sh all ✅ / quick 审计链 ✅ / host-tests 98 套件 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅（孤儿不参与编译，编译产物零变化，全链为门槛形式性复核）。
+- **审计盲区登记（§12.5 报告待裁决）**：`audit_deadlock_matrix.py` 扫描范围仅 `src/kernel/framework`（L26-27），services 子树锁序不在审计范围——第二十六批 hvfs ABBA 死锁正因此漏检；是否扩展扫描范围待用户裁决。
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
