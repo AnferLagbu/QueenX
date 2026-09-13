@@ -542,6 +542,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic 三维）✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动到 Ring 3（VFS ready，串口 242 行）✅。
 - **边界审计遗留（预存）**：`audit_services_boundary.py` 单独运行发现 2 个 HIGH 预存违规（`services/barrier/reset_config.rs` re-export `framework::barrier::reset::config`、`services/sync/types.rs` re-export `framework::sync::types`，均为 DECISION-J 第五/六批反转引入），与本批无关；audit quick 不含 boundary 维故未暴露。处置待用户裁决（§12.5）。
 
+### DECISION-J 第十五批执行记录：net 协议 wire 类型迁回（socket_types）
+
+> 调研确认：`framework/net/syscall.rs`（TCB raw 桥接）引用 `services::net::socket::{Domain, SockType, SockAddrIn}` + `services::net::unix::SockAddrUn` 共 4 处。这些是**用户态 ABI 协议 wire 类型**（AF_INET=2 / SOCK_STREAM=1 / sockaddr_in / sockaddr_un 字节布局），由 framework `raw_read_sockaddr_in`/`raw_read_sockaddr_un`/`raw_write_sockaddr_un` 从用户内存 copy-in/copy-out 直接构造并返回——属"机制的安全导出面"（DECISION-F），文档 L325 已裁决"协议 wire 类型，机制属性强，建议迁回 framework（DECISION-J 模式）"。
+
+- **迁回 framework**：新建 `framework/net/socket_types.rs`（0 unsafe）承载 `Domain`/`SockType`/`SockAddrIn`/`SockAddrUn`/`UNIX_PATH_MAX`（自 services/net/socket.rs + unix.rs 迁出，含 `SockAddrUn::new/path_slice` 方法）；framework/net/mod.rs 加 `pub mod socket_types`。
+- **services 改 re-export**：`services/net/socket.rs` 类型定义段改 `pub use framework::net::socket_types::{Domain, SockAddrIn, SockType}`；`services/net/unix.rs` 的 `UNIX_PATH_MAX` 与 `SockAddrUn` 改 re-export（`PATH_MAX = UNIX_PATH_MAX` 别名不变，services/net/mod.rs 顶层 re-export 解析路径不变，API 兼容）。
+- **消费点**：`framework/net/syscall.rs` 4 处改本地 `framework::net::socket_types::` 路径；`services/wasm/wasi/sock.rs` 经 services re-export 保持可用（无需改）。
+- **host-test 同步**：`net_dual_stack_socket_test.rs` 的 `SOCKET_RS` 源路径 `services/net/socket.rs` → `framework/net/socket_types.rs`（断言 `Inet6 = 10` + from_i32 映射随定义迁移）。
+- **引用计数**：framework 文件级反向依赖 40→39、行数 85→81；net/syscall.rs 清零。
+- **sm_fi 剩余**：`uds_svc`（`services::net::unix`）委托留待 UDS/SocketStrategy 委托 trait 注入专项。
+- **验证**：双架构 0w0e ✅ / clippy -D warnings 双架构 0 ✅ / audit quick 全 0（pedantic 三维）✅ / host-tests 全通过（双栈套件 6/6）✅ / QEMU x86_64 完整启动到 Ring 3 ✅ / 边界审计无新增违规（2 HIGH/2 MEDIUM 均为预存，与本批前一致）✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。
