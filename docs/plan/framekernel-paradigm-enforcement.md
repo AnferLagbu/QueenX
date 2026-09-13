@@ -691,6 +691,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **验证**：audit_volatile_access 4/4 通过 + fail-closed 负向验证 ✅（其余验证门槛不受影响——本批仅改审计脚本，无内核代码改动）。
 
+### DECISION-K 项 5 执行记录：第二十三批 ramfs 专项批（ramfs_core 回迁 + FsBackend 工厂钩子注入）
+
+> 执行第二十一批登记的 ramfs 专项判定（闭包不闭合 → backend_trait 注入方向）。施工前全量源码调研修正了闭包判定前提：ramfs_core 三文件对 services 的真实依赖仅剩 `RamFsInode` 构造点 ×3（fs_open/fs_create/fs_resolve_inode）——`services::fs::dcache` / `services::sync::irq_lock` / `services::fs::vfs_types` 经逐文件核实均为 framework 纯别名/壳；framework 侧 mount.rs 对 RamFsData 有机制级直接消费（含 'static 引用提升），坐实机制归属。
+
+**本批（ramfs 2433 行回迁 + 钩子注入）**：
+- **framework/fs/ramfs/ 扁平化回迁**（mod.rs + ramfs_data.rs + ramfs_node.rs，对齐 devfs 单层先例）：RamFsData/RamFsNode/RamFsDirEntry/RAMFS_DATA/init + `impl FileSystem for RamFsData` 整体归 framework（0 unsafe）。删除 framework/fs/ramfs/ramfs.rs 壳层（`ramfs::ramfs::X` 双层路径随之扁平化，mount.rs/handle.rs/inode.rs 共 9 处引用路径同步）。
+- **FsBackend trait 扩展（DECISION-K 项 5 落地）**：新增 `make_ramfs_inode(inode_id, mount_idx) -> Result<Arc<dyn Inode>, KernelError>` 工厂钩子；`FallbackFsBackend` 实现 fail-closed（未注册返回 `NotInitialized`，早期启动窗口安全）；3 个 RamFsInode 构造点改经 `current_fs_backend().make_ramfs_inode`（fs_open/fs_create 先 drop 锁再调钩子，锁序不变）。具象 `RamFsInode` 留 services（TCB 最小化：约 130 行 Inode 适配器不进 framework）。
+- **services 侧收尾**：`ServicesFsBackend` 实现钩子委托 `new_ramfs_inode`（该工厂由此获得首个生产使用路径）；删除 services/fs/ramfs_core 三文件 + 模块声明；消费者（tmpfs/overlayfs/anonymous/ramfs 薄包装）全部改 framework 直引（services→framework 合法方向）；ramfs_data.rs 内 dcache/vfs_types 别名引用还原为 framework 本地路径。
+- **host-test 同步**：fs_sync_trait_test.rs（ramfs_inherits_default 源码断言改读 framework/fs/ramfs/mod.rs）+ plan_b_inode_test.rs（ramfs_implements_fs_resolve_inode 同步）。
+- **引用计数**：生产反向依赖 **11→10 文件、29→28 行**（ramfs 壳清零；剩余 hvfs 18 行/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
+- **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy pedantic 三维（lib + kernel_test + host-test）0 warning ✅ / audit quick 全过 ✅ / 独立审计 boundary + coupling + deadlock_matrix + safety_coverage + volatile_access + repr_c + static_mut + audit_reverse_deps 全过 ✅ / host-tests 98 套件全过（含 fsx，串行 0 失败）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready，钩子注册时序实测无恙）✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。

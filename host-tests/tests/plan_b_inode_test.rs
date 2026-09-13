@@ -268,7 +268,8 @@ fn filesystem_has_fs_resolve_inode() {
 
 #[test]
 fn ramfs_implements_fs_resolve_inode() {
-    let src = read_file("services/fs/ramfs_core/mod.rs");
+    // DECISION-K 项 5: ramfs 实现回迁 framework/fs/ramfs/mod.rs
+    let src = read_file("framework/fs/ramfs/mod.rs");
     assert!(src.contains("fn fs_resolve_inode"), "RamFs 必须实现 fs_resolve_inode");
 }
 

@@ -65,8 +65,8 @@ fn hvfs_overrides_fs_sync() {
 
 #[test]
 fn ramfs_inherits_default() {
-    // 拆分后 FileSystem impl 在 ramfs_core/mod.rs (原在 ramfs_core.rs)
-    let src = read_src("src/kernel/services/fs/ramfs_core/mod.rs");
+    // DECISION-K 项 5: ramfs 实现回迁 framework/fs/ramfs/mod.rs
+    let src = read_src("src/kernel/framework/fs/ramfs/mod.rs");
     let impl_block = src
         .rsplit_once("impl FileSystem for RamFsData")
         .map(|(_, b)| b)

@@ -5,7 +5,7 @@
 
 use alloc::sync::Arc;
 use crate::kernel::framework::fs::KernelError;
-use crate::kernel::services::fs::ramfs_core::RamFsData;
+use crate::kernel::framework::fs::ramfs::RamFsData;
 use crate::kernel::services::fs::vfs_types::*;
 use crate::kernel::services::fs::inode::Inode;
 use crate::kernel::framework::sync::IrqSpinLock as Mutex;
@@ -307,7 +307,7 @@ impl FileSystem for TmpFsFileSystem {
             return Ok(false);
         }
 
-        let dirent_size = core::mem::size_of::<crate::kernel::services::fs::ramfs_core::RamFsDirEntry>();
+        let dirent_size = core::mem::size_of::<crate::kernel::framework::fs::ramfs::RamFsDirEntry>();
         let num_entries = node.size as usize / dirent_size;
         let idx = offset as usize;
 
@@ -319,7 +319,7 @@ impl FileSystem for TmpFsFileSystem {
 
         // 从 data_area 读取目录项
         let entry_data = &fs.inner.data_area[block_offset..block_offset + dirent_size];
-        let ramfs_entry = crate::kernel::services::fs::ramfs_core::RamFsDirEntry::read_at(entry_data, 0);
+        let ramfs_entry = crate::kernel::framework::fs::ramfs::RamFsDirEntry::read_at(entry_data, 0);
 
         entry.node = ramfs_entry.node;
         entry.file_type = ramfs_entry.file_type;

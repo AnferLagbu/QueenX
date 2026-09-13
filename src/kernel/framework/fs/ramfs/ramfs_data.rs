@@ -11,7 +11,7 @@ use super::{
 use crate::kernel::framework::credo::api as pwm_api;
 use crate::kernel::framework::fs::KernelError;
 use crate::kernel::framework::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
-use crate::kernel::services::fs::dcache;
+use crate::kernel::framework::fs::vfs::dcache;
 
 pub struct RamFsData {
     pub nodes: [RamFsNode; RAMFS_MAX_NODES],
@@ -763,8 +763,8 @@ impl RamFsData {
         &self,
         node_id: u32,
         _pwm: u64,
-    ) -> crate::kernel::services::fs::vfs_types::KernelResult<VfsStat> {
-        use crate::kernel::services::fs::vfs_types::KernelError as KE;
+    ) -> crate::kernel::framework::fs::KernelResult<VfsStat> {
+        use crate::kernel::framework::fs::KernelError as KE;
         if node_id as usize >= RAMFS_MAX_NODES {
             return Err(KE::InvalidArgument);
         }

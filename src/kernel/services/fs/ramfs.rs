@@ -26,7 +26,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::services::fs::ramfs_core::RamFsData;
+use crate::kernel::framework::fs::ramfs::RamFsData;
 
 // services 层透出的常量 (镜像 kernel/fs/ramfs/ramfs.rs 内部常量)
 pub const RAMFS_BLOCK_SIZE: usize = crate::kernel::framework::mm::PAGE_SIZE as usize;

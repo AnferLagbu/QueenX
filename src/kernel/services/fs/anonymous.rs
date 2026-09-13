@@ -6,7 +6,7 @@
 //! - 进程间共享内存
 //! - 临时文件 (不依赖 tmpfs)
 
-use super::ramfs_core::RamFsData;
+use crate::kernel::framework::fs::ramfs::RamFsData;
 use crate::kernel::framework::sync::IrqSpinLock;
 use crate::kernel::services::error::KernelError;
 use crate::kernel::services::fs::vfs_types::KernelResult;

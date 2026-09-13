@@ -47,9 +47,9 @@ pub struct OverlayFsData {
     /// 挂载配置
     pub mount: OverlayMount,
     /// upperdir 的 ramfs 数据
-    pub upper_data: crate::kernel::services::fs::ramfs_core::RamFsData,
+    pub upper_data: crate::kernel::framework::fs::ramfs::RamFsData,
     /// workdir 的 ramfs 数据
-    pub work_data: crate::kernel::services::fs::ramfs_core::RamFsData,
+    pub work_data: crate::kernel::framework::fs::ramfs::RamFsData,
     /// lowerdir 路径 (只读引用)
     pub lower_path: String,
 }
@@ -59,8 +59,8 @@ impl OverlayFsData {
     pub fn new(mount: OverlayMount) -> Self {
         Self {
             mount,
-            upper_data: crate::kernel::services::fs::ramfs_core::RamFsData::new(),
-            work_data: crate::kernel::services::fs::ramfs_core::RamFsData::new(),
+            upper_data: crate::kernel::framework::fs::ramfs::RamFsData::new(),
+            work_data: crate::kernel::framework::fs::ramfs::RamFsData::new(),
             lower_path: mount.lowerdir.clone(),
         }
     }

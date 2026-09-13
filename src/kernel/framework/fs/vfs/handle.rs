@@ -435,9 +435,8 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
                     let mut entry_ref = unsafe { UserRefMut::new(entry) };
                     *entry_ref.as_mut() = dir_entry;
                     let new_offset = offset
-                        + core::mem::size_of::<
-                            crate::kernel::framework::fs::ramfs::ramfs::RamFsDirEntry,
-                        >() as u64;
+                        + core::mem::size_of::<crate::kernel::framework::fs::ramfs::RamFsDirEntry>()
+                            as u64;
                     open_file.set_offset(new_offset);
                     1
                 }

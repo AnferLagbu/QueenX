@@ -44,7 +44,6 @@ pub mod process_fd_table;
 pub mod procfs;
 pub mod procfs_core;
 pub mod ramfs;
-pub mod ramfs_core;
 pub mod sendfile;
 /// 快照 (snapshot) 系统调用处理器
 pub mod snapshot;
@@ -67,6 +66,7 @@ pub mod xattr;
 
 use crate::kernel::framework::fs::vfs::api as vfs_api;
 use crate::kernel::framework::fs::vfs::backend_trait::{FsBackend, register_fs_backend};
+use crate::kernel::framework::fs::vfs::inode::Inode;
 use crate::kernel::services::fs::vfs_types::KernelError;
 
 /// services 层 VFS 后端决策策略
@@ -90,6 +90,18 @@ impl FsBackend for ServicesFsBackend {
     fn allow_mount(&self, _path: &str, _fs_name: &str) -> bool {
         // 当前允许所有挂载; 未来可按路径/fs_type 做权限检查
         true
+    }
+
+    fn make_ramfs_inode(
+        &self,
+        inode_id: u32,
+        mount_idx: u32,
+    ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError> {
+        // 具象 RamFsInode 归 services (DECISION-K 项 5): framework RamFsData
+        // 经此工厂钩子请求 services 构造 Inode trait object.
+        Ok(crate::kernel::services::fs::inode::new_ramfs_inode(
+            inode_id, mount_idx,
+        ))
     }
 }
 

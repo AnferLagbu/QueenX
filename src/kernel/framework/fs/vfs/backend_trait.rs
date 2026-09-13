@@ -23,6 +23,7 @@
 //! - 挂载权限检查
 //! - 文件系统注册表管理
 
+use crate::kernel::framework::fs::vfs::inode::Inode;
 use crate::kernel::framework::fs::vfs::types::KernelError;
 
 /// 文件系统后端决策接口 — services 实现, framework 调用
@@ -43,6 +44,19 @@ pub trait FsBackend: Send + Sync {
     ///
     /// services 可实现权限检查 (如只允许 root 挂载到 /).
     fn allow_mount(&self, path: &str, fs_name: &str) -> bool;
+
+    /// 创建 RamFS Inode 实例 (工厂钩子, DECISION-K 项 5)
+    ///
+    /// framework `RamFsData` (机制) 在 fs_open / fs_create / fs_resolve_inode
+    /// 中需要产出 Inode trait object; 具象 `RamFsInode` 是 services 层实现,
+    /// framework 不直接依赖, 经由此钩子由 services 构造注入.
+    /// # Errors
+    /// 后端未注册或拒绝构造时返回 Err (回退策略 fail-closed)。
+    fn make_ramfs_inode(
+        &self,
+        inode_id: u32,
+        mount_idx: u32,
+    ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError>;
 }
 
 // ============================================================================
@@ -62,6 +76,14 @@ impl FsBackend for FallbackFsBackend {
 
     fn allow_mount(&self, _path: &str, _fs_name: &str) -> bool {
         false
+    }
+
+    fn make_ramfs_inode(
+        &self,
+        _inode_id: u32,
+        _mount_idx: u32,
+    ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError> {
+        Err(KernelError::NotInitialized)
     }
 }
 
