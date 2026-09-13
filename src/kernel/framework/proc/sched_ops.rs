@@ -116,11 +116,9 @@ pub extern "C" fn scheduler_init() {
             * crate::kernel::framework::mm::PAGE_SIZE,
         crate::kernel::framework::config::MAX_CPUS as u32,
     );
-    // D4: 初始化 eBPF 子系统
-    crate::kernel::framework::debug::bpf_init();
-    // T4-3: 注册标准 BPF 验证器 (Safe Policy Injection)
-    crate::kernel::framework::debug::bpf_subsystem()
-        .set_verifier(&crate::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER);
+    // D4/T4-3 (eBPF init + 标准验证器注册) 已反转至 services::debug::ebpf::init
+    // 注册契约 (第二十五批): framework proc 不再反向调用 services verifier,
+    // 由 lib.rs kernel_init 统一接入.
     // D5: 初始化电源管理子系统
     crate::kernel::framework::driver::pm_init(crate::kernel::framework::config::MAX_CPUS as u32);
     // D6: 初始化安全启动 + TPM (移至 credo_init, 消除 proc→credo 依赖)

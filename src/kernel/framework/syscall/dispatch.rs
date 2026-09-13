@@ -421,7 +421,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
         // ==================== 进程创建 ====================
         QX_EXECVE => dispatch!(
-            crate::kernel::services::proc::execve::ExecveResult::from_ret(sys_execve(
+            crate::kernel::framework::syscall::execve::ExecveResult::from_ret(sys_execve(
                 a0 as *const u8,
                 a1 as *const *const u8,
                 a2 as *const *const u8

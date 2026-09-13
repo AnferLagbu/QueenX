@@ -1,30 +1,16 @@
 #![deny(unsafe_code)]
-//! execve — services 层安全代理
+//! execve 结果类型 — framework 层权威定义
 //!
-//! @SAFE: 本文件不含 unsafe 代码。
-//! 所有 unsafe 操作已委托至 `framework::syscall`。
+//! ## 归属记录
 //!
-//! ## 职责
+//! TCB 核心逻辑 (用户指针验证 / SUID 处理 / 进程替换) 在
+//! `framework::syscall::dispatch::sys_execve` 机制内; 本类型为其返回值的
+//! errno 解析包装 (机制持有). 第二十五批自 services/proc/execve.rs 迁回
+//! (DECISION-O ② MemoryPressure 同判据: 机制类型归 framework).
 //!
-//! - 提供类型安全的 execve API
-//! - 参数验证与类型转换
-//! - 错误码封装
-//!
-//! ## 注意
-//!
-//! execve 的核心逻辑 (用户指针验证、SUID 处理、进程替换)
-//! 必须在 framework TCB 中执行, 因为涉及:
-//! - 原始指针操作 (`read_volatile` 用户空间)
-//! - 进程地址空间替换 (页表切换)
-//! - Credo PWM 权限提升 (SUID)
-//!
-//! services 层仅做参数类型转换和错误码封装.
+//! services 层 0 unsafe — 本文件不含 unsafe 代码.
 
 use crate::kernel::framework::syscall::Errno;
-
-// ============================================================================
-// execve 安全 API
-// ============================================================================
 
 /// execve 结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

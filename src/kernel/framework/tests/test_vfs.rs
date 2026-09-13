@@ -197,15 +197,21 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
         ramfs.create_file("/", "backend_reg_t", 0)
     };
     check!(created.is_some(), "create_file 应成功");
-    let _node_id = match created {
-        Some(id) => id,
-        None => return TestResult::Fail("create_file 失败"),
+    let Some(_node_id) = created else {
+        return TestResult::Fail("create_file 失败");
     };
 
     // SAFETY: 全局 static RAMFS_DATA 拥有 RamFsData, 裸指针提升后生命周期为
-    // 'static (mount.rs 同款手法); fs_open 内部自行加锁, 此处不持锁调用, 无死锁
-    let fs: &'static RamFsData =
-        unsafe { &*(&*RAMFS_DATA.lock() as *const RamFsData) };
+    // 'static (mount.rs 同款手法); fs_open 内部自行加锁, 此处不持锁调用, 无死锁.
+    // 注意: 守卫必须收窄到块内 — rustc 1.98 nightly (RFC 3606 临时生命周期
+    // 延长) 下 `let p = &raw const *RAMFS_DATA.lock()` 会使守卫存活至绑定
+    // 作用域结束, fs_open 内部重入 lock() 将同线程自旋死锁 (cast 形式无此
+    // 延长, 块作用域强制语句末释放).
+    let ramfs_ptr: *const RamFsData = {
+        let guard = RAMFS_DATA.lock();
+        &raw const *guard
+    };
+    let fs: &'static RamFsData = unsafe { &*ramfs_ptr };
 
     // fs_open → make_inode 钩子 → services RamFsInode (回归路径本体)
     let opened = fs.fs_open("/backend_reg_t", 0, 0);
@@ -218,9 +224,8 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
 
 fn test_hvfs_fs_registered() -> TestResult {
     crate::kernel::services::fs::init();
-    let fs = match crate::kernel::framework::fs::vfs::backend_trait::hvfs_fs() {
-        Some(fs) => fs,
-        None => return TestResult::Fail("hvfs_fs() 未注册 — services::fs::init 未生效"),
+    let Some(fs) = crate::kernel::framework::fs::vfs::backend_trait::hvfs_fs() else {
+        return TestResult::Fail("hvfs_fs() 未注册 — services::fs::init 未生效");
     };
     check!(fs.name() == "hvfs", "hvfs name mismatch");
     // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),

@@ -590,18 +590,12 @@ impl IdentityTable {
 
     /// pwm → uid (stat 填充 `st_uid` 用)
     pub fn uid_of(&self, pwm: u64) -> u32 {
-        self.find(pwm).map_or(
-            0xFFFF_FFFF,
-            crate::kernel::services::credo::types::PwmEntry::get_uid,
-        )
+        self.find(pwm).map_or(0xFFFF_FFFF, PwmEntry::get_uid)
     }
 
     /// pwm → gid (stat 填充 `st_gid` 用)
     pub fn gid_of(&self, pwm: u64) -> u32 {
-        self.find(pwm).map_or(
-            0xFFFF_FFFF,
-            crate::kernel::services::credo::types::PwmEntry::get_gid,
-        )
+        self.find(pwm).map_or(0xFFFF_FFFF, PwmEntry::get_gid)
     }
 }
 

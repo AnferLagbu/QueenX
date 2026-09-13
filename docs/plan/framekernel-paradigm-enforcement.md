@@ -720,6 +720,25 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：生产反向依赖 **10→9 文件、28→10 行**（hvfs 18 行壳清零，为单文件最大降幅项；剩余 credo sha256/types 壳、hdmi 壳、sm_fi、ebpf verifier、execve 分发等已登记专项项）。
 - **验证**：双架构 build.sh all Passed 5/0 ✅ / clippy -D warnings 双架构 0 ✅ / 核心审计 11 项全过（boundary + safety_coverage + deadlock_matrix + coupling + comment_language + once_cell + c_naming + invariants + repr_c + volatile_access + static_mut）✅ / audit_reverse_deps 9 文件/10 行与登记一致 ✅ / host-tests 98 套件全过（e04 共享测试集 336 passed/7 skipped/0 failed）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready，注册时序实测无恙）✅。
 
+### DECISION-K 项 5 执行记录：第二十五批 credo 三壳反转 + ebpf verifier 注册契约 + ExecveResult 迁回
+
+> 落实第二十四批后剩余专项项的 credo 判据（capability/sha256/types 三模块依赖闭包闭合：纯常量/纯算法/纯数据定义，framework 内部 `secure_boot`/`process.rs` 直接消费）——反转归位 framework，services 改 re-export 壳。同批完成 ebpf verifier 注册契约与 ExecveResult 类型迁回。**生产反向依赖 9→2 文件、10→2 行**（仅剩 hdmi 壳 + sm_fi UDS 两项，均属 HDMI 平行实现统一专项批，方案 A services 收敛已获授权）。
+
+**本批（credo 反转 + 注册契约 + 类型迁回 + 死锁根因修复）**：
+- **capability 反转**：`framework/credo/capability.rs` 为权威（16 域能力位 + `VIABLE_FLOOR` viable 底线 + PWM/FS/PROC 等域常量，纯 const 闭包为空）；`services/credo/capability.rs` 改 re-export 壳（services→framework 公共路径合法方向，boundary 审计实测无需 PROXY_ALLOWANCE 登记）。
+- **sha256 反转**：`framework/credo/sha256.rs` 为权威（SHA-256 纯算法，framework/credo/secure_boot 直接消费）；services 壳 re-export；PWM_DIGEST_LEN 与相关测试注册随迁。
+- **types 反转**：`framework/credo/types.rs` 为权威（PWM 类型/能力矩阵/身份条目/审计类型，632 行纯数据定义；framework/proc/process.rs 进程表机制持有 PwmContext）；services 壳 glob re-export。`framework/credo/mod.rs` 顶层 capability re-export 改本地路径（删除 `crate::kernel::services::credo::capability` 反向引用）；identity.rs 两处同改。
+- **ebpf verifier 注册契约**（预存欠账修复）：`services::debug::ebpf::init()` 扩展为 `bpf_init()` + `set_verifier(&STANDARD_VERIFIER)`（DECISION-K 统一模式：机制 init 后立即注册策略）；`framework/proc/sched_ops.rs` scheduler_init 删除对 services verifier 的反向直调；`lib.rs` kernel_init 在 scheduler ready 后统一接入。未注册窗口 prog_load fail-closed（verifier() 返回 None 拒绝），启动早期无用户态进程，窗口安全。
+- **ExecveResult 迁回**：新增 `framework/syscall/execve.rs`（`ExecveResult` 枚举 + `from_ret`/`as_ret`，机制持有类型判据）；删除 `services/proc/execve.rs`（66 行）；`framework/syscall/dispatch.rs` QX_EXECVE 分支改 framework 本地路径。
+- **host-test 同步**：`b07_creds_audit_test.rs` 源码断言 `CAP` 路径改读 framework 权威定义（`framework/credo/capability.rs`）。
+- **test_vfs clippy 修复引入 e04 死锁——根因定位与修复（工具链行为陷阱，重要教训）**：
+  - 现象：e04 共享测试集在 `vfs::backend::ramfs_fs_open_via_backend_hook` 处 100% CPU 自旋（全量与单独运行均复现；HEAD 基线通过，锁定为本批回归）。
+  - 定位：gdb attach + 反汇编——自旋点为 `fs_open`（ramfs/mod.rs:90）内部 `RAMFS_DATA.lock()` 的 `lock cmpxchg` 获取循环，锁字恒为 1 而进程内仅自旋线程自身——同线程递归自锁；测试自身三处锁均有释放路径，仅 line 206 acquire 缺正常释放。
+  - 根因：clippy `deref_addrof` 修复将 `&*(&*RAMFS_DATA.lock() as *const RamFsData)`（cast 断开延长链，守卫语句末释放）改写为 `let ramfs_ptr = &raw const *RAMFS_DATA.lock();`——rustc 1.98 nightly（RFC 3606 临时生命周期延长）下守卫存活至**绑定作用域结束**（微测试实证：无 cast 的 `&raw const *expr` 与 `&*expr` let 绑定均延长，cast 形式不延长），fs_open 内部重入 lock() 即同线程自锁。
+  - 修复：守卫收窄至块作用域强制提前释放（`let ramfs_ptr = { let guard = RAMFS_DATA.lock(); &raw const *guard };`），SAFETY 注释补充 RFC 3606 陷阱说明；全库排查确认无其他同款模式（mount.rs:97 同款手法为 cast 形式，安全——项目此前"暂不迁移 &raw const"的保守决策恰好规避此坑）。
+- **引用计数**：生产反向依赖 **9→2 文件、10→2 行**（credo 三壳 + ebpf verifier + execve 分发五项清零；剩余 hdmi 壳、sm_fi UDS 委托均属 HDMI 专项批）。
+- **验证**：双架构 build.sh all Passed ✅ / clippy pedantic -D warnings 四维（x86_64+aarch64 × kernel_test+host-test）0 ✅ / 核心审计 12 项全过（boundary + safety_coverage + deadlock_matrix + coupling + comment_language + once_cell + c_naming + invariants + repr_c + volatile_access + static_mut + reverse_deps 2 文件/2 行与登记一致）✅ / host-tests 98 套件全过（e04 共享测试集 336 passed/7 skipped/0 failed，修复后单独+全量双跑验证）✅ / QEMU x86_64 完整启动至 Ring 3 ✅。
+
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
 > 审核员最终解释：**栏栈不整体下沉**——它已是"framework 机制 + services 策略"的正确分层样板，重构后依然如此。DECISION-L（阻塞 barrier 开发）得到设计文档三重证据验证，继续执行。

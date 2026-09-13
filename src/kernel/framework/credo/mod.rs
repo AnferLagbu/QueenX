@@ -41,7 +41,7 @@ pub use session::*;
 pub use engine::get_privilege_level;
 
 // capability 公共接口 re-export — 避免跨子系统直接访问 credo::capability 内部
-pub use crate::kernel::services::credo::capability::{
+pub use capability::{
     CAP_DOMAIN_DEVICE, CAP_DOMAIN_FS, CAP_DOMAIN_IPC, CAP_DOMAIN_MEM, CAP_DOMAIN_NET,
     CAP_DOMAIN_PROC, CAP_DOMAIN_SYSTEM, CAP_DOMAIN_TIME, CAP_DOMAIN_USER_MGMT, DEVICE_CAP_BIND,
     DEVICE_CAP_DMA, DEVICE_CAP_IRQ, DEVICE_CAP_MMIO,

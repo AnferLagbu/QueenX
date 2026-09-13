@@ -1,73 +1,10 @@
 #![deny(unsafe_code)]
-//! @SAFE: 本文件不含 unsafe 代码。纯常量定义。
-//! PWM v5 能力定义 — services 层策略主体
+//! PWM v5 能力定义 — services 层 re-export 壳
 //!
-//! ## T6-8 迁移记录
+//! ## 归属记录
 //!
-//! 原属 framework/credo/capability.rs, 2026-06-16 提取到 services.
-//! 纯常量定义 (16 域能力位 + viable floor), 0 unsafe, 0 外部依赖.
-//! framework 仅保留 re-export.
+//! 纯常量定义 (16 域能力位 + viable floor) 的权威定义在
+//! `framework/credo/capability.rs` (第二十五批反转归位, DECISION-K 项 5
+//! credo 判据). 本文件仅 re-export 保持 services 内部消费者路径兼容.
 
-pub const SYS_CAP_ALL: u64 = 0xFFFFFFFFFFFFFFFF;
-
-pub const CAP_DOMAIN_SYSTEM: u16 = 0;
-pub const CAP_DOMAIN_FS: u16 = 1;
-pub const CAP_DOMAIN_NET: u16 = 2;
-pub const CAP_DOMAIN_PROC: u16 = 3;
-pub const CAP_DOMAIN_DEVICE: u16 = 4;
-pub const CAP_DOMAIN_USER_MGMT: u16 = 5;
-pub const CAP_DOMAIN_IPC: u16 = 6;
-pub const CAP_DOMAIN_MEM: u16 = 7;
-pub const CAP_DOMAIN_TIME: u16 = 8;
-pub const CAP_DOMAIN_BARRIER: u16 = 9;
-pub const CAP_DOMAIN_SIGNAL: u16 = 10;
-pub const CAP_DOMAIN_SHM: u16 = 11;
-pub const CAP_DOMAIN_SEM: u16 = 12;
-pub const CAP_DOMAIN_MSGQ: u16 = 13;
-pub const CAP_DOMAIN_DMA: u16 = 14;
-pub const CAP_DOMAIN_RESERVED: u16 = 15;
-
-/// SYSTEM 域 bit1 — 设置进程 PWM 身份 (B07-05, DECISION-078 新增专用位)
-///
-/// `pwm_set` 会改变进程身份, 无既有能力位可精确表达, 故新增专用位而非复用
-/// SYSTEM 域 bit0 (mount/setns 等复用的 CAP_SYS_ADMIN 语义). 任意进程不可
-/// 自行设置自身 PWM (防任意提权).
-pub const SYSTEM_CAP_SET_PWM: u64 = 1 << 1;
-
-pub const FS_CAP_READ: u64 = 1 << 0;
-pub const FS_CAP_WRITE: u64 = 1 << 1;
-pub const FS_CAP_EXECUTE: u64 = 1 << 2;
-pub const FS_CAP_CREATE: u64 = 1 << 3;
-pub const FS_CAP_DELETE: u64 = 1 << 4;
-pub const FS_CAP_CHOWN: u64 = 1 << 5;
-pub const FS_CAP_CHMOD: u64 = 1 << 6;
-
-pub const NET_CAP_SEND: u64 = 1 << 0;
-pub const NET_CAP_RECV: u64 = 1 << 1;
-pub const NET_CAP_CONNECT: u64 = 1 << 2;
-pub const NET_CAP_LISTEN: u64 = 1 << 3;
-pub const NET_CAP_BIND: u64 = 1 << 4;
-
-pub const PROC_CAP_FORK: u64 = 1 << 0;
-pub const PROC_CAP_EXEC: u64 = 1 << 1;
-pub const PROC_CAP_KILL: u64 = 1 << 2;
-pub const PROC_CAP_WAIT: u64 = 1 << 3;
-pub const PROC_CAP_CREATE: u64 = 1 << 4;
-
-pub const USER_MGMT_CAP_LIST: u64 = 1 << 0;
-pub const USER_MGMT_CAP_CREATE: u64 = 1 << 1;
-pub const USER_MGMT_CAP_DELETE: u64 = 1 << 2;
-pub const USER_MGMT_CAP_MODIFY: u64 = 1 << 3;
-
-pub const DEVICE_CAP_MMIO: u64 = 1 << 0;
-pub const DEVICE_CAP_IRQ: u64 = 1 << 1;
-pub const DEVICE_CAP_DMA: u64 = 1 << 2;
-pub const DEVICE_CAP_BIND: u64 = 1 << 3;
-
-pub const VIABLE_FLOOR: [u64; 16] = {
-    let mut f = [0u64; 16];
-    f[CAP_DOMAIN_FS as usize] = FS_CAP_READ | FS_CAP_EXECUTE;
-    f[CAP_DOMAIN_PROC as usize] = PROC_CAP_FORK | PROC_CAP_EXEC;
-    f[CAP_DOMAIN_DEVICE as usize] = 0;
-    f
-};
+pub use crate::kernel::framework::credo::capability::*;

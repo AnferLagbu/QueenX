@@ -2,8 +2,8 @@
 //! 进程管理子系统 — services 层策略主体
 //!
 //! 进程生命周期 / 调度策略 / 信号 / namespace / cgroup / seccomp / rlimit
-//! / session / coredump / fd_table / clone / execve / elf / canary 等
-//! 18+ 子模块. 0 unsafe, 全部上下文切换/页表/调度底层走 framework.
+//! / session / coredump / fd_table / clone / elf / canary 等
+//! 子模块. 0 unsafe, 全部上下文切换/页表/调度底层走 framework.
 //!
 //! 历史: 2026-06 之前 v2.11 状态评估已过时, 当前已远超当时范围.
 //! 详细进度见 docs/plan/progress-active-tasks.md.
@@ -16,7 +16,6 @@ pub mod cgroup;
 pub mod clone;
 pub mod coredump;
 pub mod elf;
-pub mod execve;
 /// TD-02: 全局统一 FD 分配器 (范围规划 + 分配/释放/反查)
 pub mod fd_alloc;
 /// D8: FD Table 分配策略 (first-fit, 上限 64)

@@ -4,6 +4,8 @@ pub mod dispatch;
 /// T-03: 系统调用分发决策 trait
 pub mod dispatch_trait;
 pub mod epoll;
+/// execve 结果类型 (第二十五批自 services 迁回, 机制持有)
+pub mod execve;
 pub mod eventfd;
 pub mod firmware;
 pub mod ftrace_kgdb;

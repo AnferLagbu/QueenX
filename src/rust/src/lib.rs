@@ -754,6 +754,12 @@ pub extern "C" fn kernel_init() {
         crate::kernel::framework::proc::scheduler_ex::init();
         crate::klog_boot_info!("Scheduler ready");
 
+        // 8-1. eBPF — services::debug::ebpf::init() 注册契约 (DECISION-K 统一
+        // 模式): bpf_init (幂等) + 标准 verifier 注册 (T4-3 Safe Policy
+        // Injection). 预存欠账修复: 此前 verifier 注册位于 scheduler_init FFI
+        // (无生产调用者), 生产环境 verifier 从未注册 — 本行接通注册链路.
+        crate::kernel::services::debug::ebpf::init();
+
         // 9. VFS
         // services::fs::init() — FsBackend 策略 + VFS poll 策略 + HvFS
         // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
