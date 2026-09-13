@@ -337,6 +337,12 @@ PROXY_ALLOWANCE = [
     ('src/kernel/services/ipc/msgq.rs', 'framework::ipc::msgq::raw'),
     # proc 子系统: coredump.rs 代理 framework::proc::coredump
     ('src/kernel/services/proc/coredump.rs', 'framework::proc::coredump'),
+    # DECISION-N (2026-09-13): DECISION-J 反转批次的 re-export 代理壳
+    # (纯 `pub use framework::...::*`, 无业务逻辑, 属机制安全导出面的合法转发).
+    # sync 子系统: types.rs 代理 framework::sync::types (锁状态/守卫/统计)
+    ('src/kernel/services/sync/types.rs', 'framework::sync::types'),
+    # barrier 子系统: reset_config.rs 代理 framework::barrier::reset::config
+    ('src/kernel/services/barrier/reset_config.rs', 'framework::barrier::reset'),
 ]
 
 

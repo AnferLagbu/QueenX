@@ -531,6 +531,26 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 **状态**: [X]（裁决完成；实施交委托人）
 
+### DECISION-N: audit_services_boundary 代理豁免 + 验证链修正（2026-09-12 审核员裁决）
+
+> **背景**：委托人单独运行 `audit_services_boundary.py` 暴露 2 个 HIGH 预存违规——`services/barrier/reset_config.rs:12`（re-export `framework::barrier::reset::config`）、`services/sync/types.rs:13`（re-export `framework::sync::types`），均为 DECISION-J 第五/六批反转引入，当时未跑边界审计（audit quick 不含 boundary 维）。
+
+**裁决**：
+1. **豁免合法代理（选项 A）**：两处加入 `PROXY_ALLOWANCE` 白名单（is_proxy_allowed 机制已存在，与现有 5 条同质）——`('src/kernel/services/barrier/reset_config.rs', 'framework::barrier::reset::config')`、`('src/kernel/services/sync/types.rs', 'framework::sync::types')`。**选项 B（framework 改 pub）不成立**：审计拦的是黑名单路径引用，非可见性。豁免条件与现有 5 条同质：**仅 re-export 代理**，不包含 services 直接 use framework 内部做业务。
+2. **性质**：合法代理壳（DECISION-J 反转的预期形态），非违规；非"为迁移开绿灯"（DECISION-G 禁令针对未确认归属先改审计）。
+3. **流程修正（验证盲区）**：每批反转/迁移验证链**强制补 `audit_services_boundary.py` 单独运行**（不依赖 audit quick，后者不含 boundary 维）。
+4. **全量核查**：委托人对 DECISION-J 全部反转批次跑完整 boundary 审计，确认无其他漏豁免项，一并报回。
+
+**状态**: [X]（裁决完成；豁免+核查交委托人）
+
+### DECISION-N 执行记录：PROXY_ALLOWANCE 豁免 + 全量核查（2026-09-13）
+
+- **豁免实施**：`scripts/audit_services_boundary.py` PROXY_ALLOWANCE 新增 2 条（与现有 5 条同质，仅 re-export 代理壳）：`('src/kernel/services/sync/types.rs', 'framework::sync::types')`、`('src/kernel/services/barrier/reset_config.rs', 'framework::barrier::reset')`。
+  - **实现细节**：barrier 条目禁条字面量用 `'framework::barrier::reset'`（而非裁决文本中的 `framework::barrier::reset::config`）——`is_proxy_allowed` 按 `forbidden == allow_forbidden` 精确匹配 FORBIDDEN_FRAMEWORK_MODULES 条目，黑名单登记的是 `framework::barrier::reset`（L79），故豁免键须与之一致。已核实两文件均为纯 `pub use ... ::*` 壳（豁免前提成立）。
+- **全量核查（裁决第 4 条）**：对 DECISION-J 全部反转批次跑完整 boundary 审计——**HIGH 0 / CRITICAL 0**，无其他漏豁免项。剩余 2 MEDIUM 为 services 内部 inter-module 依赖白名单（`proc→mm`、`timer→syscall`），非 framework 边界穿透、非本裁决范畴（预存）。
+- **流程修正（裁决第 3 条）**：验证链补 `audit_services_boundary.py` 单独运行为每批强制项（audit quick 不含 boundary 维=盲区）。本批起执行。
+- **验证**：boundary 审计 `>>> services 边界检查通过 <<<` ✅。
+
 ### DECISION-J 第十四批执行记录：driver/power 迁回（DECISION-M 方案 B 实施）
 
 > 调研确认：`framework/driver/power.rs` 机制壳（PM_SUBSYSTEM static + pm_init/pm_idle/pm_suspend/sys_pm + 硬件操作），`services/driver/power.rs` 策略主体（15 类型 + sys_pm_dispatch，0 unsafe），`sys_pm → services::sys_pm_dispatch → framework::pm_suspend` 构成循环。按 DECISION-M 方案 B 迁回。
