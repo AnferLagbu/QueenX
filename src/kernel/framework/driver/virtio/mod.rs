@@ -35,7 +35,6 @@
 //! QEMU virt aarch64 将 virtio-mmio 设备放置在 0x0a000000 起始地址,
 //! 每个设备之间步长 0x200 字节.
 
-pub mod net;
 pub mod queue;
 
 use crate::kernel::framework::iomem::IoMem;
@@ -508,22 +507,4 @@ impl VirtioMmioDevice {
         let status = self.read32(INTERRUPT_STATUS);
         self.write32(INTERRUPT_ACK, status);
     }
-}
-
-/// 扫描 virtio-mmio 区域中的设备.
-/// 返回已发现设备的 Vec.
-pub fn probe_all() -> alloc::vec::Vec<VirtioMmioDevice> {
-    let mut devices = alloc::vec::Vec::new();
-
-    // 探测前检查 virtio-mmio 区域是否可访问.
-    // 在没有 virtio-mmio 的平台上 (如 QEMU x86_64 pc 机型),
-    // 第一次读将返回 0xFFFFFFFF 或导致错误.
-    for i in 0..VIRTIO_MMIO_MAX_DEVICES {
-        let base = VIRTIO_MMIO_BASE + u64::from(i) * VIRTIO_MMIO_STRIDE;
-        if let Some(dev) = VirtioMmioDevice::probe(base) {
-            devices.push(dev);
-        }
-    }
-
-    devices
 }

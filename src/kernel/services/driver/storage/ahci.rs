@@ -956,6 +956,10 @@ impl AhciPort {
         result
     }
 
+    #[expect(
+        clippy::similar_names,
+        reason = "变量名相似表达同族概念 (DMA 三元组 buf_vaddr/buf_paddr/buf_size 物理/虚拟地址对); 与同文件 read/write_dma 一致, 重命名破坏领域语义连续性"
+    )]
     /// ATA IDENTIFY DEVICE (0xEC, PIO-in 经 PRDT 传输)
     ///
     /// 读取 512B 设备标识到 `buffer`。AHCI 下 PIO-in 数据同样经命令表
@@ -971,13 +975,11 @@ impl AhciPort {
         }
 
         let byte_count = SECTOR_SIZE as u32;
-        let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::kernel::framework::driver::storage::ahci_alloc_dma_buffer(
-                byte_count as usize,
-            ) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        let Some((buf_vaddr, buf_paddr, buf_size)) =
+            crate::kernel::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
+        else {
+            return Err(());
+        };
 
         let fis = H2dFis::identify();
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);

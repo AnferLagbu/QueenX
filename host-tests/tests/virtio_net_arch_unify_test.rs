@@ -1,16 +1,18 @@
-//! I-53: 网卡探测编译时架构互斥静态契约测试
+//! I-53: 网卡驱动编译时架构互斥静态契约测试
 //!
 //! 验证 maintenance-2026-06-11.md 中 I-53 验收:
 //!   "双架构二进制包含全部网卡驱动"
 //!
 //! 防止后续重构时在网卡驱动路径上引入 `#[cfg(target_arch = "...")]` 互斥,
 //! 阻断单二进制双架构运行.
+//!
+//! 批次 Z ④: 旧 framework virtio-net 驱动已删除 (权威迁 services, 经
+//! NetOps 安全桥接入), 本文件仅保留 e1000 架构无关契约.
 
 use std::fs;
 use std::path::Path;
 
 const DRIVER_NET_DIR: &str = "src/kernel/framework/driver/net";
-const VIRTIO_NET: &str = "src/kernel/framework/driver/virtio/net.rs";
 
 /// 收集 `#[cfg(target_arch = "...")]` 紧邻 `let mut xxx = ...` 的赋值 (排除模块/类型声明).
 fn find_arch_mutex_let_assigns(src: &str) -> Vec<(usize, String)> {
@@ -64,40 +66,19 @@ fn test_e1000_driver_arch_agnostic() {
 }
 
 #[test]
-fn test_virtio_net_no_arch_mutex_let_assigns() {
-    // virtio-net 中不应再有 `#[cfg(target_arch)] + let x = ...` 的架构互斥赋值.
-    // 原因: KERNEL_BASE 本身已 cfg-gated, 单表达式可同时覆盖两架构.
+fn test_services_virtio_net_no_arch_mutex_let_assigns() {
+    // services VirtioNetDriver (virtio-net 权威, 批次 Z ④) 中不应再有
+    // `#[cfg(target_arch)] + let x = ...` 的架构互斥赋值.
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent().unwrap()
-        .join(VIRTIO_NET);
+        .join("src/kernel/services/driver/virtio/net.rs");
     let src = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     let mutexes = find_arch_mutex_let_assigns(&src);
     assert!(
         mutexes.is_empty(),
-        "virtio/net.rs 仍存在编译时架构互斥的 let 赋值 (I-53): {:?}",
+        "services virtio/net.rs 仍存在编译时架构互斥的 let 赋值 (I-53): {:?}",
         mutexes
-    );
-}
-
-#[test]
-fn test_virtio_net_uses_unified_kernel_base() {
-    // 验证修复后的代码使用统一的 KERNEL_BASE 表达式 (无 cfg 守卫).
-    // 关键标识: virtio_net_send 中应存在 `if phys >= KERNEL_BASE` 单表达式.
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent().unwrap()
-        .join(VIRTIO_NET);
-    let src = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
-
-    assert!(
-        src.contains("if phys >= KERNEL_BASE"),
-        "virtio/net.rs 应使用统一的 KERNEL_BASE 单表达式 (I-53)"
-    );
-    assert!(
-        !src.contains("#[cfg(target_arch = \"x86_64\")]\n    let dma_phys")
-            && !src.contains("#[cfg(target_arch = \"aarch64\")]\n    let dma_phys"),
-        "virtio/net.rs 不应再含 dma_phys 的 cfg 互斥赋值 (I-53)"
     );
 }

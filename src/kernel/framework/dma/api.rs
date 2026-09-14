@@ -6,7 +6,9 @@
 //! - `driver::storage::nvme` —— `NVMe` 命令队列的 DMA 缓冲区
 //! - `driver::storage::ahci` —— AHCI PRDT 表的 DMA 映射
 //! - `driver::net::e1000` —— E1000 收发描述符的 DMA 映射
-//! - `driver::virtio::blk` / `driver::virtio::net` —— `VirtIO` 队列的 DMA 映射
+//! - `driver::virtio::blk` —— `VirtIO` 队列的 DMA 映射
+//!   (批次 Z ④: virtio-net 权威已迁 services, 其 DMA 路径经 framework
+//!   `DmaBuffer` 机制, 见 services/driver/virtio/net.rs)
 //! - `fs::hvfs` —— `HvFS` 页缓存直接 I/O (通过 DMA 绕过 CPU)
 //!
 //! ## 内部接口

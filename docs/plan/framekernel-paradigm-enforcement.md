@@ -339,7 +339,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 |---|---|---|---|
 | **X** | ① char serial/vga 接线（char 桥模式，`9ba997e3` 已验证）+ ② 前置核实表更新（L941-L943：virtio 两行标"已核实 L962/L1008"、storage 两行标"归 storage 专项"）| 无（桥模式已跑通）| 双架构 0w0e + clippy 0 + 核心审计 + host-tests + **QEMU 冒烟**（接线触启动路径）|
 | **Y** | ① storage 专项 5 子步（DECISION-H：0 号 identify helper → _block 适配器 → MSI-X/IRQ → storage_init 退位 → QEMU 存储冒烟）| 无（独立排期）| 每子步双架构 0w0e + host-tests + 专项 QEMU 存储冒烟 + audit_services_boundary |
-| **Z** | ③ transport 去重（services `VirtioDevice` 删/薄代理，framework `VirtioMmioDevice` 保留）→ ④ NetOps 安全桥（同 CharOps 桥模式，net 中断驱动路径）| ③ 是 ④ 前置（transport 单一化后桥接线更干净）| ③ 双架构 0w0e + 核心审计；④ 需**先出桥 trait 设计**（framework 定义 + unsafe 转换边界）交审核员审查后再实现，避免返工 |
+| **Z** | ③ transport 去重（services `VirtioDevice` 删/薄代理，framework `VirtioMmioDevice` 保留，**已完成 `77407b8e`**）→ ④ NetOps 安全桥（同 CharOps 桥模式，net 中断驱动路径，**设计文档 [netops-bridge-design.md](netops-bridge-design.md) 已审核通过（P1×2 + P2×3 修正后实施），实施完成**：framework `net_device_ops.rs` trait + 泛型桥 + DECISION-K 注册契约槽位；services `VirtioNetDriver` impl + `net_init` 填充；旧 framework `VirtioNet` 驱动 + `virtio_net_*` FFI + `VIRTIO_NET_OPS_STATIC` + `probe_all` 已删除）| ③ 是 ④ 前置（transport 单一化后桥接线更干净）| ③ 双架构 0w0e + 核心审计；④ 双架构 0w0e + clippy + 核心审计 + host-tests（含桥契约套件）+ QEMU aarch64 virt 挂网卡冒烟 |
 
 **执行顺序**：X / Y 可并行（独立）；Z 内部 ③→④ 串行。④ 为接线最后一步（依赖 nic_probe_all 接入点确认）。
 
@@ -374,6 +374,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **services 改造**：blk.rs/net.rs/mod.rs 直接持有并使用 framework `VirtioMmioDevice`（0 unsafe 合法依赖）；`DEVICE_ID_BLOCK/NET` → framework `VIRTIO_ID_BLOCK/NET`；`device.ack_interrupt(mask)` → `ack_interrupt_mask(mask)`（framework 无参 `ack_interrupt()` 保留供旧调用）。blk/net 业务逻辑零变化（仅类型与 import）。
 - **去重收益**：平行 transport 实现单源化（机制归 framework，符合 Asterinas 判据 + DECISION-H/HDMI 方向）；消灭 `VirtioDeviceKind` 死代码；重复常量收敛。
 - **验证**：双架构 0w0e ✅ / clippy 双架构 0 ✅ / 核心审计全绿 ✅（services_boundary/safety/deadlock/coupling/comment/once_cell/invariants/reverse_deps 等）/ host-tests ✅ / **aarch64 QEMU virt 挂盘冒烟**：`virtio-blk: registered device #1` + Chitin blk=1 + Entering EL0 ✅ / x86_64 boot 回归 1/1 ✅。TCB 66.9→67.1%（transport 机制入 framework 的预期推高，软门槛既有超标非本批引入）。
+
+### 委托批次 Z ④ 执行记录（NetOps 安全桥，实施：AI）
+
+- **目标**：services `VirtioNetDriver`（0 unsafe）接入 smoltcp。`ChitinNetDevice` 要求 `&'static NetOps`（extern "C" 指针表，需裸指针转换），services 无法直接构造 → framework 提供安全桥 trait + 泛型桥（monomorphization 生成 extern "C" 回调，unsafe 转换全部留在 framework）。设计见 [netops-bridge-design.md](netops-bridge-design.md)（审核通过，P1×2 + P2×3 修正后实施）。
+- **framework 新增**（`net/net_device_ops.rs`）：`NetDeviceOps` trait（send/try_receive/get_mac/handle_irq 默认空）+ `net_ops_for::<T>` 泛型桥（Box::leak 生成 `&'static NetOps`）+ `register_net_device::<T>`（Box::into_raw 所有权转移，注册前安全读 MAC）+ DECISION-K 注册契约槽（`NET_SERVICES_DRIVER: OnceLock<fn() -> Option<NetDeviceRegistration>>` + `net_register_services_driver` set-once + `net_services_driver` 单向拉取）。`net_services_driver` 按 kernel_test cfg-out 同步门控（probe 模块 kernel_test 下不编译，F9）。
+- **framework 删除**：`driver/virtio/net.rs` 旧 `VirtioNet` 驱动（~620 行）+ `virtio_net_*` FFI + `VIRTIO_NET_OPS_STATIC`；`nic_probe_all` virtio 分支改经槽位拉取（e1000 失败后）。
+- **services 接线**：`VirtioNetDriver` impl `NetDeviceOps`（`try_receive` 显式全路径 `VirtioNetDriver::try_receive(self, buf)` 防同名递归，P1-1）+ `finalize`（vq0/vq1 MMIO 配置 + DRIVER_OK + RX 预填）+ `net_init` 填充探测回调（crate root 在 `qx_net_init` 前编排）。`virtio_net_registration` 扫描 virtio-mmio 发现 `VIRTIO_ID_NET` 即 `VirtioNetDriver::new` + `finalize` + `register_net_device`。
+- **验证**：双架构 `build all` 0w0e ✅ / clippy `--release -D warnings` 双架构 0 ✅ / clippy pedantic (lib x86_64) 0 ✅ / clippy kernel_test 维 0 ✅ / 核心审计 + 8 项补充全绿 ✅ / host-tests 755/0（99 套件，含新增 `net_device_ops_bridge_test` 3 测试）✅ / **QEMU aarch64 virt 挂网卡冒烟**：`virtio-net: probed successfully (services bridge)` + Network Subsystem Ready ✅（`qemu_boot_test.sh` aarch64 段已加 `-device virtio-net-device` + 桥探测断言，P2-5）/ x86_64 boot 回归 1/1（Ring 3）✅。
+- **遗留修复**（实施期发现，批次 Y `4994cbba` 引入）：AHCI `identify` clippy pedantic 违规（similar-names + manual-let-else）→ 按审核裁决修复（let-else 根治 manual-let-else + `#[expect(clippy::similar_names, reason=...)]` 兑底，与同文件 read/write_dma 双 expect 模式一致；read/write_dma 预存不动，§12.2）。
+- **预存登记**：`--features host-test --lib` clippy 报 E0152 duplicate lang item `owned_box`——main/Z③ 状态即存在，非本批引入；CI clippy-pedantic job 仅跑裸机 target 不受影响，host-tests 经 path 依赖引用亦不受影响；audit.sh 第 2b 步 host-test 维会失败，属 audit.sh 本地工具门禁与 feature 组合的既有缺陷，待单独立项。
 
 ## 9. 验证门槛
 

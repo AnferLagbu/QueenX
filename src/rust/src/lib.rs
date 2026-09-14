@@ -776,6 +776,10 @@ pub extern "C" fn kernel_init() {
 
         // 10. Network (smoltcp + 网卡驱动)
         {
+            // 批次 Z ④: virtio-net 权威迁 services (DECISION-K 注册契约)。
+            // net_init 仅注册探测回调槽 (services→framework 单向), 实际设备
+            // 探测在 qx_net_init → nic_probe_all e1000 失败后经槽位拉取。
+            crate::kernel::services::driver::virtio::net_init();
             // SAFETY: qx_net_init 签名是 `pub extern "C" fn`, 函数本身非 unsafe,
             // 但 Rust 调用任何 extern "C" 函数必须包 unsafe 块 (FFI 调用约定: 调用方
             // 负责确保跨边界 ABI 兼容性). 此处由启动流程串行调用 (BSP 单线程阶段),

@@ -254,7 +254,7 @@ impl VirtioNetDriver {
             if link_up { "UP" } else { "DOWN" }
         );
 
-        let mut net = Self {
+        let net = Self {
             device,
             mac,
             link_up,
@@ -268,8 +268,8 @@ impl VirtioNetDriver {
             tx_vq,
             rx_buffers: [const { None }; 32],
         };
-        // 用空缓冲区预填 RX 队列 (§6.4 迁业务: framework refill_rx 等价)
-        net.refill_rx();
+        // RX 预填移至 finalize (队列 MMIO 配置 + DRIVER_OK 之后执行), 与旧
+        // framework 驱动时序一致 (避免对未配置队列 MMIO notify)
         Some(net)
     }
 
@@ -279,6 +279,29 @@ impl VirtioNetDriver {
     pub fn set_driver_ok(&self) {
         self.device.set_driver_ok();
         slog_info!(Driver, "virtio-net: DRIVER_OK 已设置");
+    }
+
+    /// 完成设备初始化并进入 live (批次 Z ④: 注册前调用).
+    ///
+    /// 等价于 framework `VirtioNet::new` 的收尾 (与 blk `finalize` 同构):
+    /// 配置 vq0 (RX) / vq1 (TX) MMIO 寄存器 → 设置 `DRIVER_OK` → 预填
+    /// RX 队列 (refill 在 `DRIVER_OK` 后执行, 与旧 framework 驱动时序一致)。
+    pub fn finalize(&mut self) {
+        let _ = self.setup_queue(
+            RX_QUEUE_INDEX,
+            self.rx_vq.desc_paddr(),
+            self.rx_vq.avail_paddr(),
+            self.rx_vq.used_paddr(),
+        );
+        let _ = self.setup_queue(
+            TX_QUEUE_INDEX,
+            self.tx_vq.desc_paddr(),
+            self.tx_vq.avail_paddr(),
+            self.tx_vq.used_paddr(),
+        );
+        self.set_driver_ok();
+        // 用空缓冲区预填 RX 队列 (§6.4 迁业务: framework refill_rx 等价)
+        self.refill_rx();
     }
 
     /// 获取 MMIO 设备引用 (用于 `VirtQueue` 配置).
@@ -526,4 +549,35 @@ impl VirtioNetDriver {
             }
         }
     }
+}
+
+// ============================================================================
+// NetOps 安全桥 (批次 Z ④): impl trait → framework 泛型桥接入 smoltcp
+// ============================================================================
+
+impl crate::kernel::framework::net::NetDeviceOps for VirtioNetDriver {
+    fn send(&mut self, data: &[u8]) -> i32 {
+        match self.send_packet(data) {
+            Ok(()) => 0,
+            Err(()) => -1,
+        }
+    }
+
+    // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "RX 缓冲区上限 2048 字节 (RX_BUFFER_SIZE), usize→i32 截断不可达"
+    )]
+    fn try_receive(&mut self, buf: &mut [u8]) -> i32 {
+        // 审核 P1-1: 显式全路径调用 — trait impl 块内 `self.try_receive(buf)`
+        // 存在同名方法解析风险 (trait 方法与 inherent 方法同签名), 必须显式
+        // 限定 inherent 方法, 杜绝解析到 trait 方法自身造成无限递归。
+        VirtioNetDriver::try_receive(self, buf) as i32
+    }
+
+    fn get_mac(&self) -> [u8; 6] {
+        *self.mac()
+    }
+
+    // handle_irq: 默认空实现 (轮询模式; IRQ 驱动登记为后续子步)
 }

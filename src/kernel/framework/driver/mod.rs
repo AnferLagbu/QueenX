@@ -137,11 +137,8 @@ pub use net::e1000::{
     e1000_net_get_mac, e1000_net_irq, e1000_net_recv, e1000_net_send, e1000_probe,
     take_device as e1000_take_device,
 };
-#[cfg(not(feature = "kernel_test"))]
-pub use virtio::net::{
-    take_device as virtio_net_take_device, virtio_net_get_mac, virtio_net_irq, virtio_net_probe,
-    virtio_net_recv, virtio_net_send,
-};
+// 批次 Z ④: 旧 framework virtio-net 驱动 (net.rs + virtio_net_* FFI) 已删除,
+// virtio-net 权威在 services (impl NetDeviceOps 经 NetOps 安全桥接入)。
 
 // --- 输入设备导出 ---
 #[cfg(target_arch = "x86_64")]

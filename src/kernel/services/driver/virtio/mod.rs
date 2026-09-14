@@ -23,6 +23,60 @@
 pub mod blk;
 pub mod net;
 
+/// services virtio-net 探测回调 (DECISION-K 注册契约: framework 单向拉取)
+///
+/// 扫描 virtio-mmio 区域, 发现网络设备 (`VIRTIO_ID_NET`) 即创建 services
+/// `VirtioNetDriver`, 完成初始化 (`finalize`: vq0/vq1 MMIO 配置 +
+/// DRIVER_OK + RX 预填) 后经 framework `register_net_device` 桥接为
+/// `NetDeviceRegistration`。由 framework `nic_probe_all` 在 e1000 探测
+/// 失败后经槽位调用 (启动临界区单线程)。
+fn virtio_net_registration() -> Option<crate::kernel::framework::net::NetDeviceRegistration> {
+    use crate::kernel::framework::driver::virtio::{
+        VIRTIO_ID_NET, VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE,
+        VirtioMmioDevice,
+    };
+    use crate::kernel::framework::net::register_net_device;
+
+    for i in 0..VIRTIO_MMIO_MAX_DEVICES {
+        let base = VIRTIO_MMIO_BASE + u64::from(i) * VIRTIO_MMIO_STRIDE;
+        let Some(dev) = VirtioMmioDevice::probe(base) else {
+            continue;
+        };
+        if dev.device_id() != VIRTIO_ID_NET {
+            continue;
+        }
+        let Some(mut driver) = net::VirtioNetDriver::new(dev) else {
+            crate::slog_warn!(Driver, "virtio-net: 发现设备但初始化失败");
+            continue;
+        };
+        // 完成初始化: vq0/vq1 MMIO 配置 + DRIVER_OK + RX 预填 (设备进入 live)
+        driver.finalize();
+        let reg = register_net_device(alloc::boxed::Box::new(driver));
+        crate::slog_info!(
+            Driver,
+            "virtio-net: registered via services bridge (MAC={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X})",
+            reg.mac[0],
+            reg.mac[1],
+            reg.mac[2],
+            reg.mac[3],
+            reg.mac[4],
+            reg.mac[5]
+        );
+        return Some(reg);
+    }
+    None
+}
+
+/// 初始化 virtio-net (services 权威, 批次 Z ④ NetOps 安全桥)
+///
+/// DECISION-K 注册契约模式 (同 storage `NVME_SERVICES_DISPATCH`):
+/// 仅注册探测回调槽 (services→framework 单向, framework 不引用 services);
+/// framework `nic_probe_all` 在 e1000 探测失败后经槽位调用探测回调拉取
+/// `NetDeviceRegistration`。crate root lib.rs 在 `qx_net_init` 之前编排调用。
+pub fn net_init() {
+    let _ = crate::kernel::framework::net::net_register_services_driver(virtio_net_registration);
+}
+
 /// 初始化 VirtIO 块设备并注册到 Chitin (§6.4 直接方案 B: services 权威)
 ///
 /// 探测 virtio-mmio 区域, 为块设备创建 services `VirtioBlkDriver`,

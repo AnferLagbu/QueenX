@@ -198,8 +198,20 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         RESULT=1
     else
         A64_LOG="$LOG_DIR/qemu_boot_aarch64.log"
+        # 批次 Z ④: virt 机型挂 virtio-net 网卡 (services 权威探测链路, 对齐
+        # Y 批次挂盘冒烟配置). -netdev user 无 DHCP 服务, smoltcp 初始化
+        # 偶发 "TX 超时" WARN 属预期, 不影响 boot 里程碑.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -M virt,gic-version=3 -cpu max -m 512 -kernel build/kernel.flat; then
+            -M virt,gic-version=3 -cpu max -m 512 -kernel build/kernel.flat \
+            -device virtio-net-device,netdev=n0 \
+            -netdev user,id=n0; then
+            # 批次 Z ④: 验证 services virtio-net 经 NetOps 安全桥注册链路
+            if grep -q "virtio-net: probed successfully (services bridge)" "$A64_LOG"; then
+                ok "[aarch64] virtio-net 经 NetOps 安全桥探测成功 (批次 Z ④)"
+            else
+                warn "[aarch64] 未发现 virtio-net services bridge 探测日志 (Z ④ 链路未走通)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # aarch64 完整启动: 应进入用户态 (EL0)
             if grep -q "Entering EL0" "$A64_LOG"; then
                 ok "[aarch64] 完整启动成功! 进入 EL0 启动 init 进程"
