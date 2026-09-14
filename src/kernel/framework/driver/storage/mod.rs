@@ -1,372 +1,55 @@
-//! 存储设备驱动子系统 (Storage Driver Subsystem)
+//! 存储设备驱动子系统 — framework 机制层 (Storage Mechanism Layer)
 //!
-//! 负责发现和初始化存储控制器：
-//! - **AHCI SATA控制器**: 通过PCI扫描 (class 0x01, subclass 0x06)
-//! - **NVMe 控制器**: 通过PCI扫描 (class 0x01, subclass 0x08)
-//! - **ATA IDE 磁盘**: 传统IDE(PATA)磁盘支持
+//! DECISION-H storage 专项 3 号子步 (storage_init 退位) 后的职责边界:
+//! - **机制保留**: NVMe wire 类型 / 队列 DMA 分配 / 提交与排空 safe wrapper /
+//!   AHCI DMA fill 原语 / xHCI TRB 原语 / NVMe MSI-X ISR 编排 (IDT 注册 +
+//!   services 分发契约槽)
+//! - **业务退位**: PCI AHCI/NVMe 控制器探测、初始化、块设备注册已迁
+//!   `services::driver::storage::storage_init` (services 权威, crate root 编排)
+//! - **ATA 回退暂留**: 传统 ATA PIO 驱动仍由本层 `storage_init` 负责
+//!   (登记为 storage 专项后续子步: IoPort 重建迁 services)
 //!
-//! ## 初始化流程
+//! ## 初始化流程 (退位后)
 //!
 //! ```text
-//! storage_init()
+//! storage_init()  [framework, x86_64]
+//!   └── ata::detect_drives() → ATA PIO 检测 + ata0-3 注册
+//! storage_init()  [services, x86_64]
 //!   ├── PCI::scan_all_buses()
-//!   ├── for each AHCI device  → AhciController::new(BAR).init()
-//!   ├── for each NVMe device  → NvmeController::new(BAR).init()
-//!   └── ata::detect_drives()   → 检测PATA磁盘
+//!   ├── for each AHCI device  → services AhciController + AhciBlockDevice 注册
+//!   └── for each NVMe device  → services NvmeController (MSI-X) + NvmeBlockDevice 注册
 //! ```
 
 pub mod ahci;
-pub mod ahci_block;
 #[cfg(target_arch = "x86_64")]
 pub mod ata;
 #[cfg(target_arch = "x86_64")]
 pub mod ata_block;
 pub mod nvme;
-pub mod nvme_block;
 
-// 为 driver/mod.rs 方便而重导出关键类型
-pub use ahci::{AhciController, AhciPort, AtaCommand, H2dFis};
-pub use nvme::{NvmeCommand, NvmeCompletion, NvmeController};
+// 为 driver/mod.rs 方便而重导出关键类型 (机制 wire 类型; 控制器业务已迁 services)
+pub use ahci::H2dFis;
+pub use nvme::{NvmeCommand, NvmeCompletion};
 
-use super::framework::{self, Driver};
-#[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::arch::InterruptArch;
+use super::framework;
 use crate::kernel::framework::iomem::IoMem;
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::mm::PAGE_SIZE;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-// x86_64 storage_init (PCI AHCI/NVMe/ATA) 使用 klog; aarch64 storage_init 现为空操作
-// (§6.4 virtio-blk 迁 services), 故门控避免 aarch64 未使用导入
-#[cfg(target_arch = "x86_64")]
-use crate::klog_info;
-#[cfg(target_arch = "x86_64")]
-use crate::klog_warn;
-use alloc::vec::Vec;
+use crate::kernel::framework::arch::InterruptArch;
 
-/// PCI 存储控制器类码
-#[cfg(target_arch = "x86_64")]
-const PCI_CLASS_STORAGE: u8 = 0x01;
-#[cfg(target_arch = "x86_64")]
-const PCI_SUBCLASS_AHCI: u8 = 0x06;
-#[cfg(target_arch = "x86_64")]
-const PCI_SUBCLASS_NVME: u8 = 0x08;
-
-/// 全局存储控制器注册表
-static AHCI_CONTROLLERS: Mutex<Vec<AhciController>> = Mutex::new(Vec::new());
-static NVME_CONTROLLERS: Mutex<Vec<NvmeController>> = Mutex::new(Vec::new());
-
-/// 初始化存储子系统
+/// 初始化存储子系统 (framework 退位版: 仅 ATA 回退路径)
 ///
-/// 扫描 PCI 总线发现 AHCI/NVMe 控制器，然后初始化它们。
+/// DECISION-H 3 号子步: PCI AHCI/NVMe 探测/初始化/块设备注册已迁 services
+/// (`services::driver::storage::storage_init`, crate root lib.rs 编排调用)。
+/// 本函数保留 ATA PIO 检测与注册 (登记后续子步迁 services)。
 /// # Errors
-/// 存储控制器初始化失败时返回 Err。
+/// ATA 初始化失败时返回 Err。
 #[cfg(target_arch = "x86_64")]
-// 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
-#[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-)]
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
-)]
-#[expect(
-    clippy::missing_panics_doc,
-    reason = "storage_init 内唯一 panic 点为 .expect(\"NVMe controller just pushed\") 内部不变量断言 (刚 push 必然存在), 仅在内部逻辑错误时触发, 对外部调用者不可达, 故省略 # Panics 段"
+    reason = "签名保持 Result 以兼容 init_all 调用链 (let _ = storage_init())"
 )]
 pub fn storage_init() -> framework::Result<()> {
-    // Step 1: 确保 PCI 子系统已初始化
-    let pci_count = crate::kernel::framework::pci::init();
-    if pci_count == 0 {
-        klog_warn!(
-            Driver,
-            "storage_init: no PCI devices found, falling back to ATA"
-        );
-    }
-
-    // Step 2: 扫描 PCI 总线寻找存储控制器
-    let devices = crate::kernel::framework::pci::scan_all_buses();
-
-    let mut ahci_found = 0u32;
-    let mut nvme_found = 0u32;
-
-    for dev in &devices {
-        if dev.class_code != PCI_CLASS_STORAGE {
-            continue;
-        }
-
-        match dev.subclass_code {
-            PCI_SUBCLASS_AHCI => {
-                // AHCI 控制器 - 使用 BAR5 (偏移 0x24)
-                let bar = dev.bars[5].base_addr;
-                if bar == 0 || bar == 0xFFFFFFFF {
-                    klog_warn!(
-                        Driver,
-                        "AHCI: device {:02X}:{:02X}.{} has no valid BAR5",
-                        dev.bus,
-                        dev.device,
-                        dev.function
-                    );
-                    continue;
-                }
-
-                let mmio_base = (bar as usize) & !(PAGE_SIZE as usize - 1); // 掩码低12位 (BAR类型/可预取位)
-                klog_info!(
-                    Driver,
-                    "AHCI: found at {:02X}:{:02X}.{}, BAR5=0x{:X}",
-                    dev.bus,
-                    dev.device,
-                    dev.function,
-                    mmio_base
-                );
-
-                let mut controller = AhciController::new(mmio_base);
-                match controller.init_controller() {
-                    Ok(()) => {
-                        klog_info!(
-                            Driver,
-                            "AHCI: {:02X}:{:02X}.{} initialized ({} ports)",
-                            dev.bus,
-                            dev.device,
-                            dev.function,
-                            controller.port_count()
-                        );
-                        AHCI_CONTROLLERS.lock().push(controller);
-                        ahci_found += 1;
-                    }
-                    Err(e) => {
-                        klog_warn!(
-                            Driver,
-                            "AHCI: {:02X}:{:02X}.{} init failed: {:?}",
-                            dev.bus,
-                            dev.device,
-                            dev.function,
-                            e
-                        );
-                    }
-                }
-            }
-
-            PCI_SUBCLASS_NVME => {
-                // NVMe 控制器 - 使用 BAR0
-                let bar = dev.bars[0].base_addr;
-                if bar == 0 || bar == 0xFFFFFFFF {
-                    klog_warn!(
-                        Driver,
-                        "NVMe: device {:02X}:{:02X}.{} has no valid BAR0",
-                        dev.bus,
-                        dev.device,
-                        dev.function
-                    );
-                    continue;
-                }
-
-                let mmio_base = (bar as usize) & !(PAGE_SIZE as usize - 1);
-                klog_info!(
-                    Driver,
-                    "NVMe: found at {:02X}:{:02X}.{}, BAR0=0x{:X}",
-                    dev.bus,
-                    dev.device,
-                    dev.function,
-                    mmio_base
-                );
-
-                let mut controller = NvmeController::new(mmio_base);
-                match controller.init() {
-                    Ok(()) => {
-                        // B07 MSI-X 完整接入: 启用 MSI-X + 注册 ISR.
-                        if let Some(msi_vector) = controller.enable_msix(dev) {
-                            // MSIX-03: 创建 I/O 队列对 (现在已知 MSI-X vector, 可正确写 cdw11[31:16])
-                            // NVMe vector 字段 = MSI-X Table 数组索引, 与 LAPIC vector 不同.
-                            // 0 → Table[0] entry, 该 entry.msg_data = msi_vector (LAPIC vector).
-                            match controller.create_io_queue(0) {
-                                Ok(()) => {
-                                    crate::klog_info!(Driver, "[MSIX-03][diag] create_io_queue OK");
-                                }
-                                Err(e) => {
-                                    crate::klog_warn!(
-                                        Driver,
-                                        "NVMe: create_io_queue failed after MSI-X enable: {:?}, falling back to poll",
-                                        e
-                                    );
-                                    // I/O 队列失败: 不 push 到控制器表, 不注册 ISR 测试路径
-                                    continue;
-                                }
-                            }
-                            // MSIX-03: 一次性打印 LAPIC + MSI-X 状态 (RFLAGS / SVR / LAPIC ID /
-                            // MSI-X ctrl / Table[0] entry). 是中断路径打通的关键证据.
-                            {
-                                #![expect(
-                                    clippy::items_after_statements,
-                                    reason = "use 声明位于诊断块语句之后 (MSIX-03 调试段), 前移会割裂局部上下文; 以 block 内 expect 兑底"
-                                )]
-                                let mut rflags: u64 = 0;
-                                // J-02 (2026-09-08, G-03): pushfq 为 x86_64 专属指令,
-                                // 补 cfg 门控 — aarch64 下 rflags 保持 0 (klog 仅诊断打印 IF=0).
-                                // SAFETY: 只读 RFLAGS (x86_64)
-                                #[cfg(target_arch = "x86_64")]
-                                unsafe {
-                                    core::arch::asm!("pushfq; pop {0}", out(reg) rflags, options(nomem));
-                                }
-                                use crate::kernel::framework::pci::msi::pci_find_capability;
-                                let (lapic_id, ctrl, entry_addr, entry_data, entry_vc) =
-                                    if let Some(co) = pci_find_capability(dev, 0x11) {
-                                        let ctrl = crate::kernel::framework::pci::read_config_word(
-                                            dev.bus, dev.device, dev.function, co + 0x02,
-                                        );
-                                        let table_info = crate::kernel::framework::pci::read_config_dword(
-                                            dev.bus, dev.device, dev.function, co + 0x04,
-                                        );
-                                        let tbar = (table_info & 0x07) as usize;
-                                        let toff = u64::from(table_info & !0x07);
-                                        // SAFETY: te 指向设备 MSI-X Table MMIO 区域 (由 msix_enable 刚配置)
-                                        let te =
-                                            (dev.bars[tbar].base_addr + toff) as *const u32;
-                                        let (addr, data, vc) = unsafe {
-                                            (
-                                                core::ptr::read_volatile(te),
-                                                core::ptr::read_volatile(te.add(2)),
-                                                core::ptr::read_volatile(te.add(3)),
-                                            )
-                                        };
-                                        (
-                                            crate::kernel::framework::arch::apic::get_id(),
-                                            ctrl,
-                                            addr,
-                                            data,
-                                            vc,
-                                        )
-                                    } else {
-                                        (
-                                            crate::kernel::framework::arch::apic::get_id(),
-                                            0u16,
-                                            0u32,
-                                            0u32,
-                                            0u32,
-                                        )
-                                    };
-                                crate::klog_info!(
-                                    Driver,
-                                    "[MSIX-03][diag] rflags={:#X} IF={} svr={:#X} lapic_id={} msix ctrl={:#X} entry: addr={:#X} data={} vec_ctrl={:#X}",
-                                    rflags,
-                                    (rflags & 0x200) != 0,
-                                    crate::kernel::framework::arch::apic::apic_read(0xF0),
-                                    lapic_id,
-                                    ctrl,
-                                    entry_addr,
-                                    entry_data,
-                                    entry_vc
-                                );
-                            }
-                            // msi.rs::msix_enable 分配 vector ∈ [MSI_VECTOR_BASE=0x40, 0x40+MSI_VECTOR_COUNT=96).
-                            // IDT 索引 = vector - IRQ_BASE (0x20), 例如 vector=0x40 → irq=32.
-                            let irq = msi_vector - crate::kernel::framework::idt::IRQ_BASE;
-                            if let Err(e) = register_nvme_msix_isr(irq, msi_vector) {
-                                klog_warn!(
-                                    Driver,
-                                    "NVMe: MSI-X ISR register failed on irq {}: {}, falling back to poll",
-                                    irq,
-                                    e
-                                );
-                            } else {
-                                klog_info!(
-                                    Driver,
-                                    "NVMe: MSI-X enabled, vector={}, irq={}",
-                                    msi_vector,
-                                    irq
-                                );
-                            }
-                        } else {
-                            klog_info!(Driver, "NVMe: MSI-X unavailable, using poll mode");
-                        }
-                        klog_info!(
-                            Driver,
-                            "NVMe: {:02X}:{:02X}.{} initialized",
-                            dev.bus,
-                            dev.device,
-                            dev.function
-                        );
-                        NVME_CONTROLLERS.lock().push(controller);
-                        nvme_found += 1;
-
-                        crate::klog_info!(Driver, "[MSIX-03] pre-test hook entered");
-
-                        // MSIX-03: 受控 MSI-X 中断投递验证 — 开 IF 后经 ISR 路径发 I/O 命令,
-                        // 验证 handle_irq MSI 分支 → LAPIC EOI → ISR → I/O CQ 处理.
-                        // 该 hook 是 MSIX-03/07 端到端验收点: ISR-driven io read 的最终状态
-                        // (Ok 或 Err) 反映 MSI-X 中断路径是否真正打通.
-                        {
-                            // 取刚 push 的控制器原始指针, 释放全局锁后供 ISR 测试使用.
-                            #[expect(
-                                clippy::ref_as_ptr,
-                                reason = "ref_as_ptr: 需取 last_mut() 引用的裸指针, 在释放全局锁后供 ISR 测试路径继续访问控制器 (单核上下文语义已知安全)"
-                            )]
-                            let ctrl_ptr = {
-                                let mut cs = NVME_CONTROLLERS.lock();
-                                cs.last_mut().expect("NVMe controller just pushed")
-                                    as *mut nvme::NvmeController
-                            };
-                            // SAFETY: 单核; 等待期间主上下文暂停于 hlt, ISR 抢占时通过
-                            // NVME_CONTROLLERS 锁重新获取 &mut, 二者不会同时访问.
-                            let ctrl = unsafe { &mut *ctrl_ptr };
-                            if ctrl.irq_vector.is_some() {
-                                // 开 IF 让 LAPIC 能投递 MSI-X 中断.
-                                let _saved_if =
-                                    crate::kernel::framework::arch::CurrentArch::interrupt_disable();
-                                crate::kernel::framework::arch::CurrentArch::interrupt_enable();
-                                // 经 I/O CQ ISR 路径读 ns=1 sector=0 1 扇区:
-                                // 1. 分配 DMA buf
-                                // 2. 构造 Read 命令
-                                // 3. 走 submit_io_command_isr (写 SQ + 敲 SQ doorbell + hlt 等 ISR)
-                                // 4. ISR 由 LAPIC MSI-X (vector=64) 唤醒, 处理 I/O CQ 完成 entry
-                                let r: framework::Result<()> = (|| {
-                                    use crate::kernel::framework::mm::PAGE_SIZE;
-                                    let dma = crate::kernel::framework::dma::get_dma();
-                                    let (bv, bp) = dma
-                                        .alloc_coherent(PAGE_SIZE as usize)
-                                        .ok_or(framework::DriverError::Busy)?;
-                                    let cmd = nvme::NvmeCommand::read(1, 0, 1, bp.0);
-                                    // SAFETY: cmd 引用 valid NvmeCommand, submit_io_command_isr
-                                    // 调用方保证指针/类型有效 (cmd 引用栈上对象, DMA buf 有效)
-                                    let res = unsafe { ctrl.submit_io_command_isr_pub(&cmd) };
-                                    dma.free_coherent(bv, PAGE_SIZE as usize);
-                                    res
-                                })();
-                                // 恢复 boot IF=0
-                                let _ = crate::kernel::framework::arch::CurrentArch::interrupt_disable();
-                                klog_info!(
-                                    Driver,
-                                    "[MSIX-03] ISR-driven io read: {:?}",
-                                    r
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        klog_warn!(
-                            Driver,
-                            "NVMe: {:02X}:{:02X}.{} init failed: {:?}",
-                            dev.bus,
-                            dev.device,
-                            dev.function,
-                            e
-                        );
-                    }
-                }
-            }
-
-            _ => {
-                // 其他存储子类 (IDE, RAID等) 静默跳过
-            }
-        }
-    }
-
-    // Step 3: 传统 ATA 检测 (回退)
+    // Step 1: 传统 ATA 检测 (回退路径, 不依赖 PCI)
     // ATA 驱动使用内部全局单例, 通过 C FFI 接口初始化
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -383,7 +66,7 @@ pub fn storage_init() -> framework::Result<()> {
         ),
     );
 
-    // Step 3.5: 将 ATA 磁盘注册到 Chitin (唯一注册入口)
+    // Step 2: 将 ATA 磁盘注册到 Chitin (唯一注册入口)
     {
         use crate::kernel::framework::chitin::proto_block;
         use crate::kernel::framework::driver::BlockDevice;
@@ -398,7 +81,7 @@ pub fn storage_init() -> framework::Result<()> {
                     _ => "ata3",
                 };
                 proto_block::register_block_device(dev_name, dev, None);
-                klog_info!(
+                crate::klog_info!(
                     Driver,
                     "ATA: drive {} registered, {} sectors ({:.1} MB)",
                     drive,
@@ -409,97 +92,8 @@ pub fn storage_init() -> framework::Result<()> {
         }
     }
 
-    // Step 3.6: 将 AHCI 端口注册到 Chitin (唯一注册入口)
-    {
-        use crate::kernel::framework::chitin::proto_block;
-        use crate::kernel::framework::driver::BlockDevice;
-        use crate::kernel::framework::driver::storage::ahci_block::AhciBlockDevice;
-
-        let mut ahci_ports: Vec<(usize, usize)> = Vec::new();
-        {
-            let mut controllers = AHCI_CONTROLLERS.lock();
-            for (ci, controller) in controllers.iter_mut().enumerate() {
-                let port_count = controller.port_count();
-                for pi in 0..port_count {
-                    if let Some(port) = controller.get_port(pi) {
-                        if port.device_present {
-                            ahci_ports.push((ci, pi));
-                        }
-                    }
-                }
-            }
-        }
-
-        for (ci, pi) in ahci_ports {
-            if let Some(dev) = AhciBlockDevice::new(ci, pi) {
-                let sectors = dev.blk_total_sectors();
-                let dev_name = alloc::format!("ahci{ci}-p{pi}");
-                let name_leaked: &'static str = dev_name.leak();
-                proto_block::register_block_device(name_leaked, dev, None);
-                klog_info!(
-                    Driver,
-                    "AHCI: ctrl={} port={} registered, {} sectors ({:.1} MB)",
-                    ci,
-                    pi,
-                    sectors,
-                    (sectors * 512) as f64 / (1024.0 * 1024.0)
-                );
-            }
-        }
-    }
-
-    // Step 3.7: 将 NVMe 命名空间注册到 Chitin (唯一注册入口)
-    {
-        use crate::kernel::framework::chitin::proto_block;
-        use crate::kernel::framework::driver::BlockDevice;
-        use crate::kernel::framework::driver::storage::nvme_block::NvmeBlockDevice;
-
-        let mut nvme_ns: Vec<(usize, u32)> = Vec::new();
-        {
-            let controllers = NVME_CONTROLLERS.lock();
-            for (ci, controller) in controllers.iter().enumerate() {
-                let ns_count = controller.namespace_count();
-                for nsid in 1..=ns_count {
-                    let size = controller.namespace_size();
-                    if size > 0 {
-                        nvme_ns.push((ci, nsid));
-                    }
-                }
-            }
-        }
-
-        for (ci, nsid) in nvme_ns {
-            if let Some(dev) = NvmeBlockDevice::new(ci, nsid) {
-                let sectors = dev.blk_total_sectors();
-                let dev_name = alloc::format!("nvme{ci}-ns{nsid}");
-                let name_leaked: &'static str = dev_name.leak();
-                proto_block::register_block_device(name_leaked, dev, None);
-                klog_info!(
-                    Driver,
-                    "NVMe: ctrl={} nsid={} registered, {} sectors ({:.1} MB)",
-                    ci,
-                    nsid,
-                    sectors,
-                    (sectors * 512) as f64 / (1024.0 * 1024.0)
-                );
-            }
-        }
-    }
-
-    klog_info!(
-        Driver,
-        "storage: {} AHCI, {} NVMe, ATA detected",
-        ahci_found,
-        nvme_found
-    );
-
-    if ahci_found > 0 || nvme_found > 0 {
-        Ok(())
-    } else {
-        // 没有存储控制器时不算致命错误 - ATA 可能仍有设备
-        klog_warn!(Driver, "storage: no PCI storage controllers, ATA-only mode");
-        Ok(())
-    }
+    crate::klog_info!(Driver, "storage (framework): ATA fallback path ready");
+    Ok(())
 }
 
 /// AArch64 存储初始化 — 空操作 (§6.4 直接方案 B)
@@ -520,25 +114,12 @@ pub fn storage_init() -> framework::Result<()> {
     Ok(())
 }
 
-/// 获取所有已发现的 AHCI 端口总数
-pub fn ahci_port_count() -> usize {
-    let mut total = 0usize;
-    for ctrl in AHCI_CONTROLLERS.lock().iter() {
-        total += ctrl.port_count();
-    }
-    total
-}
-
-/// 获取 `NVMe` 控制器数量
-pub fn nvme_controller_count() -> usize {
-    NVME_CONTROLLERS.lock().len()
-}
-
 #[cfg(target_arch = "x86_64")]
 /// B07 MSI-X 完整接入: NVMe 中断路径 (端到端).
 ///
 /// `register_nvme_msix_isr(irq, msi_vector)` 通过 `IdtManager::register_msi_irq`
-/// 注册 NVMe 中断处理, ISR 调用 `handle_interrupt` 处理完成队列并 ack.
+/// 注册 NVMe 中断处理, ISR 经注册契约分发 services `handle_interrupt`
+/// 处理完成队列 (框架仅持 IDT/MSI-X 编排机制, DECISION-H 3 号子步).
 ///
 /// # Safety
 ///
@@ -551,12 +132,49 @@ extern "C" fn nvme_msix_irq_handler(_frame: *mut crate::kernel::framework::idt::
     if count <= 5 || count.is_multiple_of(1000) {
         crate::klog_info!(Driver, "[NVMe] MSI-X IRQ {} fired (total {})", count, count);
     }
-    let mut controllers = NVME_CONTROLLERS.lock();
-    for ctrl in controllers.iter_mut() {
-        if ctrl.irq_vector.is_some() {
-            let _ = ctrl.handle_interrupt();
-        }
+    // DECISION-H storage 专项 3 号子步 (storage_init 退位): framework 控制器业务
+    // 已删, ISR 编排仅转发 services 分发契约 (控制器状态机在 services 注册表).
+    if let Some(dispatch) = NVME_SERVICES_DISPATCH.get() {
+        dispatch();
     }
+}
+
+/// services 层 NVMe MSI-X 分发回调槽 (DECISION-H storage 专项 2 号子步)
+///
+/// 注册契约 (DECISION-K 模式, 同 register_pressure_classifier): framework 持有
+/// IDT/MSI-X 编排机制 (机制留 framework), services 注册业务分发函数
+/// (无捕获函数指针). 未注册时 handler 跳过 services 分发 (fail-quiet).
+#[cfg(target_arch = "x86_64")]
+static NVME_SERVICES_DISPATCH: crate::kernel::framework::sync::OnceLock<fn()> =
+    crate::kernel::framework::sync::OnceLock::new();
+
+/// 注册 services 层 NVMe MSI-X 分发回调 (services 可调用的 0 unsafe 入口)
+///
+/// # Errors
+///
+/// 回调槽已被占用 (重复注册) 时返回 `Err(已注册回调)`.
+#[cfg(target_arch = "x86_64")]
+pub fn nvme_register_services_msix_dispatch(dispatch: fn()) -> Result<(), fn()> {
+    NVME_SERVICES_DISPATCH.set(dispatch)
+}
+
+/// 在开启中断的窗口内执行闭包 (MSIX-03 services 自测路径专用机制原语)
+///
+/// boot 上下文 `storage_init` 运行于 IF=0 (框架约定), 而 MSI-X 中断路径验证
+/// 需要 IF=1 让 LAPIC 投递完成中断。本原语进入时开 IF, 返回前恢复关 IF —
+/// 与 framework 版 MSIX-03 hook 的手写 enable/disable 序列等值, 收敛为
+/// 单一安全入口供 services 复用 (0 unsafe)。
+///
+/// # 契约
+///
+/// 仅限 boot 单线程存储初始化上下文调用 (与 framework hook 同约束);
+/// `f` 内不得调用可能依赖 IF=0 语义的低层机制。
+#[cfg(target_arch = "x86_64")]
+pub fn nvme_with_interrupts_enabled<R>(f: impl FnOnce() -> R) -> R {
+    crate::kernel::framework::arch::CurrentArch::interrupt_enable();
+    let r = f();
+    crate::kernel::framework::arch::CurrentArch::interrupt_disable();
+    r
 }
 
 /// NVMe MSI-X ISR 触发计数 (MSIX-03 验证)
@@ -566,42 +184,30 @@ extern "C" fn nvme_msix_irq_handler(_frame: *mut crate::kernel::framework::idt::
 static NVME_MSIX_IRQ_COUNT: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
-/// 注册 NVMe MSI-X ISR.
+/// 注册 NVMe MSI-X ISR (services 可调用的 0 unsafe 入口, DECISION-H 2 号子步)
+///
+/// framework 持有 IDT/MSI-X 编排机制: `msi_vector` 是 `msix_enable` 分配的
+/// LAPIC 向量号, 内部换算 IDT 索引 (`irq = vector - IRQ_BASE`) 后注册统一
+/// `nvme_msix_irq_handler` (双注册表分发, 见 handler 注释).
 ///
 /// # Errors
 ///
 /// `IdtManager::register_msi_irq` 失败 (irq 范围错) 时返回错误.
 #[cfg(target_arch = "x86_64")]
-fn register_nvme_msix_isr(irq: u8, msi_vector: u8) -> Result<(), &'static str> {
+pub fn nvme_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
     use crate::kernel::framework::idt::IdtManager;
+    let irq = msi_vector - crate::kernel::framework::idt::IRQ_BASE;
     let manager = IdtManager::instance();
     manager.register_msi_irq(irq, nvme_msix_irq_handler, "nvme-msix")?;
     // enable_irq 用于 PIC IRQ 路径; MSI vector 不需 enable (LAPIC 已 mask).
     // 但 IDT 抽象统一要求 enable_irq (否则 vector 被屏蔽). 调用以保持一致性.
     manager.enable_irq(irq);
-    klog_info!(
+    crate::klog_info!(
         Driver,
         "NVMe MSI-X ISR registered: vector={}, irq={}",
         msi_vector,
         irq
     );
-    Ok(())
-}
-
-/// 关机 — 关闭所有存储控制器
-/// # Errors
-/// 任一存储控制器关闭失败时返回 Err。
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "storage_shutdown 保持与 storage_init 一致的 framework::Result 签名 (driver 框架统一调度入口), 各控制器 shutdown 错误已用 let _ 吞掉恒返 Ok; 当前无调用点, 简化签名会破坏公共 API 一致性"
-)]
-pub fn storage_shutdown() -> framework::Result<()> {
-    for ctrl in AHCI_CONTROLLERS.lock().iter_mut() {
-        let _ = ctrl.shutdown();
-    }
-    for ctrl in NVME_CONTROLLERS.lock().iter_mut() {
-        let _ = ctrl.shutdown();
-    }
     Ok(())
 }
 
@@ -631,9 +237,10 @@ const AHCI_CMD_TBL_SIZE: usize = 256;
 
 /// 分配 `NVMe` Admin 队列 (SQ + CQ DMA 内存)
 ///
-/// 返回 `(admin_sq_phys, admin_cq_phys)` — 物理地址用于写入 AQA/ASQ/ACQ 寄存器。
-/// 失败返回 None (DMA 分配不足)。
-pub fn nvme_alloc_admin_queues() -> Option<(u64, u64)> {
+/// 返回 `((sq_virt, sq_phys), (cq_virt, cq_phys))` — 虚拟地址供 CPU 侧队列
+/// 访问 (direct-map, `virt = phys + KERNEL_BASE`), 物理地址供设备侧寄存器/
+/// 命令写入。失败返回 None (DMA 分配不足)。
+pub fn nvme_alloc_admin_queues() -> Option<((u64, u64), (u64, u64))> {
     use crate::kernel::framework::dma::get_dma;
 
     let dma = get_dma();
@@ -644,16 +251,17 @@ pub fn nvme_alloc_admin_queues() -> Option<(u64, u64)> {
     let sq_size = NVME_QD as usize * NVME_SQ_ENTRY;
     let cq_size = NVME_QD as usize * NVME_CQ_ENTRY;
 
-    let (_, sq_phys) = dma.alloc_coherent(sq_size)?;
-    let (_, cq_phys) = dma.alloc_coherent(cq_size)?;
+    let (sq_virt, sq_phys) = dma.alloc_coherent(sq_size)?;
+    let (cq_virt, cq_phys) = dma.alloc_coherent(cq_size)?;
 
-    Some((sq_phys.0, cq_phys.0))
+    Some(((sq_virt.0, sq_phys.0), (cq_virt.0, cq_phys.0)))
 }
 
 /// 分配 `NVMe` I/O 队列 (SQ + CQ DMA 内存)
 ///
-/// 返回 `(io_sq_phys, io_cq_phys)` — 物理地址用于 Create CQ/SQ Admin 命令。
-pub fn nvme_alloc_io_queues() -> Option<(u64, u64)> {
+/// 返回 `((sq_virt, sq_phys), (cq_virt, cq_phys))` — 虚拟地址供 CPU 侧队列
+/// 访问, 物理地址供 Create CQ/SQ Admin 命令。
+pub fn nvme_alloc_io_queues() -> Option<((u64, u64), (u64, u64))> {
     use crate::kernel::framework::dma::get_dma;
 
     let dma = get_dma();
@@ -664,10 +272,10 @@ pub fn nvme_alloc_io_queues() -> Option<(u64, u64)> {
     let sq_size = NVME_QD as usize * NVME_SQ_ENTRY;
     let cq_size = NVME_QD as usize * NVME_CQ_ENTRY;
 
-    let (_, sq_phys) = dma.alloc_coherent(sq_size)?;
-    let (_, cq_phys) = dma.alloc_coherent(cq_size)?;
+    let (sq_virt, sq_phys) = dma.alloc_coherent(sq_size)?;
+    let (cq_virt, cq_phys) = dma.alloc_coherent(cq_size)?;
 
-    Some((sq_phys.0, cq_phys.0))
+    Some(((sq_virt.0, sq_phys.0), (cq_virt.0, cq_phys.0)))
 }
 
 /// 分配 DMA 缓冲区, 返回 `(vaddr, phys_addr, size)` —
@@ -756,10 +364,19 @@ pub fn nvme_submit_admin_cmd(
                 if sc == 0 {
                     return Ok(sc);
                 }
+                crate::klog_warn!(
+                    Driver,
+                    "nvme_submit_admin_cmd: device error cid={cid} sc={sc:#X}",
+                );
                 return Err(());
             }
             timeout -= 1;
             if timeout == 0 {
+                crate::klog_warn!(
+                    Driver,
+                    "nvme_submit_admin_cmd: timeout cid={cid} cq_head={cq_head} phase={}",
+                    *phase
+                );
                 return Err(());
             }
             core::hint::spin_loop();
@@ -822,6 +439,84 @@ pub fn nvme_submit_io_cmd(
             }
             core::hint::spin_loop();
         }
+    }
+}
+
+/// 向 `NVMe` I/O SQ 提交命令但不等待完成 (MSI-X 中断路径, DECISION-H 2 号子步)
+///
+/// 仅写 SQ entry + 敲 SQ 门铃, 完成处理由 ISR 侧 [`nvme_drain_completions`]
+/// 执行。`sq_virt` 为 SQ DMA 区域**虚拟地址** (CPU 侧访问)。
+///
+/// # Errors
+///
+/// SQ entry 写入无返回值, 当前恒返 `Ok(())` (签名保留以统一提交路径错误面)。
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "签名保留以统一提交路径错误面 (admin/I-O 提交链一致使用 ? 运算符)"
+)]
+pub fn nvme_submit_io_cmd_noblock(
+    sq_virt: u64,
+    cmd: nvme::NvmeCommand,
+    tail: &mut u32,
+    depth: u32,
+    iomem: &IoMem,
+    cid: u16,
+    io_sq_db_offset: usize,
+) -> Result<(), ()> {
+    // SAFETY: sq_virt 由 DMA 分配保证有效; IoMem 确保 MMIO 安全
+    unsafe {
+        let sq = sq_virt as *mut nvme::NvmeCommand;
+        let mut entry = cmd;
+        entry.cid = cid;
+        core::ptr::write_volatile(sq.add(*tail as usize), entry);
+
+        let new_tail = (*tail + 1) % depth;
+        *tail = new_tail;
+
+        // I/O SQ doorbell
+        iomem.write_u32(io_sq_db_offset, new_tail);
+    }
+    Ok(())
+}
+
+/// 从 `NVMe` CQ 排空已完成条目 (ISR 侧 0 unsafe 入口, DECISION-H 2 号子步)
+///
+/// 语义与 framework `NvmeController::handle_interrupt` 等值: 按 phase bit 循环
+/// 收割完成条目, 推进 head (回绕翻转 phase), 排空后敲一次 CQ 门铃。
+/// `cq_virt` 为 CQ DMA 区域**虚拟地址** (CPU 侧访问)。
+///
+/// 返回 `(排空条目数, 最后完成条目 status 原始字段; 无条目时为 0)`。
+pub fn nvme_drain_completions(
+    cq_virt: u64,
+    cq_head: &mut u32,
+    phase: &mut u16,
+    depth: u32,
+    iomem: &IoMem,
+    cq_db_offset: usize,
+) -> (usize, u16) {
+    // SAFETY: cq_virt 由 DMA 分配保证有效; head/phase 由调用方在锁内独占推进
+    unsafe {
+        let cq = cq_virt as *const nvme::NvmeCompletion;
+        let mut drained: usize = 0;
+        let mut last_status: u16 = 0;
+        loop {
+            let entry = core::ptr::read_volatile(cq.add(*cq_head as usize));
+            if (entry.status & 0x01) != *phase {
+                break;
+            }
+            last_status = entry.status;
+            let new_head = (*cq_head + 1) % depth;
+            *cq_head = new_head;
+            if new_head == 0 {
+                *phase ^= 1;
+            }
+            drained += 1;
+        }
+        if drained > 0 {
+            // 敲 CQ 门铃, 通知控制器已完成条目被处理
+            iomem.write_u32(cq_db_offset, *cq_head);
+        }
+        (drained, last_status)
     }
 }
 
@@ -893,14 +588,17 @@ pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
     let fis_size = PAGE_SIZE as usize;
     let cmd_table_size = AHCI_CMD_TBL_SIZE;
 
-    let (_, cmd_list_phys) = dma.alloc_coherent(cmd_list_size)?;
-    let (_, fis_phys) = dma.alloc_coherent(fis_size)?;
+    let (cmd_list_v, cmd_list_phys) = dma.alloc_coherent(cmd_list_size)?;
+    let (fis_v, fis_phys) = dma.alloc_coherent(fis_size)?;
     let (cmd_table_v, cmd_table_phys) = dma.alloc_coherent(cmd_table_size)?;
 
     Some(AhciCmdListHandle {
-        cmd_list_virt: 0, // 仅物理地址用于寄存器
+        // 虚拟地址必须真实保留: services 经 cmd_list_virt 填充命令头,
+        // 置 0 会把命令头写到虚拟地址 0 (页 0 野写), 设备侧读到全零
+        // 命令头 (CFL=0/CTBA=0) 静默丢弃命令 (首次带盘冒烟实证)
+        cmd_list_virt: cmd_list_v.0,
         cmd_list_phys: cmd_list_phys.0,
-        fis_virt: 0,
+        fis_virt: fis_v.0,
         fis_phys: fis_phys.0,
         cmd_table_virt: cmd_table_v.0,
         cmd_table_phys: cmd_table_phys.0,
@@ -950,10 +648,6 @@ pub fn ahci_copy_from_dma(dst: *mut u8, src_vaddr: u64, len: usize) {
 /// 填充 AHCI Command Header (slot 0)
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub fn ahci_fill_cmd_header(
     cmd_list_virt: u64,
     slot: u32,
@@ -966,15 +660,16 @@ pub fn ahci_fill_cmd_header(
     // SAFETY: cmd_list_virt 由 DMA 分配保证有效; slot < CMD_SLOTS
     unsafe {
         let hdr = (cmd_list_virt as *mut ahci::AhciCommandHeader).add(slot as usize);
+        // DW0 位域 (AHCI 1.3.1 §4.2.2): 位 0-4 = CFL (FIS 长度, DW 计),
+        // 位 6 = W (写方向), 位 12-15 = PMP, 位 16-31 = PRDTL (表项数)
         let flags: u32 = fis_len_dwords | (if is_write { 1 << 6 } else { 0 });
-        let dw0_val = flags | u32::from(prdt_len);
-        let ctba_val = cmd_table_phys as u32;
-        let ctbau_val = (cmd_table_phys >> 32) as u32;
+        let dw0_val = flags | (u32::from(prdt_len) << 16);
         addr_of_mut!((*hdr).dw0).write_volatile(dw0_val);
-        addr_of_mut!((*hdr).prdtl).write_volatile(0u32);
+        // DW1 = PRDBC (已传字节, 硬件维护) 软件清零;
+        // DW2/DW3 = 命令表基址低/高 32 位
         addr_of_mut!((*hdr).prdbc).write_volatile(0u32);
-        addr_of_mut!((*hdr).ctba).write_volatile(ctba_val);
-        addr_of_mut!((*hdr).ctbau).write_volatile(ctbau_val);
+        addr_of_mut!((*hdr).ctba).write_volatile(cmd_table_phys as u32);
+        addr_of_mut!((*hdr).ctbau).write_volatile((cmd_table_phys >> 32) as u32);
     }
 }
 

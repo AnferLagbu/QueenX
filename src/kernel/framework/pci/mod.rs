@@ -387,6 +387,11 @@ fn parse_bars(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
 }
 
 /// B04-05: 已持锁版本, parse_bars 通过此函数在持锁状态下访问 _locked PCI API。
+///
+/// **槽位语义**: `bars[i]` 对应配置空间 BAR i (offset 0x10 + 4*i), 未实现的
+/// BAR 槽位为 `PciBar::empty()` (`bar_type == BarType::None`)。消费者以配置
+/// 空间槽位号索引 (如 AHCI BAR5 / MSI-X BIR table_bar), 空槽由消费者防护
+/// (`BarType::None` / `base_addr == 0`)。
 fn parse_bars_locked(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
     let mut bars = [PciBar::empty(); 6];
     let mut count = 0;
@@ -408,32 +413,32 @@ fn parse_bars_locked(bus: u8, dev: u8, func: u8) -> ([PciBar; 6], usize) {
 
         if bar_lo & 1 != 0 {
             // I/O BAR
-            bars[count].base_addr = u64::from(bar_lo & !0x03u32);
-            bars[count].size = u64::from((!(size_mask & !0x03u32)).wrapping_add(1));
-            bars[count].bar_type = BarType::Io;
+            bars[i].base_addr = u64::from(bar_lo & !0x03u32);
+            bars[i].size = u64::from((!(size_mask & !0x03u32)).wrapping_add(1));
+            bars[i].bar_type = BarType::Io;
             count += 1;
         } else {
             // Memory BAR
             let mem_type = (bar_lo >> 1) & 0x03;
-            bars[count].prefetchable = (bar_lo >> 3) & 1 != 0;
+            bars[i].prefetchable = (bar_lo >> 3) & 1 != 0;
 
             if mem_type == 0x02 {
                 // 64 位 BAR: 占用两个槽位
-                bars[count].is_64bit = true;
+                bars[i].is_64bit = true;
                 let bar_hi = read_config_dword_locked(bus, dev, func, offset + 4);
-                bars[count].base_addr = u64::from(bar_lo & !0x0Fu32) | (u64::from(bar_hi) << 32);
+                bars[i].base_addr = u64::from(bar_lo & !0x0Fu32) | (u64::from(bar_hi) << 32);
                 write_config_dword_locked(bus, dev, func, offset + 4, 0xFFFF_FFFF);
                 let hi_mask = read_config_dword_locked(bus, dev, func, offset + 4);
                 write_config_dword_locked(bus, dev, func, offset + 4, bar_hi);
                 let size = (!(u64::from(size_mask & !0x0Fu32) | (u64::from(hi_mask) << 32)))
                     .wrapping_add(1);
-                bars[count].size = size;
-                bars[count].bar_type = BarType::Memory64;
+                bars[i].size = size;
+                bars[i].bar_type = BarType::Memory64;
                 i += 1; // skip next slot
             } else {
-                bars[count].base_addr = u64::from(bar_lo & !0x0Fu32);
-                bars[count].size = u64::from((!(size_mask & !0x0Fu32)).wrapping_add(1));
-                bars[count].bar_type = BarType::Memory32;
+                bars[i].base_addr = u64::from(bar_lo & !0x0Fu32);
+                bars[i].size = u64::from((!(size_mask & !0x0Fu32)).wrapping_add(1));
+                bars[i].bar_type = BarType::Memory32;
             }
             count += 1;
         }

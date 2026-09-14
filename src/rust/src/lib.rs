@@ -795,6 +795,11 @@ pub extern "C" fn kernel_init() {
         // §6.4 直接方案 B: virtio-blk 权威迁 services (aarch64 QEMU -M virt 主战场;
         // x86_64 走 PCI AHCI/NVMe, 此调用探测 virtio-mmio 无设备即跳过)
         crate::kernel::services::driver::virtio::blk_init();
+        // DECISION-H storage 专项 3 号子步: PCI AHCI/NVMe 权威迁 services,
+        // 由 crate root (合法双向编排者) 调用 services storage_init 接管控制器
+        // 初始化与 Chitin 注册 (framework storage_init 仅余 ATA 回退路径)。
+        #[cfg(target_arch = "x86_64")]
+        crate::kernel::services::driver::storage::storage_init();
         crate::klog_boot_info!("Driver subsystem initialized");
         {
             let chitin_count = crate::kernel::framework::chitin::chitin_count() as u64;

@@ -349,6 +349,23 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **X-② 核实表更新**：前置核实表 virtio 行标"**已核实**"（指向下文 virtio 净段两记录）、storage 两行标"**归 storage 专项**（DECISION-H，批次 Y）"。
 - **验证**：双架构 0w0e ✅ / clippy 三维 0 ✅ / 核心审计 ✅ / host-tests ✅ / QEMU x86_64 冒烟 ✅（本链同时为 `058cb518` smoltcp 0.14.0 升级后首次全量验证）。
 
+### 委托批次 Y 执行记录（实施：AI）
+
+- **Y-① storage 专项 5 子步**（DECISION-H 全序列）：
+  - **0 号 identify helper**：`nvme_read_identify_*` 解析迁 services（`05c9a648`，见上文记录）。
+  - **_block 适配器**：services 新增 `AhciBlockDevice`（端口 → `BlockDevice` 适配 + IDENTIFY 容量探测）与 `NvmeBlockDevice`（namespace → `BlockDevice`），统一经 Chitin `register_block_device` 注册（`ahci{ci}-p{pi}` / `nvme{ci}-ns{nsid}`）；framework 旧 `_block` 适配层删除（ahci_block.rs / nvme_block.rs 孤儿文件移除）。
+  - **MSI-X/IRQ**：NVMe MSI-X 端到端实装——**I/O CQ 必须在 MSI-X 使能后创建**（QEMU `nvme_init_cq` 仅在 msix_enabled 时 `msix_vector_use`，时序颠倒则完成中断永不到达，冒烟实证）；framework MSI-X ISR 纯编排，经 services 分发契约转发（DECISION-K 注册契约模式）+ MSIX-03 受控自测；AHCI 保持轮询提交。
+  - **storage_init 退位**：framework 删 PCI AHCI/NVMe 探测/初始化/注册（约 470 行 storage_init + 约 1400 行控制器/寄存器代码），仅留 ATA 回退路径与机制原语（wire 类型 / DMA fill / MSI-X ISR 编排）；services `storage_init` 由 crate root lib.rs 编排调用（x86_64 门控）。
+  - **QEMU 存储冒烟**：NVMe MSI-X 端到端 Ok + PCI BAR5 解析修复（BAR 槽位保持）生效；AHCI 首次带盘冒烟暴露 4 项预存缺陷（见下），修复后双机型复验通过。
+- **AHCI 首次带盘发现与本批内修复**（用户裁决 B）：
+  1. **COMRESET 缺失**：HBA 复位后未发 `PxSCTL.DET` COMRESET 序列，PHY 链路不重建，带盘端口扫描恒报"0 端口活动"（pc ich9-ahci 与 q35 内建 SATA 均复现；framework 被删版同构缺失，历史冒烟从未挂 AHCI 盘，非本批回归）。补 `comreset`（DET=1 保持 → 释放 → 轮询 DET=3）+ `enable_fis_receive`（FRE=1 → 等 FR → 锁存 PxSIG）。
+  2. **`AhciCommandHeader` 布局错位**：多余独立 `prdtl` 字段致结构体 36 字节（规范 4 DW + 4 保留 = 32 字节），CTBA 落 DW3 槽位而硬件按 DW2 读 → 读到恒 0。按 AHCI 1.3.1 §4.2.2 修正（PRDTL 是 DW0 高 16 位，非独立 DW；休眠单测 size==32 断言基线正确但从未运行）。
+  3. **`ahci_fill_cmd_header` PRDTL 未移位**：`flags | prdt_len` 把 PRDTL 挤进 CFL 位域（CFL 变 6、PRDTL=0）。修正为 `flags | (prdt_len << 16)`。
+  4. **`ahci_alloc_port_dma` 丢虚拟地址**：`cmd_list_virt` 硬编码置 0，services 填命令头写到虚拟地址 0（页 0 野写，恰被内核映射未崩溃），设备侧自 PxCLB 读到全零命令头（CFL=0/CTBA=0）静默丢弃命令、PxCI 恒挂。QEMU monitor `xp` 实证：命令表 phys 处 IDENTIFY FIS 字节正确、命令列表 phys 处全零。修正为保留全部 `alloc_coherent` 虚拟地址。
+  - **伴随加固**：命令完成判定纳入 `PxIS.TFES`（错误完成也是完成，避免越界/中止类失败白烧 5M 自旋超时）；错误路径清 `PxSERR`（AHCI 1.3.1 §6.4.2 W1C）防端口楔死；二分探测（越界读 × 24 次，TCG 下 ≈50s 且依赖错误恢复收敛）改为 IDENTIFY 单命令容量探测（word 100-103，de facto 语义 = 总扇区数，与 Linux `ata_id_u64(id,100)` 一致，避免 +1 末扇区越界）。
+- **复验结果**（pc ich9-ahci + q35 双机型，64MB SATA 盘）：带盘端口检测 `sig=00000101`（SATA）→ `ahci0-p0` 注册 **131072 扇区**（精确 64MB）→ Chitin `blk=3` → Ring 3，全程秒级；q35 同时验证双 AHCI 控制器共存（显式 ich9-ahci + 内建 00:1F.2）。
+- **验证**：见 §9 验证链 4.6 复跑记录（修复后全量）。
+
 ## 9. 验证门槛
 
 描述：每阶段提交必须满足（§2.3 + 本工程专项）。
@@ -963,8 +980,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 | char | serial.rs | ✅ 0 unsafe；PIO 全经 `framework::ioport::IoPort`（new_safe）；业务自含 | **直接接线** |
 | char | vga.rs | ✅ 0 unsafe；MMIO/PIO 经 `IoMem::from_pci_bar` + `IoPort::new_safe`；业务自含 | **直接接线** |
 | virtio | blk.rs / net.rs | ⚠ 依赖 `framework::driver::virtio::queue::{DmaBuffer, VirtQueue}`（DMA 环机制，合法机制依赖）；blk/net 业务已完整核实（net RX 半成品迁业务执行记录见下文 virtio 净段） | **已核实**（下文 virtio 净段两记录） |
-| storage | nvme.rs | ⚠ 依赖 `fw_nvme::NvmeCommand/Completion`（wire 类型，机制可留）；identify 解析 helper 已迁 services（下文执行记录，7 用例 host-test 通过）；缺 MSI-X/IRQ 路径 | 归 **storage 专项**（DECISION-H，批次 Y） |
-| storage | ahci.rs / ata.rs / mod.rs | ahci 自足缺 _block 适配器；ata 为桩模块缺真实驱动；注册路径全在 framework（下文 storage 净段详表） | 归 **storage 专项**（DECISION-H，批次 Y） |
+| storage | nvme.rs | ✅ 0 unsafe；wire 类型依赖可留；identify 解析 helper 迁 services（7 用例 host-test 通过）；MSI-X/IRQ 端到端实装（MSI-X 使能后建 I/O 队列时序契约 + services 分发契约）；NvmeBlockDevice 经 Chitin 注册 | **已核实**（批次 Y 完成，见执行记录） |
+| storage | ahci.rs / ata.rs / mod.rs | ✅ ahci 0 unsafe 自足（IoMem 安全代理）+ AhciBlockDevice 适配注册；COMRESET/命令头布局/DMA 虚拟地址等首次带盘缺陷已修（执行记录）；ata 仍为 framework 回退路径（登记 storage 后续子步迁 services） | **已核实**（批次 Y 完成，见执行记录） |
 
 **接线改造的关键耦合点（步骤 2/3 设计确认）**：
 - Chitin 注册安全路径 = `chitin_register_driver(name, proto, io_base, irq, Box<dyn Driver>)`，`Driver` trait **全 safe 方法**（framework/driver/framework.rs:287）→ **services 可 0 unsafe impl Driver 并注册**（合法方向）。

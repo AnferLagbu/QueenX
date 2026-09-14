@@ -147,10 +147,8 @@ pub use virtio::net::{
 #[cfg(target_arch = "x86_64")]
 pub use input::keyboard;
 
-// --- 存储设备导出 ---
-pub use storage::{
-    AhciController, AhciPort, AtaCommand, H2dFis, NvmeCommand, NvmeCompletion, NvmeController,
-};
+// --- 存储设备导出 (DECISION-H 3 号子步: 控制器业务已迁 services, 仅 wire 类型) ---
+pub use storage::{H2dFis, NvmeCommand, NvmeCompletion};
 
 // 为了向后兼容，保留一些直接导入
 #[cfg(target_arch = "x86_64")]
@@ -180,7 +178,7 @@ pub use uefi::*;
 /// 按照依赖顺序初始化各个子系统并注册到 Chitin 全局设备表：
 /// 1. 字符设备 (VGA、串口)
 /// 2. 总线驱动 (PCI)
-/// 3. 存储设备 (NVMe、AHCI、ATA)
+/// 3. 存储设备 (framework 仅 ATA 回退路径; PCI AHCI/NVMe 由 services 接管)
 /// 4. 输入设备 (键盘)
 /// 5. 显示设备 (HDMI、DP)
 /// 6. USB设备

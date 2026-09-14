@@ -1,9 +1,12 @@
-//! I-49: NVMe/AHCI 驱动 dead_code 收敛验证
+//! DECISION-H storage 专项: NVMe/AHCI 架构契约验证 (3 号子步 storage_init 退位后)
 //!
-//! 验证修复后的状态契约:
-//! 1. nvme.rs 不再有文件级 `#![allow(dead_code)]` (启动路径已激活)
-//! 2. ahci.rs 移除了未使用的 offset 常量 (GHC_CAP/PORT_CLB 等)
-//! 3. 启动路径 (storage::init) 注册了 NVMe/AHCI block 设备 — 镜像验证
+//! 验证退位后的状态契约 (services 权威, framework 机制保留):
+//! 1. framework `nvme.rs` 仅剩 wire 类型 (NvmeCommand/NvmeCompletion), 控制器业务已删
+//! 2. framework `ahci.rs` 仅剩 wire 命令结构 (H2dFis/命令头/命令表), HBA 寄存器布局已删
+//! 3. framework `storage_init` 仅 ATA 回退路径; PCI AHCI/NVMe 探测/注册由 services 接管
+//! 4. services `storage_init` 调用 `_block` 适配器注册 Chitin + MSI-X 接线
+//! 5. crate root lib.rs 编排 services storage_init (合法双向编排者)
+//! 6. 双侧均无文件级 dead_code 豁免 (I-49 契约延续)
 //!
 //! 主机端无法实际跑 PCI 探测, 这里做静态契约验证: 读源文件做关键字检查.
 
@@ -11,124 +14,174 @@ use std::fs;
 use std::path::Path;
 
 const FRAMEWORK_DIR: &str = "../src/kernel/framework/driver/storage";
+const SERVICES_DIR: &str = "../src/kernel/services/driver/storage";
 
-fn read_source(name: &str) -> String {
-    let path = Path::new(FRAMEWORK_DIR).join(name);
+fn read_source(dir: &str, name: &str) -> String {
+    let path = Path::new(dir).join(name);
     fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read {} failed: {}", path.display(), e))
 }
 
+/// 剥离 `//` 与 `//!` 注释行 — 静态契约只匹配真实代码, 不匹配文档图示
+fn strip_comment_lines(src: &str) -> String {
+    src.lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// ============================================================================
+// framework 侧: 机制保留面 (wire 类型 + ATA 回退)
+// ============================================================================
+
 #[test]
-fn test_nvme_no_file_level_dead_code() {
-    let src = read_source("nvme.rs");
-    // 修复后: 不应有文件级 `#![allow(dead_code)]` 属性.
-    // 关键: 必须匹配 `#[allow...` (开头), 不能是注释里说 "已移除".
-    // 简单做法: 检查前 2000 字符内没有 `^#![allow(dead_code)]` 行.
-    let in_attr = src
-        .lines()
-        .take_while(|l| l.starts_with("//") || l.trim().is_empty())
-        .any(|l| l.trim().starts_with("#![allow(dead_code)]"));
+fn test_framework_nvme_wire_types_only() {
+    let src = read_source(FRAMEWORK_DIR, "nvme.rs");
+    // wire 类型必须保留 (framework safe wrapper 与 services 驱动共用)
+    for sym in ["pub struct NvmeCommand", "pub struct NvmeCompletion"] {
+        assert!(src.contains(sym), "framework nvme.rs 缺失 {}", sym);
+    }
+    // 控制器业务必须已退位 (DECISION-H 3 号子步)
     assert!(
-        !in_attr,
-        "nvme.rs 仍带文件级 dead_code allow (在注释外的属性行)"
+        !src.contains("pub struct NvmeController"),
+        "framework nvme.rs 仍含 NvmeController (应已迁 services)"
     );
-    // 备查: 注释里应说明移除 (做反向校验, 防误删)
     assert!(
-        src.contains("#![allow(dead_code)]") && src.contains("已移除"),
-        "注释未说明 dead_code 移除原因"
+        !src.contains("#![allow(dead_code)]"),
+        "framework nvme.rs 不应有文件级 dead_code 豁免"
     );
 }
 
 #[test]
-fn test_ahci_no_unused_offset_consts() {
-    let src = read_source("ahci.rs");
-    // 验证未使用的 offset 常量已被删除 (GHC_CAP/GHC_IS/GHC_VS/PORT_CLB 等)
-    // 保留: GHC_GHC, GHC_PI (真实使用)
-    for name in [
-        "GHC_CAP:",
-        "GHC_IS:",
-        "GHC_VS:",
-        "PORT_CLB:",
-        "PORT_CLBU:",
-        "PORT_FB:",
-        "PORT_FBU:",
-        "PORT_IS:",
-        "PORT_IE:",
-        "PORT_CMD:",
-        "PORT_TFD:",
-        "PORT_SIG:",
-        "PORT_SSTS:",
-        "PORT_SERR:",
-        "PORT_CI:",
+fn test_framework_ahci_wire_types_only() {
+    let src = read_source(FRAMEWORK_DIR, "ahci.rs");
+    // wire 命令结构必须保留 (framework mod.rs 填充原语使用)
+    for sym in [
+        "pub struct AhciCommandHeader",
+        "pub struct AhciCommandTable",
+        "pub struct H2dFis",
     ] {
+        assert!(src.contains(sym), "framework ahci.rs 缺失 {}", sym);
+    }
+    // HBA 寄存器布局与控制器业务必须已退位
+    for sym in ["pub struct AhciHbaGhc", "pub struct AhciPort", "pub struct AhciController"] {
         assert!(
-            !src.contains(name),
-            "ahci.rs 仍包含未使用常量 {} (应改用 AhciHbaGhc/AhciPortRegs 字段)",
-            name
+            !src.contains(sym),
+            "framework ahci.rs 仍含 {} (应已迁 services)",
+            sym
         );
     }
-    // GHC_GHC / GHC_PI 是真实使用的, 必须保留
-    assert!(src.contains("GHC_GHC:"), "GHC_GHC 不应被删除 (真实使用)");
-    assert!(src.contains("GHC_PI:"), "GHC_PI 不应被删除 (真实使用)");
+    assert!(
+        !src.contains("#![allow(dead_code)]"),
+        "framework ahci.rs 不应有文件级 dead_code 豁免"
+    );
 }
 
 #[test]
-fn test_ahci_register_structs_preserved() {
-    let src = read_source("ahci.rs");
-    // repr(C, packed) 寄存器结构体必须保留 — 通过字段名访问硬件
-    assert!(src.contains("pub struct AhciHbaGhc"), "AhciHbaGhc 缺失");
-    assert!(src.contains("pub struct AhciPortRegs"), "AhciPortRegs 缺失");
-    // 关键字段
-    for field in ["cap: u32", "ghc: u32", "clb: u32", "fb: u32", "ci: u32"] {
-        assert!(src.contains(field), "字段 {} 缺失", field);
+fn test_framework_storage_init_ata_fallback_only() {
+    let code = strip_comment_lines(&read_source(FRAMEWORK_DIR, "mod.rs"));
+    // ATA 回退路径保留
+    assert!(
+        code.contains("ata_init") && code.contains("register_block_device"),
+        "framework storage_init 应保留 ATA 检测与注册"
+    );
+    // PCI AHCI/NVMe 探测业务必须已退位
+    assert!(
+        !code.contains("scan_all_buses"),
+        "framework storage_init 仍做 PCI 扫描 (应已迁 services)"
+    );
+    assert!(
+        !code.contains("AhciController::new") && !code.contains("NvmeController::new"),
+        "framework storage_init 仍初始化控制器 (应已迁 services)"
+    );
+    // MSI-X ISR 编排机制保留 (注册契约槽 + ISR 注册入口)
+    for sym in [
+        "nvme_register_msix_isr",
+        "nvme_register_services_msix_dispatch",
+    ] {
+        assert!(code.contains(sym), "framework mod.rs 缺失机制入口 {}", sym);
     }
 }
 
+// ============================================================================
+// services 侧: 权威实现 (控制器业务 + 注册路径 + MSI-X 接线)
+// ============================================================================
+
 #[test]
-fn test_nvme_register_structs_preserved() {
-    let src = read_source("nvme.rs");
-    // NVMe 控制器关键符号必须保留
-    for sym in ["pub struct NvmeController", "NvmeCommand", "NvmeCompletion"] {
-        assert!(src.contains(sym), "{} 缺失", sym);
-    }
+fn test_services_controllers_present() {
+    let ahci = read_source(SERVICES_DIR, "ahci.rs");
+    assert!(ahci.contains("pub struct AhciController"), "services AhciController 缺失");
+    assert!(ahci.contains("pub struct AhciPort"), "services AhciPort 缺失");
+    assert!(
+        ahci.contains("#![deny(unsafe_code)]"),
+        "services ahci.rs 必须 0 unsafe"
+    );
+    let nvme = read_source(SERVICES_DIR, "nvme.rs");
+    assert!(nvme.contains("pub struct NvmeController"), "services NvmeController 缺失");
+    assert!(
+        nvme.contains("#![deny(unsafe_code)]"),
+        "services nvme.rs 必须 0 unsafe"
+    );
 }
 
 #[test]
-fn test_storage_init_uses_block_devices() {
-    // 验证启动路径实际调用了 block 设备注册 (非死代码)
-    let src = read_source("mod.rs");
+fn test_services_storage_init_uses_block_devices() {
+    // 验证 services 启动路径实际调用了 block 设备注册 (非死代码)
+    let src = read_source(SERVICES_DIR, "mod.rs");
     assert!(
         src.contains("AhciBlockDevice::new"),
-        "storage::init 未调用 AhciBlockDevice::new"
+        "services storage_init 未调用 AhciBlockDevice::new"
     );
     assert!(
         src.contains("NvmeBlockDevice::new"),
-        "storage::init 未调用 NvmeBlockDevice::new"
+        "services storage_init 未调用 NvmeBlockDevice::new"
     );
     assert!(
         src.contains("register_block_device"),
-        "storage::init 未注册 block 设备到 Chitin"
+        "services storage_init 未注册 block 设备到 Chitin"
     );
-}
-
-#[test]
-fn test_ahci_info_field_has_explanation() {
-    // ahci.rs 保留的 info 字段必须有注释说明用途 (避免无声 dead_code)
-    let src = read_source("ahci.rs");
-    let has_info = src.contains("info: DeviceInfo");
-    let has_explanation = src.contains("I-49")
-        || src.contains("hotplug")
-        || src.contains("procfs");
-    assert!(has_info, "info 字段不存在");
+    // MSI-X 接线 (DECISION-H 2 号子步): 启用 + ISR 注册 + services 分发契约注册
     assert!(
-        has_explanation,
-        "info 字段缺少用途说明 (I-49/hotplug/procfs)"
+        src.contains("enable_msix") && src.contains("nvme_register_msix_isr"),
+        "services storage_init 未接线 NVMe MSI-X"
+    );
+    assert!(
+        src.contains("nvme_register_services_msix_dispatch"),
+        "services storage_init 未注册 services MSI-X 分发契约"
     );
 }
 
 #[test]
-fn test_block_devices_reexported() {
-    let src = read_source("mod.rs");
-    // 验证 block 设备在 mod.rs 中 re-export
-    assert!(src.contains("pub use"), "mod.rs 缺少 re-export");
+fn test_lib_rs_orchestrates_services_storage_init() {
+    // crate root (合法双向编排者) 必须调用 services storage_init (x86_64 门控)
+    let src =
+        fs::read_to_string("../src/rust/src/lib.rs").expect("read lib.rs failed");
+    assert!(
+        src.contains("services::driver::storage::storage_init"),
+        "crate root lib.rs 未编排 services storage_init"
+    );
+}
+
+// ============================================================================
+// 双侧公共契约: 无 dead_code 豁免 (I-49 延续)
+// ============================================================================
+
+#[test]
+fn test_no_dead_code_allow_in_storage() {
+    for (dir, name) in [
+        (FRAMEWORK_DIR, "mod.rs"),
+        (FRAMEWORK_DIR, "nvme.rs"),
+        (FRAMEWORK_DIR, "ahci.rs"),
+        (SERVICES_DIR, "mod.rs"),
+        (SERVICES_DIR, "nvme.rs"),
+        (SERVICES_DIR, "ahci.rs"),
+    ] {
+        let src = read_source(dir, name);
+        assert!(
+            !src.contains("#![allow(dead_code)]") && !src.contains("#![allow(unused)]"),
+            "{}/{} 含文件级 dead_code 豁免",
+            dir,
+            name
+        );
+    }
 }

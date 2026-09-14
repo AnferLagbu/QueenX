@@ -32,9 +32,14 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.3 任务: `NVMe` 存储控制器迁移
 
+use crate::kernel::framework::driver::BlockDevice;
 use crate::kernel::framework::driver::storage::nvme as fw_nvme;
 use crate::kernel::framework::iomem::IoMem;
 use crate::kernel::framework::mm::PhysAddr;
+use crate::kernel::framework::pci::PciDevice;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+use super::NVME_CONTROLLERS;
 
 // Services 层日志
 use crate::slog_info;
@@ -83,8 +88,8 @@ pub const CC_AMS_RR: u32 = 0 << 11;
 pub const CC_MPS_SHIFT: u32 = 7;
 /// IOCQES 值: 16 字节 CQ 条目, log2(16) = 4
 pub const CC_IOCQES_VAL: u32 = 4 << 20;
-/// IOSQES 值: 64 字节 SQ 条目, log2(64) = 6
-pub const CC_IOSQES_VAL: u32 = 6 << 24;
+/// IOSQES 值: 64 字节 SQ 条目, log2(64) = 6 (CC.IOSQES @ bit 16)
+pub const CC_IOSQES_VAL: u32 = 6 << 16;
 
 // ============================================================================
 // CSTS 寄存器位
@@ -559,15 +564,25 @@ pub fn parse_identify_namespace(data: &[u8]) -> Option<(u64, u8, u32)> {
 pub struct NvmeController {
     /// MMIO 寄存器句柄
     mmio: IoMem,
-    /// 门铃步长 (bytes = 4 << DSTRD)
+    /// 门铃步长 (`1 << DSTRD`, 4 字节门铃槽单位; init_controller 由 CAP 写入)
     db_stride: u32,
-    /// Admin 队列物理地址 (SQ + CQ)
+    /// Admin SQ 虚拟地址 (CPU 侧队列访问, direct-map)
+    admin_sq_virt: u64,
+    /// Admin SQ 物理地址 (设备侧: ASQ 寄存器)
     admin_sq_phys: u64,
+    /// Admin CQ 虚拟地址 (CPU 侧队列访问)
+    admin_cq_virt: u64,
+    /// Admin CQ 物理地址 (设备侧: ACQ 寄存器)
     admin_cq_phys: u64,
     /// Admin 队列对状态
     admin_queue: NvmeQueuePair,
-    /// I/O 队列物理地址
+    /// I/O SQ 虚拟地址 (CPU 侧队列访问)
+    io_sq_virt: u64,
+    /// I/O SQ 物理地址 (设备侧: Create SQ 命令)
     io_sq_phys: u64,
+    /// I/O CQ 虚拟地址 (CPU 侧队列访问)
+    io_cq_virt: u64,
+    /// I/O CQ 物理地址 (设备侧: Create CQ 命令)
     io_cq_phys: u64,
     /// I/O 队列对状态
     io_queue: NvmeQueuePair,
@@ -577,6 +592,10 @@ pub struct NvmeController {
     namespace_size_lba: u64,
     /// LBA 格式字节数
     lba_format_size: u16,
+    /// MSI-X LAPIC 向量号 (DECISION-H 2 号子步; ISR 注册成功后置位, None = 轮询)
+    irq_vector: Option<u8>,
+    /// ISR 侧 I/O CQ 完成处理计数 (MSIX-03 等值: 中断路径提交者等待此计数变化)
+    io_cq_isr_processed: AtomicU64,
     /// 控制器已初始化
     initialized: bool,
 }
@@ -592,15 +611,21 @@ impl NvmeController {
         Some(Self {
             mmio,
             db_stride: 0,
+            admin_sq_virt: 0,
             admin_sq_phys: 0,
+            admin_cq_virt: 0,
             admin_cq_phys: 0,
             admin_queue: NvmeQueuePair::new(ADMIN_QID, u32::from(QUEUE_DEPTH), 0),
+            io_sq_virt: 0,
             io_sq_phys: 0,
+            io_cq_virt: 0,
             io_cq_phys: 0,
             io_queue: NvmeQueuePair::new(IO_QID, u32::from(QUEUE_DEPTH), 0),
             namespace_count: 0,
             namespace_size_lba: 0,
             lba_format_size: SECTOR_SIZE as u16,
+            irq_vector: None,
+            io_cq_isr_processed: AtomicU64::new(0),
             initialized: false,
         })
     }
@@ -753,18 +778,16 @@ impl NvmeController {
         cmd: fw_nvme::NvmeCommand,
     ) -> Result<fw_nvme::NvmeCompletion, ()> {
         let cid = self.admin_queue.next_admin_cid();
-        let sq_phys = self.admin_sq_phys;
-        let cq_phys = self.admin_cq_phys;
+        // CPU 侧队列访问用虚拟地址 (direct-map), 物理地址仅供设备侧寄存器
+        let sq_virt = self.admin_sq_virt;
+        let cq_virt = self.admin_cq_virt;
         let depth = self.admin_queue.depth();
         let db_stride = self.admin_queue.db_stride();
-        let _tail = self.admin_queue.sq_tail();
-        let _cq_head = self.admin_queue.cq_head();
-        let _phase = self.admin_queue.admin_cq_phase();
 
         // 通过 framework safe wrapper 执行 unsafe 队列操作
         let result = crate::kernel::framework::driver::storage::nvme_submit_admin_cmd(
-            sq_phys,
-            cq_phys,
+            sq_virt,
+            cq_virt,
             cmd,
             &mut self.admin_queue.sq_tail,
             &mut self.admin_queue.cq_head,
@@ -791,20 +814,28 @@ impl NvmeController {
         }
     }
 
+    /// I/O SQ 门铃偏移 (CQ 门铃 = 此值 + 4, 与 submit/ISR 路径共用)
+    ///
+    /// 步长取控制器 `db_stride` (init_controller 写入 `1 << DSTRD`);
+    /// 队列对内 `db_stride` 恒为构造初值 0, 不可用作步长来源。
+    fn io_db_offset(&self) -> usize {
+        // I/O doorbell offset = DB_BASE + IO_QID * 8 * stride
+        NVME_DB_BASE + (IO_QID as usize) * 8 * (self.db_stride as usize)
+    }
+
     /// 提交 I/O 命令并等待完成
     fn submit_io_cmd(&mut self, cmd: fw_nvme::NvmeCommand) -> Result<(), ()> {
         let cid = self.io_queue.next_io_cid();
-        let sq_phys = self.io_sq_phys;
-        let cq_phys = self.io_cq_phys;
+        // CPU 侧队列访问用虚拟地址 (direct-map), 物理地址仅供设备侧命令
+        let sq_virt = self.io_sq_virt;
+        let cq_virt = self.io_cq_virt;
         let depth = self.io_queue.depth();
         let db_stride = self.io_queue.db_stride();
-
-        // I/O doorbell offset = DB_BASE + IO_QID * 8 * stride
-        let io_db_offset = NVME_DB_BASE + (IO_QID as usize) * 8 * (db_stride as usize);
+        let io_db_offset = self.io_db_offset();
 
         crate::kernel::framework::driver::storage::nvme_submit_io_cmd(
-            sq_phys,
-            cq_phys,
+            sq_virt,
+            cq_virt,
             cmd,
             &mut self.io_queue.sq_tail,
             &mut self.io_queue.cq_head,
@@ -850,15 +881,17 @@ impl NvmeController {
             }
         }
 
-        // 分配 Admin 队列 DMA 内存
-        let (sq_phys, cq_phys) =
+        // 分配 Admin 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供寄存器写入)
+        let ((sq_virt, sq_phys), (cq_virt, cq_phys)) =
             if let Some(v) = crate::kernel::framework::driver::storage::nvme_alloc_admin_queues() {
                 v
             } else {
                 slog_warn!(Driver, "Admin 队列 DMA 分配失败");
                 return false;
             };
+        self.admin_sq_virt = sq_virt;
         self.admin_sq_phys = sq_phys;
+        self.admin_cq_virt = cq_virt;
         self.admin_cq_phys = cq_phys;
 
         // 配置 Admin 队列 (AQA + ASQ + ACQ)
@@ -1001,19 +1034,22 @@ impl NvmeController {
     )]
     /// 创建 I/O 队列对 (CQ + SQ)
     pub fn create_io_queue(&mut self) -> bool {
-        // 分配 I/O 队列 DMA 内存
-        let (sq_phys, cq_phys) =
+        // 分配 I/O 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供 Create 命令)
+        let ((sq_virt, sq_phys), (cq_virt, cq_phys)) =
             if let Some(v) = crate::kernel::framework::driver::storage::nvme_alloc_io_queues() {
                 v
             } else {
                 slog_warn!(Driver, "I/O 队列 DMA 分配失败");
                 return false;
             };
+        self.io_sq_virt = sq_virt;
         self.io_sq_phys = sq_phys;
+        self.io_cq_virt = cq_virt;
         self.io_cq_phys = cq_phys;
 
         // 创建 I/O Completion Queue (Admin 命令)
-        // services 层 NVMe 走 polling, irq_vector=0 (MSI-X disable 时合法)
+        // MSI-X Table 向量索引 = 0 (enable_msix 请求 1 向量, entry 0);
+        // fw_nvme::create_cq 置 IEN=1, MSI-X 未启用时设备中断不投递 (轮询合法)
         let cmd_cq = fw_nvme::NvmeCommand::create_cq(IO_QID, cq_phys, 0);
         if self.submit_admin_cmd(cmd_cq).is_err() {
             slog_warn!(Driver, "创建 I/O CQ 失败");
@@ -1033,32 +1069,12 @@ impl NvmeController {
         self.io_queue.set_io_cq_phase(1);
         self.io_queue.set_created(true);
 
-        slog_info!(Driver, "I/O 队列创建完成 (depth={})", QUEUE_DEPTH);
-        true
-    }
-
-    /// 初始化完整流程: 控制器 → Identify → I/O 队列
-    pub fn init(&mut self) -> bool {
-        if !self.init_controller() {
-            return false;
-        }
-
-        if !self.identify_controller() {
-            return false;
-        }
-
-        // Identify namespace 1
-        if self.namespace_count > 0 {
-            self.identify_namespace(1);
-        }
-
-        // 创建 I/O 队列对
-        if !self.create_io_queue() {
-            return false;
-        }
-
+        // I/O 队列是初始化编排的最终阶段 (storage_init 时序契约:
+        // 初始化控制器 → 识别 → 启用 MSI-X → 创建 I/O 队列),
+        // 队列创建成功即控制器完全初始化 (提交/ISR 路径可用)
         self.initialized = true;
-        slog_info!(Driver, "NVMe 完全初始化, {} 命名空间", self.namespace_count);
+
+        slog_info!(Driver, "I/O 队列创建完成 (depth={})", QUEUE_DEPTH);
         true
     }
 
@@ -1210,15 +1226,195 @@ impl NvmeController {
         self.initialized
     }
 
-    /// 中断处理 (轮询 CQ 完成)
+    // ── MSI-X 中断路径 (DECISION-H storage 专项 2 号子步) ──
+
+    /// 启用 MSI-X (B07 等值: 经 framework `pci::msi::msix_enable` 请求 1 向量)
+    ///
+    /// 仅配置 PCI MSI-X capability 并返回分配的 LAPIC 向量号 (纯 PCI 操作,
+    /// 不触碰控制器状态, 故为关联函数); `irq_vector` 由调用方在 ISR 注册
+    /// 成功后经 [`Self::set_irq_vector`] 显式置位 (注册失败保持 None = 轮询回退)。
+    pub fn enable_msix(dev: &PciDevice) -> Option<u8> {
+        use crate::kernel::framework::pci::msi;
+        // 启用 MSI-X, 请求 1 个向量 (NVMe 单 I/O CQ 中断, Table entry 0)
+        let config = msi::msix_enable(dev, 1)?;
+        Some(config.base_vector)
+    }
+
+    /// 置位 MSI-X 向量号 (ISR 注册成功后由 `storage_init` 调用)
+    pub fn set_irq_vector(&mut self, vector: u8) {
+        self.irq_vector = Some(vector);
+    }
+
+    /// MSI-X 向量号 (None = 轮询模式)
+    pub fn irq_vector(&self) -> Option<u8> {
+        self.irq_vector
+    }
+
+    /// ISR 侧 I/O CQ 完成处理计数快照 (MSIX-03 自测等待信号)
+    pub fn io_isr_processed(&self) -> u64 {
+        self.io_cq_isr_processed.load(Ordering::Acquire)
+    }
+
+    /// MSI-X 中断路径提交 I/O 命令 — 仅写 SQ + 敲门铃, 不等待完成
+    ///
+    /// 返回提交前的 ISR 处理计数, 调用方在释放注册表锁后 (IF=1 窗口)
+    /// 等待该计数变化 (与 framework `submit_io_command_isr` 等值)。
+    ///
+    /// # Errors
+    ///
+    /// 控制器未初始化时返回 `Err(())`。
+    pub fn io_submit_isr(&mut self, cmd: fw_nvme::NvmeCommand) -> Result<u64, ()> {
+        if !self.initialized {
+            return Err(());
+        }
+        let cid = self.io_queue.next_io_cid();
+        let before = self.io_cq_isr_processed.load(Ordering::Acquire);
+        let depth = self.io_queue.depth();
+        let io_db_offset = self.io_db_offset();
+        crate::kernel::framework::driver::storage::nvme_submit_io_cmd_noblock(
+            self.io_sq_virt,
+            cmd,
+            &mut self.io_queue.sq_tail,
+            depth,
+            &self.mmio,
+            cid,
+            io_db_offset,
+        )?;
+        Ok(before)
+    }
+
+    /// 中断处理: 排空 Admin/I-O CQ 完成条目 (与 framework `handle_interrupt` 等值)
+    ///
+    /// 由 MSI-X ISR 经注册契约分发调用, 调用方持注册表锁 (IrqSpinLock,
+    /// 中断安全)。返回是否有完成条目被处理。
     pub fn handle_interrupt(&mut self) -> bool {
         if !self.initialized {
             return false;
         }
 
-        // 通过 IoMem 读取 I/O CQ
-        // 此处简化: 实际中断处理由 framework 层负责
-        false
+        // 偏移/深度先取快照 (参数位置不可与 &mut 队列字段借用并存);
+        // 门铃约定与 framework 提交 helper 一致: CQ 槽 = SQ 偏移 + 4
+        let admin_depth = self.admin_queue.depth();
+        let io_depth = self.io_queue.depth();
+        let io_cq_db_offset = self.io_db_offset() + 4;
+
+        // Admin CQ 排空 (doorbell = DB_BASE + 4: QID 0 completion 槽)
+        let (admin_drained, _) =
+            crate::kernel::framework::driver::storage::nvme_drain_completions(
+                self.admin_cq_virt,
+                &mut self.admin_queue.cq_head,
+                &mut self.admin_queue.admin_cq_phase,
+                admin_depth,
+                &self.mmio,
+                NVME_DB_BASE + 4,
+            );
+
+        // I/O CQ 排空 + 完成计数递增 (Release 配对提交者 Acquire 等待)
+        let (io_drained, status) =
+            crate::kernel::framework::driver::storage::nvme_drain_completions(
+                self.io_cq_virt,
+                &mut self.io_queue.cq_head,
+                &mut self.io_queue.io_cq_phase,
+                io_depth,
+                &self.mmio,
+                io_cq_db_offset,
+            );
+        if io_drained > 0 {
+            if (status >> 1) & 0x7FF != 0 {
+                slog_warn!(
+                    Driver,
+                    "NVMe I/O completion error: status={:#X}",
+                    (status >> 1) & 0x7FF
+                );
+            }
+            self.io_cq_isr_processed
+                .fetch_add(io_drained as u64, Ordering::Release);
+        }
+
+        admin_drained + io_drained > 0
+    }
+}
+
+// ============================================================================
+// BlockDevice 适配器 (DECISION-H storage 专项 1 号子步: _block 路径迁 services)
+// ============================================================================
+
+/// `NVMe` 命名空间的 `BlockDevice` 适配器
+///
+/// 不直接持有控制器, 经 (`controller_index`, `namespace_id`) 在 services 全局
+/// [`NVME_CONTROLLERS`] 注册表中查找 (services 权威, framework `_block` 已随
+/// 3 号子步退位删除)。仅含 `usize`/`u32`/`u64` 纯数据字段, `Send + Sync` 自动派生, 0 unsafe。
+pub struct NvmeBlockDevice {
+    /// 控制器在 [`NVME_CONTROLLERS`] 中的索引
+    controller_index: usize,
+    /// 命名空间 ID (1-based)
+    namespace_id: u32,
+    /// 缓存的磁盘容量 (512 字节扇区数)
+    total_sectors: u64,
+}
+
+impl NvmeBlockDevice {
+    /// 为指定的 `NVMe` 命名空间创建适配器
+    ///
+    /// 命名空间 ID 越界或容量为 0 (非块设备命名空间) 时返回 `None`。
+    pub fn new(controller_index: usize, namespace_id: u32) -> Option<Self> {
+        let controllers = NVME_CONTROLLERS.lock();
+        let controller = controllers.get(controller_index)?;
+
+        let ns_count = controller.namespace_count();
+        if namespace_id < 1 || namespace_id > ns_count {
+            return None;
+        }
+
+        let total_sectors = controller.namespace_size();
+        if total_sectors == 0 {
+            return None;
+        }
+
+        Some(Self {
+            controller_index,
+            namespace_id,
+            total_sectors,
+        })
+    }
+}
+
+impl BlockDevice for NvmeBlockDevice {
+    fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
+        let mut controllers = NVME_CONTROLLERS.lock();
+        controllers
+            .get_mut(self.controller_index)
+            .map_or(-1, |controller| {
+                match controller.read(self.namespace_id, sector, 1, buf.as_mut_ptr()) {
+                    Ok(()) => 0,
+                    Err(()) => -1,
+                }
+            })
+    }
+
+    fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
+        let mut controllers = NVME_CONTROLLERS.lock();
+        controllers
+            .get_mut(self.controller_index)
+            .map_or(-1, |controller| {
+                match controller.write(self.namespace_id, sector, 1, buf.as_ptr()) {
+                    Ok(()) => 0,
+                    Err(()) => -1,
+                }
+            })
+    }
+
+    fn blk_is_present(&self) -> bool {
+        let controllers = NVME_CONTROLLERS.lock();
+        controllers.get(self.controller_index).map_or(false, |c| {
+            self.namespace_id >= 1
+                && self.namespace_id <= c.namespace_count()
+                && c.namespace_size() > 0
+        })
+    }
+
+    fn blk_total_sectors(&self) -> u64 {
+        self.total_sectors
     }
 }
 

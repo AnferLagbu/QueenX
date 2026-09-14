@@ -36,8 +36,11 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.4 任务: 存储设备 (AHCI) 迁移
 
+use crate::kernel::framework::driver::BlockDevice;
 use crate::kernel::framework::iomem::IoMem;
 use crate::kernel::framework::mm::PhysAddr;
+
+use super::AHCI_CONTROLLERS;
 
 // Services 层日志
 use crate::slog_info;
@@ -145,6 +148,15 @@ pub const PxTFD_BSY: u32 = 1 << 7;
 
 /// Device Detection (`PxSSTS` `[3:0]`)
 pub const PxSSTS_DET: u32 = 0xF;
+
+// ============================================================================
+// PxSCTL 寄存器位
+// ============================================================================
+
+/// Device Control (`PxSCTL` `[3:0]`)
+pub const PxSCTL_DET: u32 = 0xF;
+/// DET=1: 发起 COMRESET (端口复位, 重建 PHY 链路)
+pub const PxSCTL_DET_COMRESET: u32 = 0x1;
 
 // ============================================================================
 // PxIS 寄存器位
@@ -537,6 +549,74 @@ impl AhciPort {
 
     // ── 端口操作 ──
 
+    /// 发起 COMRESET 序列重建端口 PHY 链路 (AHCI 1.3.1 §3.3.4)
+    ///
+    /// HBA 复位 (GHC.HR) 会清除端口链路状态; 软件必须经 `PxSCTL.DET`
+    /// 发起 COMRESET (置 1 保持 → 写 0 释放) 后, 设备侧才会重建
+    /// `PxSSTS.DET=3` (在位 + 通信建立)。缺失该序列时带盘端口扫描
+    /// 恒报"设备不在位" (首次带盘冒烟发现, framework 版同构缺失,
+    /// pc ich9-ahci 与 q35 内建 SATA 均复现)。
+    pub fn comreset(&self, hba: &AhciHba) {
+        // DET=1: 发出 COMRESET 并保持 (真实硬件 PHY 时序要求 >1ms)
+        let sctl = self.port_read32(hba, PxSCTL);
+        self.port_write32(hba, PxSCTL, (sctl & !PxSCTL_DET) | PxSCTL_DET_COMRESET);
+        let mut hold = 1_000_000u32;
+        while hold > 0 {
+            hold -= 1;
+            core::hint::spin_loop();
+        }
+
+        // DET=0: 释放 COMRESET, 设备开始链路建立
+        let sctl = self.port_read32(hba, PxSCTL);
+        self.port_write32(hba, PxSCTL, sctl & !PxSCTL_DET);
+
+        // 轮询 PxSSTS.DET==3 (设备在位 + 通信建立); 超时按设备缺位
+        // 处理, 由调用方 detect_device 最终判定
+        let mut timeout = 1_000_000u32;
+        while timeout > 0 {
+            if SataStatus::from_register(self.port_read32(hba, PxSSTS)).is_connected() {
+                break;
+            }
+            timeout -= 1;
+            core::hint::spin_loop();
+        }
+    }
+
+    /// 使能 FIS 接收 (PxCMD.FRE) 并等待设备签名锁存
+    ///
+    /// COMRESET 后设备在位信息经 D2H Register FIS 上报, HBA 须先开
+    /// FIS 接收引擎 PxSIG 才会被锁存 (AHCI 1.3.1 §3.3.5)。QEMU 于
+    /// PxCMD 写入时惰性补发 init D2H (hw/ide/ahci.c `ahci_init_d2h`,
+    /// 其注释自述为 hack), 不使能 FRE 则 `PxSIG` 恒 `0xFFFFFFFF`,
+    /// 端口扫描判不出设备 (带盘冒烟实证)。
+    pub fn enable_fis_receive(&mut self, hba: &AhciHba) -> bool {
+        // 清零中断状态
+        self.port_write32(hba, PxIS, 0xFFFF_FFFF);
+
+        // FRE=1
+        let cmd = self.port_cmd(hba);
+        self.set_port_cmd(hba, cmd | PxCMD_FRE);
+
+        // 等待 FR 置位
+        let mut timeout = 1_000_000u64;
+        while self.port_cmd(hba) & PxCMD_FR == 0 && timeout > 0 {
+            timeout -= 1;
+            core::hint::spin_loop();
+        }
+        if timeout == 0 {
+            slog_warn!(Driver, "端口 {} FRE 超时", self.port_num);
+            return false;
+        }
+
+        // 等待设备签名锁存 (D2H FIS 到达; QEMU 同步锁存, 真实硬件轮询)
+        let mut sig_wait = 1_000_000u32;
+        while self.port_signature(hba) == 0xFFFF_FFFF && sig_wait > 0 {
+            sig_wait -= 1;
+            core::hint::spin_loop();
+        }
+        true
+    }
+
     /// 检测设备 (读 `PxSSTS` + `PxSIG`)
     pub fn detect_device(&mut self, hba: &AhciHba) -> bool {
         let ssts = self.port_sata_status(hba);
@@ -556,8 +636,13 @@ impl AhciPort {
         clippy::manual_let_else,
         reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
     )]
-    /// 分配 DMA 内存并设置寄存器
+    /// 分配 DMA 内存并设置寄存器 (幂等: 已分配时直接返回)
     pub fn setup_dma(&mut self, hba: &AhciHba) -> bool {
+        // 幂等防护: enable() 与 init_controller 检测序列都会调用,
+        // 重复分配会泄漏先前的 DMA 资源
+        if self.dma.is_some() {
+            return true;
+        }
         let handle =
             if let Some(h) = crate::kernel::framework::driver::storage::ahci_alloc_port_dma() {
                 h
@@ -726,11 +811,12 @@ impl AhciPort {
         crate::arch!(fence_w());
         self.set_port_cmd_issue(hba, 1 << slot);
 
-        // 6. 等待完成
+        // 6. 等待完成 (错误完成 TFES 同样视为完成信号, 否则越界/中止类
+        //    失败只置 TFES 不置 DHRS, 会白烧满超时 — 首次带盘冒烟实证)
         timeout = 5_000_000;
         while timeout > 0 {
             let is = self.interrupt_status(hba);
-            if is & (PxIS_DHRS | PxIS_DPS | PxIS_PCS) != 0 {
+            if is & (PxIS_DHRS | PxIS_DPS | PxIS_PCS | PxIS_TFE) != 0 {
                 break;
             }
             timeout -= 1;
@@ -738,18 +824,30 @@ impl AhciPort {
         }
 
         if timeout == 0 {
+            self.clear_port_error_status(hba);
             return Err(());
         }
 
         // 7. 检查错误
         if self.interrupt_status(hba) & PxIS_TFE != 0 {
+            self.clear_port_error_status(hba);
             return Err(());
         }
         if self.port_has_error(hba) {
+            self.clear_port_error_status(hba);
             return Err(());
         }
 
         Ok(())
+    }
+
+    /// 命令失败后的最小错误恢复 (AHCI 1.3.1 §6.4.2)
+    ///
+    /// PxSERR 状态/诊断位为 W1C, 错误完成后保持置位; 不清除将影响
+    /// 端口后续命令处理。PxIS 同步清除避免残留中断状态误判。
+    fn clear_port_error_status(&self, hba: &AhciHba) {
+        self.port_write32(hba, PxSERR, 0xFFFF_FFFF);
+        self.ack_interrupt(hba, 0xFFFF_FFFF);
     }
 
     #[expect(
@@ -853,6 +951,44 @@ impl AhciPort {
 
         let fis = H2dFis::write_dma(lba, count);
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, true);
+
+        crate::kernel::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
+        result
+    }
+
+    /// ATA IDENTIFY DEVICE (0xEC, PIO-in 经 PRDT 传输)
+    ///
+    /// 读取 512B 设备标识到 `buffer`。AHCI 下 PIO-in 数据同样经命令表
+    /// PRDT 由 HBA 搬运, 与 DMA 读共用提交路径。
+    ///
+    /// # Errors
+    ///
+    /// - 端口未初始化或设备未就绪时返回 `Err(())`
+    /// - DMA 缓冲区分配失败或命令提交失败时返回 `Err(())`
+    pub fn identify(&mut self, hba: &AhciHba, buffer: *mut u8) -> Result<(), ()> {
+        if !self.port_initialized || !self.device_present {
+            return Err(());
+        }
+
+        let byte_count = SECTOR_SIZE as u32;
+        let (buf_vaddr, buf_paddr, buf_size) =
+            match crate::kernel::framework::driver::storage::ahci_alloc_dma_buffer(
+                byte_count as usize,
+            ) {
+                Some(v) => v,
+                None => return Err(()),
+            };
+
+        let fis = H2dFis::identify();
+        let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);
+
+        if result.is_ok() {
+            crate::kernel::framework::driver::storage::ahci_copy_from_dma(
+                buffer,
+                buf_vaddr,
+                byte_count as usize,
+            );
+        }
 
         crate::kernel::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
@@ -1035,14 +1171,17 @@ impl AhciController {
             self.hba.set_ghc(ghc_val);
         }
 
-        // HBA 复位
+        // HBA 复位 (GHC.HR 自清零; 按 AHCI 1.3.1 §3.3.1 复位会清 GHC.AE,
+        // 必须重新置位后方可访问端口寄存器)
         self.hba.reset();
+        self.hba.enable_ahci();
 
         // 启用中断
         self.hba.enable_interrupts();
 
         // 获取已实现的端口
         self.port_bitmap = self.hba.ports_implemented();
+        slog_info!(Driver, "HBA 就绪, 已实现端口位图 PI={:#010x}", self.port_bitmap);
 
         // 初始化每个端口
         for i in 0..AHCI_MAX_PORTS {
@@ -1052,7 +1191,14 @@ impl AhciController {
 
             let mut port = AhciPort::new(i as u8);
 
-            if port.detect_device(&self.hba) {
+            // 检测序列 (AHCI 1.3.1 §3.3.4/§3.3.5): COMRESET 重建 PHY 链路
+            // → 分配端口 DMA → 使能 FIS 接收 (锁存 PxSIG) → 读 SSTS/SIG
+            // 判定在位与设备类型
+            port.comreset(&self.hba);
+            if port.setup_dma(&self.hba)
+                && port.enable_fis_receive(&self.hba)
+                && port.detect_device(&self.hba)
+            {
                 if port.enable(&self.hba) {
                     slog_info!(
                         Driver,
@@ -1089,6 +1235,136 @@ impl AhciController {
     /// 控制器是否已初始化
     pub fn is_initialized(&self) -> bool {
         self.initialized
+    }
+
+    /// 拆借端口与 HBA (块适配器使用: [`AhciPort::read`]/[`AhciPort::write`]
+    /// 需同时持有端口可变引用与 HBA 共享引用, 链式借用会产生双重可变借用)
+    fn split_port_hba(&mut self, index: usize) -> Option<(&mut AhciPort, &AhciHba)> {
+        let AhciController {
+            hba,
+            ports,
+            port_bitmap: _,
+            initialized: _,
+        } = self;
+        let port = ports.get_mut(index)?;
+        Some((port, hba))
+    }
+}
+
+// ============================================================================
+// BlockDevice 适配器 (DECISION-H storage 专项 1 号子步: _block 路径迁 services)
+// ============================================================================
+
+/// AHCI 端口的 `BlockDevice` 适配器
+///
+/// 不直接持有控制器, 经 (`controller_index`, `port_index`) 在 services 全局
+/// [`AHCI_CONTROLLERS`] 注册表中查找 (services 权威, framework `_block` 已随
+/// 3 号子步退位删除)。仅含 `usize`/`u64` 纯数据字段, `Send + Sync` 自动派生, 0 unsafe。
+pub struct AhciBlockDevice {
+    /// 控制器在 [`AHCI_CONTROLLERS`] 中的索引
+    controller_index: usize,
+    /// 端口索引
+    port_index: usize,
+    /// 缓存的磁盘容量 (512 字节扇区数)
+    total_sectors: u64,
+}
+
+impl AhciBlockDevice {
+    /// 为指定的 AHCI 端口创建适配器
+    ///
+    /// 端口无设备或探测容量为 0 时返回 `None`。
+    pub fn new(controller_index: usize, port_index: usize) -> Option<Self> {
+        {
+            let mut controllers = AHCI_CONTROLLERS.lock();
+            let controller = controllers.get_mut(controller_index)?;
+            let (port, _hba) = controller.split_port_hba(port_index)?;
+            if !port.device_present {
+                return None;
+            }
+        }
+
+        let total_sectors = Self::probe_disk_size(controller_index, port_index);
+        if total_sectors == 0 {
+            return None;
+        }
+
+        Some(Self {
+            controller_index,
+            port_index,
+            total_sectors,
+        })
+    }
+
+    /// 探测 AHCI 磁盘容量 (ATA IDENTIFY DEVICE, word 100-103)
+    ///
+    /// 单命令直读容量, 取代二分探测 (二分需读越界 LBA 触发设备错误,
+    /// TCG 下 24 次命令 × 5M 自旋超时 ≈ 50s, 首次带盘冒烟实证)。
+    /// word 100-103 (字节偏移 200..208 LE, u48 有效) 按 de facto 语义
+    /// 取总扇区数 (Linux ata_id_u64(id,100) 直接作 n_sectors)。
+    fn probe_disk_size(ci: usize, pi: usize) -> u64 {
+        let mut controllers = AHCI_CONTROLLERS.lock();
+        let Some(controller) = controllers.get_mut(ci) else {
+            return 0;
+        };
+        let Some((port, hba)) = controller.split_port_hba(pi) else {
+            return 0;
+        };
+
+        let mut buf = [0u8; SECTOR_SIZE];
+        if port.identify(hba, buf.as_mut_ptr()).is_err() {
+            return 0;
+        }
+
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&buf[200..208]);
+        // word100-103 按 de facto 语义 = 总扇区数 (Linux ata_id_u64(id,100)
+        // 直接作 n_sectors, QEMU 写 nb_sectors); 不做 +1, 否则末扇区越界
+        u64::from_le_bytes(raw) & 0x0000_FFFF_FFFF_FFFF
+    }
+}
+
+impl BlockDevice for AhciBlockDevice {
+    fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
+        let mut controllers = AHCI_CONTROLLERS.lock();
+        let Some(controller) = controllers.get_mut(self.controller_index) else {
+            return -1;
+        };
+        let Some((port, hba)) = controller.split_port_hba(self.port_index) else {
+            return -1;
+        };
+        match port.read(hba, sector, 1, buf.as_mut_ptr()) {
+            Ok(()) => 0,
+            Err(()) => -1,
+        }
+    }
+
+    fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
+        let mut controllers = AHCI_CONTROLLERS.lock();
+        let Some(controller) = controllers.get_mut(self.controller_index) else {
+            return -1;
+        };
+        let Some((port, hba)) = controller.split_port_hba(self.port_index) else {
+            return -1;
+        };
+        match port.write(hba, sector, 1, buf.as_ptr()) {
+            Ok(()) => 0,
+            Err(()) => -1,
+        }
+    }
+
+    fn blk_is_present(&self) -> bool {
+        let mut controllers = AHCI_CONTROLLERS.lock();
+        controllers
+            .get_mut(self.controller_index)
+            .map_or(false, |controller| {
+                controller
+                    .split_port_hba(self.port_index)
+                    .map_or(false, |(port, _hba)| port.device_present)
+            })
+    }
+
+    fn blk_total_sectors(&self) -> u64 {
+        self.total_sectors
     }
 }
 

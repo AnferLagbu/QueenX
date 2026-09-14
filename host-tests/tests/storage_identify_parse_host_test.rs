@@ -16,6 +16,57 @@ use queenx::kernel::services::driver::storage::nvme::{
     parse_identify_controller, parse_identify_namespace,
 };
 
+// ============================================================================
+// CC 寄存器位域回归 (QEMU 存储冒烟 MSIX-04: IOSQES 6<<24 笔误致 create_cq
+// 被 QEMU 以 MAX_QSIZE_EXCEEDED 拒绝 — IOSQES 实际在 bit 16, 非 bit 24)
+// ============================================================================
+
+#[test]
+fn cc_iosqes_iocqes_field_positions_match_nvme_spec() {
+    use queenx::kernel::services::driver::storage::nvme::{
+        CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
+    };
+
+    // IOSQES @ CC bits 19:16, 64 字节 SQ 条目 → 6
+    assert_eq!(
+        (CC_IOSQES_VAL & CC_IOSQES_MASK) >> 16,
+        6,
+        "CC.IOSQES 编码应落在 bit 16-19 且值 = log2(64) = 6"
+    );
+    // IOCQES @ CC bits 23:20, 16 字节 CQ 条目 → 4
+    assert_eq!(
+        (CC_IOCQES_VAL & CC_IOCQES_MASK) >> 20,
+        4,
+        "CC.IOCQES 编码应落在 bit 20-23 且值 = log2(16) = 4"
+    );
+    // IOSQES 不得越界污染 bit 20+ (bit 24+ 为保留域)
+    assert_eq!(
+        CC_IOSQES_VAL & !(CC_IOSQES_MASK | CC_IOCQES_MASK),
+        0,
+        "IOSQES 编码不得污染 IOCQES 及保留域"
+    );
+}
+
+#[test]
+fn cc_composed_value_decodes_to_required_entry_sizes() {
+    use queenx::kernel::services::driver::storage::nvme::{
+        CC_AMS_RR, CC_EN, CC_IOCQES_MASK, CC_IOCQES_VAL, CC_IOSQES_MASK, CC_IOSQES_VAL,
+        CC_MPS_SHIFT, CC_CSS_NVM,
+    };
+
+    // 与 services nvme init_controller 的 CC 组成保持同构:
+    // create_cq/create_sq 依赖 QEMU 侧检查 CC.IOSQES == 6 且 CC.IOCQES == 4
+    let cc = CC_EN
+        | CC_CSS_NVM
+        | (0u32 << CC_MPS_SHIFT)
+        | CC_AMS_RR
+        | CC_IOCQES_VAL
+        | CC_IOSQES_VAL;
+
+    assert_eq!((cc & CC_IOSQES_MASK) >> 16, 6, "CC.IOSQES 必须为 6 (64B SQE)");
+    assert_eq!((cc & CC_IOCQES_MASK) >> 20, 4, "CC.IOCQES 必须为 4 (16B CQE)");
+}
+
 #[test]
 fn identify_controller_parse_full() {
     let mut data = [0u8; 520];
