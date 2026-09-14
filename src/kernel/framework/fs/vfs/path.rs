@@ -8,7 +8,7 @@
 use super::api::{ptr_to_str, split_parent_name, with_cstr};
 use super::types::VfsStat;
 use super::vfs::VFS_MANAGER;
-use crate::kernel::framework::userptr::{UserRefMut, UserWritePtr};
+use crate::framework::userptr::{UserRefMut, UserWritePtr};
 
 // ============================================================================
 // VFS 核心接口 (内部)
@@ -39,7 +39,7 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     // 文件删除成功后, 释放该 inode 上的 POSIX 锁 + inotify 通知
     if result == 0 {
         if let Some(ino) = ino_before {
-            crate::kernel::framework::fs::vfs::flock::posix_lock_release_inode(ino);
+            crate::framework::fs::vfs::flock::posix_lock_release_inode(ino);
             let (parent_path, name) = split_parent_name(rel_path);
             let parent_ino = fs_opt.map_or(0, |fs| fs.fs_resolve_path(parent_path).unwrap_or(0));
             super::inotify::inotify_notify(parent_ino, super::inotify::IN_DELETE, name, false);
@@ -143,7 +143,7 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     });
 
     if result == 0 {
-        let tbl = crate::kernel::framework::credo::identity::get_table();
+        let tbl = crate::framework::credo::identity::get_table();
         let r = st_ref.as_mut();
         r.uid = tbl.uid_of(r.owner_pwm);
         r.gid = tbl.gid_of(r.group_pwm);

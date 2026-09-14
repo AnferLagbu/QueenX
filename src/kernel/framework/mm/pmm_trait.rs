@@ -118,8 +118,8 @@ impl PmmPolicy for FallbackPmmPolicy {
 static FALLBACK_PMM_POLICY: FallbackPmmPolicy = FallbackPmmPolicy;
 
 /// 全局策略注册表 — services 通过 `register_pmm_policy` 注册
-static PMM_POLICY: crate::kernel::framework::sync::OnceLock<&'static dyn PmmPolicy> =
-    crate::kernel::framework::sync::OnceLock::new();
+static PMM_POLICY: crate::framework::sync::OnceLock<&'static dyn PmmPolicy> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 PMM 策略 (由 `services::mm::init` 调用)
 ///

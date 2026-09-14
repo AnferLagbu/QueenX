@@ -28,7 +28,7 @@ fn table_error_is_thin_wrapper() {
     let src = read(TABLE_RS);
     // 必须有 Kernel(KernelError) 共享包装
     assert!(
-        src.contains("Kernel(crate::kernel::services::error::KernelError)"),
+        src.contains("Kernel(crate::services::error::KernelError)"),
         "TableError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }
@@ -66,8 +66,8 @@ fn table_error_preserves_three_table_specific_variants() {
 fn to_errno_method_present() {
     let src = read(TABLE_RS);
     assert!(
-        src.contains("pub fn to_errno(self) -> crate::kernel::framework::syscall::types::Errno")
-            || src.contains("pub fn to_errno(self) -> crate::kernel::framework::syscall::Errno"),
+        src.contains("pub fn to_errno(self) -> crate::framework::syscall::types::Errno")
+            || src.contains("pub fn to_errno(self) -> crate::framework::syscall::Errno"),
         "TableError 必须有 to_errno() 方法 (4 变体全覆盖)"
     );
     // to_errno 必须处理 4 个变体
@@ -88,7 +88,7 @@ fn to_errno_method_present() {
 fn from_kernel_error_impl() {
     let src = read(TABLE_RS);
     assert!(
-        src.contains("impl From<crate::kernel::services::error::KernelError> for TableError"),
+        src.contains("impl From<crate::services::error::KernelError> for TableError"),
         "TableError 必须有 From<KernelError> 包装实现, 让 `?` 操作符自动转换"
     );
 }

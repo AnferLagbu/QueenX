@@ -34,8 +34,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::kernel::framework::mm::pmm_alloc_page;
-use crate::kernel::framework::mm::{KERNEL_BASE, PAGE_SIZE, PhysAddr};
+use crate::framework::mm::pmm_alloc_page;
+use crate::framework::mm::{KERNEL_BASE, PAGE_SIZE, PhysAddr};
 
 // ── PCID 常量 ─────────────────────────────────────────────────────
 // PCID (Process-Context Identifier) 占 CR3 低 12 位, 用于 TLB 标记.
@@ -134,9 +134,9 @@ pub const fn cr3_with_pcid(pml4_phys: u64, pcid: u64) -> u64 {
 /// 检查 CPU 是否支持 INVPCID.
 #[inline]
 pub fn has_invpcid() -> bool {
-    crate::kernel::framework::cpu::get_cpu_info().is_some_and(|info| {
+    crate::framework::cpu::get_cpu_info().is_some_and(|info| {
         info.features
-            .contains(crate::kernel::framework::cpu::CpuFeatures::INVPCID)
+            .contains(crate::framework::cpu::CpuFeatures::INVPCID)
     })
 }
 
@@ -229,11 +229,11 @@ pub unsafe fn kpti_sync_pml4_entry(pml4_idx: usize) {
     // VMM_LOCK 由调用方持有, 防止并发修改页表.
     unsafe {
         let kernel_pml4_phys =
-            crate::kernel::framework::mm::vmm::KERNEL_PML4.load(Ordering::Acquire);
-        let src = crate::kernel::framework::mm::PhysAddr(kernel_pml4_phys)
+            crate::framework::mm::vmm::KERNEL_PML4.load(Ordering::Acquire);
+        let src = crate::framework::mm::PhysAddr(kernel_pml4_phys)
             .to_virt()
             .0 as *const u64;
-        let dst = crate::kernel::framework::mm::PhysAddr(user_pml4_phys)
+        let dst = crate::framework::mm::PhysAddr(user_pml4_phys)
             .to_virt()
             .0 as *mut u64;
         let entry = core::ptr::read_volatile(src.add(pml4_idx));
@@ -463,7 +463,7 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
     // gdt_set_kpti_pml4 是安全的 FFI 调用, cpu 索引 0..256 合法.
     unsafe {
         for cpu in 0..256u32 {
-            crate::kernel::framework::arch::gdt::gdt_set_kpti_pml4(cpu, kernel_cr3, user_cr3);
+            crate::framework::arch::gdt::gdt_set_kpti_pml4(cpu, kernel_cr3, user_cr3);
         }
     }
 
@@ -751,7 +751,7 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     //
     //    同时映射高半区 VMA (LMA + vma_offset) 以备高半区访问路径.
     let per_cpu_gdt_lma =
-        crate::kernel::framework::arch::gdt::get_syscall_per_cpu_base() & !(PAGE_SIZE as u64 - 1);
+        crate::framework::arch::gdt::get_syscall_per_cpu_base() & !(PAGE_SIZE as u64 - 1);
     let per_cpu_gdt_vma = per_cpu_gdt_lma + vma_offset;
 
     // SAFETY: user_pml4 有效; per_cpu_gdt 地址来自 GDT 初始化, 合法;

@@ -1,9 +1,9 @@
-use crate::kernel::framework::proc::{
+use crate::framework::proc::{
     SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM, SCHED_LEVEL_3_QUANTUM,
     ThreadPriority,
 };
-use crate::kernel::framework::proc::{SchedulerEx, Thread, ThreadState};
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::proc::{SchedulerEx, Thread, ThreadState};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 use alloc::boxed::Box;
 use core::sync::atomic::Ordering;

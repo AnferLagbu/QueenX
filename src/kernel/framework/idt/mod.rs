@@ -319,7 +319,7 @@ pub extern "C" fn idt_init() -> i32 {
                 let lo = ($f as *const ()) as usize as u64;
                 #[cfg(target_arch = "x86_64")]
                 {
-                    lo + crate::kernel::framework::mm::KERNEL_BASE
+                    lo + crate::framework::mm::KERNEL_BASE
                 }
                 #[cfg(not(target_arch = "x86_64"))]
                 {

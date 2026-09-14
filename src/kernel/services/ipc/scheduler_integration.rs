@@ -14,11 +14,11 @@
 //! - 支持超时等待
 
 use super::types::{WaitQueue, WaitQueueItem};
-use crate::kernel::framework::proc::{
+use crate::framework::proc::{
     process_get_current_pid, scheduler_block, scheduler_unblock, scheduler_yield_ex,
 };
-use crate::kernel::framework::sync::in_irq_context;
-use crate::kernel::framework::timer::hrtimer::hrtimer_sleep;
+use crate::framework::sync::in_irq_context;
+use crate::framework::timer::hrtimer::hrtimer_sleep;
 
 /// B07-15: 中断上下文唤醒守卫 — 中断/softirq 上下文不得直接调度或阻塞.
 fn in_interrupt_context() -> bool {
@@ -63,7 +63,7 @@ pub fn block_current_thread(wait_queue: &mut WaitQueue, _timeout_ms: u64) -> Res
     }
 
     // 标记进程为 Blocked 并让出 CPU.
-    scheduler_block(crate::kernel::framework::proc::BlockReason::WaitingForIo);
+    scheduler_block(crate::framework::proc::BlockReason::WaitingForIo);
     scheduler_yield_ex();
 
     // 被唤醒后返回
@@ -149,7 +149,7 @@ pub fn block_with_timeout(wait_queue: &mut WaitQueue, timeout_ms: u64) -> Result
     let timeout_nanos = timeout_ms.saturating_mul(1_000_000);
     // 周期性检查等待队列是否仍需要阻塞 (被外部唤醒则退出).
     // 简化: 有限次重试 + hrtimer 睡眠, 期间被唤醒则立即返回.
-    let deadline = crate::kernel::framework::timer::hrtimer::hrtimer_clock_read()
+    let deadline = crate::framework::timer::hrtimer::hrtimer_clock_read()
         .saturating_add(timeout_nanos);
     loop {
         if wait_queue.count() == 0 {
@@ -159,7 +159,7 @@ pub fn block_with_timeout(wait_queue: &mut WaitQueue, timeout_ms: u64) -> Result
         if in_interrupt_context() {
             return Err(-2);
         }
-        if crate::kernel::framework::timer::hrtimer::hrtimer_clock_read() >= deadline {
+        if crate::framework::timer::hrtimer::hrtimer_clock_read() >= deadline {
             return Err(-1); // 超时
         }
         // 睡眠一个短时隙后重查 (让出 CPU, 非忙等).

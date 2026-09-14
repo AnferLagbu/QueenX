@@ -10,7 +10,7 @@
 //! - 重复 lock 同一线程不重复 push
 //! - 回调注册
 use super::{TestResult, runner};
-use crate::kernel::framework::sync::pi_mutex as pi;
+use crate::framework::sync::pi_mutex as pi;
 use crate::register_tests_inner;
 
 /// 模拟 A 持锁 + B/C/D 注册为等待者的辅助函数
@@ -35,7 +35,7 @@ fn test_basic_lock_unlock() -> TestResult {
     // 环境 pid: kernel_test 环境无调度器, current_pid() 返回 0 (PID_NONE)。
     // 必须用环境 pid 持锁, 否则 RAII drop 走 unlock_internal (校验 holder==current_pid)
     // 会因硬编码 pid 与环境不符而提前返回, 无法覆盖 RAII 释放路径。
-    let my_pid = crate::kernel::framework::sync::raw::current_pid();
+    let my_pid = crate::framework::sync::raw::current_pid();
     let g = m.lock(my_pid, 5);
     if !m.is_locked() {
         return TestResult::Fail("should be locked after lock()");

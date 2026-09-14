@@ -32,9 +32,9 @@ pub use ahci::H2dFis;
 pub use nvme::{NvmeCommand, NvmeCompletion};
 
 use super::framework;
-use crate::kernel::framework::iomem::IoMem;
+use crate::framework::iomem::IoMem;
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::arch::InterruptArch;
+use crate::framework::arch::InterruptArch;
 
 /// 初始化存储子系统 (framework 退位版: 仅 ATA 回退路径)
 ///
@@ -53,24 +53,24 @@ pub fn storage_init() -> framework::Result<()> {
     // ATA 驱动使用内部全局单例, 通过 C FFI 接口初始化
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        crate::kernel::framework::driver::storage::ata::ata_init();
+        crate::framework::driver::storage::ata::ata_init();
     }
 
-    crate::kernel::framework::chitin::chitin_register_driver(
+    crate::framework::chitin::chitin_register_driver(
         "ata_controller",
-        crate::kernel::framework::chitin::ChitinProto::Block,
+        crate::framework::chitin::ChitinProto::Block,
         None,
         None,
         alloc::boxed::Box::new(
-            crate::kernel::framework::driver::storage::ata::AtaController::new(),
+            crate::framework::driver::storage::ata::AtaController::new(),
         ),
     );
 
     // Step 2: 将 ATA 磁盘注册到 Chitin (唯一注册入口)
     {
-        use crate::kernel::framework::chitin::proto_block;
-        use crate::kernel::framework::driver::BlockDevice;
-        use crate::kernel::framework::driver::storage::ata_block::AtaBlockDevice;
+        use crate::framework::chitin::proto_block;
+        use crate::framework::driver::BlockDevice;
+        use crate::framework::driver::storage::ata_block::AtaBlockDevice;
         for drive in 0..4u8 {
             if let Some(dev) = AtaBlockDevice::new(drive) {
                 let sectors = dev.blk_total_sectors();
@@ -125,7 +125,7 @@ pub fn storage_init() -> framework::Result<()> {
 ///
 /// `frame` 由 IDT 中断入口压栈, 指向保存的寄存器. NVMe ISR 不读取 frame
 /// 内容, 仅作 IDT 签名要求.
-extern "C" fn nvme_msix_irq_handler(_frame: *mut crate::kernel::framework::idt::InterruptFrame) {
+extern "C" fn nvme_msix_irq_handler(_frame: *mut crate::framework::idt::InterruptFrame) {
     // B07: handle_irq 已自动 EOI (LAPIC 路径), 这里只需 dispatch 给 controller.
     // MSIX-03: 中断触发计数 — 首次 + 每 1000 次打印, 验证真实 MSI-X 投递路径.
     let count = NVME_MSIX_IRQ_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
@@ -145,8 +145,8 @@ extern "C" fn nvme_msix_irq_handler(_frame: *mut crate::kernel::framework::idt::
 /// IDT/MSI-X 编排机制 (机制留 framework), services 注册业务分发函数
 /// (无捕获函数指针). 未注册时 handler 跳过 services 分发 (fail-quiet).
 #[cfg(target_arch = "x86_64")]
-static NVME_SERVICES_DISPATCH: crate::kernel::framework::sync::OnceLock<fn()> =
-    crate::kernel::framework::sync::OnceLock::new();
+static NVME_SERVICES_DISPATCH: crate::framework::sync::OnceLock<fn()> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 services 层 NVMe MSI-X 分发回调 (services 可调用的 0 unsafe 入口)
 ///
@@ -171,9 +171,9 @@ pub fn nvme_register_services_msix_dispatch(dispatch: fn()) -> Result<(), fn()> 
 /// `f` 内不得调用可能依赖 IF=0 语义的低层机制。
 #[cfg(target_arch = "x86_64")]
 pub fn nvme_with_interrupts_enabled<R>(f: impl FnOnce() -> R) -> R {
-    crate::kernel::framework::arch::CurrentArch::interrupt_enable();
+    crate::framework::arch::CurrentArch::interrupt_enable();
     let r = f();
-    crate::kernel::framework::arch::CurrentArch::interrupt_disable();
+    crate::framework::arch::CurrentArch::interrupt_disable();
     r
 }
 
@@ -195,8 +195,8 @@ static NVME_MSIX_IRQ_COUNT: core::sync::atomic::AtomicU64 =
 /// `IdtManager::register_msi_irq` 失败 (irq 范围错) 时返回错误.
 #[cfg(target_arch = "x86_64")]
 pub fn nvme_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
-    use crate::kernel::framework::idt::IdtManager;
-    let irq = msi_vector - crate::kernel::framework::idt::IRQ_BASE;
+    use crate::framework::idt::IdtManager;
+    let irq = msi_vector - crate::framework::idt::IRQ_BASE;
     let manager = IdtManager::instance();
     manager.register_msi_irq(irq, nvme_msix_irq_handler, "nvme-msix")?;
     // enable_irq 用于 PIC IRQ 路径; MSI vector 不需 enable (LAPIC 已 mask).
@@ -241,7 +241,7 @@ const AHCI_CMD_TBL_SIZE: usize = 256;
 /// 访问 (direct-map, `virt = phys + KERNEL_BASE`), 物理地址供设备侧寄存器/
 /// 命令写入。失败返回 None (DMA 分配不足)。
 pub fn nvme_alloc_admin_queues() -> Option<((u64, u64), (u64, u64))> {
-    use crate::kernel::framework::dma::get_dma;
+    use crate::framework::dma::get_dma;
 
     let dma = get_dma();
     if !dma.is_initialized() {
@@ -262,7 +262,7 @@ pub fn nvme_alloc_admin_queues() -> Option<((u64, u64), (u64, u64))> {
 /// 返回 `((sq_virt, sq_phys), (cq_virt, cq_phys))` — 虚拟地址供 CPU 侧队列
 /// 访问, 物理地址供 Create CQ/SQ Admin 命令。
 pub fn nvme_alloc_io_queues() -> Option<((u64, u64), (u64, u64))> {
-    use crate::kernel::framework::dma::get_dma;
+    use crate::framework::dma::get_dma;
 
     let dma = get_dma();
     if !dma.is_initialized() {
@@ -281,7 +281,7 @@ pub fn nvme_alloc_io_queues() -> Option<((u64, u64), (u64, u64))> {
 /// 分配 DMA 缓冲区, 返回 `(vaddr, phys_addr, size)` —
 /// 实际分配大小可能向上对齐到页。
 pub fn nvme_alloc_dma_buffer(size: usize) -> Option<(u64, u64, usize)> {
-    use crate::kernel::framework::dma::get_dma;
+    use crate::framework::dma::get_dma;
 
     let dma = get_dma();
     if !dma.is_initialized() {
@@ -294,8 +294,8 @@ pub fn nvme_alloc_dma_buffer(size: usize) -> Option<(u64, u64, usize)> {
 
 /// 释放 DMA 缓冲区
 pub fn nvme_free_dma_buffer(vaddr: u64, size: usize) {
-    use crate::kernel::framework::dma::get_dma;
-    use crate::kernel::framework::mm::VirtAddr;
+    use crate::framework::dma::get_dma;
+    use crate::framework::mm::VirtAddr;
 
     let dma = get_dma();
     if vaddr != 0 {
@@ -576,8 +576,8 @@ impl AhciCmdListHandle {
 // 有意窄化: 用户内存代理, 指针/长度上下文保证
 #[expect(clippy::cast_possible_truncation)]
 pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
-    use crate::kernel::framework::dma::get_dma;
-    use crate::kernel::framework::mm::PAGE_SIZE;
+    use crate::framework::dma::get_dma;
+    use crate::framework::mm::PAGE_SIZE;
 
     let dma = get_dma();
     if !dma.is_initialized() {
@@ -607,7 +607,7 @@ pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
 
 /// AHCI DMA buffer 分配 (用于读写数据传输)
 pub fn ahci_alloc_dma_buffer(size: usize) -> Option<(u64, u64, usize)> {
-    use crate::kernel::framework::dma::get_dma;
+    use crate::framework::dma::get_dma;
 
     let dma = get_dma();
     if !dma.is_initialized() {
@@ -620,8 +620,8 @@ pub fn ahci_alloc_dma_buffer(size: usize) -> Option<(u64, u64, usize)> {
 
 /// 释放 AHCI DMA 缓冲区
 pub fn ahci_free_dma_buffer(vaddr: u64, size: usize) {
-    use crate::kernel::framework::dma::get_dma;
-    use crate::kernel::framework::mm::VirtAddr;
+    use crate::framework::dma::get_dma;
+    use crate::framework::mm::VirtAddr;
 
     let dma = get_dma();
     if vaddr != 0 {

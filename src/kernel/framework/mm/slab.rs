@@ -45,7 +45,7 @@ macro_rules! klog_slab {
 // ============================================================================
 
 /// Slab 配置常量 (统一从 config.rs 引用)
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     SLAB_DEFAULT_SIZE, SLAB_GENERAL_CACHE_NUM, SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE,
 };
 
@@ -932,9 +932,9 @@ impl CacheStats {
 // ============================================================================
 
 /// 通用缓存数组 (预定义 8 个大小的缓存)
-static GENERAL_CACHES: crate::kernel::framework::sync::IrqSpinLock<
+static GENERAL_CACHES: crate::framework::sync::IrqSpinLock<
     [Option<KmemCache>; SLAB_GENERAL_CACHE_NUM],
-> = crate::kernel::framework::sync::IrqSpinLock::new([const { None }; SLAB_GENERAL_CACHE_NUM]);
+> = crate::framework::sync::IrqSpinLock::new([const { None }; SLAB_GENERAL_CACHE_NUM]);
 
 /// 系统是否已初始化
 static SLAB_INITIALIZED: core::sync::atomic::AtomicBool =
@@ -1218,5 +1218,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_slab_tests() {
-    crate::kernel::framework::tests::sys::register_slab_tests();
+    crate::framework::tests::sys::register_slab_tests();
 }

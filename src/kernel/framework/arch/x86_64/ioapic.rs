@@ -3,7 +3,7 @@
 //! 将外部硬件中断路由到指定 CPU 核心.
 //! 支持多 IOAPIC 控制器, 通过 GSI (Global System Interrupt) 路由.
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 const IOAPIC_BASE_DEFAULT: u64 = 0xFEC00000;
@@ -136,7 +136,7 @@ pub fn get_max_irq() -> u8 {
 
 /// 按 GSI 设置 IRQ (自动路由到正确的 IOAPIC)
 pub fn set_irq_gsi(gsi: u32, vector: u8, apic_id: u8, masked: bool) {
-    if let Some((idx, local_irq)) = crate::kernel::framework::arch::acpi::gsi_to_ioapic(gsi) {
+    if let Some((idx, local_irq)) = crate::framework::arch::acpi::gsi_to_ioapic(gsi) {
         set_irq_on(idx, local_irq, vector, apic_id, masked, DELIVERY_FIXED);
     }
 }
@@ -178,7 +178,7 @@ pub fn set_irq_on(
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
 pub fn mask_irq_gsi(gsi: u32) {
-    if let Some((idx, local_irq)) = crate::kernel::framework::arch::acpi::gsi_to_ioapic(gsi) {
+    if let Some((idx, local_irq)) = crate::framework::arch::acpi::gsi_to_ioapic(gsi) {
         let ioapics = IOAPICS.lock();
         if let Some(ref state) = ioapics[idx] {
             let reg = IOREDTBL_BASE + u32::from(local_irq) * 2;
@@ -192,7 +192,7 @@ pub fn mask_irq_gsi(gsi: u32) {
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
 pub fn unmask_irq_gsi(gsi: u32) {
-    if let Some((idx, local_irq)) = crate::kernel::framework::arch::acpi::gsi_to_ioapic(gsi) {
+    if let Some((idx, local_irq)) = crate::framework::arch::acpi::gsi_to_ioapic(gsi) {
         let ioapics = IOAPICS.lock();
         if let Some(ref state) = ioapics[idx] {
             let reg = IOREDTBL_BASE + u32::from(local_irq) * 2;
@@ -206,7 +206,7 @@ pub fn unmask_irq_gsi(gsi: u32) {
 // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
 #[expect(clippy::cast_possible_truncation)]
 pub fn set_irq_level_gsi(gsi: u32, level_triggered: bool) {
-    if let Some((idx, local_irq)) = crate::kernel::framework::arch::acpi::gsi_to_ioapic(gsi) {
+    if let Some((idx, local_irq)) = crate::framework::arch::acpi::gsi_to_ioapic(gsi) {
         let ioapics = IOAPICS.lock();
         if let Some(ref state) = ioapics[idx] {
             let reg = IOREDTBL_BASE + u32::from(local_irq) * 2;
@@ -222,7 +222,7 @@ pub fn set_irq_level_gsi(gsi: u32, level_triggered: bool) {
 
 /// 按 GSI 路由 IRQ 到指定 CPU
 pub fn route_irq_to_cpu_gsi(gsi: u32, apic_id: u8) {
-    if let Some((idx, local_irq)) = crate::kernel::framework::arch::acpi::gsi_to_ioapic(gsi) {
+    if let Some((idx, local_irq)) = crate::framework::arch::acpi::gsi_to_ioapic(gsi) {
         let ioapics = IOAPICS.lock();
         if let Some(ref state) = ioapics[idx] {
             let reg = IOREDTBL_BASE + u32::from(local_irq) * 2;
@@ -245,7 +245,7 @@ pub fn set_irq(irq: u8, vector: u8, apic_id: u8, masked: bool) {
 /// 向后兼容: 按 IRQ 设置投递模式
 pub fn set_irq_with_mode(irq: u8, vector: u8, apic_id: u8, masked: bool, mode: u64) {
     if let Some((idx, local_irq)) =
-        crate::kernel::framework::arch::acpi::gsi_to_ioapic(u32::from(irq))
+        crate::framework::arch::acpi::gsi_to_ioapic(u32::from(irq))
     {
         set_irq_on(idx, local_irq, vector, apic_id, masked, mode);
     }

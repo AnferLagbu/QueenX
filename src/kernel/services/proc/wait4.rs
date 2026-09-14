@@ -11,7 +11,7 @@
 //! - services 层验证 pid 范围/options 合法
 //! - 进程表操作和阻塞委托给 framework 层 (TCB)
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// wait4 安全代理
 ///
@@ -54,7 +54,7 @@ pub fn wait4_syscall(pid: i32, wstatus_ptr: u64, options: i32) -> Result<usize, 
     // wstatus 指针如果为 0, 允许 (调用方不需要状态)
     // 否则由 framework 内部 check_user_ptr 验证
 
-    let ret = crate::kernel::framework::syscall::wait4::sys_wait4(pid, wstatus_ptr, options);
+    let ret = crate::framework::syscall::wait4::sys_wait4(pid, wstatus_ptr, options);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

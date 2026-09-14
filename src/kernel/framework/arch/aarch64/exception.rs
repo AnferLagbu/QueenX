@@ -462,13 +462,13 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     if syscall_num == 139 {
         // 清除 SS_ONSTACK 标记
         if let Some(pid) =
-            Some(crate::kernel::framework::proc::process_get_current_pid()).filter(|&p| p != 0)
+            Some(crate::framework::proc::process_get_current_pid()).filter(|&p| p != 0)
         {
-            crate::kernel::framework::proc::process_with_mut(pid, |proc| {
+            crate::framework::proc::process_with_mut(pid, |proc| {
                 use core::sync::atomic::Ordering;
                 let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
                 proc.sigaltstack_flags.store(
-                    flags & !crate::kernel::framework::proc::SS_ONSTACK,
+                    flags & !crate::framework::proc::SS_ONSTACK,
                     Ordering::Release,
                 );
             });
@@ -487,7 +487,7 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     // 调用通用 syscall 分发器 (syscall 模块已全局化)
     let result =
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe { crate::kernel::framework::syscall::syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5) };
+        unsafe { crate::framework::syscall::syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5) };
 
     // 返回值写入 x0
     result as u64
@@ -519,12 +519,12 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
                 Boot,
                 "TIMER IRQ (EL0) count={} ready={}",
                 el0count,
-                crate::kernel::framework::net::NET_READY
+                crate::framework::net::NET_READY
                     .load(core::sync::atomic::Ordering::Acquire)
             );
         }
 
-        crate::kernel::framework::timer::on_timer_interrupt();
+        crate::framework::timer::on_timer_interrupt();
 
         // I-50: hrtimer_run_queues 已在 on_timer_interrupt 内统一触发, 此处不再显式调用.
 
@@ -532,11 +532,11 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
         #[cfg(not(feature = "kernel_test"))]
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            crate::kernel::framework::net::poll_network();
+            crate::framework::net::poll_network();
         }
 
         // 仅当 scheduler 已初始化时触发调度
-        if crate::kernel::framework::proc::SCHEDULER_READY.load(Ordering::Acquire) {
+        if crate::framework::proc::SCHEDULER_READY.load(Ordering::Acquire) {
             // SAFETY: scheduler_tick 由框架调度器提供, 中断路径触发调度
             unsafe extern "C" {
                 fn scheduler_tick();
@@ -550,7 +550,7 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
 
     super::gic::end_of_interrupt(intid);
 
-    crate::kernel::framework::irq::do_softirq();
+    crate::framework::irq::do_softirq();
 }
 
 /// 默认同步异常处理 (EL1h)
@@ -672,22 +672,22 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
                 Boot,
                 "TIMER IRQ count={} ready={}",
                 tcount,
-                crate::kernel::framework::net::NET_READY
+                crate::framework::net::NET_READY
                     .load(core::sync::atomic::Ordering::Acquire)
             );
         }
 
-        crate::kernel::framework::timer::on_timer_interrupt();
+        crate::framework::timer::on_timer_interrupt();
 
         // 网络轮询
         #[cfg(not(feature = "kernel_test"))]
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            crate::kernel::framework::net::poll_network();
+            crate::framework::net::poll_network();
         }
 
         // 仅当 scheduler 已初始化时触发调度
-        if crate::kernel::framework::proc::SCHEDULER_READY
+        if crate::framework::proc::SCHEDULER_READY
             .load(core::sync::atomic::Ordering::Acquire)
         {
             // SAFETY: C ABI 互操作，函数签名与外部代码约定一致

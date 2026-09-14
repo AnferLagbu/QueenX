@@ -23,34 +23,34 @@
 //!
 //! 评估日期: 2026-06-04, v2.17 更新: 2026-06-12
 
-use crate::kernel::framework::proc::ProcessPriority;
-use crate::kernel::framework::proc::ProcessState;
-use crate::kernel::framework::proc::{PROCESS_TABLE, Process};
+use crate::framework::proc::ProcessPriority;
+use crate::framework::proc::ProcessState;
+use crate::framework::proc::{PROCESS_TABLE, Process};
 
 // ============================================================================
 // 强类型 re-export
 // ============================================================================
 
 /// 进程调度策略 (从 `proc::scheduler` 透传)
-pub use crate::kernel::framework::proc::SchedPolicy;
+pub use crate::framework::proc::SchedPolicy;
 
 /// 进程句柄 (新类型包装, 表示对表项的活跃引用)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ProcessHandle {
     /// 进程 PID
-    pub pid: crate::kernel::framework::proc::Pid,
+    pub pid: crate::framework::proc::Pid,
 }
 
 impl ProcessHandle {
     /// 构造新句柄
     #[inline]
-    pub const fn new(pid: crate::kernel::framework::proc::Pid) -> Self {
+    pub const fn new(pid: crate::framework::proc::Pid) -> Self {
         Self { pid }
     }
 
     /// 获取 PID
     #[inline]
-    pub const fn pid(self) -> crate::kernel::framework::proc::Pid {
+    pub const fn pid(self) -> crate::framework::proc::Pid {
         self.pid
     }
 }
@@ -74,7 +74,7 @@ pub enum TableError {
     /// 状态转换非法
     InvalidStateTransition,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl TableError {
@@ -83,8 +83,8 @@ impl TableError {
         reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"
     )]
     /// 映射为 POSIX errno
-    pub fn to_errno(self) -> crate::kernel::framework::syscall::Errno {
-        use crate::kernel::framework::syscall::Errno as E;
+    pub fn to_errno(self) -> crate::framework::syscall::Errno {
+        use crate::framework::syscall::Errno as E;
         match self {
             Self::TableFull => E::EAGAIN,              // 表满, 资源暂时不可用
             Self::RefCountUnderflow => E::EINVAL,      // 内部状态错误
@@ -94,8 +94,8 @@ impl TableError {
     }
 }
 
-impl From<crate::kernel::services::error::KernelError> for TableError {
-    fn from(e: crate::kernel::services::error::KernelError) -> Self {
+impl From<crate::services::error::KernelError> for TableError {
+    fn from(e: crate::services::error::KernelError) -> Self {
         Self::Kernel(e)
     }
 }
@@ -113,7 +113,7 @@ pub type TableResult<T> = Result<T, TableError>;
 /// # Errors
 ///
 /// 当进程表已满无法分配新 PID 时返回 `TableError::TableFull`.
-pub fn allocate_pid() -> TableResult<crate::kernel::framework::proc::Pid> {
+pub fn allocate_pid() -> TableResult<crate::framework::proc::Pid> {
     PROCESS_TABLE.allocate_pid().ok_or(TableError::TableFull)
 }
 
@@ -128,16 +128,16 @@ pub fn allocate_pid() -> TableResult<crate::kernel::framework::proc::Pid> {
 /// # Errors
 ///
 /// 当目标进程不存在时返回 `TableError`(`NoSuchProcess`).
-pub fn try_inc_ref(pid: crate::kernel::framework::proc::Pid) -> TableResult<()> {
+pub fn try_inc_ref(pid: crate::framework::proc::Pid) -> TableResult<()> {
     if PROCESS_TABLE.try_inc_ref(pid) {
         Ok(())
     } else {
-        Err(crate::kernel::services::error::KernelError::NoSuchProcess.into())
+        Err(crate::services::error::KernelError::NoSuchProcess.into())
     }
 }
 
 /// 减少引用计数, 归零时回收 PCB
-pub fn dec_ref_and_maybe_free(pid: crate::kernel::framework::proc::Pid) {
+pub fn dec_ref_and_maybe_free(pid: crate::framework::proc::Pid) {
     PROCESS_TABLE.dec_ref_and_maybe_free(pid);
 }
 
@@ -151,7 +151,7 @@ pub fn dec_ref_and_maybe_free(pid: crate::kernel::framework::proc::Pid) {
 /// ```ignore
 /// let state = with(handle.pid(), |p| p.get_state());
 /// ```
-pub fn with<F, R>(pid: crate::kernel::framework::proc::Pid, f: F) -> Option<R>
+pub fn with<F, R>(pid: crate::framework::proc::Pid, f: F) -> Option<R>
 where
     F: FnOnce(&Process) -> R,
 {
@@ -159,7 +159,7 @@ where
 }
 
 /// 在持有表锁的情况下, 对进程执行可变闭包
-pub fn with_mut<F, R>(pid: crate::kernel::framework::proc::Pid, f: F) -> Option<R>
+pub fn with_mut<F, R>(pid: crate::framework::proc::Pid, f: F) -> Option<R>
 where
     F: FnOnce(&mut Process) -> R,
 {
@@ -171,10 +171,10 @@ where
 // ============================================================================
 
 /// 获取进程状态
-pub fn get_state(pid: crate::kernel::framework::proc::Pid) -> Option<ProcessState> {
+pub fn get_state(pid: crate::framework::proc::Pid) -> Option<ProcessState> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::get_state,
+        crate::framework::proc::process::Process::get_state,
     )
 }
 
@@ -184,17 +184,17 @@ pub fn get_state(pid: crate::kernel::framework::proc::Pid) -> Option<ProcessStat
 ///
 /// - 目标进程不存在 → `TableError`(`NoSuchProcess`)
 /// - 状态转换不合法 → `TableError::InvalidStateTransition`
-pub fn set_state(pid: crate::kernel::framework::proc::Pid, state: ProcessState) -> TableResult<()> {
+pub fn set_state(pid: crate::framework::proc::Pid, state: ProcessState) -> TableResult<()> {
     with_mut(pid, |p| p.set_state_safe(state))
-        .ok_or(crate::kernel::services::error::KernelError::NoSuchProcess)?
+        .ok_or(crate::services::error::KernelError::NoSuchProcess)?
         .map_err(|_| TableError::InvalidStateTransition)
 }
 
 /// 获取进程优先级
-pub fn get_priority(pid: crate::kernel::framework::proc::Pid) -> Option<ProcessPriority> {
+pub fn get_priority(pid: crate::framework::proc::Pid) -> Option<ProcessPriority> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::get_priority,
+        crate::framework::proc::process::Process::get_priority,
     )
 }
 
@@ -208,7 +208,7 @@ pub fn get_priority(pid: crate::kernel::framework::proc::Pid) -> Option<ProcessP
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
 pub fn set_priority(
-    pid: crate::kernel::framework::proc::Pid,
+    pid: crate::framework::proc::Pid,
     priority: ProcessPriority,
 ) -> TableResult<()> {
     with_mut(pid, |p| p.set_priority(priority));
@@ -216,10 +216,10 @@ pub fn set_priority(
 }
 
 /// 是否内核进程
-pub fn is_kernel(pid: crate::kernel::framework::proc::Pid) -> Option<bool> {
+pub fn is_kernel(pid: crate::framework::proc::Pid) -> Option<bool> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::is_kernel,
+        crate::framework::proc::process::Process::is_kernel,
     )
 }
 
@@ -232,16 +232,16 @@ pub fn is_kernel(pid: crate::kernel::framework::proc::Pid) -> Option<bool> {
 /// # Errors
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_kernel(pid: crate::kernel::framework::proc::Pid, is_kernel: bool) -> TableResult<()> {
+pub fn set_kernel(pid: crate::framework::proc::Pid, is_kernel: bool) -> TableResult<()> {
     with_mut(pid, |p| p.set_kernel(is_kernel));
     Ok(())
 }
 
 /// 获取调度策略
-pub fn get_sched_policy(pid: crate::kernel::framework::proc::Pid) -> Option<SchedPolicy> {
+pub fn get_sched_policy(pid: crate::framework::proc::Pid) -> Option<SchedPolicy> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::get_sched_policy,
+        crate::framework::proc::process::Process::get_sched_policy,
     )
 }
 
@@ -255,7 +255,7 @@ pub fn get_sched_policy(pid: crate::kernel::framework::proc::Pid) -> Option<Sche
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
 pub fn set_sched_policy(
-    pid: crate::kernel::framework::proc::Pid,
+    pid: crate::framework::proc::Pid,
     policy: SchedPolicy,
 ) -> TableResult<()> {
     with_mut(pid, |p| p.set_sched_policy(policy));
@@ -263,10 +263,10 @@ pub fn set_sched_policy(
 }
 
 /// 获取 RT 优先级 (0-99)
-pub fn get_rt_priority(pid: crate::kernel::framework::proc::Pid) -> Option<u8> {
+pub fn get_rt_priority(pid: crate::framework::proc::Pid) -> Option<u8> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::get_rt_priority,
+        crate::framework::proc::process::Process::get_rt_priority,
     )
 }
 
@@ -279,16 +279,16 @@ pub fn get_rt_priority(pid: crate::kernel::framework::proc::Pid) -> Option<u8> {
 /// # Errors
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_rt_priority(pid: crate::kernel::framework::proc::Pid, priority: u8) -> TableResult<()> {
+pub fn set_rt_priority(pid: crate::framework::proc::Pid, priority: u8) -> TableResult<()> {
     with_mut(pid, |p| p.set_rt_priority(priority));
     Ok(())
 }
 
 /// 获取进程 PMM (Per-Memory Mapping) 字节数
-pub fn get_pwm(pid: crate::kernel::framework::proc::Pid) -> Option<u64> {
+pub fn get_pwm(pid: crate::framework::proc::Pid) -> Option<u64> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::get_pwm,
+        crate::framework::proc::process::Process::get_pwm,
     )
 }
 
@@ -301,7 +301,7 @@ pub fn get_pwm(pid: crate::kernel::framework::proc::Pid) -> Option<u64> {
 /// # Errors
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_pwm(pid: crate::kernel::framework::proc::Pid, pwm: u64) -> TableResult<()> {
+pub fn set_pwm(pid: crate::framework::proc::Pid, pwm: u64) -> TableResult<()> {
     with_mut(pid, |p| p.set_pwm(pwm));
     Ok(())
 }
@@ -319,16 +319,16 @@ pub fn set_pwm(pid: crate::kernel::framework::proc::Pid, pwm: u64) -> TableResul
 /// # Errors
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn signal_set(pid: crate::kernel::framework::proc::Pid, sig: u32) -> TableResult<()> {
+pub fn signal_set(pid: crate::framework::proc::Pid, sig: u32) -> TableResult<()> {
     with_mut(pid, |p| p.signal_pending_set(sig));
     Ok(())
 }
 
 /// 获取待处理信号位图
-pub fn signal_get(pid: crate::kernel::framework::proc::Pid) -> Option<u64> {
+pub fn signal_get(pid: crate::framework::proc::Pid) -> Option<u64> {
     with(
         pid,
-        crate::kernel::framework::proc::process::Process::signal_pending_get,
+        crate::framework::proc::process::Process::signal_pending_get,
     )
 }
 
@@ -341,7 +341,7 @@ pub fn signal_get(pid: crate::kernel::framework::proc::Pid) -> Option<u64> {
 /// # Errors
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn signal_clear(pid: crate::kernel::framework::proc::Pid, mask: u64) -> TableResult<()> {
+pub fn signal_clear(pid: crate::framework::proc::Pid, mask: u64) -> TableResult<()> {
     with_mut(pid, |p| p.signal_pending_clear(mask));
     Ok(())
 }
@@ -385,7 +385,7 @@ where
 /// 移除并释放进程 PCB
 ///
 /// **安全保证**: 内部引用计数归零后才真正释放内存.
-pub fn remove_and_free(pid: crate::kernel::framework::proc::Pid) {
+pub fn remove_and_free(pid: crate::framework::proc::Pid) {
     PROCESS_TABLE.remove_and_free(pid);
 }
 
@@ -394,7 +394,7 @@ pub fn remove_and_free(pid: crate::kernel::framework::proc::Pid) {
 /// # Errors
 ///
 /// 当进程表已满时返回 `TableError::TableFull`(由 `allocate_pid` 传播).
-pub fn allocate_reserved_pid() -> TableResult<crate::kernel::framework::proc::Pid> {
+pub fn allocate_reserved_pid() -> TableResult<crate::framework::proc::Pid> {
     // 启动期特殊 PID (0=kthread, 1=init) 由 thread 模块单独分配
     // 普通进程用 allocate_pid
     allocate_pid()

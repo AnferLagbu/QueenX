@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 // P1-I-28 修复: kmalloc 自旋锁在中断上下文会死锁 (同 CPU ISR 持锁 + 主线 spin)
 // 仿 pmm.rs 模式, acquire_lock 时 disable_interrupts, release_lock 时 restore.
 // 导入 framework/sync/spinlock 的 arch 无关原语, 避免直接 crate::arch!().
-use crate::kernel::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
+use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 
 /// 堆头校验魔数
 const HEAP_MAGIC: u32 = 0xDEADBEEF;
@@ -1058,16 +1058,16 @@ pub struct HeapStats {
 }
 
 // 全局 Kmalloc 实例
-static GLOBAL_KMALLOC: crate::kernel::framework::sync::IrqSpinLock<KernelHeap> =
-    crate::kernel::framework::sync::IrqSpinLock::new(KernelHeap::new());
+static GLOBAL_KMALLOC: crate::framework::sync::IrqSpinLock<KernelHeap> =
+    crate::framework::sync::IrqSpinLock::new(KernelHeap::new());
 
 /// 获取全局 Kmalloc 实例的锁 guard
-pub fn get_kmalloc() -> crate::kernel::framework::sync::IrqSpinLockGuard<'static, KernelHeap> {
+pub fn get_kmalloc() -> crate::framework::sync::IrqSpinLockGuard<'static, KernelHeap> {
     GLOBAL_KMALLOC.lock()
 }
 
 /// 获取全局 Kmalloc 实例的可变 guard (用于初始化)
-pub fn get_kmalloc_mut() -> crate::kernel::framework::sync::IrqSpinLockGuard<'static, KernelHeap> {
+pub fn get_kmalloc_mut() -> crate::framework::sync::IrqSpinLockGuard<'static, KernelHeap> {
     GLOBAL_KMALLOC.lock()
 }
 

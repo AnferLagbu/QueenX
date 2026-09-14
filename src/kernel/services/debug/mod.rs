@@ -18,7 +18,7 @@
 //! ## 使用方式
 //!
 //! ```rust,ignore
-//! use crate::kernel::services::debug;
+//! use crate::services::debug;
 //!
 //! // 启用 ftrace
 //! debug::ftrace_enable();
@@ -44,9 +44,9 @@
 //! - `kgdb_enter` 在用户态串口未注册时返回 false (而非阻塞)
 
 // Re-export 关键类型
-pub use crate::kernel::framework::debug::fnv1a_32;
-pub use crate::kernel::framework::debug::{EVENT_SIZE, FTRACE_BUF_CAP, TraceEvent};
-pub use crate::kernel::framework::debug::{KgdbRegs, KgdbSerial};
+pub use crate::framework::debug::fnv1a_32;
+pub use crate::framework::debug::{EVENT_SIZE, FTRACE_BUF_CAP, TraceEvent};
+pub use crate::framework::debug::{KgdbRegs, KgdbSerial};
 
 /// D4: eBPF 安全封装
 pub mod ebpf;
@@ -63,37 +63,37 @@ pub mod ebpf_verifier;
 
 /// 启用 ftrace 全局开关
 pub fn ftrace_enable() {
-    crate::kernel::framework::syscall::ftrace_kgdb::sys_ftrace_enable();
+    crate::framework::syscall::ftrace_kgdb::sys_ftrace_enable();
 }
 
 /// 禁用 ftrace 全局开关
 pub fn ftrace_disable() {
-    crate::kernel::framework::syscall::ftrace_kgdb::sys_ftrace_disable();
+    crate::framework::syscall::ftrace_kgdb::sys_ftrace_disable();
 }
 
 /// 查询 ftrace 启用状态
 pub fn ftrace_is_enabled() -> bool {
-    crate::kernel::framework::debug::ftrace_is_enabled()
+    crate::framework::debug::ftrace_is_enabled()
 }
 
 /// 累计事件计数
 pub fn ftrace_event_count() -> u64 {
-    crate::kernel::framework::debug::ftrace_event_count()
+    crate::framework::debug::ftrace_event_count()
 }
 
 /// 累计溢出计数
 pub fn ftrace_overflow_count() -> u64 {
-    crate::kernel::framework::debug::ftrace_overflow_count()
+    crate::framework::debug::ftrace_overflow_count()
 }
 
 /// 弹出一条事件 (None = 空)
 pub fn ftrace_read_event() -> Option<TraceEvent> {
-    crate::kernel::framework::debug::ftrace_pop_event()
+    crate::framework::debug::ftrace_pop_event()
 }
 
 /// 注册一个跟踪点 (按名称字符串)
 pub fn ftrace_register(name: &'static str) -> bool {
-    crate::kernel::framework::debug::ftrace_register_point(fnv1a_32(name.as_bytes()))
+    crate::framework::debug::ftrace_register_point(fnv1a_32(name.as_bytes()))
 }
 
 // ============================================================================
@@ -105,17 +105,17 @@ pub fn ftrace_register(name: &'static str) -> bool {
 /// - 串口未注册时: 返回 false, 不阻塞
 /// - 串口已注册时: 阻塞与外部 gdb 通信, 返回 true 表示 KGDB 已返回
 pub fn kgdb_enter() -> bool {
-    crate::kernel::framework::syscall::ftrace_kgdb::sys_kgdb_enter() == 0
+    crate::framework::syscall::ftrace_kgdb::sys_kgdb_enter() == 0
 }
 
 /// 当前是否在 KGDB 主循环中
 pub fn kgdb_is_active() -> bool {
-    crate::kernel::framework::debug::kgdb_active()
+    crate::framework::debug::kgdb_active()
 }
 
 /// 串口是否已注册到 KGDB
 pub fn kgdb_serial_ready() -> bool {
-    crate::kernel::framework::debug::kgdb_serial_ready()
+    crate::framework::debug::kgdb_serial_ready()
 }
 
 // ============================================================================
@@ -124,7 +124,7 @@ pub fn kgdb_serial_ready() -> bool {
 
 /// 初始化 debug 子系统
 pub fn debug_init() {
-    crate::kernel::framework::debug::debug_init();
+    crate::framework::debug::debug_init();
 }
 
 // ============================================================================

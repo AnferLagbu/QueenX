@@ -8,7 +8,7 @@
 //! (spinlock/rwlock/mutex FFI 层) 直接消费, 且与 C 版本布局兼容 (`#[repr(C)]`)
 //! — 属机制类型, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::sync::types::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::sync::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + 原子操作).
 
 // ============================================================================
@@ -479,5 +479,5 @@ mod tests {
 // E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试注册委托, host-test 下同样编译
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub fn register_sync_types_tests() {
-    crate::kernel::framework::tests::sync::register_sync_types_tests();
+    crate::framework::tests::sync::register_sync_types_tests();
 }

@@ -438,11 +438,11 @@ impl MassStorageDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::driver::usb::enumerate::parse_device_descriptor;
-    use crate::kernel::framework::driver::usb::usb_core::DeviceState;
-    use crate::kernel::framework::driver::usb::usb_core::EndpointDescriptor;
-    use crate::kernel::framework::driver::usb::usb_core::InterfaceDescriptor;
-    use crate::kernel::framework::driver::usb::usb_core::UsbSpeed;
+    use crate::framework::driver::usb::enumerate::parse_device_descriptor;
+    use crate::framework::driver::usb::usb_core::DeviceState;
+    use crate::framework::driver::usb::usb_core::EndpointDescriptor;
+    use crate::framework::driver::usb::usb_core::InterfaceDescriptor;
+    use crate::framework::driver::usb::usb_core::UsbSpeed;
     use alloc::vec;
 
     // ----------------- CBW Tests -----------------
@@ -629,9 +629,9 @@ mod tests {
                     interval: 0,
                 },
             ],
-            info: crate::kernel::framework::driver::framework::DeviceInfo::new(
+            info: crate::framework::driver::framework::DeviceInfo::new(
                 "test-msc",
-                crate::kernel::framework::driver::framework::DeviceType::Block,
+                crate::framework::driver::framework::DeviceType::Block,
             ),
         }
     }

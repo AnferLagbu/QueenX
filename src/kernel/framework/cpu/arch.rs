@@ -12,8 +12,8 @@
 //! - 零依赖: 不引入额外的 trait 或抽象层
 //! - 可替换: Phase 2/3 只需更新 Arch impl，此处无需改动
 
-use crate::kernel::framework::arch::Arch;
-use crate::kernel::framework::config::MAX_CPUS;
+use crate::framework::arch::Arch;
+use crate::framework::config::MAX_CPUS;
 
 /// 获取当前 CPU ID (APIC ID / `MPIDR_EL1`)。
 #[inline(always)]
@@ -22,7 +22,7 @@ use crate::kernel::framework::config::MAX_CPUS;
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn cpu_id() -> u32 {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::cpu_id()
+    <crate::framework::arch::CurrentArch as Arch>::cpu_id()
 }
 
 /// 获取高精度时间戳 (rdtsc / `CNTVCT_EL0`)。
@@ -32,7 +32,7 @@ pub fn cpu_id() -> u32 {
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn timestamp() -> u64 {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::timestamp()
+    <crate::framework::arch::CurrentArch as Arch>::timestamp()
 }
 
 /// CPU 暂停直到中断 (hlt / wfi)。
@@ -42,7 +42,7 @@ pub fn timestamp() -> u64 {
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn halt() {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::halt();
+    <crate::framework::arch::CurrentArch as Arch>::halt();
 }
 
 /// 发送核间中断到目标 CPU。
@@ -61,7 +61,7 @@ pub fn send_ipi(target_cpu: u32, vector: u8) {
         // 越界: 静默丢弃 (与原行为一致, 但显式校验避免 silently 失败)
         return;
     }
-    <crate::kernel::framework::arch::CurrentArch as Arch>::send_ipi(target_cpu, vector);
+    <crate::framework::arch::CurrentArch as Arch>::send_ipi(target_cpu, vector);
 }
 
 /// 广播核间中断到所有 CPU。
@@ -71,7 +71,7 @@ pub fn send_ipi(target_cpu: u32, vector: u8) {
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn broadcast_ipi(vector: u8) {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::broadcast_ipi(vector);
+    <crate::framework::arch::CurrentArch as Arch>::broadcast_ipi(vector);
 }
 
 /// 设置当前 CPU 的内核栈指针。
@@ -87,7 +87,7 @@ pub fn set_kernel_stack(_stack: u64) {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        crate::kernel::framework::arch::tss::tss_set_kernel_stack(_stack);
+        crate::framework::arch::tss::tss_set_kernel_stack(_stack);
     }
     #[cfg(not(target_arch = "x86_64"))]
     {

@@ -37,8 +37,8 @@ pub use fd_table::{
     write_u32_to_memory,
 };
 
-use crate::kernel::services::wasm::interpreter::Interpreter;
-use crate::kernel::services::wasm::types::WasmError;
+use crate::services::wasm::interpreter::Interpreter;
+use crate::services::wasm::types::WasmError;
 use alloc::string::String;
 use alloc::vec::Vec;
 

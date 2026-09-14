@@ -6,9 +6,9 @@
 //! 从 framework/fs/procfs/procfs.rs 迁移而来, 0 unsafe, 纯策略.
 //! framework 层转为 re-export 层.
 
-use crate::kernel::framework::mm::api as pmm_api;
-use crate::kernel::framework::mm::api::{SlabCacheInfo, slab_get_cache_infos, slab_get_stats};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::mm::api as pmm_api;
+use crate::framework::mm::api::{SlabCacheInfo, slab_get_cache_infos, slab_get_stats};
+use crate::framework::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 pub const PROCFS_MAX_ENTRIES: usize = 32;
@@ -162,7 +162,7 @@ impl ProcfsData {
                 *pos += len;
             };
 
-            let cpu_info = crate::kernel::framework::cpu::get_cpu_info();
+            let cpu_info = crate::framework::cpu::get_cpu_info();
             match cpu_info {
                 Some(info) => {
                     write_str(buf, &mut pos, "processor\t: 0\n");
@@ -374,7 +374,7 @@ impl ProcfsData {
                 &mut pos,
                 "intr 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n",
             );
-            let ticks = crate::kernel::framework::tick_query::current_tick();
+            let ticks = crate::framework::tick_query::current_tick();
             write_str(buf, &mut pos, "ctxt 0\n");
             write_str(buf, &mut pos, "btime 0\n");
             write_str(buf, &mut pos, "processes 0\n");
@@ -416,14 +416,14 @@ impl ProcfsData {
 
             for info in infos.iter().take(count) {
                 let objperslab = if info.object_size > 0 {
-                    (crate::kernel::framework::mm::PAGE_SIZE as usize / info.object_size as usize)
+                    (crate::framework::mm::PAGE_SIZE as usize / info.object_size as usize)
                         as u32
                 } else {
                     0
                 };
                 // pagesperslab: 每个 slab 占用的页数, 由 slab 配置决定
-                let pagesperslab = (crate::kernel::services::config::slab::SLAB_DEFAULT_SIZE
-                    / crate::kernel::framework::mm::PAGE_SIZE as usize)
+                let pagesperslab = (crate::services::config::slab::SLAB_DEFAULT_SIZE
+                    / crate::framework::mm::PAGE_SIZE as usize)
                     as u32;
                 write_str(
                     buf,
@@ -454,10 +454,10 @@ impl ProcfsData {
                 *pos += len;
             };
 
-            let (d_hits, d_lookups) = crate::kernel::services::fs::dcache::dcache_hit_rate();
-            let (i_hits, i_lookups) = crate::kernel::services::fs::dcache::icache_hit_rate();
-            let d_count = crate::kernel::services::fs::dcache::dcache_count();
-            let i_count = crate::kernel::services::fs::dcache::icache_count();
+            let (d_hits, d_lookups) = crate::services::fs::dcache::dcache_hit_rate();
+            let (i_hits, i_lookups) = crate::services::fs::dcache::icache_hit_rate();
+            let d_count = crate::services::fs::dcache::dcache_count();
+            let i_count = crate::services::fs::dcache::icache_count();
 
             write_str(buf, &mut pos, "dcache_lookups: ");
             write_str(buf, &mut pos, &alloc::format!("{d_lookups}\n"));
@@ -487,7 +487,7 @@ impl ProcfsData {
             };
 
             // 获取 NestFS 池统计
-            let nestfs = crate::kernel::services::fs::nestfs::nestfs::get_nestfs();
+            let nestfs = crate::services::fs::nestfs::nestfs::get_nestfs();
             let (allocs, frees, reads, writes) = nestfs.get_stats();
 
             write_str(buf, &mut pos, "allocs: ");
@@ -574,7 +574,7 @@ impl ProcfsData {
                 *pos += len;
             };
 
-            let cpu_info = crate::kernel::framework::cpu::get_cpu_info();
+            let cpu_info = crate::framework::cpu::get_cpu_info();
             if let Some(info) = cpu_info {
                 write_str(buf, &mut pos, "CPU: ");
                 write_str(buf, &mut pos, info.brand_name());
@@ -653,23 +653,23 @@ impl ProcfsData {
         }
 
         if name == "sys/config" {
-            return crate::kernel::services::config::procfs::read_sys_config(buf) as i32;
+            return crate::services::config::procfs::read_sys_config(buf) as i32;
         }
 
         if name == "sys/config.json" {
-            return crate::kernel::services::config::procfs::read_sys_config_json(buf) as i32;
+            return crate::services::config::procfs::read_sys_config_json(buf) as i32;
         }
 
         // TD-09 V2: /proc/sys/klog/sinks — 运行时 sink 列表
         if name == "sys/klog/sinks" {
-            return crate::kernel::services::klog::render_text(buf) as i32;
+            return crate::services::klog::render_text(buf) as i32;
         }
         if name == "sys/klog/sinks.json" {
-            return crate::kernel::services::klog::render_json(buf) as i32;
+            return crate::services::klog::render_json(buf) as i32;
         }
 
         // 未知 entry → ENOENT (VFS 边界约定, 不要返回裸 -1)
-        crate::kernel::framework::fs::KernelError::FileNotFound.as_i32()
+        crate::framework::fs::KernelError::FileNotFound.as_i32()
     }
 
     pub fn readdir(&self, index: usize) -> Option<([u8; 32], u32, u8)> {
@@ -704,7 +704,7 @@ impl ProcfsData {
     )]
     /// 读取进程状态 /proc/[pid]/status
     fn read_process_status(&self, pid: u32, buf: &mut [u8]) -> i32 {
-        use crate::kernel::framework::proc::api::process_with;
+        use crate::framework::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
             let mut pos = 0usize;
@@ -770,7 +770,7 @@ impl ProcfsData {
     )]
     /// 读取进程命令行 /proc/[pid]/cmdline
     fn read_process_cmdline(&self, pid: u32, buf: &mut [u8]) -> i32 {
-        use crate::kernel::framework::proc::api::process_with;
+        use crate::framework::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
             let name_guard = proc.name.lock();
@@ -794,7 +794,7 @@ impl ProcfsData {
     )]
     /// 读取进程文件描述符 /proc/[pid]/fd
     fn read_process_fd(&self, pid: u32, buf: &mut [u8]) -> i32 {
-        use crate::kernel::framework::proc::api::process_with;
+        use crate::framework::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
             let fds = proc.fd_table.get_all_fds();
@@ -839,7 +839,7 @@ impl ProcfsData {
     )]
     /// 读取进程统计 /proc/[pid]/stat
     fn read_process_stat(&self, pid: u32, buf: &mut [u8]) -> i32 {
-        use crate::kernel::framework::proc::api::process_with;
+        use crate::framework::proc::api::process_with;
 
         let result = process_with(pid, |proc| {
             let name_guard = proc.name.lock();
@@ -865,7 +865,7 @@ impl ProcfsData {
             let utime = proc.user_time.load(core::sync::atomic::Ordering::SeqCst);
             let stime = proc.sys_time.load(core::sync::atomic::Ordering::SeqCst);
             // 使用 create_time 作为进程启动时间 (ticks)
-            let start = crate::kernel::framework::proc::api::proc_get_create_time(pid);
+            let start = crate::framework::proc::api::proc_get_create_time(pid);
             let vsize = 0u64; // 暂时返回 0
             let _rss = 0u64; // 暂时返回 0
 

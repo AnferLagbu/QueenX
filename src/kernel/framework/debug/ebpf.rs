@@ -35,7 +35,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // 常量
@@ -576,13 +576,13 @@ impl BpfHelper {
                 }
             }
             helper_id::GET_SMP_PROCESSOR => {
-                u64::from(crate::kernel::framework::cpu::arch::cpu_id())
+                u64::from(crate::framework::cpu::arch::cpu_id())
             }
             helper_id::TRACE_PRINTK => {
                 // r1 = fmt 指针, r2 = fmt 长度, r3 = arg1
                 // 简化: 仅记录到 ftrace
-                crate::kernel::framework::debug::ftrace::record_named(
-                    crate::kernel::framework::debug::ftrace::fnv1a_32(b"bpf_trace"),
+                crate::framework::debug::ftrace::record_named(
+                    crate::framework::debug::ftrace::fnv1a_32(b"bpf_trace"),
                     r3,
                     0,
                     0,

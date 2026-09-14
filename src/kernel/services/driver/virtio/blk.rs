@@ -3,7 +3,7 @@
 //!
 //! `VirtIO` 块设备驱动 — services 层 (Phase 2.1.3)
 //!
-//! 通过 [`crate::kernel::framework::driver::virtio::VirtioMmioDevice`] (framework
+//! 通过 [`crate::framework::driver::virtio::VirtioMmioDevice`] (framework
 //! transport 机制) 提供 100% safe 的块设备初始化与配置路径。
 //! `VirtQueue` 操作通过 framework 层安全 API 完成。
 //!
@@ -21,8 +21,8 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.3 任务: VirtIO-blk 块设备迁移
 
-use crate::kernel::framework::driver::virtio::queue::{DmaBuffer, VirtQueue};
-use crate::kernel::framework::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_BLOCK, VirtioMmioDevice};
+use crate::framework::driver::virtio::queue::{DmaBuffer, VirtQueue};
+use crate::framework::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_BLOCK, VirtioMmioDevice};
 use crate::slog_info;
 use crate::slog_warn;
 
@@ -562,7 +562,7 @@ pub struct BlkGeometry {
 // BlockDevice trait 实现 (§6.4 直接方案 B: services 权威注册)
 // ============================================================================
 
-impl crate::kernel::framework::chitin::BlockDevice for VirtioBlkDriver {
+impl crate::framework::chitin::BlockDevice for VirtioBlkDriver {
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
         match self.read_sector(sector, buf) {
             Ok(()) => 0,

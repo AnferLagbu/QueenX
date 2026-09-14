@@ -9,4 +9,4 @@
 //! seccomp_check 被 framework syscall 分发消费。glob re-export 保持
 //! services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::seccomp::*;
+pub use crate::framework::proc::seccomp::*;

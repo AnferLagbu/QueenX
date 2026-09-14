@@ -5,7 +5,7 @@ use super::types::{
     DIRECT_MAP_SIZE, DomainState, MAX_RECOVERY_DOMAINS, MAX_ROLLBACK_LOG, RollbackEvent,
 };
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 pub static ROLLBACK_LOG: IrqSpinLock<[Option<RollbackEvent>; MAX_ROLLBACK_LOG]> =
     IrqSpinLock::new([None; MAX_ROLLBACK_LOG]);
 static ROLLBACK_LOG_IDX: AtomicU32 = AtomicU32::new(0);
@@ -147,7 +147,7 @@ impl RecoveryManager {
                             "[BARRIER] domain {} persistent failures ({failures}), escalating to BSR",
                             dom.id
                         );
-                        crate::kernel::framework::barrier::NEED_BSR_ESCALATION
+                        crate::framework::barrier::NEED_BSR_ESCALATION
                             .store(true, Ordering::SeqCst);
                         return;
                     }

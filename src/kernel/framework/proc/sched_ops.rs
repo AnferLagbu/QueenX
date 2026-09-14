@@ -104,37 +104,37 @@ pub extern "C" fn scheduler_init() {
     // 注册 tick 查询回调, 解耦 barrier→proc::scheduler 依赖
     // SAFETY: get_tick 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
-        crate::kernel::framework::tick_query::register_tick_query(
-            crate::kernel::framework::proc::get_tick,
+        crate::framework::tick_query::register_tick_query(
+            crate::framework::proc::get_tick,
         );
     }
     // D2: 初始化 cgroup 子系统
     super::cgroup::cgroup_init();
     // D3: 初始化 NUMA 拓扑 (UMA 回退, 后续接入 ACPI SRAT)
-    crate::kernel::framework::mm::numa_init(
-        crate::kernel::framework::mm::pmm_get_total_pages()
-            * crate::kernel::framework::mm::PAGE_SIZE,
-        crate::kernel::framework::config::MAX_CPUS as u32,
+    crate::framework::mm::numa_init(
+        crate::framework::mm::pmm_get_total_pages()
+            * crate::framework::mm::PAGE_SIZE,
+        crate::framework::config::MAX_CPUS as u32,
     );
     // D4/T4-3 (eBPF init + 标准验证器注册) 已反转至 services::debug::ebpf::init
     // 注册契约 (第二十五批): framework proc 不再反向调用 services verifier,
     // 由 lib.rs kernel_init 统一接入.
     // D5: 初始化电源管理子系统
-    crate::kernel::framework::driver::pm_init(crate::kernel::framework::config::MAX_CPUS as u32);
+    crate::framework::driver::pm_init(crate::framework::config::MAX_CPUS as u32);
     // D6: 初始化安全启动 + TPM (移至 credo_init, 消除 proc→credo 依赖)
-    crate::kernel::framework::credo::credo_init();
+    crate::framework::credo::credo_init();
     // D7: 初始化 CET (Shadow Stack)
-    crate::kernel::framework::arch::cet_init();
+    crate::framework::arch::cet_init();
     // D8: 初始化 Tickless (NO_HZ)
-    crate::kernel::framework::timer::tickless_init(
-        crate::kernel::framework::config::MAX_CPUS as u32,
+    crate::framework::timer::tickless_init(
+        crate::framework::config::MAX_CPUS as u32,
     );
     // D9: 初始化 NTP/PTP 时钟同步
-    crate::kernel::framework::timer::timesync_init();
+    crate::framework::timer::timesync_init();
     // D10: 初始化 kexec
-    crate::kernel::framework::driver::kexec_init();
+    crate::framework::driver::kexec_init();
     // D11: 初始化 UEFI (0 = 无 UEFI 固件, 实际由 bootloader 传入)
-    crate::kernel::framework::driver::uefi_init(0);
+    crate::framework::driver::uefi_init(0);
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

@@ -56,8 +56,8 @@ macro_rules! lockdep_log {
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use crate::kernel::framework::constants::limits::{MAX_HELD_LOCKS, MAX_LOCK_CLASSES};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::constants::limits::{MAX_HELD_LOCKS, MAX_LOCK_CLASSES};
+use crate::framework::sync::IrqSpinLock;
 
 /// 邻接矩阵中 "已验证无环" 的标记位 (避免重复 BFS)
 const DEPENDENCY_VERIFIED: u8 = 1;

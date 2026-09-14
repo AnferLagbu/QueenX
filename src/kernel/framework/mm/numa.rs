@@ -7,10 +7,10 @@
 //! framework proc/process 机制持有、`numa_init` 被 framework mm 机制调用 —
 //! 属机制项, 迁回。依赖闭包全在 framework 内 (mm::PAGE_SIZE + sync::IrqSpinLock)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::mm::numa::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::mm::numa::*` 保持 API 兼容。
 
-use crate::kernel::framework::mm::PAGE_SIZE;
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::mm::PAGE_SIZE;
+use crate::framework::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use alloc::sync::Arc;
@@ -226,7 +226,7 @@ impl NumaTopology {
             num_cpus,
             total_memory / (1024 * 1024)
         );
-        crate::kernel::framework::klog::serial_write_bytes(msg.as_bytes());
+        crate::framework::klog::serial_write_bytes(msg.as_bytes());
     }
 
     /// 添加 NUMA 节点 (用于 ACPI SRAT 解析)
@@ -359,8 +359,8 @@ pub fn numa_is_initialized() -> bool {
 
 /// `sys_get_mempolicy` — 获取当前 NUMA 内存策略
 pub fn sys_get_mempolicy(_mode_ptr: u64, _nodemask_ptr: u64) -> i64 {
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
-    let result = crate::kernel::framework::proc::PROCESS_TABLE.with_process(pid, |p| {
+    let pid = crate::framework::proc::process_get_current_pid();
+    let result = crate::framework::proc::PROCESS_TABLE.with_process(pid, |p| {
         let policy = p.numa_policy.lock();
         let mode = *policy.mode.lock() as u8;
         let mask = *policy.nodemask.lock();
@@ -384,8 +384,8 @@ pub fn sys_set_mempolicy(mode: u64, nodemask: u64) -> i64 {
         return -(22i64);
     }
 
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
-    let result = crate::kernel::framework::proc::PROCESS_TABLE.with_process(pid, |p| {
+    let pid = crate::framework::proc::process_get_current_pid();
+    let result = crate::framework::proc::PROCESS_TABLE.with_process(pid, |p| {
         let policy = p.numa_policy.lock();
         *policy.mode.lock() = policy_mode;
         *policy.nodemask.lock() = nodemask;
@@ -404,7 +404,7 @@ pub fn sys_migrate_pages(_target_nodemask: u64) -> i64 {
 
 /// `sys_getcpu` — 获取当前 CPU 和 NUMA 节点
 pub fn sys_getcpu() -> i64 {
-    let cpu = crate::kernel::framework::cpu::arch::cpu_id();
+    let cpu = crate::framework::cpu::arch::cpu_id();
     let node = if numa_is_initialized() {
         numa_topology().cpu_to_node(cpu)
     } else {

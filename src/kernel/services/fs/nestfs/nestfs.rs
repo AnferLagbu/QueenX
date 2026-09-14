@@ -3,7 +3,7 @@
 //!
 //! 热插拔监听 + 公共类型重导出.
 
-use crate::kernel::framework::driver::hotplug::{HotplugEvent, HotplugListener};
+use crate::framework::driver::hotplug::{HotplugEvent, HotplugListener};
 use alloc::boxed::Box;
 
 // 公共类型重导出 (必须在 HotplugListener 之前, 因为热插拔代码使用 get_nestfs)
@@ -42,6 +42,6 @@ impl HotplugListener for NestfsHotplugListener {
 
 /// 注册 `NestFS` 热插拔监听器到全局热插拔管理器
 pub fn nestfs_hotplug_register() {
-    use crate::kernel::framework::driver::hotplug::HOTPLUG_MANAGER;
+    use crate::framework::driver::hotplug::HOTPLUG_MANAGER;
     HOTPLUG_MANAGER.register_listener(Box::new(NestfsHotplugListener));
 }

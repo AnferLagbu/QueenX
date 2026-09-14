@@ -38,10 +38,10 @@
 //! - `epoll_pwake` 在文件 I/O 路径 (write/close) 调用, 持锁时不可睡眠
 //! - 阻塞在 `epoll_wait` 中调用 `SCHEDULER.yield_to_wait`, 无需额外锁保护
 
-use crate::kernel::framework::fs::vfs_poll_trait::{VfsPollContext, current_vfs_poll_policy};
-use crate::kernel::framework::ipc::{WaitQueue, WaitQueueItem};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::fs::vfs_poll_trait::{VfsPollContext, current_vfs_poll_policy};
+use crate::framework::ipc::{WaitQueue, WaitQueueItem};
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::syscall::Errno;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -309,7 +309,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
     if ready_events.is_empty() && timeout != 0 {
         // 完整实现: 挂入 epfd 等待队列, 调度让出
         // epoll_pwake 会在 fd 状态变化时唤醒
-        let current_pid = crate::kernel::framework::proc::process_get_current_pid();
+        let current_pid = crate::framework::proc::process_get_current_pid();
 
         if current_pid != 0 && timeout == -1 {
             // 1. 挂入 wait_queue (持锁, 避免与 epoll_pwake 竞态)
@@ -320,7 +320,7 @@ pub fn sys_epoll_wait(epfd: i64, events: *mut EpollEvent, maxevents: i32, timeou
             drop(instances);
 
             // 3. 阻塞当前线程 + 触发调度
-            crate::kernel::framework::proc::process_block(current_pid);
+            crate::framework::proc::process_block(current_pid);
 
             // 4. 被唤醒: 重新加锁扫描
             let instances = EPOLL_INSTANCES.lock();
@@ -402,7 +402,7 @@ pub fn epoll_pwake(fd: i32) {
 
         // 机制: 唤醒 wait_queue 中的所有等待者
         while let Some(item) = instances[i].wait_queue.wake_one() {
-            crate::kernel::framework::proc::scheduler_unblock(item.pid);
+            crate::framework::proc::scheduler_unblock(item.pid);
         }
     }
 }
@@ -481,26 +481,26 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
 /// 与 user 事件掩码做 AND 运算, 只报告 user 关心的位.
 fn check_fd_ready(fd: i32, events: u32) -> u32 {
     // 1. eventfd 空间 [200, 216)
-    if crate::kernel::framework::syscall::eventfd::is_eventfd_fd(fd) {
-        let raw = crate::kernel::framework::syscall::eventfd::eventfd_poll_events(fd);
+    if crate::framework::syscall::eventfd::is_eventfd_fd(fd) {
+        let raw = crate::framework::syscall::eventfd::eventfd_poll_events(fd);
         return raw & events;
     }
 
     // 2. signalfd 空间 [220, 236)
-    if crate::kernel::framework::syscall::signalfd::is_signalfd_fd(fd) {
-        let raw = crate::kernel::framework::syscall::signalfd::signalfd_poll_events(fd);
+    if crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
+        let raw = crate::framework::syscall::signalfd::signalfd_poll_events(fd);
         return raw & events;
     }
 
     // 3. timerfd 空间 [240, 256)
-    if crate::kernel::framework::syscall::timerfd::is_timerfd_fd(fd) {
-        let raw = crate::kernel::framework::syscall::timerfd::timerfd_poll_events(fd);
+    if crate::framework::syscall::timerfd::is_timerfd_fd(fd) {
+        let raw = crate::framework::syscall::timerfd::timerfd_poll_events(fd);
         return raw & events;
     }
 
     // 4. VFS fd 空间 — REVAL-6.1: 委托给 VfsPollPolicy
-    use crate::kernel::framework::fs::VFS_MANAGER;
-    use crate::kernel::framework::fs::VfsFileType;
+    use crate::framework::fs::VFS_MANAGER;
+    use crate::framework::fs::VfsFileType;
 
     // 查询 VFS 真实状态
     let (valid, file_type) = {
@@ -542,8 +542,8 @@ pub fn epoll_destroy(epfd: u64) {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_epoll_create() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_epoll_create() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     let fd = sys_epoll_create(1);
     check!(fd > 0, "epoll_create returns positive fd");
@@ -555,8 +555,8 @@ fn test_epoll_create() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_epoll_ctl_add_del() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_epoll_ctl_add_del() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     let epfd = sys_epoll_create(4);
     check!(epfd > 0, "epoll_create ok");
@@ -581,7 +581,7 @@ fn test_epoll_ctl_add_del() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_epoll_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("epoll", "create", test_epoll_create);
     r.register("epoll", "ctl_add_del", test_epoll_ctl_add_del);

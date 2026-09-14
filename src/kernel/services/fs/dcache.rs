@@ -8,4 +8,4 @@
 
 #![deny(unsafe_code)]
 
-pub use crate::kernel::framework::fs::vfs::dcache::*;
+pub use crate::framework::fs::vfs::dcache::*;

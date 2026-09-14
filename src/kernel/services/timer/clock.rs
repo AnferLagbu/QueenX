@@ -5,7 +5,7 @@
 //! 集中 `clock_gettime` / `gettimeofday`, 消除此前分散在 fs/file_ops 与
 //! proc/info 的职责错位.
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// POSIX 时钟 ID
 const CLOCK_REALTIME: i32 = 0;
@@ -39,13 +39,13 @@ pub fn clock_gettime_syscall(clk_id: i32, tp_ptr: u64) -> i64 {
         tv_nsec: i64,
     }
 
-    let ticks = crate::kernel::framework::syscall::api::get_ticks();
+    let ticks = crate::framework::syscall::api::get_ticks();
     let t = Timespec {
         tv_sec: (ticks / 1000) as i64,
         tv_nsec: ((ticks % 1000) * 1000000) as i64,
     };
 
-    if !crate::kernel::framework::syscall::api::write_struct_to_user(tp_ptr, &t) {
+    if !crate::framework::syscall::api::write_struct_to_user(tp_ptr, &t) {
         return Errno::EFAULT.as_ret();
     }
     0
@@ -62,7 +62,7 @@ pub fn gettimeofday_syscall(tv: u64) -> Result<usize, Errno> {
     if tv == 0 {
         return Err(Errno::EFAULT);
     }
-    let ret = crate::kernel::framework::syscall::info::sys_gettimeofday(tv);
+    let ret = crate::framework::syscall::info::sys_gettimeofday(tv);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

@@ -7,10 +7,10 @@
 //! - 0 unsafe, 纯类型安全
 //! - 委托 `framework/fs/vfs::api` 完成真实现 (ramfs.link / ramfs.symlink / ramfs.readlink)
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::fs::api as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::credo;
+use crate::framework::fs::api as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // link

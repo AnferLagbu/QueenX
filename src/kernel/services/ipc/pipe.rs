@@ -4,8 +4,8 @@
 //! 纯策略逻辑: 槽位查找、环形缓冲区读写、fd 管理、读者/写者计数.
 //! 自旋锁操作通过 `framework::sync::IrqSpinLock` 机制完成.
 
-use crate::kernel::framework::ipc::types::{IPC_MAX_PIPES, IpcId, IpcNamespace, PIPE_BUFFER_SIZE};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::ipc::types::{IPC_MAX_PIPES, IpcId, IpcNamespace, PIPE_BUFFER_SIZE};
+use crate::framework::sync::IrqSpinLock;
 
 /// 管道全局自旋锁 (framework 机制, 短临界区)
 static PIPE_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
@@ -31,7 +31,7 @@ pub fn pipe_find_by_fd_index(namespace: &IpcNamespace, fd: i32) -> Option<usize>
 
 /// 判断 fd 是否为 pipe fd (公开接口, 供 sendfile/splice 使用)
 pub fn is_pipe_fd(fd: i32) -> bool {
-    let ns = crate::kernel::framework::ipc::IPC_NAMESPACE.get_mut();
+    let ns = crate::framework::ipc::IPC_NAMESPACE.get_mut();
     pipe_find_by_fd_index(ns, fd).is_some()
 }
 

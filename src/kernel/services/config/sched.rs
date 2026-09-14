@@ -16,7 +16,7 @@
 //! 纯 re-export 保持 services 侧 API 兼容 (services→framework 合法方向),
 //! cfs 依赖收敛单向。
 
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     CFS_BOOST_INTERVAL, CFS_DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD, CFS_DL_MIN_RUNTIME,
     CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, SCHED_BOOST_INTERVAL,
     SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM, SCHED_LEVEL_3_QUANTUM,

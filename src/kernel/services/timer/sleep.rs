@@ -10,7 +10,7 @@
 //! - services 层验证标量参数 (Timespec 字段合法性)
 //! - 原始指针解引用委托给 framework 层 (指针合法性由 syscall 入口保证)
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// nanosleep 安全代理
 ///
@@ -23,7 +23,7 @@ use crate::kernel::framework::syscall::Errno;
 pub fn nanosleep_syscall(req: u64, rem: u64) -> Result<usize, Errno> {
     // req 指针为空由 framework 层检查 (需要 unsafe 解引用)
     // services 层仅验证已解析的标量参数
-    let ret = crate::kernel::framework::syscall::api::sys_nanosleep(req, rem);
+    let ret = crate::framework::syscall::api::sys_nanosleep(req, rem);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

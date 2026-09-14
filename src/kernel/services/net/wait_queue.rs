@@ -10,4 +10,4 @@
 //! 子模块 (`pub mod wait_queue`), 可直接 glob re-export, 保持 services 侧
 //! API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::net::wait_queue::*;
+pub use crate::framework::net::wait_queue::*;

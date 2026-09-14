@@ -20,7 +20,7 @@
 //! ```
 
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::idt::InterruptFrame;
+use crate::framework::idt::InterruptFrame;
 
 /// Timer IRQ0 中断处理程序 (仅 `x86_64`)
 /// aarch64 定时器中断由 exception.rs 的 `irq_handler_el1` 处理
@@ -30,7 +30,7 @@ use crate::kernel::framework::idt::InterruptFrame;
 pub extern "C" fn timer_irq0_handler(_frame: *mut InterruptFrame) {
     // I-50: hrtimer_run_queues 已在 on_timer_interrupt 内统一触发 (tick.rs),
     // 此处不再显式调用, 避免重复处理 (hrtimer 自身有去重, 但统一入口更清晰).
-    crate::kernel::framework::timer::on_timer_interrupt();
+    crate::framework::timer::on_timer_interrupt();
 
     #[cfg(not(feature = "kernel_test"))]
     {
@@ -39,14 +39,14 @@ pub extern "C" fn timer_irq0_handler(_frame: *mut InterruptFrame) {
             // smoltcp: 始终轮询
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                crate::kernel::framework::net::poll_network();
+                crate::framework::net::poll_network();
             }
         }
     }
 
     // 5. 触发调度器 tick (统一入口: 进程调度器负责线程记账 + 调度决策)
     // ✅ 安全检查: 仅当调度器已初始化时才触发 tick (与 ARM 版本一致, 避免竞态崩溃)
-    if crate::kernel::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire) {
+    if crate::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire) {
         // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
         unsafe extern "C" {
             fn scheduler_tick();
@@ -65,7 +65,7 @@ pub extern "C" fn timer_irq0_handler(_frame: *mut InterruptFrame) {
 /// `IdtManager::register_irq` 提供 (如向量槽位冲突等).
 #[cfg(target_arch = "x86_64")]
 pub fn register_timer_irq() -> Result<(), &'static str> {
-    use crate::kernel::framework::idt::IdtManager;
+    use crate::framework::idt::IdtManager;
 
     let manager = IdtManager::instance();
 
@@ -117,7 +117,7 @@ mod tests {
 
 #[cfg(all(feature = "kernel_test", target_arch = "x86_64"))]
 pub fn register_timer_irq_tests() {
-    use crate::kernel::framework::tests::{TestFn, TestResult, runner};
+    use crate::framework::tests::{TestFn, TestResult, runner};
 
     fn timer_irq0_handler_signature() -> TestResult {
         // J-01 (2026-09-08): used_underscore_binding 清理 — 类型注解断言函数签名

@@ -1,7 +1,7 @@
 use super::assert_eq_test;
 use super::check;
-use crate::kernel::framework::proc::types::{ProcessId, ProcessState, ThreadId};
-use crate::kernel::framework::tests::{TestResult, runner};
+use crate::framework::proc::types::{ProcessId, ProcessState, ThreadId};
+use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
 fn test_process_state_from_u8() -> TestResult {
@@ -149,7 +149,7 @@ fn test_process_state_lifecycle() -> TestResult {
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 fn test_stack_canary() -> TestResult {
-    use crate::kernel::framework::proc::KERNEL_STACK_CANARY;
+    use crate::framework::proc::KERNEL_STACK_CANARY;
     check!(
         KERNEL_STACK_CANARY == 0xDEADBEEF_CAFEBABE,
         "canary value mismatch"

@@ -203,11 +203,11 @@ pub fn init_all() {
     // NestFS 热插拔监听器注册已反转至 services::fs::init (DECISION-K 项 6:
     // 注册点前置, framework driver 不再反向调用 services nestfs)
 
-    let _ = crate::kernel::framework::chitin::devtree_probe_composites();
+    let _ = crate::framework::chitin::devtree_probe_composites();
 
     // 注册 Block softirq 处理程序
-    crate::kernel::framework::irq::open_softirq(
-        crate::kernel::framework::irq::SoftirqVec::Block,
+    crate::framework::irq::open_softirq(
+        crate::framework::irq::SoftirqVec::Block,
         block_softirq_handler,
     );
 }
@@ -222,7 +222,7 @@ fn block_softirq_handler() {
 ///
 /// 通过 Chitin 框架统一关闭所有注册的设备。
 pub fn shutdown_all() {
-    crate::kernel::framework::chitin::chitin_shutdown_all();
+    crate::framework::chitin::chitin_shutdown_all();
 }
 
 /// 获取系统已检测到的设备列表 (从 Chitin + BlockDevice 读取)
@@ -233,7 +233,7 @@ pub fn list_devices() -> alloc::string::String {
     use alloc::format;
     let mut info = alloc::string::String::from("=== Chitin Device Registry ===\n\n");
 
-    let chitin_devs = crate::kernel::framework::chitin::chitin_list();
+    let chitin_devs = crate::framework::chitin::chitin_list();
     if chitin_devs.is_empty() {
         info.push_str("  (no devices)\n");
     } else {
@@ -247,10 +247,10 @@ pub fn list_devices() -> alloc::string::String {
             let st = format!("{:?}", state);
             let line = format!("  [id={}] {} proto={:?} state={}", id, name, proto, st);
             match proto {
-                crate::kernel::framework::chitin::ChitinProto::Block => block.push(line),
-                crate::kernel::framework::chitin::ChitinProto::Input => input.push(line),
-                crate::kernel::framework::chitin::ChitinProto::Net => net.push(line),
-                crate::kernel::framework::chitin::ChitinProto::Char => char_dev.push(line),
+                crate::framework::chitin::ChitinProto::Block => block.push(line),
+                crate::framework::chitin::ChitinProto::Input => input.push(line),
+                crate::framework::chitin::ChitinProto::Net => net.push(line),
+                crate::framework::chitin::ChitinProto::Char => char_dev.push(line),
                 _ => other.push(line),
             }
         }
@@ -339,7 +339,7 @@ pub extern "C" fn driver_shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::driver::input::KeyboardDriver;
+    use crate::framework::driver::input::KeyboardDriver;
     use alloc::vec;
     use alloc::vec::Vec;
 

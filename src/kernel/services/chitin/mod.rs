@@ -21,7 +21,7 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::framework::chitin;
+use crate::framework::chitin;
 
 pub mod composite;
 pub mod devtree;
@@ -49,7 +49,7 @@ pub enum ChitinError {
     /// 设备类型不匹配
     WrongType,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl ChitinError {
@@ -63,7 +63,7 @@ impl ChitinError {
     }
 
     pub fn from_i32(rc: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match rc {
             -2 => Self::Kernel(K::FileNotFound),
             -17 => Self::Kernel(K::AlreadyExists),
@@ -82,7 +82,7 @@ impl ChitinError {
 /// services 层结果类型别名
 pub type ChitinResult<T> = Result<T, ChitinError>;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 设备 ID
@@ -209,7 +209,7 @@ pub fn register(name: &str, proto: Proto, driver_data: *mut u8) -> ChitinResult<
     let id = chitin::chitin_register(leaked, chitin_proto, None, None, driver_data);
     if id == u32::MAX {
         Err(ChitinError::Kernel(
-            crate::kernel::services::error::KernelError::WouldBlock,
+            crate::services::error::KernelError::WouldBlock,
         ))
     } else {
         Ok(DeviceId(id))
@@ -272,7 +272,7 @@ pub fn count_by_proto(proto: Proto) -> usize {
 
 /// 查找网络设备 (返回 (`NetOps`, `driver_data`, mac))
 pub fn find_net_device() -> Option<(
-    &'static crate::kernel::framework::chitin::proto_net::NetOps,
+    &'static crate::framework::chitin::proto_net::NetOps,
     *mut u8,
     [u8; 6],
 )> {

@@ -1,17 +1,17 @@
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::driver::Driver;
+use crate::framework::driver::Driver;
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::driver::keyboard::{
+use crate::framework::driver::keyboard::{
     KB_LED_CAPS_LOCK, KB_LED_NUM_LOCK, KeyboardBuffer, KeyboardDriver, ModifierState,
     SCANCODE_TABLE, SHIFT_TABLE, SpecialKey, get_special_key,
 };
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::driver::{
+use crate::framework::driver::{
     ATA_PRIMARY_CTRL, ATA_PRIMARY_IO, ATA_SECONDARY_CTRL, ATA_SECONDARY_IO, AtaController,
     AtaDevice, MAX_ATA_DEVICES, WORDS_PER_SECTOR, get_ctrl_base, get_io_base,
 };
-use crate::kernel::framework::driver::{DeviceInfo, DeviceType, DriverError, DriverResult};
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::driver::{DeviceInfo, DeviceType, DriverError, DriverResult};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 
 fn driver_error_codes() -> TestResult {

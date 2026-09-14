@@ -1,4 +1,4 @@
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 
 // ============================================================
@@ -7,7 +7,7 @@ use crate::register_tests_inner;
 
 fn test_pf_info_from_error_code() -> TestResult {
     let info =
-        crate::kernel::framework::mm::page_fault::PageFaultInfo::from_error_code(0x4000, 0x06);
+        crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x4000, 0x06);
     check!(info.fault_addr == 0x4000, "fault_addr");
     check!(info.write, "write flag");
     check!(info.user, "user flag");
@@ -19,7 +19,7 @@ fn test_pf_info_from_error_code() -> TestResult {
 
 fn test_pf_info_not_present() -> TestResult {
     let info =
-        crate::kernel::framework::mm::page_fault::PageFaultInfo::from_error_code(0x1000, 0x00);
+        crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x1000, 0x00);
     check!(!info.present, "not present");
     check!(!info.write, "not write");
     check!(!info.user, "not user");
@@ -27,7 +27,7 @@ fn test_pf_info_not_present() -> TestResult {
 }
 
 fn test_pf_result_values() -> TestResult {
-    use crate::kernel::framework::mm::page_fault::PfResult;
+    use crate::framework::mm::page_fault::PfResult;
     assert_eq_test!(PfResult::Fixed as u32, 0, "Fixed=0");
     assert_eq_test!(PfResult::SignalSegv as u32, 1, "SignalSegv=1");
     assert_eq_test!(PfResult::Oom as u32, 3, "Oom=3");
@@ -48,42 +48,42 @@ fn test_cow_frame_key_alignment() -> TestResult {
 }
 
 fn test_cow_ref_init() -> TestResult {
-    crate::kernel::framework::mm::cow_init();
-    let count = crate::kernel::framework::mm::cow_ref_count(0x1000);
+    crate::framework::mm::cow_init();
+    let count = crate::framework::mm::cow_ref_count(0x1000);
     assert_eq_test!(count, 0, "initially zero");
     TestResult::Pass
 }
 
 fn test_cow_ref_inc_dec() -> TestResult {
-    crate::kernel::framework::mm::cow_init();
+    crate::framework::mm::cow_init();
     let phys = 0x5000u64;
 
-    crate::kernel::framework::mm::cow_inc_ref(phys);
+    crate::framework::mm::cow_inc_ref(phys);
     assert_eq_test!(
-        crate::kernel::framework::mm::cow_ref_count(phys),
+        crate::framework::mm::cow_ref_count(phys),
         1,
         "after inc=1"
     );
 
-    crate::kernel::framework::mm::cow_inc_ref(phys);
+    crate::framework::mm::cow_inc_ref(phys);
     assert_eq_test!(
-        crate::kernel::framework::mm::cow_ref_count(phys),
+        crate::framework::mm::cow_ref_count(phys),
         2,
         "after inc=2"
     );
 
-    let should_free = crate::kernel::framework::mm::cow_dec_ref(phys);
+    let should_free = crate::framework::mm::cow_dec_ref(phys);
     check!(!should_free, "dec to 1 should not free");
     assert_eq_test!(
-        crate::kernel::framework::mm::cow_ref_count(phys),
+        crate::framework::mm::cow_ref_count(phys),
         1,
         "after dec=1"
     );
 
-    let should_free = crate::kernel::framework::mm::cow_dec_ref(phys);
+    let should_free = crate::framework::mm::cow_dec_ref(phys);
     check!(should_free, "dec to 0 should free");
     assert_eq_test!(
-        crate::kernel::framework::mm::cow_ref_count(phys),
+        crate::framework::mm::cow_ref_count(phys),
         0,
         "after dec=0"
     );
@@ -95,15 +95,15 @@ fn test_cow_ref_inc_dec() -> TestResult {
 // ============================================================
 
 fn test_elf64_header_sizes() -> TestResult {
-    use crate::kernel::framework::proc::Elf64Header;
-    use crate::kernel::framework::proc::Elf64Phdr;
+    use crate::framework::proc::Elf64Header;
+    use crate::framework::proc::Elf64Phdr;
     assert_eq_test!(core::mem::size_of::<Elf64Header>(), 64, "header size");
     assert_eq_test!(core::mem::size_of::<Elf64Phdr>(), 56, "phdr size");
     TestResult::Pass
 }
 
 fn test_elf_validation_null() -> TestResult {
-    let result = crate::kernel::framework::proc::elf_validate(core::ptr::null(), 64);
+    let result = crate::framework::proc::elf_validate(core::ptr::null(), 64);
     check!(result.is_none(), "null pointer rejected");
     TestResult::Pass
 }
@@ -113,14 +113,14 @@ fn test_elf_validation_null() -> TestResult {
     reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
 )]
 fn test_elf_validation_small() -> TestResult {
-    let result = crate::kernel::framework::proc::elf_validate(&0u8 as *const u8, 10);
+    let result = crate::framework::proc::elf_validate(&0u8 as *const u8, 10);
     check!(result.is_none(), "too small rejected");
     TestResult::Pass
 }
 
 fn test_elf_magic_rejected() -> TestResult {
     let data = [0u8; 64];
-    let result = crate::kernel::framework::proc::elf_validate(data.as_ptr(), 64);
+    let result = crate::framework::proc::elf_validate(data.as_ptr(), 64);
     check!(result.is_none(), "bad magic rejected");
     TestResult::Pass
 }
@@ -130,7 +130,7 @@ fn test_elf_magic_rejected() -> TestResult {
     reason = "cast_ptr_alignment: 指针类型转换对齐假设已知安全 (例如硬件 MMIO 寄存器地址已知对齐; 当前优先 expect"
 )]
 fn test_elf_valid_minimal() -> TestResult {
-    use crate::kernel::framework::proc::Elf64Header;
+    use crate::framework::proc::Elf64Header;
     let data = [0u8; 80]; // 头部 + 预留空间
     // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
     let hdr = unsafe { &mut *(data.as_ptr() as *mut Elf64Header) };
@@ -141,7 +141,7 @@ fn test_elf_valid_minimal() -> TestResult {
     hdr.e_ident[4] = 2; // ELFCLASS64
     hdr.e_machine = 0x3E; // x86_64
     hdr.e_phentsize = 56; // sizeof(Elf64Phdr)
-    let result = crate::kernel::framework::proc::elf_validate(data.as_ptr(), 80);
+    let result = crate::framework::proc::elf_validate(data.as_ptr(), 80);
     check!(result.is_some(), "valid elf accepted");
     TestResult::Pass
 }
@@ -151,17 +151,17 @@ fn test_elf_valid_minimal() -> TestResult {
 // ============================================================
 
 fn test_rcu_read_lock_unlock() -> TestResult {
-    crate::kernel::framework::sync::rcu::rcu_read_lock();
+    crate::framework::sync::rcu::rcu_read_lock();
     // 单核上下文中嵌套层数应为 1
-    crate::kernel::framework::sync::rcu::rcu_read_unlock();
+    crate::framework::sync::rcu::rcu_read_unlock();
     TestResult::Pass
 }
 
 fn test_rcu_nested_locks() -> TestResult {
-    crate::kernel::framework::sync::rcu::rcu_read_lock();
-    crate::kernel::framework::sync::rcu::rcu_read_lock();
-    crate::kernel::framework::sync::rcu::rcu_read_unlock();
-    crate::kernel::framework::sync::rcu::rcu_read_unlock();
+    crate::framework::sync::rcu::rcu_read_lock();
+    crate::framework::sync::rcu::rcu_read_lock();
+    crate::framework::sync::rcu::rcu_read_unlock();
+    crate::framework::sync::rcu::rcu_read_unlock();
     TestResult::Pass
 }
 
@@ -170,14 +170,14 @@ fn test_rcu_nested_locks() -> TestResult {
 // ============================================================
 
 fn test_devtree_create_node() -> TestResult {
-    let node_id = crate::kernel::framework::chitin::devtree_create_node_impl(
+    let node_id = crate::framework::chitin::devtree_create_node_impl(
         "test_device",
-        crate::kernel::framework::chitin::ChitinProto::Other,
+        crate::framework::chitin::ChitinProto::Other,
         None,
     );
     if let Some(id) = node_id {
         check!(id > 0, "node id positive");
-        let node = crate::kernel::framework::chitin::devtree_get_node(id);
+        let node = crate::framework::chitin::devtree_get_node(id);
         check!(node.is_some(), "can get node");
     } else {
         // DevTree may not be initialized
@@ -187,16 +187,16 @@ fn test_devtree_create_node() -> TestResult {
 
 fn test_devtree_set_compatible() -> TestResult {
     use alloc::vec;
-    let node_id = crate::kernel::framework::chitin::devtree_create_node_impl(
+    let node_id = crate::framework::chitin::devtree_create_node_impl(
         "compat_device",
-        crate::kernel::framework::chitin::ChitinProto::Other,
+        crate::framework::chitin::ChitinProto::Other,
         None,
     );
     match node_id {
         Some(id) => {
             let compat = vec!["test,device"];
-            crate::kernel::framework::chitin::devtree_set_compatible(id, compat);
-            let found = crate::kernel::framework::chitin::devtree_find_compatible("test,device");
+            crate::framework::chitin::devtree_set_compatible(id, compat);
+            let found = crate::framework::chitin::devtree_find_compatible("test,device");
             check!(found.is_some(), "find by compatible");
         }
         None => {}
@@ -209,7 +209,7 @@ fn test_devtree_set_compatible() -> TestResult {
 // ============================================================
 
 fn test_slab_cache_index_selection() -> TestResult {
-    use crate::kernel::framework::mm::kmalloc_slab;
+    use crate::framework::mm::kmalloc_slab;
     // Test via the public API
     let p1 = kmalloc_slab::slab_kmalloc(8);
     let p2 = kmalloc_slab::slab_kmalloc(32);
@@ -234,8 +234,8 @@ fn test_slab_cache_index_selection() -> TestResult {
 fn test_zil_crc32_deterministic() -> TestResult {
     // CRC32 在 zil_persist.rs 中定义; 通过 roundtrip 测试
     let data = b"Hello, ZIL!";
-    let c1 = crate::kernel::services::fs::nestfs::zil_persist::crc32_test_wrapper(data);
-    let c2 = crate::kernel::services::fs::nestfs::zil_persist::crc32_test_wrapper(data);
+    let c1 = crate::services::fs::nestfs::zil_persist::crc32_test_wrapper(data);
+    let c2 = crate::services::fs::nestfs::zil_persist::crc32_test_wrapper(data);
     assert_eq_test!(c1, c2, "crc32 deterministic");
     check!(c1 != 0, "crc32 non-zero");
     TestResult::Pass
@@ -246,7 +246,7 @@ fn test_zil_crc32_deterministic() -> TestResult {
 // ============================================================
 
 fn test_prot_to_vma_flags() -> TestResult {
-    use crate::kernel::framework::mm::PageFlags;
+    use crate::framework::mm::PageFlags;
 
     // prot_to_vma_flags 是私有的, 无法直接调用, 此处仅测试基础标志语义
     let r = PageFlags::PRESENT | PageFlags::USER;
@@ -267,7 +267,7 @@ fn test_prot_to_vma_flags() -> TestResult {
 // ============================================================
 
 fn test_dyn_ipc_pipe_no_limit() -> TestResult {
-    let ns = crate::kernel::framework::ipc::dynamic::DynIpcNamespace::new();
+    let ns = crate::framework::ipc::dynamic::DynIpcNamespace::new();
     let mut ids = alloc::vec::Vec::new();
     for _ in 0..50 {
         let id = ns.pipe_create(1000, 2000);
@@ -284,7 +284,7 @@ fn test_dyn_ipc_pipe_no_limit() -> TestResult {
 }
 
 fn test_dyn_ipc_msgq_growth() -> TestResult {
-    let ns = crate::kernel::framework::ipc::dynamic::DynIpcNamespace::new();
+    let ns = crate::framework::ipc::dynamic::DynIpcNamespace::new();
     for _ in 0..20 {
         let id = ns.msgq_create(1000, 64, 4096).unwrap();
         check!(ns.msgq_exists(id), "msgq exists");
@@ -304,7 +304,7 @@ fn test_dyn_ipc_shm_create() -> TestResult {
 
 #[cfg(not(feature = "host-test"))]
 fn test_dyn_ipc_shm_create() -> TestResult {
-    let ns = crate::kernel::framework::ipc::dynamic::DynIpcNamespace::new();
+    let ns = crate::framework::ipc::dynamic::DynIpcNamespace::new();
     let result = ns.shm_create(2000, 8192);
     // May fail if PMM not initialized in test context
     if let Ok(id) = result {
@@ -315,7 +315,7 @@ fn test_dyn_ipc_shm_create() -> TestResult {
 }
 
 fn test_dyn_ipc_sem_create() -> TestResult {
-    let ns = crate::kernel::framework::ipc::dynamic::DynIpcNamespace::new();
+    let ns = crate::framework::ipc::dynamic::DynIpcNamespace::new();
     let id = ns.sem_create(1000, 1, 10).unwrap();
     check!(id != 0, "sem id non-zero");
     ns.sem_destroy(id).unwrap();
@@ -331,8 +331,8 @@ fn test_dyn_ipc_sem_create() -> TestResult {
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 fn test_vma_creation() -> TestResult {
-    use crate::kernel::framework::mm::PageFlags;
-    use crate::kernel::framework::mm::{Vma, VmaType};
+    use crate::framework::mm::PageFlags;
+    use crate::framework::mm::{Vma, VmaType};
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
     let vma = Vma::new(0x400000, 0x401000, flags, VmaType::Anonymous);
     assert_eq_test!(vma.start, 0x400000usize, "start");
@@ -356,8 +356,8 @@ fn test_mm_struct_operations() -> TestResult {
 )]
 #[cfg(not(feature = "host-test"))]
 fn test_mm_struct_operations() -> TestResult {
-    use crate::kernel::framework::mm::PageFlags;
-    use crate::kernel::framework::mm::{MmStruct, Vma, VmaType};
+    use crate::framework::mm::PageFlags;
+    use crate::framework::mm::{MmStruct, Vma, VmaType};
     let mm = MmStruct::new();
     let flags = PageFlags::PRESENT | PageFlags::USER;
 
@@ -382,8 +382,8 @@ fn test_mm_struct_operations() -> TestResult {
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 fn test_vma_stack_guard() -> TestResult {
-    use crate::kernel::framework::mm::PageFlags;
-    use crate::kernel::framework::mm::{Vma, VmaType};
+    use crate::framework::mm::PageFlags;
+    use crate::framework::mm::{Vma, VmaType};
     let guard = Vma::new(0x700000, 0x701000, PageFlags::empty(), VmaType::Guard);
     check!(guard.is_guard(), "is_guard");
     check!(!guard.is_stack(), "not stack");

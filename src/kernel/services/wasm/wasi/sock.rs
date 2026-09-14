@@ -5,8 +5,8 @@
 
 use super::fd_table::{read_iovec_from_memory, write_i32_to_memory, write_u32_to_memory};
 use super::{WasiContext, WasiErrno, wasi_errno, wasi_success};
-use crate::kernel::services::wasm::interpreter::Interpreter;
-use crate::kernel::services::wasm::types::{Value, WasmError};
+use crate::services::wasm::interpreter::Interpreter;
+use crate::services::wasm::types::{Value, WasmError};
 
 /// WASI `sock_accept`: 接受连接
 ///
@@ -28,7 +28,7 @@ pub fn wasi_sock_accept(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     };
 
     // 调用 services::net accept
-    match crate::kernel::services::net::socket::accept(entry.inner_fd) {
+    match crate::services::net::socket::accept(entry.inner_fd) {
         Ok(new_fd) => {
             // 创建新的 WASI fd 表条目
             let new_entry = super::fd_table::WasiFdEntry {
@@ -91,9 +91,9 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
         mem.read_u8((base + 7) as u32).unwrap_or(0),
     ];
 
-    let addr = crate::kernel::services::net::socket::SockAddrIn::new(sin_port, sin_addr);
+    let addr = crate::services::net::socket::SockAddrIn::new(sin_port, sin_addr);
 
-    match crate::kernel::services::net::socket::connect(entry.inner_fd, &addr) {
+    match crate::services::net::socket::connect(entry.inner_fd, &addr) {
         Ok(()) => {
             interp.stack.push(Value::I32(wasi_success()))?;
         }
@@ -136,7 +136,7 @@ pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         }
         // 分配临时缓冲区接收数据
         let mut buf = alloc::vec![0u8; iov.len as usize];
-        if let Ok(n) = crate::kernel::services::net::socket::recv(entry.inner_fd, &mut buf) {
+        if let Ok(n) = crate::services::net::socket::recv(entry.inner_fd, &mut buf) {
             // 将数据写回 WASM 线性内存
             if let Some(ref mut mem) = interp.memory {
                 for (i, &byte) in buf[..n].iter().enumerate() {
@@ -192,7 +192,7 @@ pub fn wasi_sock_send(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         }
     }
 
-    match crate::kernel::services::net::socket::send(entry.inner_fd, &send_buf) {
+    match crate::services::net::socket::send(entry.inner_fd, &send_buf) {
         Ok(n) => {
             write_u32_to_memory(interp, nwritten_ptr, n as u32);
             interp.stack.push(Value::I32(wasi_success()))?;

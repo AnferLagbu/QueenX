@@ -1,23 +1,23 @@
 #![deny(unsafe_code)]
 
-use crate::kernel::framework::credo::api as pwm_api;
-use crate::kernel::framework::driver::block;
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
-use crate::kernel::services::fs::nestfs::bp::{NestBlockPointer, NestCksumType, NestCompType};
-use crate::kernel::services::fs::nestfs::compress;
-use crate::kernel::services::fs::nestfs::dataset::NestDataset;
-use crate::kernel::services::fs::nestfs::dmu::{HV_DMU_OBJ_ROOT, NestDmuObject, NestObjType};
-use crate::kernel::services::fs::nestfs::snapshot::NestSnapshotManager;
-use crate::kernel::services::fs::nestfs::spa::{HV_POOL_BLOCK_SIZE, NestPoolState, NestSpa};
-use crate::kernel::services::fs::nestfs::txg::NestTxgGroup;
-use crate::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord};
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::framework::credo::api as pwm_api;
+use crate::framework::driver::block;
+use crate::framework::fs::KernelError;
+use crate::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
+use crate::services::fs::nestfs::bp::{NestBlockPointer, NestCksumType, NestCompType};
+use crate::services::fs::nestfs::compress;
+use crate::services::fs::nestfs::dataset::NestDataset;
+use crate::services::fs::nestfs::dmu::{HV_DMU_OBJ_ROOT, NestDmuObject, NestObjType};
+use crate::services::fs::nestfs::snapshot::NestSnapshotManager;
+use crate::services::fs::nestfs::spa::{HV_POOL_BLOCK_SIZE, NestPoolState, NestSpa};
+use crate::services::fs::nestfs::txg::NestTxgGroup;
+use crate::services::fs::nestfs::zil::{NestZil, NestZilRecord};
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-use crate::kernel::services::sync::once::OnceCell;
+use crate::services::sync::once::OnceCell;
 
 fn nestfs_save() {}
 fn nestfs_restore() {
@@ -213,7 +213,7 @@ impl NestfsData {
                 for (drive_id, part_start) in &discovered[1..] {
                     self.disk_drive.store(*drive_id, Ordering::Release);
                     let mut vdev_cfg =
-                        crate::kernel::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
+                        crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
                             u16::from(*drive_id),
                             "disk",
                             12,
@@ -236,7 +236,7 @@ impl NestfsData {
         } else {
             crate::slog_info!(FS, "[NestFS] No disk, running in memory mode");
             self.spa.add_vdev(
-                crate::kernel::services::fs::nestfs::vdev::NestVdevConfig::new_disk(0, "ata0", 12),
+                crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(0, "ata0", 12),
             );
         }
 
@@ -252,7 +252,7 @@ impl NestfsData {
             crate::slog_info!(FS, "[NestFS] Initialized: pool=queenx-pool (memory)");
         }
 
-        crate::kernel::framework::barrier::recovery::recovery_domain_register(
+        crate::framework::barrier::recovery::recovery_domain_register(
             "nestfs",
             2,
             &[],
@@ -331,7 +331,7 @@ impl NestfsData {
             part_start
         );
         self.spa.disk_present.store(true, Ordering::Release);
-        let mut vdev_cfg = crate::kernel::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
+        let mut vdev_cfg = crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
             u16::from(drive_id),
             "disk",
             12,
@@ -374,7 +374,7 @@ impl NestfsData {
             }
         };
 
-        let mut vdev_cfg = crate::kernel::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
+        let mut vdev_cfg = crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
             u16::from(drive),
             "disk",
             12,
@@ -403,7 +403,7 @@ impl NestfsData {
             .iter_mut()
             .find(|v| v.config.vdev_id == u16::from(drive))
         {
-            vdev.state = crate::kernel::services::fs::nestfs::vdev::NestVdevState::Removed;
+            vdev.state = crate::services::fs::nestfs::vdev::NestVdevState::Removed;
             crate::slog_info!(FS, "[NestFS] HOTPLUG: disk removed (drive={})", drive);
             return true;
         }
@@ -439,7 +439,7 @@ impl NestfsData {
         if last_ok > part_start {
             (u64::from(last_ok) - u64::from(part_start)) * 512
         } else {
-            crate::kernel::services::fs::nestfs::vdev::NestVdev::probe_disk_size(drive_id)
+            crate::services::fs::nestfs::vdev::NestVdev::probe_disk_size(drive_id)
         }
     }
 
@@ -475,7 +475,7 @@ impl NestfsData {
         self.spa.formatted.store(true, Ordering::Release);
         self.spa.disk_present.store(true, Ordering::Release);
         self.mode.store(NestfsMode::Disk as u8, Ordering::Release);
-        let mut vdev_cfg = crate::kernel::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
+        let mut vdev_cfg = crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
             u16::from(drive_id),
             "disk",
             12,

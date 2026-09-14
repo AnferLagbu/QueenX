@@ -18,22 +18,22 @@
 //!
 //! 评估日期: 2026-06-04
 
-use crate::kernel::framework::mm::MmStruct;
-use crate::kernel::framework::proc_elf;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::mm::MmStruct;
+use crate::framework::proc_elf;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 强类型 re-export
 // ============================================================================
 
 /// ELF 64 字节头 (与 Linux ELF64 布局一致, 64 字节)
-pub use crate::kernel::framework::proc::Elf64Header;
+pub use crate::framework::proc::Elf64Header;
 
 /// ELF 64 程序头 (56 字节)
-pub use crate::kernel::framework::proc::Elf64Phdr;
+pub use crate::framework::proc::Elf64Phdr;
 
 /// ELF 加载结果 (entry / `phdr_addr` / `phdr_count` / brk / `stack_top`)
-pub use crate::kernel::framework::proc::ElfLoadResult;
+pub use crate::framework::proc::ElfLoadResult;
 
 // ============================================================================
 // 错误
@@ -63,7 +63,7 @@ pub enum ElfError {
     /// 用户内存映射失败 (`MmStruct` 添加 VMA 失败)
     MapFailed,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl ElfError {
@@ -84,7 +84,7 @@ impl ElfError {
     )]
     /// 从内核返回的 `&'static str` 翻译为 `ElfError`
     pub fn from_kernel_str(s: &'static str) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match s {
             "Invalid ELF header" => Self::Truncated,
             "No program headers" => Self::BadMagic,

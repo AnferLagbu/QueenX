@@ -1,12 +1,12 @@
 use super::check;
-use crate::kernel::framework::mm::KERNEL_BASE;
-use crate::kernel::framework::mm::{
+use crate::framework::mm::KERNEL_BASE;
+use crate::framework::mm::{
     MemoryInfo, PageFlags, PageSize, PageTableEntry, PhysAddr, VirtAddr,
 };
-use crate::kernel::framework::mm::{
+use crate::framework::mm::{
     pd_index, pdpt_index, phys_to_virt, pml4_index, pt_index, virt_to_phys,
 };
-use crate::kernel::framework::tests::{TestResult, runner};
+use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
 #[expect(

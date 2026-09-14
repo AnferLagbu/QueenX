@@ -227,4 +227,4 @@ pub fn render_json(buf: &mut [u8]) -> usize {
 // ============================================================================
 // Framework 重新导出 (仅本模块内部使用, 避免外部直接走 unsafe 入口)
 // ============================================================================
-use crate::kernel::framework::klog as framework_klog;
+use crate::framework::klog as framework_klog;

@@ -10,7 +10,7 @@
 //! 其顶层 re-export (`framework::config::MAX_CPUS` 等) 显式转发, 保持 services
 //! 侧 API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     MAX_CPUS, MAX_IRQS, MAX_OPEN_FILES, MAX_PROCESSES, MAX_SESSIONS, MAX_THREADS,
     MAX_THREADS_PER_PROCESS,
 };

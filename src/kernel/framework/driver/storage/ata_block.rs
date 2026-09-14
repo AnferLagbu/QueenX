@@ -6,7 +6,7 @@
 //!
 //! 仅用于 `x86_64`; aarch64 上此模块会被编译排除。
 
-use crate::kernel::framework::driver::BlockDevice;
+use crate::framework::driver::BlockDevice;
 
 /// ATA 磁盘的 `BlockDevice` 适配器。
 ///

@@ -13,10 +13,10 @@
 //! - [`mount_syscall`] target 必须非空, fstype 必须在已知列表
 //! - [`umount2_syscall`] target 必须非空, 需 `CAP_SYS_ADMIN`
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::fs::api as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::credo;
+use crate::framework::fs::api as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // mount

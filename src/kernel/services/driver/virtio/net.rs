@@ -3,7 +3,7 @@
 //!
 //! `VirtIO` 网络设备驱动 — services 层 (Phase 2.1.2)
 //!
-//! 通过 [`crate::kernel::framework::driver::virtio::VirtioMmioDevice`] (framework
+//! 通过 [`crate::framework::driver::virtio::VirtioMmioDevice`] (framework
 //! transport 机制) 提供 100% safe 的网卡初始化与配置路径。
 //! `VirtQueue` 操作通过 framework 层安全 API 完成。
 //!
@@ -21,8 +21,8 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.2 任务: VirtIO-net 网络设备迁移
 
-use crate::kernel::framework::driver::virtio::queue::{DmaBuffer, VirtQueue};
-use crate::kernel::framework::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_NET, VirtioMmioDevice};
+use crate::framework::driver::virtio::queue::{DmaBuffer, VirtQueue};
+use crate::framework::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_NET, VirtioMmioDevice};
 use crate::slog_info;
 use crate::slog_warn;
 
@@ -555,7 +555,7 @@ impl VirtioNetDriver {
 // NetOps 安全桥 (批次 Z ④): impl trait → framework 泛型桥接入 smoltcp
 // ============================================================================
 
-impl crate::kernel::framework::net::NetDeviceOps for VirtioNetDriver {
+impl crate::framework::net::NetDeviceOps for VirtioNetDriver {
     fn send(&mut self, data: &[u8]) -> i32 {
         match self.send_packet(data) {
             Ok(()) => 0,

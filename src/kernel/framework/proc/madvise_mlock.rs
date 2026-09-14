@@ -8,7 +8,7 @@
 //! 依赖闭包全在 framework 内 (errno/mm::PAGE_SIZE/copy_user/vma_get_current_mm/
 //! userptr) — 属机制项, 迁回 (同 io_uring 模式)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::madvise_mlock::*`
+//! services 侧改 `pub use crate::framework::proc::madvise_mlock::*`
 //! 保持 API 兼容。
 //!
 //! ## 职责
@@ -18,11 +18,11 @@
 //! - mlockall/munlockall: 进程级锁定 (委托 framework)
 //! - mincore: 每页驻留性查询 (参数验证 + copy_to_user)
 
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::mm::PAGE_SIZE;
-use crate::kernel::framework::mm::copy_user::copy_to_user;
-use crate::kernel::framework::mm::vma_get_current_mm;
-use crate::kernel::framework::userptr;
+use crate::framework::errno::Errno;
+use crate::framework::mm::PAGE_SIZE;
+use crate::framework::mm::copy_user::copy_to_user;
+use crate::framework::mm::vma_get_current_mm;
+use crate::framework::userptr;
 
 // ============================================================================
 // madvise advice 常量

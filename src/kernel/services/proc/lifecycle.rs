@@ -13,17 +13,17 @@
 
 /// `fork()` 策略
 pub fn fork_syscall() -> i64 {
-    i64::from(crate::kernel::framework::proc::sys_fork())
+    i64::from(crate::framework::proc::sys_fork())
 }
 
 /// exit(status) 策略
 pub fn exit_syscall(status: i32) -> i64 {
-    crate::kernel::framework::proc::process_exit(status as u32);
+    crate::framework::proc::process_exit(status as u32);
     0
 }
 
 /// `sched_yield()` 策略
 pub fn sched_yield_syscall() -> i64 {
-    crate::kernel::framework::proc::scheduler_yield();
+    crate::framework::proc::scheduler_yield();
     0
 }

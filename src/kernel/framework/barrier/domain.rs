@@ -6,7 +6,7 @@ use super::types::{
 };
 use super::undo_log::UndoLog;
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 pub struct RecoveryDomain {
     pub id: u64,
     state: AtomicU32,

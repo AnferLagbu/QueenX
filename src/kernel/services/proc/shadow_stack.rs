@@ -4,12 +4,12 @@
 //! 封装 `framework::arch::shadow_stack` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::arch::{
+pub use crate::framework::arch::{
     CetCapabilities, CetSubsystem, SHADOW_STACK_ALIGN, SHADOW_STACK_DEFAULT_SIZE,
     SHADOW_STACK_PAGE_SIZE, ShadowStack,
 };
 
-use crate::kernel::framework::arch::{cet_init, cet_is_initialized, cet_subsystem, sys_cet};
+use crate::framework::arch::{cet_init, cet_is_initialized, cet_subsystem, sys_cet};
 
 /// 初始化 CET
 pub fn init() {

@@ -5,7 +5,7 @@
 //! `pub use dns::*` re-export.
 
 // I-46: hosts 表里 10.0.2.x 引用集中常量, 避免散落硬编码
-use crate::kernel::framework::net::types::{FALLBACK_GATEWAY, FALLBACK_IPV4};
+use crate::framework::net::types::{FALLBACK_GATEWAY, FALLBACK_IPV4};
 
 /// 静态 hosts 表条目: 主机名 → IPv4
 #[derive(Debug, Clone, Copy)]

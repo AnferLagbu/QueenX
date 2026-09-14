@@ -9,7 +9,7 @@
 
 use core::sync::atomic::Ordering;
 
-use crate::kernel::framework::net::{NET_CONFIGURED, NET_READY};
+use crate::framework::net::{NET_CONFIGURED, NET_READY};
 
 use super::raw;
 use super::sockets::SOCKETS_INITIALIZED;

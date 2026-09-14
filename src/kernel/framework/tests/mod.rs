@@ -1,9 +1,9 @@
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
 
-use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock;
+use crate::framework::sync::irq_spinlock::IrqSpinLock;
 
-use crate::kernel::framework::sync::once_lock::OnceLock;
+use crate::framework::sync::once_lock::OnceLock;
 // E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试模块在 host-test 下同样编译
 // (同源双编译, 供 host-tests 引用内核真实源码). 硬件路径门控保持 kernel_test.
 // 语义: any(kernel_test, host-test) = 纯逻辑测试辅助; kernel_test = 硬件路径切换.
@@ -145,7 +145,7 @@ impl TestRunner {
         // restore_interrupts() — host-test 下 B08-14 已桩化为 no-op (直接
         // arch!(interrupt_disable) 执行 cli 特权指令, host 用户态会 SIGSEGV);
         // 裸机 (kernel_test) 下其内部即 arch!(interrupt_disable), 语义完全等价.
-        let saved_flags = crate::kernel::framework::sync::disable_interrupts();
+        let saved_flags = crate::framework::sync::disable_interrupts();
 
         for i in 0..total {
             let tc = reg.cases[i];
@@ -223,7 +223,7 @@ impl TestRunner {
         // B03-15: 恢复中断状态 (而非保持 disable 状态)。
         // SAFETY: saved_flags 由 interrupt_save() 获取, 与 interrupt_disable()
         // 配套使用恢复原状态。
-        crate::kernel::framework::sync::restore_interrupts(&saved_flags);
+        crate::framework::sync::restore_interrupts(&saved_flags);
     }
 
     fn serial_print(s: &[u8]) {
@@ -243,7 +243,7 @@ impl TestRunner {
         for &b in s {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                crate::kernel::framework::arch::aarch64::uart::putc(b);
+                crate::framework::arch::aarch64::uart::putc(b);
             }
         }
     }
@@ -265,7 +265,7 @@ impl TestRunner {
             if n == 0 {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
-                    crate::kernel::framework::arch::aarch64::uart::putc(b'0');
+                    crate::framework::arch::aarch64::uart::putc(b'0');
                 }
                 return;
             }
@@ -280,7 +280,7 @@ impl TestRunner {
             for i in (0..pos).rev() {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
-                    crate::kernel::framework::arch::aarch64::uart::putc(buf[i]);
+                    crate::framework::arch::aarch64::uart::putc(buf[i]);
                 }
             }
         }
@@ -362,7 +362,7 @@ pub fn runner() -> &'static TestRunner {
 macro_rules! check {
     ($cond:expr_2021, $msg:literal $(,)?) => {
         if !($cond) {
-            return $crate::kernel::framework::tests::TestResult::Fail($msg);
+            return $crate::framework::tests::TestResult::Fail($msg);
         }
     };
 }
@@ -373,7 +373,7 @@ macro_rules! assert_eq_test {
         let l = $left;
         let r = $right;
         if l != r {
-            return $crate::kernel::framework::tests::TestResult::Fail($msg);
+            return $crate::framework::tests::TestResult::Fail($msg);
         }
     };
 }
@@ -381,7 +381,7 @@ macro_rules! assert_eq_test {
 #[macro_export]
 macro_rules! skip_test {
     ($reason:literal $(,)?) => {
-        return $crate::kernel::framework::tests::TestResult::Skip($reason);
+        return $crate::framework::tests::TestResult::Skip($reason);
     };
 }
 
@@ -414,7 +414,7 @@ pub fn test_runner_init() {
     // 诊断: test 运行前检查页表
     {
         let read_u64 = |phys: u64, idx: usize| -> u64 {
-            let va = phys + crate::kernel::framework::mm::KERNEL_BASE + idx as u64 * 8;
+            let va = phys + crate::framework::mm::KERNEL_BASE + idx as u64 * 8;
             // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
             unsafe { core::ptr::read_volatile(va as *const u64) }
         };
@@ -453,8 +453,8 @@ pub fn register_all_tests() {
     // 调用 global() 会 panic (e.g. devfs::global() called before init_global()).
     // init_global 是幂等的 (OnceCell::get_or_init), 多次调用安全.
     // 注: ramfs::init_global 需要 mount_point 参数, 在 mount 测试内显式调用.
-    crate::kernel::services::fs::devfs::init_global();
-    crate::kernel::services::fs::procfs::init_global();
+    crate::services::fs::devfs::init_global();
+    crate::services::fs::procfs::init_global();
 
     test_barrier::register_barrier_tests();
     test_barrier_ext::register_barrier_ext_tests();
@@ -504,26 +504,26 @@ pub fn register_all_tests() {
         reset::register_tests();
         #[cfg(target_arch = "x86_64")]
         {
-            crate::kernel::framework::timer::pit::register_pit_tests();
-            crate::kernel::framework::timer::calibration::register_timer_calibration_tests();
+            crate::framework::timer::pit::register_pit_tests();
+            crate::framework::timer::calibration::register_timer_calibration_tests();
         }
-        crate::kernel::framework::timer::tick::register_timer_tick_tests();
+        crate::framework::timer::tick::register_timer_tick_tests();
         #[cfg(target_arch = "x86_64")]
-        crate::kernel::framework::timer::irq::register_timer_irq_tests();
-        crate::kernel::framework::timer::sleep::register_timer_sleep_tests();
-        crate::kernel::framework::timer::hrtimer::register_hrtimer_tests();
-        crate::kernel::framework::proc::signal::register_signal_tests();
-        crate::kernel::framework::config::memory::register_aslr_tests();
-        crate::kernel::framework::fs::initramfs::register_initramfs_tests();
-        crate::kernel::framework::syscall::futex::register_futex_tests();
-        crate::kernel::framework::mm::pcache::register_pcache_tests();
-        crate::kernel::framework::mm::swap::register_swap_tests();
-        crate::kernel::framework::pci::msi::register_msi_tests();
-        crate::kernel::framework::syscall::epoll::register_epoll_tests();
-        crate::kernel::framework::syscall::eventfd::register_eventfd_tests();
-        crate::kernel::framework::syscall::signalfd::register_signalfd_tests();
-        crate::kernel::framework::syscall::timerfd::register_timerfd_tests();
-        crate::kernel::framework::syscall::sendfile::register_sendfile_tests();
+        crate::framework::timer::irq::register_timer_irq_tests();
+        crate::framework::timer::sleep::register_timer_sleep_tests();
+        crate::framework::timer::hrtimer::register_hrtimer_tests();
+        crate::framework::proc::signal::register_signal_tests();
+        crate::framework::config::memory::register_aslr_tests();
+        crate::framework::fs::initramfs::register_initramfs_tests();
+        crate::framework::syscall::futex::register_futex_tests();
+        crate::framework::mm::pcache::register_pcache_tests();
+        crate::framework::mm::swap::register_swap_tests();
+        crate::framework::pci::msi::register_msi_tests();
+        crate::framework::syscall::epoll::register_epoll_tests();
+        crate::framework::syscall::eventfd::register_eventfd_tests();
+        crate::framework::syscall::signalfd::register_signalfd_tests();
+        crate::framework::syscall::timerfd::register_timerfd_tests();
+        crate::framework::syscall::sendfile::register_sendfile_tests();
     }
 }
 

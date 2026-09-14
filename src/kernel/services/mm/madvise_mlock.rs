@@ -9,4 +9,4 @@
 //! framework/proc 的 madvise_mlock 为公开子模块, 可直接 glob re-export,
 //! 保持 services 侧 API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::proc::madvise_mlock::*;
+pub use crate::framework::proc::madvise_mlock::*;

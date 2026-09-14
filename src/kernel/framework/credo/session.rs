@@ -20,8 +20,8 @@
 //         `Mutex<...>` 字段提供内部可变性.
 use super::identity;
 use super::types::{AuditAction, DomainId, PwmContext, PwmEntry, PwmError, PwmFlags, PwmId};
-use crate::kernel::framework::proc::PROCESS_TABLE;
-use crate::kernel::framework::proc::process_get_current_pid;
+use crate::framework::proc::PROCESS_TABLE;
+use crate::framework::proc::process_get_current_pid;
 use core::sync::atomic::Ordering;
 
 const MAX_ELEVATION_DEPTH: isize = 8;

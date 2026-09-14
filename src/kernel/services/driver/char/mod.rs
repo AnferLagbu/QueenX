@@ -32,7 +32,7 @@ pub mod vga;
 #[cfg(target_arch = "x86_64")]
 pub fn char_init() {
     use alloc::boxed::Box;
-    use crate::kernel::framework::chitin::{ChitinProto, chitin_register_driver};
+    use crate::framework::chitin::{ChitinProto, chitin_register_driver};
     use serial::{ComPort, SerialConfig, SerialPort};
     use vga::VgaConsole;
 

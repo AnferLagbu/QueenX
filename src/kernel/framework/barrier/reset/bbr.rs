@@ -10,8 +10,8 @@ use core::sync::atomic::Ordering;
 
 use super::audit;
 use super::config::{self, RecoveryLayer, RecoveryResult};
-use crate::kernel::framework::barrier::DomainState;
-use crate::kernel::framework::barrier::RECOVERY_MANAGER;
+use crate::framework::barrier::DomainState;
+use crate::framework::barrier::RECOVERY_MANAGER;
 
 #[expect(
     clippy::ref_as_ptr,
@@ -78,7 +78,7 @@ pub fn execute(panic_info: &core::panic::PanicInfo<'_>) -> RecoveryResult {
 
     crate::klog_crit!(Kernel, "[BBR] Barrier Base Recovery initiated");
 
-    let tick = crate::kernel::framework::timer::get_ticks();
+    let tick = crate::framework::timer::get_ticks();
     let fingerprint = compute_fingerprint(panic_info);
 
     locate_domain_from_panic(panic_info).map_or_else(

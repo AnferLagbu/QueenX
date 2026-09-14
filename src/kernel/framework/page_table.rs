@@ -17,8 +17,8 @@
 //! - 可在每次 map/unmap 后调用 (性能敏感路径用 feature gate)。
 
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::mm::KERNEL_BASE;
-use crate::kernel::framework::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, get_vmm};
+use crate::framework::mm::KERNEL_BASE;
+use crate::framework::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, get_vmm};
 
 /// 检查虚拟地址是否在用户地址空间内。
 ///

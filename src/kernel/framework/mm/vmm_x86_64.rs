@@ -46,9 +46,9 @@ use super::{
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-use crate::kernel::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
+use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 pub(crate) static KERNEL_PML4: AtomicU64 = AtomicU64::new(0);
 
 static VMM_LOCK: AtomicBool = AtomicBool::new(false);
@@ -103,7 +103,7 @@ impl VirtualMemoryManager {
         // P1 C7: KPTI 实际页表隔离 — 分配 USER_PML4, 复制内核高半区并清 USER 位
         // 完整功能需要汇编 entry/exit trampoline, 见 kpti.rs 模块顶部文档
         if !super::kpti::kpti_is_active()
-            && crate::kernel::framework::config::KernelCapabilities::detect().kpti
+            && crate::framework::config::KernelCapabilities::detect().kpti
         {
             // SAFETY: KERNEL_PML4 已初始化, PMM 可用, KPTI 全局状态在 init 独占
             unsafe {
@@ -624,16 +624,16 @@ impl VirtualMemoryManager {
         // enter_user_asm 在低半区 LMA 地址执行, mov cr3 切换到进程页表后
         // CPU 继续取指执行, 因此 trampoline 代码页必须在进程页表低半区有映射.
         // 权限: USER (Ring 3 可访问) + RX (可执行, 不可写).
-        if crate::kernel::framework::mm::kpti::kpti_is_active() {
+        if crate::framework::mm::kpti::kpti_is_active() {
             // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
             unsafe {
                 let text_start =
-                    core::ptr::addr_of!(crate::kernel::framework::mm::kpti::_kernel_text_start)
+                    core::ptr::addr_of!(crate::framework::mm::kpti::_kernel_text_start)
                         as u64;
                 let text_end =
-                    core::ptr::addr_of!(crate::kernel::framework::mm::kpti::_kernel_text_end)
+                    core::ptr::addr_of!(crate::framework::mm::kpti::_kernel_text_end)
                         as u64;
-                crate::kernel::framework::mm::kpti::map_text_region_in_user_pml4(
+                crate::framework::mm::kpti::map_text_region_in_user_pml4(
                     pml4_virt.0 as *mut u64,
                     text_start,
                     text_end,
@@ -648,7 +648,7 @@ impl VirtualMemoryManager {
                 // kpti_init() 只映射了全局 USER_PML4, 每个进程的独立页表也需要映射.
                 // 不映射会导致 Ring 3 下第一个时钟中断 (IRQ 0) 在 irq_common 中
                 // mov [USER_CR3_SAVE], rax → #PF (写入不存在的页) → Double Fault → 死锁.
-                crate::kernel::framework::mm::kpti::map_kpti_data_pages(pml4_virt.0 as *mut u64);
+                crate::framework::mm::kpti::map_kpti_data_pages(pml4_virt.0 as *mut u64);
             }
         }
 
@@ -659,7 +659,7 @@ impl VirtualMemoryManager {
         // 因此必须显式映射.
         // 注意: 必须在 release_lock 之后调用, 因为 map_page_in_table 内部也会获取锁.
         {
-            let sgdt = crate::kernel::framework::arch::gdt::get_gdt_ptr();
+            let sgdt = crate::framework::arch::gdt::get_gdt_ptr();
             let gdt_start = sgdt.base as u64 & !(PAGE_SIZE as u64 - 1);
             let gdt_end = (sgdt.base as u64 + u64::from(sgdt.limit) + PAGE_SIZE as u64)
                 & !(PAGE_SIZE as u64 - 1);
@@ -717,7 +717,7 @@ impl VirtualMemoryManager {
 
             // 读取 TSS 基地址 (从 GDT TSS 描述符)
             let tss_start =
-                crate::kernel::framework::arch::gdt::get_tss_base() & !(PAGE_SIZE as u64 - 1);
+                crate::framework::arch::gdt::get_tss_base() & !(PAGE_SIZE as u64 - 1);
             // TSS 结构约 128 字节, 最多跨 2 页
             let tss_end = tss_start + 2 * PAGE_SIZE as u64;
 
@@ -786,7 +786,7 @@ impl VirtualMemoryManager {
             const PER_CPU_IST_STACK_SIZE: u64 = 16384;
             // SAFETY: get_tss_mut 返回当前 CPU 的有效 TSS (BSP 启动期单 CPU 独占).
             // TSS 是 #[repr(packed)], ist 字段可能未对齐, 用 read_unaligned 拷贝.
-            let tss_ref = unsafe { &*crate::kernel::framework::arch::gdt::get_tss_mut() };
+            let tss_ref = unsafe { &*crate::framework::arch::gdt::get_tss_mut() };
             let mut ist_tops = [0u64; 4];
             // SAFETY: tss_ref.ist 为 [u64; 7], 索引 0..4 在界内;
             // addr_of! 不创建引用, 配合 read_unaligned 避免 packed 错位 UB.
@@ -819,10 +819,10 @@ impl VirtualMemoryManager {
             // 实际映射在 enter_user 的 set_kernel_stack 之后完成.
             // 这里仅做尝试, 如果 RSP0 为 0 则跳过.
             // 使用 map_kernel_page_in_table 绕过 KPTI 安全门 (pml4_idx >= 256).
-            let rsp0 = crate::kernel::framework::arch::tss::tss_get_kernel_stack();
+            let rsp0 = crate::framework::arch::tss::tss_get_kernel_stack();
             if rsp0 != 0 {
                 let rsp0_page = rsp0 & !(PAGE_SIZE as u64 - 1);
-                let rsp0_phys = rsp0_page - crate::kernel::framework::mm::KERNEL_BASE as u64;
+                let rsp0_phys = rsp0_page - crate::framework::mm::KERNEL_BASE as u64;
                 self.map_kernel_page_in_table(
                     pml4_phys.as_u64(),
                     VirtAddr(rsp0_page),
@@ -1172,7 +1172,7 @@ impl VirtualMemoryManager {
                                             let user_phys = pte.frame().as_u64();
                                             // cow_dec_ref 锁序: VMM_LOCK 已持有,
                                             // 内部 IrqSpinLock<COW_REFS> 嵌套.
-                                            if crate::kernel::framework::mm::cow::cow_dec_ref(user_phys) {
+                                            if crate::framework::mm::cow::cow_dec_ref(user_phys) {
                                                 // 引用计数归零: 释放物理页
                                                 pmm.free_page(PhysAddr(user_phys));
                                             }
@@ -1967,7 +1967,7 @@ impl VirtualMemoryManager {
 
         #[cfg(feature = "smp")]
         {
-            use crate::kernel::framework::smp;
+            use crate::framework::smp;
             if smp::is_enabled() && smp::get_cpu_count() > 1 {
                 smp::broadcast_tlb_invalidate();
             }

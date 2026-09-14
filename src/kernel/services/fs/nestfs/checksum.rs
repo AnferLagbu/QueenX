@@ -1,4 +1,4 @@
-use crate::kernel::services::fs::nestfs::bp::NestCksumType;
+use crate::services::fs::nestfs::bp::NestCksumType;
 
 pub const HV_CKSUM_FLETCHER2: usize = 1;
 pub const HV_CKSUM_FLETCHER4: usize = 2;
@@ -115,7 +115,7 @@ impl NestChecksum {
     }
 
     fn sha256(&mut self, data: &[u8]) {
-        let hash = crate::kernel::framework::credo::sha256::sha256(data);
+        let hash = crate::framework::credo::sha256::sha256(data);
         self.value[0] = u64::from_be_bytes(hash[0..8].try_into().unwrap_or_else(|_| [0u8; 8]));
         self.value[1] = u64::from_be_bytes(hash[8..16].try_into().unwrap_or_else(|_| [0u8; 8]));
         self.value[2] = u64::from_be_bytes(hash[16..24].try_into().unwrap_or_else(|_| [0u8; 8]));

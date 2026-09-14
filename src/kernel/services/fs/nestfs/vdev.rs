@@ -1,5 +1,5 @@
-use crate::kernel::framework::driver::block;
-use crate::kernel::framework::fs::KernelError;
+use crate::framework::driver::block;
+use crate::framework::fs::KernelError;
 use alloc::vec::Vec;
 
 pub const HV_VDEV_MAX: usize = 8;

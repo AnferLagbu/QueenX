@@ -10,7 +10,7 @@
 //! - 参数验证
 //! - Swap 信息查询
 
-use crate::kernel::framework::mm::swap as fw_swap;
+use crate::framework::mm::swap as fw_swap;
 
 // ============================================================================
 // Swap Entry 安全封装

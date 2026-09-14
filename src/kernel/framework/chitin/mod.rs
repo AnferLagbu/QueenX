@@ -49,8 +49,8 @@
 //! ```
 
 use super::driver::Driver;
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::fs::KernelError;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -421,7 +421,7 @@ pub fn chitin_count_by_proto(proto: ChitinProto) -> usize {
 /// 供 `smoltcp_impl` 使用——协议栈不关心具体驱动类型, 只需要
 /// 四个函数指针 (`send/recv/get_mac/irq`) 和 `driver_data`。
 pub fn chitin_find_net_device() -> Option<(
-    &'static crate::kernel::framework::chitin::proto_net::NetOps,
+    &'static crate::framework::chitin::proto_net::NetOps,
     *mut u8,
     [u8; 6],
 )> {
@@ -806,8 +806,8 @@ pub fn chitin_init_all() {
     // 注册进程退出清理回调, 解耦 proc→chitin 依赖
     // SAFETY: chitin_process_cleanup 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
-        crate::kernel::framework::process_cleanup::register_process_cleanup(
-            crate::kernel::framework::chitin::user_driver::chitin_process_cleanup,
+        crate::framework::process_cleanup::register_process_cleanup(
+            crate::framework::chitin::user_driver::chitin_process_cleanup,
         );
     }
 
@@ -957,7 +957,7 @@ mod tests {
             None,
             raw,
             // 使用 Net 变体替代已移除的 Block 变体
-            ChitinOps::Net(&crate::kernel::framework::chitin::proto_net::NetOps {
+            ChitinOps::Net(&crate::framework::chitin::proto_net::NetOps {
                 send: |_, _, _| 0,
                 recv: |_, _| 0,
                 get_mac: |_, _| {},

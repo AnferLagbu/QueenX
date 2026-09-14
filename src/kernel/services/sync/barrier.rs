@@ -18,8 +18,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::Mutex;
-use crate::kernel::services::sync::scoped::MutexExt;
+use crate::framework::sync::Mutex;
+use crate::services::sync::scoped::MutexExt;
 
 /// N-线程集合点 (latch-style)。
 ///

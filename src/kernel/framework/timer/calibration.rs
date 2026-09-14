@@ -19,7 +19,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::kernel::framework::cpu::{read_tsc, read_tsc_serialized};
+use crate::framework::cpu::{read_tsc, read_tsc_serialized};
 
 // ============================================================================
 // 全局状态
@@ -385,7 +385,7 @@ mod tests {
     reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
 )]
 pub fn register_timer_calibration_tests() {
-    use crate::kernel::framework::tests::{TestFn, TestResult, runner};
+    use crate::framework::tests::{TestFn, TestResult, runner};
     let r = runner();
 
     fn initial_state() -> TestResult {

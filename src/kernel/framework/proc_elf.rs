@@ -2,7 +2,7 @@
 //!
 //! ## 职责
 //!
-//! 这是 services 层与 `kernel::crate::kernel::framework::proc::elf::elf_*` 之间的**唯一** unsafe 边界。
+//! 这是 services 层与 `kernel::crate::framework::proc::elf::elf_*` 之间的**唯一** unsafe 边界。
 //! 所有 `unsafe { ... }` 块都集中在本模块处理, services 层 0 unsafe。
 //!
 //! ## 设计原则
@@ -13,8 +13,8 @@
 //!
 //! 评估日期: 2026-06-04
 
-use crate::kernel::framework::mm::MmStruct;
-use crate::kernel::framework::proc;
+use crate::framework::mm::MmStruct;
+use crate::framework::proc;
 
 // ============================================================================
 // ELF 校验

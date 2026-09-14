@@ -69,7 +69,7 @@ fn fd_table_uses_framework_irq_spinlock() {
     // FdTable 使用 framework 提供的 safe API (IrqSpinLock)
     let src = framework_fd_table_rs();
     assert!(
-        src.contains("use crate::kernel::framework::sync::IrqSpinLock"),
+        src.contains("use crate::framework::sync::IrqSpinLock"),
         "DECISION-J: FdTable 应使用 framework::sync::IrqSpinLock"
     );
 }
@@ -79,11 +79,11 @@ fn framework_process_re_exports_fd_table_locally() {
     // DECISION-J 验收: process.rs 引 framework 本地路径 (不再是 services)
     let src = framework_process_rs();
     assert!(
-        src.contains("pub use crate::kernel::framework::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS}"),
+        src.contains("pub use crate::framework::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS}"),
         "DECISION-J: framework/proc/process.rs 必须 re-export framework::fd_table"
     );
     assert!(
-        !src.contains("crate::kernel::services::proc::fd_table"),
+        !src.contains("crate::services::proc::fd_table"),
         "DECISION-J: framework/proc/process.rs 不得再引用 services::fd_table"
     );
     // 不能有 struct FdTable 重复定义
@@ -100,7 +100,7 @@ fn services_fd_table_is_pure_reexport_shell() {
     // DECISION-J 验收: services 侧为纯 re-export 代理壳, 不重复定义
     let src = services_fd_table_rs();
     assert!(
-        src.contains("pub use crate::kernel::framework::proc::fd_table::*;"),
+        src.contains("pub use crate::framework::proc::fd_table::*;"),
         "DECISION-J: services/proc/fd_table.rs 必须为 glob re-export 壳"
     );
     let struct_count = src.matches("pub struct FdTable").count();

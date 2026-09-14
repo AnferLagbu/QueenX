@@ -33,7 +33,7 @@
 /// ## 使用示例
 ///
 /// ```rust
-/// use crate::kernel::framework::lib::string::*;
+/// use crate::framework::lib::string::*;
 ///
 /// // FFI 风格 (供 C 代码调用或需要指针操作时)
 /// unsafe {
@@ -61,6 +61,6 @@
 pub mod cstr;
 pub mod string;
 
-// 导出常用函数，方便通过 crate::kernel::framework::lib::* 直接使用
+// 导出常用函数，方便通过 crate::framework::lib::* 直接使用
 pub use cstr::*;
 pub use string::*;

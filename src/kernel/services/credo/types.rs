@@ -8,4 +8,4 @@
 //! 判据 — framework/proc/process.rs 进程表机制持有 PwmContext). 本文件仅
 //! re-export 保持 services 内部消费者路径兼容.
 
-pub use crate::kernel::framework::credo::types::*;
+pub use crate::framework::credo::types::*;

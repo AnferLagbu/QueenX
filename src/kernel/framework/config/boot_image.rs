@@ -10,8 +10,8 @@
 //!
 //! services 侧改 re-export 保持 API 兼容。本文件 0 unsafe。
 
-use crate::kernel::framework::config::get_config_summary;
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::config::get_config_summary;
+use crate::framework::sync::IrqSpinLock;
 
 const ENCODED_LEN: usize = 64;
 const HEADER_MAGIC: u32 = 0xC0FFEE01;

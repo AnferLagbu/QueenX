@@ -348,7 +348,7 @@ fn test_posix_marker_without_backtick_still_violates() {
 fn test_rust_code_example_passes() {
     let files = &[(
         "doc.rs",
-        "//! use crate::kernel::services::proc::posix_timer;\n\
+        "//! use crate::services::proc::posix_timer;\n\
          //! let new_value = Itimerspec { it_interval_sec: 1, it_interval_nsec: 0 };\n\
          //! posix_timer::timer_settime(id, 0, Some(&new_value), None);\n\
          pub fn f() {}\n",

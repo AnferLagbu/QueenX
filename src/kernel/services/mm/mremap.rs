@@ -15,8 +15,8 @@
 //! - `MREMAP_MAYMOVE (1)`: 允许搬迁到新地址
 //! - `MREMAP_FIXED (2)`: 不支持 (由 glibc 在用户态模拟)
 
-use crate::kernel::framework::mm::MmStruct;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::mm::MmStruct;
+use crate::framework::syscall::Errno;
 
 /// mremap 系统调用安全代理
 ///

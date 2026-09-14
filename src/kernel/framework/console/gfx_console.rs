@@ -1,4 +1,4 @@
-use crate::kernel::framework::driver::{Color, Font, Framebuffer, Rect, colors};
+use crate::framework::driver::{Color, Font, Framebuffer, Rect, colors};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// 全局紧急/panic 标记 — 当为 true 时，GfxConsole 输出使用 panic 专用配色

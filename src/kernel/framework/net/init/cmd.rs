@@ -16,7 +16,7 @@ use core::sync::atomic::Ordering;
 
 use smoltcp::wire::IpCidr;
 
-use crate::kernel::framework::net::{NET_CONFIGURED, NET_READY};
+use crate::framework::net::{NET_CONFIGURED, NET_READY};
 
 use super::dns::{parse_cidr, parse_ipv4_literal};
 use super::poll_network;

@@ -8,4 +8,4 @@
 //! 判据 — framework/credo/secure_boot 直接消费). 本文件仅 re-export 保持
 //! services 内部消费者路径兼容.
 
-pub use crate::kernel::framework::credo::sha256::*;
+pub use crate::framework::credo::sha256::*;

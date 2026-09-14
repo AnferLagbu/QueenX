@@ -8,9 +8,9 @@
 //! 已完成, IPv4/IPv6 双栈支持 (DECISION-032) 已实装. 详细进度见
 //! 进度跟踪文档 (docs/plan/progress-active-tasks.md).
 
-use crate::kernel::framework::net_socket as fw_net_socket;
-use crate::kernel::framework::sync::{Mutex, OnceLock};
-use crate::kernel::services::net::smoltcp_impl::SmoltcpNetStack;
+use crate::framework::net_socket as fw_net_socket;
+use crate::framework::sync::{Mutex, OnceLock};
+use crate::services::net::smoltcp_impl::SmoltcpNetStack;
 
 /// 全局 `SmoltcpNetStack` 实例, 由 `init()` 初始化, socket.rs 通过 `net_stack()` 访问
 ///
@@ -43,7 +43,7 @@ pub enum InitState {
 // I-预存 (kernel_test build): 同 net_socket.rs 处理 — 用 cfg-gate `use` 别名
 // + 桩模块, 让函数体保持 `init::*` 调用, 不扩散 cfg 到 fn body.
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::net::init;
+use crate::framework::net::init;
 
 // kernel_test 桩: 对齐真实 `net::init` 暴露的类型与函数签名.
 // 同时为 smoltcp_impl.rs 的 `fw_init::` 调用提供 kernel_test no-op stub.
@@ -63,15 +63,15 @@ mod init {
     }
     // I-预存 (kernel_test build): 为 smoltcp_impl.rs 的 fw_init:: 调用
     // 提供 no-op stub, 避免编译失败. 测试模式下不创建真实 socket.
-    use crate::kernel::framework::net::iface_trait::SocketKind;
+    use crate::framework::net::iface_trait::SocketKind;
     pub fn smoltcp_net_stack_socket_open(_kind: SocketKind, _slot_idx: usize) -> Option<u32> {
         None
     }
     pub fn smoltcp_net_stack_slot_base() -> usize {
         0
     }
-    pub fn smoltcp_net_stack_poll() -> crate::kernel::framework::net::iface_trait::PollOutcome {
-        crate::kernel::framework::net::iface_trait::PollOutcome::idle()
+    pub fn smoltcp_net_stack_poll() -> crate::framework::net::iface_trait::PollOutcome {
+        crate::framework::net::iface_trait::PollOutcome::idle()
     }
     pub fn smoltcp_net_stack_close(_slot_idx: usize) {}
 }
@@ -120,7 +120,7 @@ pub enum NetError {
     /// DHCP 未配置
     NotConfigured,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl NetError {
@@ -134,7 +134,7 @@ impl NetError {
     }
 
     pub fn from_i32(rc: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match rc {
             -1 => Self::Kernel(K::NotReady),
             -2 => Self::Kernel(K::NoSuchProcess),
@@ -150,7 +150,7 @@ impl NetError {
 /// services 层结果类型别名
 pub type NetResult<T> = Result<T, NetError>;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 状态转换

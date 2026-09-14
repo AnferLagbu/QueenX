@@ -19,9 +19,9 @@ use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::time::Instant;
 use smoltcp::wire::{EthernetAddress, HardwareAddress};
 
-use crate::kernel::framework::chitin::NetOps;
-use crate::kernel::framework::timer::get_uptime_ms;
-use crate::kernel::framework::timer::hrtimer_clock_read;
+use crate::framework::chitin::NetOps;
+use crate::framework::timer::get_uptime_ms;
+use crate::framework::timer::hrtimer_clock_read;
 
 const RX_BUF_SIZE: usize = 2048;
 const TX_BUF_SIZE: usize = 2048;

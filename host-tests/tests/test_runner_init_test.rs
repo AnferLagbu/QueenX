@@ -5,8 +5,8 @@
 //! "devfs::global() called before init_global()" panic, 测试卡死.
 //!
 //! 修复: test_runner_init 在 register_tests 之前调用:
-//! - crate::kernel::services::fs::devfs::init_global()
-//! - crate::kernel::services::fs::procfs::init_global()
+//! - crate::services::fs::devfs::init_global()
+//! - crate::services::fs::procfs::init_global()
 //!
 //! E-04 (2026-09-06): 测试运行器双端适配 — 注册逻辑已从 test_runner_init 抽取至
 //! `register_all_tests()` (kernel_test 的 test_runner_init 与 host 入口
@@ -98,7 +98,7 @@ fn test_smoltcp_impl_kernel_test_fw_init_stub() {
     ).expect("无法读取 smoltcp_impl.rs");
     assert!(
         smoltcp_impl.contains("#[cfg(not(feature = \"kernel_test\"))]")
-            && smoltcp_impl.contains("use crate::kernel::framework::net::init as fw_init"),
+            && smoltcp_impl.contains("use crate::framework::net::init as fw_init"),
         "smoltcp_impl.rs 应 cfg-gate framework::net::init import (kernel_test 模式走桩)"
     );
 }

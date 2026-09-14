@@ -12,9 +12,9 @@
 //! `register_default_ipc_strategy()` 注册 → FFI syscall 使用时经
 //! `current_ipc_strategy()` 获取。由 lib.rs 编排 (crate root 双向编排者)。
 
-use crate::kernel::framework::ipc::types::{IpcId, IpcNamespace};
-use crate::kernel::framework::ipc::IpcStrategy;
-use crate::kernel::services::ipc::{msgq, pipe, shm};
+use crate::framework::ipc::types::{IpcId, IpcNamespace};
+use crate::framework::ipc::IpcStrategy;
+use crate::services::ipc::{msgq, pipe, shm};
 
 /// 默认 IPC 策略 — 包装 services `*_safe` 策略函数
 pub struct DefaultIpcStrategy;
@@ -134,5 +134,5 @@ static IPC_STRATEGY: DefaultIpcStrategy = DefaultIpcStrategy;
 /// # Errors
 /// 当策略已注册时返回 `Err(())`.
 pub fn register_default_ipc_strategy() -> Result<(), ()> {
-    crate::kernel::framework::ipc::strategy::register_ipc_strategy(&IPC_STRATEGY).map_err(|_| ())
+    crate::framework::ipc::strategy::register_ipc_strategy(&IPC_STRATEGY).map_err(|_| ())
 }

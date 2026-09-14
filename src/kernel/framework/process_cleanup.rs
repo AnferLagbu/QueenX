@@ -32,7 +32,7 @@ pub unsafe fn register_process_cleanup(func: ProcessCleanupFn) {
 pub fn notify_process_exit(pid: u32) {
     // B03-08 返工: 进程退出时强制释放该进程持有的所有 PI Mutex,
     // 防止"持锁进程退出 → 锁永久不释放 → 后续获取者死锁" (TOP 20 #6).
-    crate::kernel::framework::sync::pi_mutex::pi_mutex_process_exit(pid);
+    crate::framework::sync::pi_mutex::pi_mutex_process_exit(pid);
 
     let ptr = PROCESS_CLEANUP_FN.load(Ordering::Acquire);
     if !ptr.is_null() {

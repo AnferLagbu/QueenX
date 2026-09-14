@@ -70,7 +70,7 @@ pub use sched_policy::{DefaultPolicy, register_default_policy};
 // namespace 公共接口 re-export — 避免跨层直接访问 services::proc::namespace 内部
 pub use namespace::NamespaceSet;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 错误
@@ -87,7 +87,7 @@ pub enum ProcError {
     /// 进程已退出
     Exited,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl ProcError {
@@ -101,7 +101,7 @@ impl ProcError {
     }
 
     pub fn from_i32(rc: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match rc {
             -1 => Self::Kernel(K::NoSuchProcess),
             -2 => Self::Kernel(K::PermissionDenied),
@@ -142,17 +142,17 @@ pub fn init() {
     signal::register_standard_signal_policy()
         .expect("proc::init: 信号策略重复注册 (framework 契约: 仅注册一次)");
 
-    crate::kernel::framework::proc::thread::init();
-    crate::kernel::framework::proc::scheduler::init();
-    crate::kernel::framework::proc::scheduler_ex::init();
-    crate::kernel::framework::proc::session::init();
+    crate::framework::proc::thread::init();
+    crate::framework::proc::scheduler::init();
+    crate::framework::proc::scheduler_ex::init();
+    crate::framework::proc::session::init();
 }
 
 /// 初始化指定 CPU 的每 CPU 调度队列
 ///
 /// 由 SMP 启动代码在每个 CPU 上调用一次。
 pub fn init_per_cpu(cpu_id: u32) {
-    crate::kernel::framework::proc::init_per_cpu_sched(cpu_id);
+    crate::framework::proc::init_per_cpu_sched(cpu_id);
 }
 
 // ============================================================================
@@ -161,14 +161,14 @@ pub fn init_per_cpu(cpu_id: u32) {
 
 /// 调度器是否已就绪
 pub fn scheduler_ready() -> bool {
-    crate::kernel::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire)
+    crate::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire)
 }
 
 /// 触发调度 (在 timer tick 或阻塞唤醒后调用)
 ///
 /// 由架构中断处理代码调用。
 pub fn schedule() {
-    crate::kernel::framework::proc::SCHEDULER.schedule();
+    crate::framework::proc::SCHEDULER.schedule();
 }
 
 // ============================================================================

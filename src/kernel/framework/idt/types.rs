@@ -4,7 +4,7 @@
 //! 所有布局与 C 版本 [idt.h](../../../include/idt.h) 完全兼容，
 //! 使用 `#[repr(C, packed)]` 确保内存布局一致。
 
-use crate::kernel::framework::mm::{KERNEL_TEXT_BASE, USER_ADDR_MIN};
+use crate::framework::mm::{KERNEL_TEXT_BASE, USER_ADDR_MIN};
 
 /// IDT 条目总数 (Intel 64-bit)
 pub const IDT_ENTRIES: usize = 256;
@@ -602,5 +602,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_idt_types_tests() {
-    crate::kernel::framework::tests::idt::register_idt_types_tests();
+    crate::framework::tests::idt::register_idt_types_tests();
 }

@@ -26,9 +26,9 @@ pub use controller::{DisplayController, DisplayManager, DisplayMode, DisplayOutp
 
 use super::framework;
 use super::framework::{Driver, DriverError};
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::PhysAddr;
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::PhysAddr;
+use crate::framework::sync::IrqSpinLock;
 
 struct DisplayDriver;
 
@@ -68,7 +68,7 @@ pub static FB_PHYS_SIZE: core::sync::atomic::AtomicU64 = core::sync::atomic::Ato
 /// 返回 `IrqSpinLockGuard` 持有锁期间访问帧缓冲。
 /// 调用方通过 `.as_ref()` 获取 `Option<&Framebuffer>`。
 pub fn get_framebuffer()
--> Option<crate::kernel::framework::sync::IrqSpinLockGuard<'static, Option<Framebuffer>>> {
+-> Option<crate::framework::sync::IrqSpinLockGuard<'static, Option<Framebuffer>>> {
     let guard = GLOBAL_FRAMEBUFFER.lock();
     if guard.is_some() { Some(guard) } else { None }
 }
@@ -209,7 +209,7 @@ unsafe fn read_bochs_disp_mode_mmio(mmio_base: u64) -> Option<(u32, u32, u8)> {
 #[cfg(target_arch = "x86_64")]
 fn probe_vga_fb_via_pci() -> Option<VgaFbInfo> {
     let devices =
-        crate::kernel::framework::pci::find_by_class(crate::kernel::framework::pci::CLASS_DISPLAY);
+        crate::framework::pci::find_by_class(crate::framework::pci::CLASS_DISPLAY);
     for dev in &devices {
         if dev.subclass_code != 0x00 {
             crate::klog_info!(
@@ -301,7 +301,7 @@ pub fn display_init() -> framework::Result<()> {
     crate::klog_boot_info!("[DISPLAY] display_init: probing framebuffer");
 
     // ── 方案 A: Multiboot2 tag 8 (GRUB boot) ──
-    let fb_info = match crate::kernel::framework::boot::multiboot2_fb::get_framebuffer_info() {
+    let fb_info = match crate::framework::boot::multiboot2_fb::get_framebuffer_info() {
         Some(info) if info.is_valid() => {
             crate::klog_boot_info!(
                 "[DISPLAY] got framebuffer from Multiboot2: {}x{}x{} @ 0x{:X}",
@@ -346,7 +346,7 @@ pub fn display_init() -> framework::Result<()> {
     FB_PHYS_ADDR.store(fb_addr, core::sync::atomic::Ordering::Release);
     FB_PHYS_SIZE.store(fb_size, core::sync::atomic::Ordering::Release);
 
-    let _virt_addr = crate::kernel::framework::mm::map_framebuffer(fb_addr, fb_size);
+    let _virt_addr = crate::framework::mm::map_framebuffer(fb_addr, fb_size);
 
     let format = infer_pixel_format(bpp, 16, 8, 0);
 
@@ -380,18 +380,18 @@ pub fn display_init() -> framework::Result<()> {
             }
 
             let console = alloc::boxed::Box::new(
-                crate::kernel::framework::console::gfx_console::GfxConsole::new(fb as *mut _, font),
+                crate::framework::console::gfx_console::GfxConsole::new(fb as *mut _, font),
             );
-            crate::kernel::framework::console::gfx_console_init(alloc::boxed::Box::leak(console));
+            crate::framework::console::gfx_console_init(alloc::boxed::Box::leak(console));
             crate::klog_info!(Driver, "[DISPLAY] GfxConsole initialized");
         }
     });
 
     let _manager = DisplayManager::new();
 
-    crate::kernel::framework::chitin::chitin_register_driver(
+    crate::framework::chitin::chitin_register_driver(
         "vga-display",
-        crate::kernel::framework::chitin::ChitinProto::Other,
+        crate::framework::chitin::ChitinProto::Other,
         Some(fb_addr),
         None,
         alloc::boxed::Box::new(DisplayDriver),

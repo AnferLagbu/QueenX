@@ -181,7 +181,7 @@ pub unsafe fn unpack(data: *const u8, len: usize) -> Result<usize, &'static str>
 
         // 确保根目录存在
         let pwm = 0; // 内核权限
-        let _ = crate::kernel::framework::fs::vfs::vfs_mkdir(b"/\0".as_ptr(), pwm);
+        let _ = crate::framework::fs::vfs::vfs_mkdir(b"/\0".as_ptr(), pwm);
 
         while offset < data_slice.len() {
             let (entry, next_offset) = match parse_next_entry(data_slice, offset) {
@@ -205,31 +205,31 @@ pub unsafe fn unpack(data: *const u8, len: usize) -> Result<usize, &'static str>
             match file_type {
                 CPIO_S_IFDIR => {
                     // 创建目录
-                    let _ = crate::kernel::framework::fs::vfs::vfs_mkdir(path_buf.as_ptr(), pwm);
+                    let _ = crate::framework::fs::vfs::vfs_mkdir(path_buf.as_ptr(), pwm);
                 }
                 CPIO_S_IFREG => {
                     // 创建文件并写入数据
-                    let fd = crate::kernel::framework::fs::vfs::vfs_open(
+                    let fd = crate::framework::fs::vfs::vfs_open(
                         path_buf.as_ptr(),
                         0x41, // O_WRONLY | O_CREAT
                         pwm,
                     );
                     if fd >= 0 {
                         if !entry.data.is_empty() {
-                            crate::kernel::framework::fs::vfs::vfs_write(
+                            crate::framework::fs::vfs::vfs_write(
                                 fd as u32,
                                 entry.data.as_ptr(),
                                 entry.data.len() as u32,
                             );
                         }
-                        crate::kernel::framework::fs::vfs::vfs_close(fd as u32);
+                        crate::framework::fs::vfs::vfs_close(fd as u32);
                     }
                 }
                 CPIO_S_IFLNK => {
                     // 符号链接: entry.data 是链接目标
                     // 真实实现: 在 linkpath 父目录下建 Symlink 类型新节点.
                     if !entry.data.is_empty() {
-                        crate::kernel::framework::fs::vfs::vfs_symlink(
+                        crate::framework::fs::vfs::vfs_symlink(
                             entry.data.as_ptr(),
                             path_buf.as_ptr(),
                             pwm,
@@ -259,8 +259,8 @@ pub unsafe fn unpack(data: *const u8, len: usize) -> Result<usize, &'static str>
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_cpio_parse_hex() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_cpio_parse_hex() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     assert_eq_test!(parse_hex_field(b"00000000"), 0u32, "hex 0");
     assert_eq_test!(parse_hex_field(b"00000001"), 1u32, "hex 1");
     assert_eq_test!(parse_hex_field(b"0000000A"), 10u32, "hex A");
@@ -270,8 +270,8 @@ fn test_cpio_parse_hex() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_cpio_align4() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_cpio_align4() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     assert_eq_test!(align4(0), 0, "align4(0)");
     assert_eq_test!(align4(1), 4, "align4(1)");
     assert_eq_test!(align4(3), 4, "align4(3)");
@@ -282,8 +282,8 @@ fn test_cpio_align4() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_cpio_parse_minimal() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_cpio_parse_minimal() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // 构造一个最小的 cpio 归档: 一个空目录 + TRAILER
     let mut archive = [0u8; 256];
 
@@ -328,7 +328,7 @@ fn test_cpio_parse_minimal() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_initramfs_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("initramfs", "parse_hex", test_cpio_parse_hex);
     r.register("initramfs", "align4", test_cpio_align4);

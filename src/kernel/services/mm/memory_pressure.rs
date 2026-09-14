@@ -29,7 +29,7 @@
 //!   反转归位 (2026-09-13); 类型/状态/读取/包装经下方 re-export 保持 API 兼容
 //!   (services→framework 合法方向)
 
-pub use crate::kernel::framework::mm::pressure::{
+pub use crate::framework::mm::pressure::{
     MemoryPressure, current_pressure, previous_pressure, update_pressure,
 };
 
@@ -86,7 +86,7 @@ fn classify_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
 ///
 /// 当分级策略已被注册时返回 `Err(())`.
 pub fn register_pressure_classifier() -> Result<(), ()> {
-    crate::kernel::framework::mm::pressure::register_pressure_classifier(classify_pressure)
+    crate::framework::mm::pressure::register_pressure_classifier(classify_pressure)
         .map_err(|_| ())
 }
 
@@ -102,7 +102,7 @@ pub fn is_pressure_emergency() -> bool {
 // T-02: 压力感知分配策略 — services 层策略主体
 // ============================================================================
 
-use crate::kernel::framework::mm::alloc_trait::{AllocContext, AllocDecision, FrameAllocDecision};
+use crate::framework::mm::alloc_trait::{AllocContext, AllocDecision, FrameAllocDecision};
 
 /// 压力感知分配策略 — services 层安全实现
 ///
@@ -161,5 +161,5 @@ impl FrameAllocDecision for PressureAwareAllocPolicy {
 /// 当分配策略已被注册时返回 `Err(())`.
 pub fn register_pressure_aware_policy() -> Result<(), ()> {
     static POLICY: PressureAwareAllocPolicy = PressureAwareAllocPolicy;
-    crate::kernel::framework::mm::register_alloc_decision(&POLICY).map_err(|_| ())
+    crate::framework::mm::register_alloc_decision(&POLICY).map_err(|_| ())
 }

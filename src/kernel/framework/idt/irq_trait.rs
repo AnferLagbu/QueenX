@@ -97,8 +97,8 @@ impl IrqDecision for FallbackIrqDecision {
 static FALLBACK_DECISION: FallbackIrqDecision = FallbackIrqDecision;
 
 /// 全局策略注册表 — services 通过 `register_irq_decision` 注册
-static IRQ_DECISION: crate::kernel::framework::sync::OnceLock<&'static dyn IrqDecision> =
-    crate::kernel::framework::sync::OnceLock::new();
+static IRQ_DECISION: crate::framework::sync::OnceLock<&'static dyn IrqDecision> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册中断处理决策策略 (由 `services::driver::init` 调用)
 ///

@@ -20,8 +20,8 @@
 //! - 脏页写回由文件系统负责 (当前阶段仅标记)
 //! - 仅 `pcache_copy_to_user` 保留 unsafe (用户态指针操作)
 
-use crate::kernel::framework::mm::{PAGE_SIZE, PhysAddr, pmm};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::mm::{PAGE_SIZE, PhysAddr, pmm};
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // 物理页 safe 操作封装
@@ -47,7 +47,7 @@ fn zero_phys_page(phys: PhysAddr) {
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 fn copy_to_phys_page(phys: u64, src: &[u8]) {
-    let dst_virt = crate::kernel::framework::mm::phys_to_virt(phys);
+    let dst_virt = crate::framework::mm::phys_to_virt(phys);
     let copy_len = core::cmp::min(src.len(), PAGE_SIZE as usize);
     // SAFETY: phys 是 PMM 分配的有效物理页, phys_to_virt 返回有效的内核虚拟地址;
     // copy_len <= PAGE_SIZE, 不会越界; src 是有效切片.
@@ -62,7 +62,7 @@ fn copy_to_phys_page(phys: u64, src: &[u8]) {
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
 fn copy_from_phys_page(phys: u64, dst: &mut [u8]) {
-    let src_virt = crate::kernel::framework::mm::phys_to_virt(phys);
+    let src_virt = crate::framework::mm::phys_to_virt(phys);
     let copy_len = core::cmp::min(dst.len(), PAGE_SIZE as usize);
     // SAFETY: phys 是 PMM 分配的有效物理页, phys_to_virt 返回有效的内核虚拟地址;
     // copy_len <= PAGE_SIZE, 不会越界; dst 是有效切片.
@@ -336,7 +336,7 @@ pub fn pcache_invalidate_inode(inode_id: u32) {
 #[expect(clippy::cast_possible_truncation)]
 pub unsafe fn pcache_copy_to_user(phys: u64, dest_virt: u64) {
     unsafe {
-        let src_virt = crate::kernel::framework::mm::phys_to_virt(phys);
+        let src_virt = crate::framework::mm::phys_to_virt(phys);
         // SAFETY: 调用方保证 dest_virt 指向有效用户空间页, phys 为有效物理页.
         core::ptr::copy_nonoverlapping(
             src_virt as *const u8,
@@ -381,8 +381,8 @@ pub fn pcache_read_to_slice(inode_id: u32, page_index: u64, dst: &mut [u8]) -> b
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_pcache_hash_range() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_pcache_hash_range() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     for &inode in &[1u32, 42, 1000, 0xFFFF] {
         for &pg in &[0u64, 1, 100, 0xFFFFFFFF] {
             let idx = pcache_hash(inode, pg);
@@ -393,8 +393,8 @@ fn test_pcache_hash_range() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_pcache_bucket_insert_lookup() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_pcache_bucket_insert_lookup() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     let bucket = PageCacheBucket::new();
     check!(bucket.count == 0, "empty bucket");
 
@@ -405,8 +405,8 @@ fn test_pcache_bucket_insert_lookup() -> crate::kernel::framework::tests::TestRe
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_pcache_fill_requires_existing_entry() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_pcache_fill_requires_existing_entry() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // 在空桶上 fill 应返回 false (entry 不存在)
     let mut bucket = PageCacheBucket::new();
     let data = [0xABu8; 16];
@@ -416,8 +416,8 @@ fn test_pcache_fill_requires_existing_entry() -> crate::kernel::framework::tests
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_pcache_fill_len_clamped() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_pcache_fill_len_clamped() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // fill 的 copy_len 应取 min(src.len(), PAGE_SIZE)
     // 我们通过计算期望 copy_len 验证 (不实际触发 PMM 分配)
     let src_short = [0u8; 100];
@@ -434,7 +434,7 @@ fn test_pcache_fill_len_clamped() -> crate::kernel::framework::tests::TestResult
 
 #[cfg(feature = "kernel_test")]
 pub fn register_pcache_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("pcache", "hash_range", test_pcache_hash_range);
     r.register(

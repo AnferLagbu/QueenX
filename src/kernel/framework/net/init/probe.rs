@@ -11,18 +11,18 @@
 
 use alloc::boxed::Box;
 
-use crate::kernel::framework::driver::Driver;
-use crate::kernel::framework::net::ChitinNetDevice;
+use crate::framework::driver::Driver;
+use crate::framework::net::ChitinNetDevice;
 
 use super::raw;
 
 #[cfg(not(feature = "kernel_test"))]
-static E1000_NET_OPS_STATIC: crate::kernel::framework::chitin::NetOps =
-    crate::kernel::framework::chitin::NetOps {
-        send: crate::kernel::framework::driver::e1000_net_send,
-        try_receive: crate::kernel::framework::driver::e1000_net_recv,
-        get_mac: crate::kernel::framework::driver::e1000_net_get_mac,
-        handle_irq: Some(crate::kernel::framework::driver::e1000_net_irq),
+static E1000_NET_OPS_STATIC: crate::framework::chitin::NetOps =
+    crate::framework::chitin::NetOps {
+        send: crate::framework::driver::e1000_net_send,
+        try_receive: crate::framework::driver::e1000_net_recv,
+        get_mac: crate::framework::driver::e1000_net_get_mac,
+        handle_irq: Some(crate::framework::driver::e1000_net_irq),
     };
 
 /// # Safety
@@ -52,9 +52,9 @@ pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
         // 1) e1000 探测 (PCI 设备, 走 PCI 总线)
         // aarch64: e1000_probe() 内部安全返回 -1 (无 PCI ECAM)
         {
-            let probe_result = crate::kernel::framework::driver::e1000_probe();
+            let probe_result = crate::framework::driver::e1000_probe();
             if probe_result == 0 {
-                let mut dev = crate::kernel::framework::driver::e1000_take_device()?;
+                let mut dev = crate::framework::driver::e1000_take_device()?;
                 if Driver::init(&mut *dev).is_err() {
                     raw::klog_err("e1000: hardware init failed");
                     return None;
@@ -73,7 +73,7 @@ pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
         // 未注册/探测失败返回 None → nic_probe_all 返回 None (与旧行为一致)。
         {
             if let Some(reg) =
-                crate::kernel::framework::net::net_device_ops::net_services_driver()
+                crate::framework::net::net_device_ops::net_services_driver()
             {
                 let nic = ChitinNetDevice::new(reg.ops, reg.driver_data, reg.mac);
                 raw::klog_msg("virtio-net: probed successfully (services bridge)");

@@ -8,15 +8,15 @@
 //! 纯策略代码 (socket CRUD + 路径绑定 + STREAM/DGRAM 数据传输), 0 unsafe.
 //! framework 仅保留 re-export.
 
-use crate::kernel::framework::sync::IrqSpinLock;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::sync::IrqSpinLock;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量
 // ============================================================================
 
 /// FD 起点, 位于 smoltcp FD 空间 (`[0, 256)`) 之后, 与之不重叠.
-pub const UDS_FD_BASE: i32 = crate::kernel::framework::proc::FdPlan::UDS.base;
+pub const UDS_FD_BASE: i32 = crate::framework::proc::FdPlan::UDS.base;
 
 /// 最大 UDS socket 数量
 pub const MAX_UDS_FD: usize = 16;
@@ -25,7 +25,7 @@ pub const MAX_UDS_FD: usize = 16;
 ///
 /// DECISION-J (2026-09-13): wire 常量迁回 `framework::net::socket_types`,
 /// 此处 re-export 保持 API 兼容。
-pub use crate::kernel::framework::net::socket_types::UNIX_PATH_MAX;
+pub use crate::framework::net::socket_types::UNIX_PATH_MAX;
 
 /// 路径绑定表容量
 pub const UNIX_MAX_BINDINGS: usize = 32;
@@ -253,8 +253,8 @@ fn alloc_socket_id() -> u32 {
 /// FD → 槽位索引反查 (V3: 使用 `idx_of`, FD 编号由 `fd_at` 计算)
 #[inline]
 fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
-    match crate::kernel::framework::proc::idx_of(fd) {
-        Some((crate::kernel::framework::proc::FdSubsystem::Uds, slot)) => Ok(slot as u8),
+    match crate::framework::proc::idx_of(fd) {
+        Some((crate::framework::proc::FdSubsystem::Uds, slot)) => Ok(slot as u8),
         _ => Err(UdsError::BadFd),
     }
 }
@@ -271,7 +271,7 @@ pub fn uds_init() {
     // cfg 对齐 framework::net::init 门控 (kernel_test 下 init FFI 层不存在).
     #[cfg(not(feature = "kernel_test"))]
     {
-        let _ = crate::kernel::framework::net::init::register_uds_setsockopt_hook(uds_setsockopt);
+        let _ = crate::framework::net::init::register_uds_setsockopt_hook(uds_setsockopt);
     }
 }
 
@@ -296,13 +296,13 @@ pub fn uds_create(sock_type: UnixSockType) -> Result<i32, UdsError> {
         }
 
         // V2: 使用集中分配器获取 FD, 再通过 idx_of 获取槽位索引
-        let fd = crate::kernel::services::proc::fd_alloc::alloc_fd(
-            crate::kernel::services::proc::fd_alloc::FdSubsystem::Uds,
+        let fd = crate::services::proc::fd_alloc::alloc_fd(
+            crate::services::proc::fd_alloc::FdSubsystem::Uds,
         )
         .ok_or(UdsError::NoMem)?;
 
         let (_sub, slot) =
-            crate::kernel::services::proc::fd_alloc::idx_of(fd).ok_or(UdsError::BadFd)?;
+            crate::services::proc::fd_alloc::idx_of(fd).ok_or(UdsError::BadFd)?;
 
         let idx = slot as u8;
         let id = alloc_socket_id();
@@ -391,13 +391,13 @@ pub fn uds_listen(fd: i32) -> Result<(), UdsError> {
 /// 套接字非流式或非 Listening 状态时返回 `Err(UdsError::Invalid)`; 待连接队列为空时返回 `Err(UdsError::Again)`。
 pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
     // V2: 使用集中分配器获取新 FD
-    let new_fd = crate::kernel::services::proc::fd_alloc::alloc_fd(
-        crate::kernel::services::proc::fd_alloc::FdSubsystem::Uds,
+    let new_fd = crate::services::proc::fd_alloc::alloc_fd(
+        crate::services::proc::fd_alloc::FdSubsystem::Uds,
     )
     .ok_or(UdsError::NoMem)?;
 
     let (_sub, new_slot) =
-        crate::kernel::services::proc::fd_alloc::idx_of(new_fd).ok_or(UdsError::BadFd)?;
+        crate::services::proc::fd_alloc::idx_of(new_fd).ok_or(UdsError::BadFd)?;
 
     UDS_STATE.with_mut(|state| {
         let listen_idx = fd_to_idx(fd)? as usize;
@@ -865,9 +865,9 @@ pub struct ScmCredentials {
 /// `proc::process_get_current_pid()` + `credo::session::{get_current_uid, get_current_gid}`.
 fn current_scm_credentials() -> ScmCredentials {
     ScmCredentials {
-        pid: crate::kernel::framework::proc::process_get_current_pid(),
-        uid: crate::kernel::framework::credo::get_current_uid(),
-        gid: crate::kernel::framework::credo::get_current_gid(),
+        pid: crate::framework::proc::process_get_current_pid(),
+        uid: crate::framework::credo::get_current_uid(),
+        gid: crate::framework::credo::get_current_gid(),
     }
 }
 
@@ -954,7 +954,7 @@ pub use UnixSockType as SockType;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnixSocketError {
     PathNotFound,
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl UnixSocketError {
@@ -968,7 +968,7 @@ impl UnixSocketError {
 
 impl From<UdsError> for UnixSocketError {
     fn from(e: UdsError) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match e {
             UdsError::NotFound => Self::PathNotFound,
             UdsError::BadFd => Self::Kernel(K::BadFd),
@@ -983,8 +983,8 @@ impl From<UdsError> for UnixSocketError {
     }
 }
 
-impl From<crate::kernel::services::error::KernelError> for UnixSocketError {
-    fn from(e: crate::kernel::services::error::KernelError) -> Self {
+impl From<crate::services::error::KernelError> for UnixSocketError {
+    fn from(e: crate::services::error::KernelError) -> Self {
         Self::Kernel(e)
     }
 }
@@ -996,7 +996,7 @@ pub type UnixResult<T> = Result<T, UnixSocketError>;
 /// DECISION-J (2026-09-13): wire 类型迁回 `framework::net::socket_types` —
 /// 由 framework TCB raw 桥接 (net/syscall.rs::raw_read/write_sockaddr_un)
 /// 从用户内存构造, 属机制的安全导出面。此处 re-export 保持 API 兼容。
-pub use crate::kernel::framework::net::socket_types::SockAddrUn;
+pub use crate::framework::net::socket_types::SockAddrUn;
 
 // ============================================================================
 // 安全封装 API (保持原有调用方兼容)

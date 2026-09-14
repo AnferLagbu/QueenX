@@ -29,8 +29,8 @@
 
 use super::framework::{DeviceInfo, DeviceType, Driver, DriverError, Result};
 use super::usb_core::{HostController, Urb, UsbSpeed};
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::{PhysAddr, VirtAddr};
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::{PhysAddr, VirtAddr};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::ptr;
@@ -556,7 +556,7 @@ impl XhciController {
     /// # Errors
     /// DMA 内存分配失败时返回 Err。
     pub fn init_command_ring(&mut self) -> Result<()> {
-        use crate::kernel::framework::dma::get_dma;
+        use crate::framework::dma::get_dma;
 
         let dma = get_dma();
         let ring_size = self.cmd_ring_size as usize;
@@ -1034,14 +1034,14 @@ impl HostController for XhciController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::driver::usb::usb_core;
+    use crate::framework::driver::usb::usb_core;
 
     #[test]
     fn test_xhci_controller_creation() {
         // SAFETY: 测试用固定 MMIO 地址, identity-mapped in test environment
         let iomem = unsafe {
             IoMem::new(
-                crate::kernel::framework::mm::PhysAddr(0xFE000000),
+                crate::framework::mm::PhysAddr(0xFE000000),
                 0x10000,
                 "xhci-test",
             )
@@ -1080,7 +1080,7 @@ mod tests {
         // SAFETY: 测试脚手架, 详见函数 doc.
         let iomem = unsafe {
             IoMem::new(
-                crate::kernel::framework::mm::PhysAddr(0xFE000000),
+                crate::framework::mm::PhysAddr(0xFE000000),
                 0x10000,
                 "xhci-test",
             )

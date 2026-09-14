@@ -10,6 +10,6 @@
 //! (`framework::config::SLAB_*`) 显式转发, 保持 services 侧 API 兼容
 //! (services→framework 合法方向)。
 
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     SLAB_DEFAULT_SIZE, SLAB_GENERAL_CACHE_NUM, SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE,
 };

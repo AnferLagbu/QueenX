@@ -257,7 +257,7 @@ pub enum AuditError {
     /// 缓冲区已满 (应该不会发生, 环形)
     Full,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl AuditError {
@@ -271,7 +271,7 @@ impl AuditError {
     }
 }
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 #[expect(
     clippy::unreadable_literal,

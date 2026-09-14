@@ -44,7 +44,7 @@ pub struct KmallocSlabAlloc;
 
 impl SlabAlloc for KmallocSlabAlloc {
     fn alloc(&self, layout: Layout) -> Option<NonNull<u8>> {
-        let heap = crate::kernel::framework::mm::get_kmalloc();
+        let heap = crate::framework::mm::get_kmalloc();
         let ptr = heap.allocate(layout.size());
         let p = ptr?;
         NonNull::new(p)
@@ -72,7 +72,7 @@ impl SlabAlloc for KmallocSlabAlloc {
         //   3. 同一 ptr 未被双重 free (GlobalAlloc 自身要求, 不在 SAFETY 内)
         // `get_kmalloc()` 返回全局 kmalloc 堆, `deallocate` 内部按 size class
         // 归还到对应 slab; `_layout` 在当前实现中未使用 (slab 按 size class 路由)
-        let heap = crate::kernel::framework::mm::get_kmalloc();
+        let heap = crate::framework::mm::get_kmalloc();
         heap.deallocate(ptr.as_ptr());
     }
 }

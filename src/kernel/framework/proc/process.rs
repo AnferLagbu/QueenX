@@ -4,8 +4,8 @@ use super::types::{
     BlockReason, KERNEL_STACK_SIZE, MAX_PROCESSES, Pid, ProcessContext, ProcessFlags, ProcessId,
     ProcessPriority, ProcessState,
 };
-use crate::kernel::framework::mm::{KERNEL_BASE, PAGE_SIZE, USER_ADDR_FLOOR};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::mm::{KERNEL_BASE, PAGE_SIZE, USER_ADDR_FLOOR};
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering
 // D8: FdTable 分配策略 (first-fit, 上限 64) 经 DECISION-J (2026-09-13) 反转
 // 迁回 framework/proc/fd_table.rs (Process 机制字段归 framework).
 // 详见 [docs/plan/maintenance-2026-06-11.md] (P1-I-01).
-pub use crate::kernel::framework::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS};
+pub use crate::framework::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS};
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
 unsafe extern "C" {
@@ -200,7 +200,7 @@ pub struct Process {
     ///
     /// 低字节恒为 0 (Linux/glibc 兼容). 用户态编译器
     /// (`-fstack-protector`) 在 prologue 写入, epilogue 验证.
-    /// 进程创建时由 [`crate::kernel::framework::proc::canary::generate_canary`]
+    /// 进程创建时由 [`crate::framework::proc::canary::generate_canary`]
     /// 初始化, fork 继承父进程.
     pub stack_canary: AtomicU64,
 
@@ -208,14 +208,14 @@ pub struct Process {
     ///
     /// 包含模式 (Disabled/Strict/Filter) + 过滤器链 + `no_new_privs` 位.
     /// fork 继承全部过滤器; execve 保留.
-    pub seccomp: crate::kernel::framework::proc::SeccompState,
+    pub seccomp: crate::framework::proc::SeccompState,
 
     /// Per-process Namespace 集合 (D1)
     ///
     /// 包含 UTS/IPC/PID/Mount/User/Net/Cgroup 七种 namespace.
     /// fork 默认共享 (`Arc::clone`), `CLONE_NEW`* 创建新实例.
     /// 通过 `sys_unshare` / `sys_setns` 运行时切换.
-    pub namespaces: Mutex<crate::kernel::framework::proc::NamespaceSet>,
+    pub namespaces: Mutex<crate::framework::proc::NamespaceSet>,
 
     /// Per-process cgroup ID (D2)
     ///
@@ -227,7 +227,7 @@ pub struct Process {
     ///
     /// 控制进程的内存分配节点选择策略.
     /// fork 继承父进程策略; 可通过 `sys_set_mempolicy` 修改.
-    pub numa_policy: Mutex<crate::kernel::framework::mm::numa::NumaMempolicy>,
+    pub numa_policy: Mutex<crate::framework::mm::numa::NumaMempolicy>,
 
     /// Per-process 凭证会话上下文 (P2-I-30)
     ///
@@ -236,13 +236,13 @@ pub struct Process {
     /// `domain/elevation_granted_pwm`). 在 SMP 下, 不同 CPU 上不同进程的会话
     /// 上下文天然隔离, 杜绝身份/权限串台.
     /// 进程退出时该字段随 Process 一起释放, 自动回收.
-    pub session: Mutex<crate::kernel::framework::credo::types::PwmContext>,
+    pub session: Mutex<crate::framework::credo::types::PwmContext>,
 
     /// Per-process SUID 提权栈 (P2-I-30)
     ///
     /// `try_setuid` / `elevate_for_suid` 推送 `PwmContext` 快照;
     /// `drop_elevation` 弹出. 栈深上限 8, 与原 `SessionManager` 保持一致.
-    pub session_elev_stack: Mutex<[crate::kernel::framework::credo::types::PwmContext; 8]>,
+    pub session_elev_stack: Mutex<[crate::framework::credo::types::PwmContext; 8]>,
 
     /// Per-process SUID 提权栈深度 (P2-I-30)
     pub session_elev_depth: AtomicIsize,
@@ -329,20 +329,20 @@ impl Process {
             sigaltstack_flags: AtomicU32::new(0),
             rlimit_table: Mutex::new(RlimitTable::new()),
             // P1 #14: 进程创建时分配独立 canary
-            stack_canary: AtomicU64::new(crate::kernel::framework::proc::generate_canary()),
+            stack_canary: AtomicU64::new(crate::framework::proc::generate_canary()),
             // C7: Seccomp 默认 Disabled
-            seccomp: crate::kernel::framework::proc::SeccompState::new(),
+            seccomp: crate::framework::proc::SeccompState::new(),
             // D1: Namespace 默认 init namespace 集合
-            namespaces: Mutex::new(crate::kernel::framework::proc::NamespaceSet::new_init()),
+            namespaces: Mutex::new(crate::framework::proc::NamespaceSet::new_init()),
             // D2: cgroup 默认根 cgroup (id=0)
             cgroup_id: AtomicU64::new(0),
             // D3: NUMA 策略默认 Default
-            numa_policy: Mutex::new(crate::kernel::framework::mm::numa::NumaMempolicy::new()),
+            numa_policy: Mutex::new(crate::framework::mm::numa::NumaMempolicy::new()),
             // P2-I-30: 进程级凭证会话上下文 (uid/gid/euid/egid/saved_*/domain)
-            session: Mutex::new(crate::kernel::framework::credo::types::PwmContext::default()),
+            session: Mutex::new(crate::framework::credo::types::PwmContext::default()),
             // P2-I-30: SUID 提权栈 (深度 0, 容量 8)
             session_elev_stack: Mutex::new(
-                [crate::kernel::framework::credo::types::PwmContext::default(); 8],
+                [crate::framework::credo::types::PwmContext::default(); 8],
             ),
             session_elev_depth: AtomicIsize::new(0),
             tls_base: AtomicU64::new(0),
@@ -651,7 +651,7 @@ impl ProcessTable {
     /// 由最后的 `dec_ref_and_maybe_free` 调用完成实际释放。
     /// 全程持有 table lock 以防止与 `dec_ref_and_maybe_free` 竞争。
     pub fn remove_and_free(&self, pid: Pid) {
-        crate::kernel::framework::process_cleanup::notify_process_exit(pid);
+        crate::framework::process_cleanup::notify_process_exit(pid);
         let mut table = self.processes.lock();
         if pid as usize >= MAX_PROCESSES {
             return;
@@ -778,8 +778,8 @@ fn proc_barrier_rollback_cb() -> bool {
 }
 
 pub fn proc_register_barrier_domain() {
-    crate::kernel::framework::barrier::recovery_domain_register(4);
-    if let Some(dom) = crate::kernel::framework::barrier::RECOVERY_MANAGER
+    crate::framework::barrier::recovery_domain_register(4);
+    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER
         .lock()
         .find(4)
     {

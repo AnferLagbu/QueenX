@@ -33,9 +33,9 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.6 任务: USB/XHCI 驱动迁移
 
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::PhysAddr;
-use crate::kernel::services::error::KernelError;
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::PhysAddr;
+use crate::services::error::KernelError;
 
 // ============================================================================
 // xHCI TRB 类型定义 (USB-1.5)
@@ -798,10 +798,10 @@ impl TransferRing {
     pub fn new(max_trbs: u32) -> Option<Self> {
         let buf_size = (max_trbs as usize) * core::mem::size_of::<Trb>();
         let (vaddr, paddr, actual_size) =
-            crate::kernel::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)?;
+            crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)?;
 
         // 清零 — 通过 framework safe wrapper
-        crate::kernel::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
 
         let depth = (actual_size / core::mem::size_of::<Trb>()) as u32;
 
@@ -818,7 +818,7 @@ impl TransferRing {
     /// 释放 Transfer Ring DMA 内存.
     pub fn free(&self) {
         if self.vaddr != 0 {
-            crate::kernel::framework::driver::storage::nvme_free_dma_buffer(
+            crate::framework::driver::storage::nvme_free_dma_buffer(
                 self.vaddr,
                 self.buf_size,
             );
@@ -867,7 +867,7 @@ impl TransferRing {
         // 通过 framework safe wrapper 写入 TRB
         // 创建 raw pointer 是 safe 操作; 实际解引用由 framework 内部 unsafe 完成
         let trb_ptr: *const u8 = &trb as *const Trb as *const u8;
-        crate::kernel::framework::driver::storage::xhci_write_trb(
+        crate::framework::driver::storage::xhci_write_trb(
             self.vaddr,
             self.enqueue_index,
             trb_ptr,
@@ -882,7 +882,7 @@ impl TransferRing {
                 | u32::from(self.cycle);
             let link_trb = Trb::new(self.paddr, 0, link_control);
             let link_ptr: *const u8 = &link_trb as *const Trb as *const u8;
-            crate::kernel::framework::driver::storage::xhci_write_trb(
+            crate::framework::driver::storage::xhci_write_trb(
                 self.vaddr,
                 self.enqueue_index,
                 link_ptr,
@@ -1006,7 +1006,7 @@ impl TransferRing {
     /// 清空 Transfer Ring (重置所有 TRB, 回到初始状态).
     pub fn reset(&mut self) {
         // 通过 framework safe wrapper 清零
-        crate::kernel::framework::driver::storage::nvme_zero_dma(self.vaddr, self.buf_size);
+        crate::framework::driver::storage::nvme_zero_dma(self.vaddr, self.buf_size);
         self.enqueue_index = 0;
         self.cycle = true;
     }

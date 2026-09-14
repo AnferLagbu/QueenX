@@ -5,8 +5,8 @@
 use super::block_group::Ext2BlockGroupDescriptor;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
-use crate::kernel::framework::driver::block::{read_sectors, with_device, write_sectors};
-use crate::kernel::framework::fs::KernelError;
+use crate::framework::driver::block::{read_sectors, with_device, write_sectors};
+use crate::framework::fs::KernelError;
 
 /// 在指定块组中分配一个空闲块
 ///

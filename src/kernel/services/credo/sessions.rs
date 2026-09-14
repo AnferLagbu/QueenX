@@ -116,7 +116,7 @@ impl SessionTable {
                     count += 1;
                     if count >= per_pwm {
                         return Err(SessionError::Kernel(
-                            crate::kernel::services::error::KernelError::WouldBlock,
+                            crate::services::error::KernelError::WouldBlock,
                         ));
                     }
                 }
@@ -178,7 +178,7 @@ impl SessionTable {
             }
         }
         Err(SessionError::Kernel(
-            crate::kernel::services::error::KernelError::FileNotFound,
+            crate::services::error::KernelError::FileNotFound,
         ))
     }
 
@@ -199,7 +199,7 @@ impl SessionTable {
             }
         }
         Err(SessionError::Kernel(
-            crate::kernel::services::error::KernelError::FileNotFound,
+            crate::services::error::KernelError::FileNotFound,
         ))
     }
 
@@ -259,7 +259,7 @@ pub enum SessionError {
     TableFull,
     NotActive,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl SessionError {
@@ -274,7 +274,7 @@ impl SessionError {
     }
 }
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// 登录认证结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -341,7 +341,7 @@ impl<'a> SessionManager<'a> {
                 {
                     Ok(id) => id,
                     Err(SessionError::Kernel(
-                        crate::kernel::services::error::KernelError::WouldBlock,
+                        crate::services::error::KernelError::WouldBlock,
                     )) => {
                         return LoginResult::Denied(LoginDeny::TooManySessions);
                     }
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(
             r,
             Err(SessionError::Kernel(
-                crate::kernel::services::error::KernelError::WouldBlock
+                crate::services::error::KernelError::WouldBlock
             ))
         );
     }

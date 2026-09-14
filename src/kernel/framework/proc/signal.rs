@@ -504,7 +504,7 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
 ///
 /// - frame 指针必须有效且指向当前 CPU 的中断帧
 /// - 仅在返回用户态前调用 (中断上下文或系统调用出口)
-pub fn do_signal_deliver(frame: *mut crate::kernel::framework::idt::InterruptFrame) -> bool {
+pub fn do_signal_deliver(frame: *mut crate::framework::idt::InterruptFrame) -> bool {
     let pid = match super::scheduler::SCHEDULER.current() {
         Some(p) => p,
         None => return false,
@@ -629,13 +629,13 @@ pub fn do_signal_deliver(frame: *mut crate::kernel::framework::idt::InterruptFra
                 };
 
                 let ok_ret =
-                    crate::kernel::framework::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
-                let ok_frame = crate::kernel::framework::mm::copy_to_user(
+                    crate::framework::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
+                let ok_frame = crate::framework::mm::copy_to_user(
                     frame_rsp + 8,
                     sigframe_bytes,
                     core::mem::size_of::<SignalFrame>(),
                 );
-                let ok_trampoline = crate::kernel::framework::mm::copy_to_user(
+                let ok_trampoline = crate::framework::mm::copy_to_user(
                     trampoline_start,
                     &SIGRETURN_TRAMPOLINE,
                     SIGRETURN_TRAMPOLINE_SIZE,
@@ -796,8 +796,8 @@ pub fn reset_signal_state_on_exec(pid: Pid) {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_signal_default_action() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_signal_default_action() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     assert_eq_test!(
         signal_default_action(9),
         SignalDefaultAction::Term,
@@ -832,8 +832,8 @@ fn test_signal_default_action() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_uncatchable() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_uncatchable() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     check!(is_uncatchable(9), "SIGKILL uncatchable");
     check!(is_uncatchable(19), "SIGSTOP uncatchable");
     check!(!is_uncatchable(15), "SIGTERM catchable");
@@ -842,8 +842,8 @@ fn test_uncatchable() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_signal_pick_next_logic() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_signal_pick_next_logic() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     // 模拟 pending = 0b1010 (bit 1=SIGINT, bit 3=SIGQUIT)
     // blocked = 0b10 (bit 1=SIGINT)
     // deliverable = 0b1000, 应选择 bit 3 = SIGQUIT (sig=3)
@@ -857,8 +857,8 @@ fn test_signal_pick_next_logic() -> crate::kernel::framework::tests::TestResult 
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_set_get_sigaction() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_set_get_sigaction() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // SIGKILL (9) 不可设置
     let result = set_sigaction(1, 9, 0xDEAD);
     check!(result.is_none(), "SIGKILL cannot be caught");
@@ -869,8 +869,8 @@ fn test_set_get_sigaction() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_default_action_coverage() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_default_action_coverage() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     // 验证所有 31 个标准信号都有定义
     for sig in 1u8..=31 {
         let _action = signal_default_action(sig);
@@ -901,7 +901,7 @@ fn test_default_action_coverage() -> crate::kernel::framework::tests::TestResult
 
 #[cfg(feature = "kernel_test")]
 pub fn register_signal_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("signal", "default_action", test_signal_default_action);
     r.register("signal", "uncatchable", test_uncatchable);
@@ -939,8 +939,8 @@ pub fn register_signal_tests() {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_kill_broadcast_pid_positive() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+fn test_kill_broadcast_pid_positive() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test, check};
     // pid > 0 单进程: 不存在的 pid 必返回 Err(ESRCH)
     let res = do_signal_send_extended(9999, 9);
     check!(res.is_err(), "kill non-existent pid should fail");
@@ -951,8 +951,8 @@ fn test_kill_broadcast_pid_positive() -> crate::kernel::framework::tests::TestRe
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_kill_broadcast_pid_zero_group() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+fn test_kill_broadcast_pid_zero_group() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test, check};
     // pid = 0 广播: 接受 Err(-2) (ESRCH) 或 Ok(N) (有进程).
     // G-11 修复后广播不再死锁; 测试进程组真实投递 sig=9 仅置 pending
     // (kernel_test 不返回用户态不投递), 用作广播路径回归覆盖.
@@ -965,8 +965,8 @@ fn test_kill_broadcast_pid_zero_group() -> crate::kernel::framework::tests::Test
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_kill_broadcast_pid_negative_all() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_kill_broadcast_pid_negative_all() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // pid = -1: 广播到所有进程 (除 init).
     // host test 环境下进程表通常为空 -> Err(ESRCH)
     let res = do_signal_send_extended(-1, 9);
@@ -978,8 +978,8 @@ fn test_kill_broadcast_pid_negative_all() -> crate::kernel::framework::tests::Te
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_kill_broadcast_pid_negative_group() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_kill_broadcast_pid_negative_group() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // pid < -1: 广播到进程组 |pid|.
     let res = do_signal_send_extended(-100, 9);
     check!(res != Err(-1i32), "pid=-100 must not return EINVAL");

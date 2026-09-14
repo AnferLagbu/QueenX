@@ -12,9 +12,9 @@
 //! - 本模块 syscall 入口 API (i32, u64 用户指针, u32 长度)
 
 use super::unix as uds;
-use crate::kernel::framework::net::syscall as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::net::syscall as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // 12 个 Socket Syscall 安全代理
@@ -404,9 +404,9 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
             // [16-19] pid (高 32 位) | uid (低 32 位)
             // [24-27] gid
             // B07-02: 使用当前进程真实凭据, 消除硬编码伪造的 root 凭据.
-            let pid: u64 = u64::from(crate::kernel::framework::proc::process_get_current_pid());
-            let uid: u64 = u64::from(crate::kernel::framework::credo::get_current_uid());
-            let gid: u64 = u64::from(crate::kernel::framework::credo::get_current_gid());
+            let pid: u64 = u64::from(crate::framework::proc::process_get_current_pid());
+            let uid: u64 = u64::from(crate::framework::credo::get_current_uid());
+            let gid: u64 = u64::from(crate::framework::credo::get_current_gid());
             raw::write_u64_to_user(msg_control_ptr, 28u64);
             raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
             raw::write_u64_to_user(msg_control_ptr + 16, (pid << 32) | uid);

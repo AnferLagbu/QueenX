@@ -28,8 +28,8 @@
 
 use alloc::boxed::Box;
 
-use crate::kernel::framework::chitin::NetOps;
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::chitin::NetOps;
+use crate::framework::sync::OnceLock;
 
 // ============================================================================
 // 安全桥 trait

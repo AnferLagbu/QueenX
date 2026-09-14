@@ -12,8 +12,8 @@
 //! 提供 mount/unmount/resolve/alloc_fd 等纯机制操作。
 //! 不含 unsafe, 不直接操作硬件。
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::fs::vfs::types::{
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::fs::vfs::types::{
     FileSystem, FsType, KernelError, VFS_MAX_FDS, VFS_MAX_MOUNTS, VFS_MAX_PATH,
 };
 use alloc::string::String;
@@ -507,7 +507,7 @@ impl VfsManager {
         for mount in mounts.iter_mut() {
             if mount.used && mount.get_path() == path {
                 // 卸载前清空 dcache/icache
-                crate::kernel::framework::fs::vfs::dcache::flush_all();
+                crate::framework::fs::vfs::dcache::flush_all();
                 mount.used = false;
                 return Ok(());
             }
@@ -572,7 +572,7 @@ pub fn init() {
     VFS_MANAGER.init();
 
     // barrier 回调注册 (必须在 framework 层, 因为引用 framework::barrier)
-    if let Some(dom) = crate::kernel::framework::barrier::RECOVERY_MANAGER
+    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER
         .lock()
         .find(2)
     {

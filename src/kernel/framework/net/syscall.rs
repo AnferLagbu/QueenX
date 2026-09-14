@@ -7,14 +7,14 @@
 //!
 //! services 层通过 framework 层接口访问,本模块是 services/net/syscall.rs 的 TCB 后端.
 
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::mm::{
+use crate::framework::errno::Errno;
+use crate::framework::mm::{
     copy_from_user as safe_copy_from_user, copy_to_user as safe_copy_to_user,
 };
-use crate::kernel::framework::net_socket;
-use crate::kernel::framework::userptr;
+use crate::framework::net_socket;
+use crate::framework::userptr;
 
-use crate::kernel::framework::net::socket_types::{Domain, SockAddrIn, SockAddrUn, SockType};
+use crate::framework::net::socket_types::{Domain, SockAddrIn, SockAddrUn, SockType};
 
 // ============================================================================
 // 用户空间数据搬运 (TCB)

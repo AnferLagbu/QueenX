@@ -42,9 +42,9 @@ use alloc::collections::{BTreeMap, VecDeque};
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 #[cfg(debug_assertions)]
-use crate::kernel::framework::sync::{LockClassDesc, LockClassId, LockKind};
+use crate::framework::sync::{LockClassDesc, LockClassId, LockKind};
 
 // ============================================================================
 // v2.5: 鲁棒 mutex — 进程退出时强制释放所有 PI Mutex (DECISION-049 方案 D)
@@ -165,26 +165,26 @@ pub unsafe fn set_revoke_callback(cb: DonationCallback) {
 #[inline]
 fn notify_donation(holder_pid: u32, donated_prio: u32) {
     // v2.3: 直接修改 Process.priority, 触发 CFS 重排
-    let table = &crate::kernel::framework::proc::PROCESS_TABLE;
+    let table = &crate::framework::proc::PROCESS_TABLE;
     if let Some(proc_ptr) = table.get(holder_pid) {
         // SAFETY: proc_ptr 来自 PROCESS_TABLE, 有效指针; 单线程保证
         let proc = unsafe { &*proc_ptr };
         proc.priority.store(donated_prio, Ordering::SeqCst);
     }
     // 通知调度器有优先级变化
-    crate::kernel::framework::proc::scheduler_ex::SCHEDULER_EX.yield_current();
+    crate::framework::proc::scheduler_ex::SCHEDULER_EX.yield_current();
 }
 
 #[inline]
 fn notify_revoke(pid: u32) {
     // v2.3: 恢复 Process.priority 到 Normal (2)
-    let table = &crate::kernel::framework::proc::PROCESS_TABLE;
+    let table = &crate::framework::proc::PROCESS_TABLE;
     if let Some(proc_ptr) = table.get(pid) {
         // SAFETY: proc_ptr 来自 PROCESS_TABLE, 有效指针; 单线程保证
         let proc = unsafe { &*proc_ptr };
         proc.priority.store(2, Ordering::SeqCst);
     }
-    crate::kernel::framework::proc::scheduler_ex::SCHEDULER_EX.yield_current();
+    crate::framework::proc::scheduler_ex::SCHEDULER_EX.yield_current();
 }
 
 // ============================================================================
@@ -299,7 +299,7 @@ impl<T> PiMutex<T> {
     // J-01 (2026-09-08): 删除 unfulfilled doc_markdown expect — 文档已用反引号包裹
     // 标识符, doc_markdown 从不触发, expect 为多余防御 (host-test debug 编译暴露)
     pub fn named(name: &'static str, data: T) -> Self {
-        let class_id = crate::kernel::framework::sync::register_class(LockClassDesc {
+        let class_id = crate::framework::sync::register_class(LockClassDesc {
             name,
             kind: LockKind::PiMutex,
         });
@@ -393,9 +393,9 @@ impl<T: ?Sized> PiMutex<T> {
 
             // Lockdep: 通知锁获取
             #[cfg(debug_assertions)]
-            crate::kernel::framework::sync::acquire(
+            crate::framework::sync::acquire(
                 self.lockdep_class,
-                crate::kernel::framework::sync::in_irq_context(),
+                crate::framework::sync::in_irq_context(),
             );
 
             return true;
@@ -530,7 +530,7 @@ impl<T: ?Sized> PiMutex<T> {
     pub(crate) fn unlock_internal(&self) {
         // Lockdep: 通知锁释放
         #[cfg(debug_assertions)]
-        crate::kernel::framework::sync::release(self.lockdep_class);
+        crate::framework::sync::release(self.lockdep_class);
 
         let my_pid = current_pid();
         if self.inner.holder.load(Ordering::Acquire) != my_pid {
@@ -551,7 +551,7 @@ impl<T: ?Sized> PiMutex<T> {
     pub(crate) fn force_unlock(&self) {
         // Lockdep: 通知锁释放
         #[cfg(debug_assertions)]
-        crate::kernel::framework::sync::release(self.lockdep_class);
+        crate::framework::sync::release(self.lockdep_class);
 
         // 跳过 holder 检查: 静默忽略未持锁情况 (无操作)
         if !self.inner.locked.load(Ordering::Acquire) {
@@ -732,5 +732,5 @@ fn current_pid() -> u32 {
 
 fn scheduler_yield() {
     // v2.6: 用 SCHEDULER_EX.yield_current() 让出 CPU, 替代旧的 C ABI scheduler_yield
-    crate::kernel::framework::proc::scheduler_ex::SCHEDULER_EX.yield_current();
+    crate::framework::proc::scheduler_ex::SCHEDULER_EX.yield_current();
 }

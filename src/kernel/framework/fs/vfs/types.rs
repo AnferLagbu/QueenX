@@ -19,13 +19,13 @@ pub const VFS_MAX_FDS: usize = 32;
 pub const VFS_MAX_MOUNTS: usize = 8;
 
 // 统一到 framework::error (P0-2 迁回)
-pub use crate::kernel::framework::error::KernelError;
+pub use crate::framework::error::KernelError;
 
 /// fs 层特有的类型别名 (向后兼容旧变体名)
-pub type NotFound = crate::kernel::framework::error::KernelError;
-pub type IoError = crate::kernel::framework::error::KernelError;
-pub type OutOfMemory = crate::kernel::framework::error::KernelError;
-pub type ReadOnly = crate::kernel::framework::error::KernelError;
+pub type NotFound = crate::framework::error::KernelError;
+pub type IoError = crate::framework::error::KernelError;
+pub type OutOfMemory = crate::framework::error::KernelError;
+pub type ReadOnly = crate::framework::error::KernelError;
 
 impl KernelError {
     /// VFS 风格返回: 负 errno (POSIX `-|errno|` 约定)

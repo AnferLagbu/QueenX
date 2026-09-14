@@ -85,7 +85,7 @@ pub fn timer_init(frequency_hz: u32) -> Result<u32, &'static str> {
     // 2. 记录启动时间戳
     #[cfg(target_arch = "x86_64")]
     {
-        let boot_tsc = crate::kernel::framework::cpu::read_tsc();
+        let boot_tsc = crate::framework::cpu::read_tsc();
         BOOT_TSC.store(boot_tsc, Ordering::Relaxed);
         LAST_TSC.store(boot_tsc, Ordering::Relaxed);
     }
@@ -117,8 +117,8 @@ pub fn timer_init(frequency_hz: u32) -> Result<u32, &'static str> {
     super::hrtimer::hrtimer_init();
 
     // 7. 注册 Timer softirq 处理程序 (预留, 当前 hrtimer 在 hardirq 中直接处理)
-    crate::kernel::framework::irq::open_softirq(
-        crate::kernel::framework::irq::SoftirqVec::Timer,
+    crate::framework::irq::open_softirq(
+        crate::framework::irq::SoftirqVec::Timer,
         timer_softirq_handler,
     );
 
@@ -171,7 +171,7 @@ pub fn on_timer_interrupt() {
     // 更新时间戳 (用于高精度测量)
     #[cfg(target_arch = "x86_64")]
     {
-        let current_tsc = crate::kernel::framework::cpu::read_tsc();
+        let current_tsc = crate::framework::cpu::read_tsc();
         LAST_TSC.store(current_tsc, Ordering::Relaxed);
     }
     #[cfg(target_arch = "aarch64")]
@@ -325,7 +325,7 @@ pub fn get_uptime_s() -> u64 {
 pub fn get_uptime_tsc() -> (u64, u64) {
     let boot_tsc = BOOT_TSC.load(Ordering::Acquire);
     let last_tsc = LAST_TSC.load(Ordering::Acquire);
-    let current_tsc = crate::kernel::framework::cpu::read_tsc();
+    let current_tsc = crate::framework::cpu::read_tsc();
 
     let total_cycles = current_tsc.saturating_sub(boot_tsc);
     let since_last_tick = current_tsc.saturating_sub(last_tsc);
@@ -481,7 +481,7 @@ mod tests {
     reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
 )]
 pub fn register_timer_tick_tests() {
-    use crate::kernel::framework::tests::{TestFn, TestResult, runner};
+    use crate::framework::tests::{TestFn, TestResult, runner};
     let r = runner();
 
     fn initial_state() -> TestResult {

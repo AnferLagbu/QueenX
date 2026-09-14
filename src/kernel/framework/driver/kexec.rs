@@ -31,7 +31,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -240,7 +240,7 @@ impl KexecSubsystem {
         crate::klog_ffi!(klog_ffi_info, "[kexec] executing: entry={:#x}", entry);
 
         // 1. 关闭所有设备
-        crate::kernel::framework::driver::shutdown_all();
+        crate::framework::driver::shutdown_all();
 
         // 2. 关闭中断
         crate::arch!(interrupt_disable());

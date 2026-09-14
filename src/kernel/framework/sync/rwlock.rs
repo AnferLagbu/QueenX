@@ -403,5 +403,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_rwlock_tests() {
-    crate::kernel::framework::tests::sync::register_rwlock_tests();
+    crate::framework::tests::sync::register_rwlock_tests();
 }

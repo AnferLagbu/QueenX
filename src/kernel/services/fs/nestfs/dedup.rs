@@ -15,12 +15,12 @@
 //! ```
 
 use super::bp::NestBlockPointer;
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::services::sync::once::OnceCell;
+use crate::services::sync::once::OnceCell;
 pub const CAS_HASH_SIZE: usize = 32;
 pub type CasHash = [u8; CAS_HASH_SIZE];
 
@@ -185,7 +185,7 @@ pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::
 
     if let Some(existing) = cas.lookup(&hash) {
         cas.ref_inc(&hash);
-        crate::kernel::services::fs::nestfs::zil::NestZilRecord::new_dedup_ref(
+        crate::services::fs::nestfs::zil::NestZilRecord::new_dedup_ref(
             txg,
             [
                 u64::from_be_bytes(hash[0..8].try_into().unwrap_or_else(|_| [0u8; 8])),

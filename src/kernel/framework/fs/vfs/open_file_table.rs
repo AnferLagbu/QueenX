@@ -10,7 +10,7 @@
 //! dup() 通过引用计数共享 OpenFile, 实现 POSIX 共享 offset 语义.
 
 use super::types::OpenFile;
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// 全局 `OpenFile` 表上限

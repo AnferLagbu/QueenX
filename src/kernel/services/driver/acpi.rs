@@ -22,13 +22,13 @@
 /// 是否找到 RSDP (Root System Description Pointer)
 #[inline]
 pub fn has_rsdp() -> bool {
-    crate::kernel::framework::arch::acpi::find_rsdp(0).is_some()
+    crate::framework::arch::acpi::find_rsdp(0).is_some()
 }
 
 /// 是否解析过 MADT (Multiple APIC Description Table)
 #[inline]
 pub fn has_madt() -> bool {
-    crate::kernel::framework::arch::acpi::has_madt()
+    crate::framework::arch::acpi::has_madt()
 }
 
 /// 是否解析过 FADT (电源管理)
@@ -37,13 +37,13 @@ pub fn has_fadt() -> bool {
     // B04-21: 委托 framework::arch::acpi::has_fadt(), 替代原硬编码 `true`.
     // 旧实现未查询框架层 → 即使未解析 FADT 也返回 true, 电源管理走 ACPI 路径
     // → 可能空指针 deref PM1a_CNT 寄存器.
-    crate::kernel::framework::arch::acpi::has_fadt()
+    crate::framework::arch::acpi::has_fadt()
 }
 
 /// 是否解析过 HPET (高精度事件定时器)
 #[inline]
 pub fn has_hpet() -> bool {
-    crate::kernel::framework::arch::acpi::get_hpet_info().is_some()
+    crate::framework::arch::acpi::get_hpet_info().is_some()
 }
 
 /// 是否解析过 DMAR (IOMMU DRHD)
@@ -60,25 +60,25 @@ pub fn has_dmar() -> bool {
 /// 获取 AP (Application Processor) 数量
 #[inline]
 pub fn ap_count() -> u32 {
-    crate::kernel::framework::arch::acpi::get_ap_count()
+    crate::framework::arch::acpi::get_ap_count()
 }
 
 /// LAPIC 基址
 #[inline]
 pub fn lapic_base() -> u64 {
-    crate::kernel::framework::arch::acpi::get_lapic_base()
+    crate::framework::arch::acpi::get_lapic_base()
 }
 
 /// IOAPIC 基址
 #[inline]
 pub fn ioapic_addr() -> u64 {
-    crate::kernel::framework::arch::acpi::get_ioapic_addr()
+    crate::framework::arch::acpi::get_ioapic_addr()
 }
 
 /// IOAPIC 全局系统中断基址
 #[inline]
 pub fn ioapic_gsib() -> u32 {
-    crate::kernel::framework::arch::acpi::get_ioapic_gsib()
+    crate::framework::arch::acpi::get_ioapic_gsib()
 }
 
 // ============================================================================
@@ -96,7 +96,7 @@ pub struct IoApicInfoSafe {
 
 /// 获取所有 IOAPIC 信息
 pub fn ioapic_list() -> [Option<IoApicInfoSafe>; 8] {
-    let fw = crate::kernel::framework::arch::acpi::get_ioapics();
+    let fw = crate::framework::arch::acpi::get_ioapics();
     let mut result = [None; 8];
     for (i, item) in fw.iter().enumerate() {
         if i < 8 {
@@ -113,7 +113,7 @@ pub fn ioapic_list() -> [Option<IoApicInfoSafe>; 8] {
 
 /// IOAPIC 数量
 pub fn ioapic_count() -> u32 {
-    crate::kernel::framework::arch::acpi::get_ioapic_count()
+    crate::framework::arch::acpi::get_ioapic_count()
 }
 
 // ============================================================================
@@ -132,7 +132,7 @@ pub struct HpetInfoSafe {
 /// 获取 HPET 信息 (safe 拷贝)
 #[inline]
 pub fn hpet_info() -> Option<HpetInfoSafe> {
-    crate::kernel::framework::arch::acpi::get_hpet_info().map(|info| HpetInfoSafe {
+    crate::framework::arch::acpi::get_hpet_info().map(|info| HpetInfoSafe {
         base_addr: info.base_addr,
         hpet_number: info.hpet_number,
         comparator_count: info.comparator_count,
@@ -157,13 +157,13 @@ pub enum MsiResult {
 
 /// 分配一个 MSI 中断向量 (0..=255)
 pub fn msi_alloc_vector() -> MsiResult {
-    crate::kernel::framework::pci::msi::msi_alloc_vector()
+    crate::framework::pci::msi::msi_alloc_vector()
         .map_or(MsiResult::PoolExhausted, MsiResult::Allocated)
 }
 
 /// 释放 MSI 中断向量
 pub fn msi_free_vector(vector: u8) {
-    crate::kernel::framework::pci::msi::msi_free_vector(vector);
+    crate::framework::pci::msi::msi_free_vector(vector);
 }
 
 // ============================================================================
@@ -176,12 +176,12 @@ pub fn msi_free_vector(vector: u8) {
 ///
 /// 写 `PM1a_CNT` S5 位后将不可恢复地停止系统.
 pub fn acpi_shutdown() -> ! {
-    crate::kernel::framework::arch::acpi::acpi_shutdown()
+    crate::framework::arch::acpi::acpi_shutdown()
 }
 
 /// ACPI 重启
 pub fn acpi_reboot() -> ! {
-    crate::kernel::framework::arch::acpi::acpi_reboot()
+    crate::framework::arch::acpi::acpi_reboot()
 }
 
 // ============================================================================

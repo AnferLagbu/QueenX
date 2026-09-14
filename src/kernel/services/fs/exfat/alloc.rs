@@ -4,8 +4,8 @@
 
 use super::fat::FAT_END;
 use super::super_block::ExfatSuperBlock;
-use crate::kernel::framework::driver::block::{read_sectors, with_device};
-use crate::kernel::framework::fs::KernelError;
+use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::fs::KernelError;
 use alloc::vec;
 
 /// 分配一个空闲簇
@@ -92,7 +92,7 @@ pub fn write_cluster(
     for i in 0..sectors_per_cluster {
         let offset = i * bytes_per_sector;
         let result = with_device(device_idx as usize, |dev| {
-            crate::kernel::framework::driver::block::write_sectors(
+            crate::framework::driver::block::write_sectors(
                 dev,
                 u64::from(sector + i as u32),
                 1,

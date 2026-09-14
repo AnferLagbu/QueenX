@@ -18,4 +18,4 @@
 //! 评估日期: 2026-07-22
 
 // 重导出 framework usb_core 全部公共类型 (framework usb_core.rs = 0 unsafe)
-pub use crate::kernel::framework::driver::usb::usb_core::*;
+pub use crate::framework::driver::usb::usb_core::*;

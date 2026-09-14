@@ -11,11 +11,11 @@
 //! re-export (`framework::config::KASLR_*` 等) 显式转发, 保持 services 侧 API 兼容
 //! (services→framework 合法方向)。
 
-use crate::kernel::services::error::KernelError;
+use crate::services::error::KernelError;
 
 // framework 顶层以 `is_kaslr_aligned` 别名暴露 `is_aligned`, 此处还原为 `is_aligned`
 // 保持 services 侧 API 兼容
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     KASLR_ALIGN, KASLR_BASE_OFFSET, KASLR_DEFAULT_OFFSET, KASLR_ENABLED, KASLR_MAX_OFFSET,
     get_kaslr_offset, is_kaslr_aligned as is_aligned, set_kaslr_offset,
 };

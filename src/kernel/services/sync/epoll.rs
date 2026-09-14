@@ -12,7 +12,7 @@
 //! - 原始指针 (`*const EpollEvent` / `*mut EpollEvent`) 委托给 framework 层
 //!   (指针合法性由 syscall 入口 `check_user_ptr` 保证)
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// `epoll_create` 安全代理
 ///
@@ -26,7 +26,7 @@ pub fn epoll_create_syscall(size: i32) -> Result<usize, Errno> {
     if size <= 0 {
         return Err(Errno::EINVAL);
     }
-    let ret = crate::kernel::framework::syscall::epoll::sys_epoll_create(size);
+    let ret = crate::framework::syscall::epoll::sys_epoll_create(size);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -63,7 +63,7 @@ pub fn epoll_ctl_syscall(
     }
     // DEL 操作允许 event 为 null
     if op == EPOLL_CTL_DEL && event == 0 {
-        let ret = crate::kernel::framework::syscall::epoll::sys_epoll_ctl(
+        let ret = crate::framework::syscall::epoll::sys_epoll_ctl(
             epfd,
             op,
             fd,
@@ -79,11 +79,11 @@ pub fn epoll_ctl_syscall(
     if event == 0 {
         return Err(Errno::EFAULT);
     }
-    let ret = crate::kernel::framework::syscall::epoll::sys_epoll_ctl(
+    let ret = crate::framework::syscall::epoll::sys_epoll_ctl(
         epfd,
         op,
         fd,
-        event as *const crate::kernel::framework::syscall::epoll::EpollEvent,
+        event as *const crate::framework::syscall::epoll::EpollEvent,
     );
     if ret < 0 {
         Err(Errno::from_ret(ret))
@@ -113,9 +113,9 @@ pub fn epoll_wait_syscall(
     if events == 0 {
         return Err(Errno::EFAULT);
     }
-    let ret = crate::kernel::framework::syscall::epoll::sys_epoll_wait(
+    let ret = crate::framework::syscall::epoll::sys_epoll_wait(
         epfd,
-        events as *mut crate::kernel::framework::syscall::epoll::EpollEvent,
+        events as *mut crate::framework::syscall::epoll::EpollEvent,
         maxevents,
         timeout,
     );

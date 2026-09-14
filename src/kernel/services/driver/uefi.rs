@@ -4,13 +4,13 @@
 //! 封装 `framework::driver::uefi` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::driver::{
+pub use crate::framework::driver::{
     EFI_MAX_VAR_DATA, EFI_MAX_VAR_NAME, EFI_VARIABLE_BOOTSERVICE_ACCESS, EFI_VARIABLE_NON_VOLATILE,
     EFI_VARIABLE_RUNTIME_ACCESS, EfiGopModeInfo, EfiMemoryDescriptor, EfiMemoryType,
     EfiPixelFormat, EfiTime, EfiVariable, UefiSubsystem,
 };
 
-use crate::kernel::framework::driver::{sys_uefi, uefi_init, uefi_is_initialized, uefi_subsystem};
+use crate::framework::driver::{sys_uefi, uefi_init, uefi_is_initialized, uefi_subsystem};
 
 /// 初始化 UEFI
 pub fn init(system_table_addr: u64) {

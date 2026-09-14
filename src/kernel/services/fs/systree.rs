@@ -15,9 +15,9 @@
 //! - Linux sysfs 文档: Documentation/filesystems/sysfs.rst
 //! - Linux kobject 文档: Documentation/core-api/kobject.rst
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::sync::OnceLock;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::OnceLock;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量

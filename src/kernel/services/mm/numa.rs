@@ -10,4 +10,4 @@
 //! framework/mm 的 numa 为公开子模块 (`pub mod numa`), 可直接 glob re-export,
 //! 保持 services 侧 API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::mm::numa::*;
+pub use crate::framework::mm::numa::*;

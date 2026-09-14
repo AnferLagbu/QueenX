@@ -9,7 +9,7 @@
 //! 判据反转：cgroup 层级管理器是进程资源控制机制状态, 被 framework proc
 //! 顶层导出消费 — 属机制项, 迁回。依赖闭包仅 framework。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::cgroup::*`
+//! services 侧改 `pub use crate::framework::proc::cgroup::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //! 日志使用 framework::klog::serial_write_bytes (safe API).
 
@@ -20,10 +20,10 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::klog::serial_write_bytes;
-use crate::kernel::framework::proc::Pid;
-use crate::kernel::framework::sync::IrqSpinLock;
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::klog::serial_write_bytes;
+use crate::framework::proc::Pid;
+use crate::framework::sync::IrqSpinLock;
+use crate::framework::sync::OnceLock;
 
 // ============================================================================
 // 常量

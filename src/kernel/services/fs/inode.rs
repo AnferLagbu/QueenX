@@ -9,11 +9,11 @@
 
 // Inode trait 定义在 framework, 此处 re-export 保持 `services::fs::inode::Inode`
 // 调用方兼容 (services→framework 单向依赖).
-pub use crate::kernel::framework::fs::vfs::inode::Inode;
+pub use crate::framework::fs::vfs::inode::Inode;
 
 use alloc::sync::Arc;
 
-use crate::kernel::framework::fs::vfs::types::{
+use crate::framework::fs::vfs::types::{
     KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat,
 };
 
@@ -126,7 +126,7 @@ impl RamFsInode {
 
 impl Inode for RamFsInode {
     fn read(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let mut ramfs = RAMFS_DATA.lock();
         let (bytes_read, _new_offset) = ramfs.read_at_offset(self.inode_id, offset, buf, pwm);
         if bytes_read == 0 && offset >= u64::from(ramfs.get_file_size(self.inode_id).unwrap_or(0)) {
@@ -140,7 +140,7 @@ impl Inode for RamFsInode {
     }
 
     fn write(&self, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize> {
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let mut ramfs = RAMFS_DATA.lock();
         let (bytes_written, _new_offset) = ramfs.write_at_offset(self.inode_id, offset, buf, pwm);
         if bytes_written > 0 {
@@ -156,7 +156,7 @@ impl Inode for RamFsInode {
     )]
     fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
         // icache 快速路径: 避免 RAMFS_DATA 锁
-        if let Some(cached) = crate::kernel::services::fs::dcache::icache_lookup(self.inode_id) {
+        if let Some(cached) = crate::services::fs::dcache::icache_lookup(self.inode_id) {
             return Ok(VfsStat {
                 node_id: cached.ino,
                 file_type: cached.file_type,
@@ -170,11 +170,11 @@ impl Inode for RamFsInode {
             });
         }
         // 缓存未命中: 回退到完整 stat
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let ramfs = RAMFS_DATA.lock();
         let st = ramfs.get_stat(self.inode_id, pwm)?;
         // 填充 icache
-        crate::kernel::services::fs::dcache::icache_insert(
+        crate::services::fs::dcache::icache_insert(
             self.inode_id,
             st.file_type,
             st.perm,
@@ -188,7 +188,7 @@ impl Inode for RamFsInode {
     }
 
     fn truncate(&self, size: u64, pwm: u64) -> KernelResult<()> {
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let mut ramfs = RAMFS_DATA.lock();
         let rc = ramfs.truncate(self.inode_id, size, pwm);
         if rc == 0 {
@@ -199,7 +199,7 @@ impl Inode for RamFsInode {
     }
 
     fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let ramfs = RAMFS_DATA.lock();
         let file_size = u64::from(ramfs.get_file_size(self.inode_id).unwrap_or(0));
         let new_offset = match whence {
@@ -211,10 +211,10 @@ impl Inode for RamFsInode {
     }
 
     fn is_dir(&self) -> bool {
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let ramfs = RAMFS_DATA.lock();
         // B06-09: 用 RAMFS_MAX_NODES 常量替代硬编码 256, 用 VfsFileType::Dir 替代魔法数 1
-        if (self.inode_id as usize) < crate::kernel::framework::fs::ramfs::RAMFS_MAX_NODES {
+        if (self.inode_id as usize) < crate::framework::fs::ramfs::RAMFS_MAX_NODES {
             ramfs.nodes[self.inode_id as usize].file_type == VfsFileType::Dir.as_u8()
         } else {
             false
@@ -235,7 +235,7 @@ impl Inode for RamFsInode {
     }
 
     fn pread_inode(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
-        use crate::kernel::framework::fs::ramfs::RAMFS_DATA;
+        use crate::framework::fs::ramfs::RAMFS_DATA;
         let mut ramfs = RAMFS_DATA.lock();
         let (bytes_read, _) = ramfs.read_at_offset(self.inode_id, offset, buf, pwm);
         Ok(bytes_read)
@@ -283,7 +283,7 @@ impl LegacyInode {
 
 impl Inode for LegacyInode {
     fn read(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -298,7 +298,7 @@ impl Inode for LegacyInode {
     }
 
     fn write(&self, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -313,7 +313,7 @@ impl Inode for LegacyInode {
     }
 
     fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -332,7 +332,7 @@ impl Inode for LegacyInode {
     }
 
     fn truncate(&self, size: u64, pwm: u64) -> KernelResult<()> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -347,7 +347,7 @@ impl Inode for LegacyInode {
     }
 
     fn seek(&self, offset: i64, whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -375,7 +375,7 @@ impl Inode for LegacyInode {
     }
 
     fn chmod(&self, mode: u16, pwm: u64) -> KernelResult<()> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -390,7 +390,7 @@ impl Inode for LegacyInode {
     }
 
     fn chown(&self, owner_pwm: u64, group_pwm: u64, pwm: u64) -> KernelResult<()> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {
@@ -411,7 +411,7 @@ impl Inode for LegacyInode {
     }
 
     fn pread_inode(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
-        use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
+        use crate::services::fs::vfs_manager::VFS_MANAGER;
         let fs = {
             let mounts = VFS_MANAGER.mounts.lock();
             if (self.mount_idx as usize) < mounts.len() && mounts[self.mount_idx as usize].used {

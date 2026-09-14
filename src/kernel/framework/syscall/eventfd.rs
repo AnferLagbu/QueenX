@@ -32,8 +32,8 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量
@@ -42,7 +42,7 @@ use crate::kernel::framework::syscall::Errno;
 /// eventfd 最大实例数
 pub const EFD_MAX_SLOTS: usize = 16;
 /// TD-02: 基址来源已迁移至 `framework::proc::FdPlan::EVENT_FD` 单一来源, 不再硬编码.
-pub const EFD_FD_BASE: i32 = crate::kernel::framework::proc::FdPlan::EVENT_FD.base;
+pub const EFD_FD_BASE: i32 = crate::framework::proc::FdPlan::EVENT_FD.base;
 /// `EFD_CLOEXEC` (与 Linux 一致)
 pub const EFD_CLOEXEC: i32 = 0o2000000;
 /// `EFD_NONBLOCK` (与 Linux 一致)
@@ -116,15 +116,15 @@ pub fn sys_eventfd(initval: u64, flags: i32) -> i64 {
     let semaphore = (flags & EFD_SEMAPHORE) != 0;
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
-        crate::kernel::framework::proc::fd_alloc::FdSubsystem::EventFd,
+    let fd = match crate::framework::proc::fd_alloc::alloc_fd(
+        crate::framework::proc::fd_alloc::FdSubsystem::EventFd,
     ) {
         Some(f) => f,
         None => return Errno::EMFILE.as_ret(),
     };
 
     // V2: FD 编号由 alloc_fd 计算 (底层使用 fd_at(EventFd, slot))
-    let slot = match crate::kernel::framework::proc::fd_alloc::idx_of(fd) {
+    let slot = match crate::framework::proc::fd_alloc::idx_of(fd) {
         Some((_sub, s)) => s,
         None => return Errno::EBADF.as_ret(),
     };
@@ -272,7 +272,7 @@ pub fn sys_eventfd_close(fd: i32) -> i64 {
     // TD-04: close 路径必须 epoll_pwake — 否则 epoll_wait 可能永远睡在已关闭 fd 上,
     // 后续 slot 复用时看到的是新 eventfd 的事件, 进程侧拿到 stale fd 句柄.
     // 必须在释放 EFD_TABLE 锁之后再唤醒, 让 epoll_waiter 看到 slot.used=false → EPOLLERR.
-    crate::kernel::framework::syscall::epoll_pwake(fd);
+    crate::framework::syscall::epoll_pwake(fd);
 
     crate::klog_debug!(Sync, "[eventfd] Closed fd={}", fd);
     0
@@ -290,7 +290,7 @@ pub fn sys_eventfd_close(fd: i32) -> i64 {
 ///
 /// 返回 EPOLLIN (可读) / EPOLLOUT (可写) 事件掩码
 pub fn eventfd_poll_events(fd: i32) -> u32 {
-    use crate::kernel::framework::syscall::{EPOLLERR, EPOLLIN, EPOLLOUT};
+    use crate::framework::syscall::{EPOLLERR, EPOLLIN, EPOLLOUT};
 
     let idx = match fd_to_idx(fd) {
         Some(i) => i,
@@ -324,8 +324,8 @@ pub fn eventfd_poll_events(fd: i32) -> u32 {
 /// TD-02 V4: 改走 `fd_alloc::idx_of` 集中反查, 本地不再持有 `EFD_FD_BASE` 字面量 +
 /// 减法边界检查.
 fn fd_to_idx(fd: i32) -> Option<usize> {
-    match crate::kernel::framework::proc::idx_of(fd) {
-        Some((crate::kernel::framework::proc::FdSubsystem::EventFd, slot)) => Some(slot),
+    match crate::framework::proc::idx_of(fd) {
+        Some((crate::framework::proc::FdSubsystem::EventFd, slot)) => Some(slot),
         _ => None,
     }
 }
@@ -335,8 +335,8 @@ fn fd_to_idx(fd: i32) -> Option<usize> {
 /// TD-02 V4: 改走 `fd_alloc::idx_of`, 不再持有 `EFD_FD_BASE` 字面量 + 算术.
 pub fn is_eventfd_fd(fd: i32) -> bool {
     matches!(
-        crate::kernel::framework::proc::idx_of(fd),
-        Some((crate::kernel::framework::proc::FdSubsystem::EventFd, _))
+        crate::framework::proc::idx_of(fd),
+        Some((crate::framework::proc::FdSubsystem::EventFd, _))
     )
 }
 
@@ -345,8 +345,8 @@ pub fn is_eventfd_fd(fd: i32) -> bool {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_eventfd_create_read_write() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_eventfd_create_read_write() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     // 创建 eventfd, initval=5
     let fd = sys_eventfd(5, 0);
@@ -379,8 +379,8 @@ fn test_eventfd_create_read_write() -> crate::kernel::framework::tests::TestResu
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_eventfd_semaphore() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_eventfd_semaphore() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     // 创建 semaphore 模式 eventfd, initval=3
     let fd = sys_eventfd(3, EFD_SEMAPHORE);
@@ -410,9 +410,9 @@ fn test_eventfd_semaphore() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_eventfd_poll() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::syscall::{EPOLLIN, EPOLLOUT};
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_eventfd_poll() -> crate::framework::tests::TestResult {
+    use crate::framework::syscall::{EPOLLIN, EPOLLOUT};
+    use crate::framework::tests::{TestResult, check};
 
     let fd = sys_eventfd(0, 0);
     check!(fd >= 200, "eventfd for poll ok");
@@ -434,7 +434,7 @@ fn test_eventfd_poll() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_eventfd_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register(
         "eventfd",

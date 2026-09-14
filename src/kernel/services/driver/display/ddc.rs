@@ -15,7 +15,7 @@
 //! - 单字节传输: 8 bit + ACK = 10 次延时调用
 //! - 完整 EDID 读: ~150 字节, 接近总超时上限
 
-use crate::kernel::framework::iomem::IoMem;
+use crate::framework::iomem::IoMem;
 
 // ============================================================================
 // DDC 寄存器偏移

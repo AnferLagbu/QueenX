@@ -16,4 +16,4 @@
 //! 可直接 glob re-export, 保持 services 侧 API 兼容 (services→framework 合法方向)。
 //! 演进预留: 未来 governor 独立化再下沉, 不堵死。
 
-pub use crate::kernel::framework::driver::power::*;
+pub use crate::framework::driver::power::*;

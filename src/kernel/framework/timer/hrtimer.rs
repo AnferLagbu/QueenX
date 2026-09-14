@@ -45,7 +45,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 // ============================================================================
 // 公共类型
@@ -479,7 +479,7 @@ pub fn hrtimer_pending_count() -> usize {
 /// - 未校准: 毫秒级 (tick 精度)
 pub fn hrtimer_clock_read() -> u64 {
     // 优先使用校准后的高精度时间
-    if let Some(freq_hz) = crate::kernel::framework::timer::calibration::get_tsc_frequency_hz() {
+    if let Some(freq_hz) = crate::framework::timer::calibration::get_tsc_frequency_hz() {
         if freq_hz > 0 {
             let ts = crate::arch!(timestamp());
             // ns = cycles * 1_000_000_000 / freq_hz
@@ -489,8 +489,8 @@ pub fn hrtimer_clock_read() -> u64 {
     }
 
     // 回退: tick 计数 → 纳秒
-    crate::kernel::framework::timer::tick::ticks_to_ns(
-        crate::kernel::framework::timer::tick::get_ticks(),
+    crate::framework::timer::tick::ticks_to_ns(
+        crate::framework::timer::tick::get_ticks(),
     )
 }
 
@@ -498,14 +498,14 @@ pub fn hrtimer_clock_read() -> u64 {
 ///
 /// 用于编程硬件定时器。
 pub fn hrtimer_ns_to_cycles(ns: u64) -> u64 {
-    if let Some(freq_hz) = crate::kernel::framework::timer::calibration::get_tsc_frequency_hz() {
+    if let Some(freq_hz) = crate::framework::timer::calibration::get_tsc_frequency_hz() {
         if freq_hz > 0 {
             return mul_u64_div(ns, freq_hz, 1_000_000_000);
         }
     }
 
     // 回退: 纳秒 → tick
-    crate::kernel::framework::timer::tick::us_to_ticks(ns / 1000)
+    crate::framework::timer::tick::us_to_ticks(ns / 1000)
 }
 
 /// 安全的 64 位乘除法: (a * b) / c, 无溢出
@@ -707,8 +707,8 @@ mod tests {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_state_encoding() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_state_encoding() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     assert_eq_test!(HrTimerState::Inactive as u64, 0, "Inactive=0");
     assert_eq_test!(HrTimerState::Pending as u64, 1, "Pending=1");
     assert_eq_test!(HrTimerState::Running as u64, 2, "Running=2");
@@ -716,8 +716,8 @@ fn test_state_encoding() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_uninit_state() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+fn test_uninit_state() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test, check};
     let timer = HrTimer::uninit();
     assert_eq_test!(timer.state(), HrTimerState::Inactive, "state");
     assert_eq_test!(timer.expiry_ns(), 0, "expiry");
@@ -726,8 +726,8 @@ fn test_uninit_state() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_init_and_cancel() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+fn test_init_and_cancel() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test, check};
     static mut TEST_TIMER: HrTimer = HrTimer::uninit();
     // SAFETY: 测试单线程, 无竞争
     unsafe {
@@ -740,8 +740,8 @@ fn test_init_and_cancel() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_forward_periodic() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_forward_periodic() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     let mut timer = HrTimer::uninit();
     timer.init(noop_callback);
     timer.interval_ns.store(1_000_000, Ordering::Release);
@@ -755,8 +755,8 @@ fn test_forward_periodic() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_mul_u64_div_basic() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_mul_u64_div_basic() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     assert_eq_test!(mul_u64_div(100, 3, 100), 3, "100*3/100=3");
     assert_eq_test!(mul_u64_div(0, 100, 50), 0, "zero a");
     assert_eq_test!(mul_u64_div(100, 0, 50), 0, "zero b");
@@ -765,8 +765,8 @@ fn test_mul_u64_div_basic() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_clock_read() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_clock_read() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // u64 类型即非负契约; 此测试只验证调用不 panic + 返回合理量级.
     let ns = hrtimer_clock_read();
     check!(ns < u64::MAX, "clock read bounded");
@@ -774,8 +774,8 @@ fn test_clock_read() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_queue_operations() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+fn test_queue_operations() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test, check};
     // J-01 (2026-09-08): static mut 移至函数顶部 (items_after_statements 清理) —
     // 测试用持久 HrTimer, 生命周期跨多次调用
     static mut T1: HrTimer = HrTimer::uninit();
@@ -803,8 +803,8 @@ fn test_queue_operations() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_periodic_restart() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_periodic_restart() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     static mut T2: HrTimer = HrTimer::uninit();
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -827,7 +827,7 @@ fn periodic_test_callback(_timer: &HrTimer) -> HrTimerRestart {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_hrtimer_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("hrtimer", "state_encoding", test_state_encoding);
     r.register("hrtimer", "uninit_state", test_uninit_state);

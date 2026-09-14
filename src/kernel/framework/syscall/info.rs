@@ -5,9 +5,9 @@
 //! - uname: 系统信息
 //! - gettimeofday: 时钟
 
-use crate::kernel::framework::proc::api;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::proc::api;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // 进程/线程 ID
@@ -33,7 +33,7 @@ pub fn sys_getppid() -> i64 {
 ///
 /// 若 pid == 0, 返回当前进程的进程组.
 pub fn sys_getpgid(pid: i32) -> i64 {
-    crate::kernel::framework::proc::proc_getpgid(pid)
+    crate::framework::proc::proc_getpgid(pid)
 }
 
 // ============================================================================

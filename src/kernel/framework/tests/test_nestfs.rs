@@ -2,15 +2,15 @@
 use crate::register_tests_inner;
 
 use super::{assert_eq_test, check};
-use crate::kernel::services::fs::nestfs::arc::{NestArc, NestArcBufType, NestArcKey};
-use crate::kernel::services::fs::nestfs::bp::{NestBlockPointer, NestCksumType, NestDva};
-use crate::kernel::services::fs::nestfs::checksum::NestChecksum;
-use crate::kernel::services::fs::nestfs::dmu::{NestDmuObject, NestObjType};
-use crate::kernel::services::fs::nestfs::spa::{HV_SPA_MAGIC, NestSpaConfig, NestUberblock};
-use crate::kernel::services::fs::nestfs::txg::NestTxgGroup;
-use crate::kernel::services::fs::nestfs::zap::NestZap;
-use crate::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord};
-use crate::kernel::framework::tests::{TestResult, runner};
+use crate::services::fs::nestfs::arc::{NestArc, NestArcBufType, NestArcKey};
+use crate::services::fs::nestfs::bp::{NestBlockPointer, NestCksumType, NestDva};
+use crate::services::fs::nestfs::checksum::NestChecksum;
+use crate::services::fs::nestfs::dmu::{NestDmuObject, NestObjType};
+use crate::services::fs::nestfs::spa::{HV_SPA_MAGIC, NestSpaConfig, NestUberblock};
+use crate::services::fs::nestfs::txg::NestTxgGroup;
+use crate::services::fs::nestfs::zap::NestZap;
+use crate::services::fs::nestfs::zil::{NestZil, NestZilRecord};
+use crate::framework::tests::{TestResult, runner};
 
 fn test_bp_null() -> TestResult {
     let bp = NestBlockPointer::null();

@@ -11,7 +11,7 @@
 //! 迁回。依赖闭包闭合: IrqSpinLock/OnceLock/Inode trait 均为 framework
 //! 项 (Inode trait 已于 B09-12 迁回 framework::fs::vfs::inode), 0 unsafe。
 //!
-//! services 侧改 `pub use crate::kernel::framework::fs::devfs::*`
+//! services 侧改 `pub use crate::framework::fs::devfs::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //!
 //! ## 设计原则
@@ -24,7 +24,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 
 // ============================================================================
 // 常量
@@ -280,9 +280,9 @@ impl DevfsData {
             }
             Some(DevKind::Console | DevKind::Tty) => 0,
             Some(DevKind::Credo) => {
-                let pwm = crate::kernel::framework::credo::session::get_current_pwm();
-                let euid = crate::kernel::framework::credo::session::get_euid();
-                let uid = crate::kernel::framework::credo::session::get_current_uid();
+                let pwm = crate::framework::credo::session::get_current_pwm();
+                let euid = crate::framework::credo::session::get_euid();
+                let uid = crate::framework::credo::session::get_current_uid();
                 if pwm != 0 {
                     let mut off = 0;
                     let blen = buf.len();
@@ -359,7 +359,7 @@ impl DevfsData {
             Some(DevKind::Null | DevKind::Zero) => buf.len() as i32,
             Some(DevKind::Console | DevKind::Tty) => {
                 // services 层不能使用 klog_info! (含 unsafe), 改用 safe 串口输出
-                crate::kernel::framework::klog::serial_write_bytes(buf);
+                crate::framework::klog::serial_write_bytes(buf);
                 buf.len() as i32
             }
             Some(DevKind::Credo) => {
@@ -371,7 +371,7 @@ impl DevfsData {
                 if note.is_empty() || password.is_empty() {
                     return KernelError::InvalidArgument.as_i32();
                 }
-                crate::kernel::framework::credo::session::login(note, password)
+                crate::framework::credo::session::login(note, password)
                     .map_or(KernelError::PermissionDenied.as_i32(), |_pwm| {
                         buf.len() as i32
                     })
@@ -424,16 +424,16 @@ pub fn init() {
 /// Chitin 驱动注册新设备时, `DevFS` 自动创建对应设备节点。
 pub fn init_with_chitin_bridge() {
     register_standard();
-    crate::kernel::framework::chitin::chitin_set_register_callback(on_chitin_device_registered);
+    crate::framework::chitin::chitin_set_register_callback(on_chitin_device_registered);
 }
 
 /// Chitin 设备注册回调 — 自动创建 `DevFS` 设备节点 (E6-9b)
-fn on_chitin_device_registered(dev: &crate::kernel::framework::chitin::ChitinDevice) {
+fn on_chitin_device_registered(dev: &crate::framework::chitin::ChitinDevice) {
     let kind = match dev.proto {
-        crate::kernel::framework::chitin::ChitinProto::Block => DevKind::Block,
-        crate::kernel::framework::chitin::ChitinProto::Char => DevKind::Char,
-        crate::kernel::framework::chitin::ChitinProto::Net => DevKind::Net,
-        crate::kernel::framework::chitin::ChitinProto::Input => DevKind::Input,
+        crate::framework::chitin::ChitinProto::Block => DevKind::Block,
+        crate::framework::chitin::ChitinProto::Char => DevKind::Char,
+        crate::framework::chitin::ChitinProto::Net => DevKind::Net,
+        crate::framework::chitin::ChitinProto::Input => DevKind::Input,
         // Bus/Other 不创建 DevFS 节点
         _ => return,
     };
@@ -582,7 +582,7 @@ impl Default for SafeDevFs {
 // ============================================================================
 
 // I-16: 替换 spin::Once → 项目自研 OnceCell (framework::sync::OnceLock 别名)
-use crate::kernel::framework::sync::OnceLock as OnceCell;
+use crate::framework::sync::OnceLock as OnceCell;
 static GLOBAL_DEVFS: OnceCell<SafeDevFs> = OnceCell::new();
 
 /// 初始化全局 `DevFS`
@@ -644,7 +644,7 @@ pub fn register_standard() {
 // DevFs Inode — 设备文件 Inode 实现
 // ============================================================================
 
-use crate::kernel::framework::fs::vfs::inode::Inode;
+use crate::framework::fs::vfs::inode::Inode;
 use alloc::sync::Arc;
 
 /// 设备文件 Inode — `DevFS` 的 Inode 实现
@@ -685,7 +685,7 @@ impl Inode for DevFsInode {
         Ok(VfsStat {
             node_id: u32::from(self.dev_type),
             mode: 0o20666,
-            file_type: crate::kernel::framework::fs::VfsFileType::Dev.as_u8(),
+            file_type: crate::framework::fs::VfsFileType::Dev.as_u8(),
             perm: 0o666,
             ..VfsStat::default()
         })
@@ -698,7 +698,7 @@ impl Inode for DevFsInode {
     fn seek(
         &self,
         _offset: i64,
-        _whence: crate::kernel::framework::fs::VfsSeekWhence,
+        _whence: crate::framework::fs::VfsSeekWhence,
         _current_offset: u64,
     ) -> KernelResult<u64> {
         Err(KernelError::InvalidArgument)
@@ -726,7 +726,7 @@ impl Inode for DevFsInode {
 // FileSystem trait 实现 (E6-9c: VFS 分发接入)
 // ============================================================================
 
-use crate::kernel::framework::fs::{FileSystem, KernelError, KernelResult, VfsDirEntry, VfsStat};
+use crate::framework::fs::{FileSystem, KernelError, KernelResult, VfsDirEntry, VfsStat};
 
 impl FileSystem for DevfsData {
     fn name(&self) -> &'static str {
@@ -864,7 +864,7 @@ impl FileSystem for DevfsData {
         &self,
         inode_id: u32,
         mount_idx: u32,
-    ) -> Option<alloc::sync::Arc<dyn crate::kernel::framework::fs::vfs::inode::Inode>> {
+    ) -> Option<alloc::sync::Arc<dyn crate::framework::fs::vfs::inode::Inode>> {
         Some(alloc::sync::Arc::new(DevFsInode::new(
             inode_id as u8,
             mount_idx,

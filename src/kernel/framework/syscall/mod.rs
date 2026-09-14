@@ -47,11 +47,11 @@ pub mod types;
 pub use dispatch::*;
 
 pub fn validate_user_ptr(ptr: u64) -> bool {
-    crate::kernel::framework::userptr::validate_user_ptr(ptr)
+    crate::framework::userptr::validate_user_ptr(ptr)
 }
 
 pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
-    crate::kernel::framework::userptr::validate_user_buf(ptr, len)
+    crate::framework::userptr::validate_user_buf(ptr, len)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -64,7 +64,7 @@ pub unsafe extern "C" fn syscall_init() {
     // SAFETY: klog_write 是 C-ABI 日志函数；byte string literal 是 'static
     // 字节切片，传递给 C 时按指针 + 长度使用。
     unsafe {
-        crate::kernel::framework::klog::klog_write(
+        crate::framework::klog::klog_write(
             1,
             7,
             core::ptr::null(),
@@ -77,8 +77,8 @@ pub unsafe extern "C" fn syscall_init() {
     // 注册 epoll 的 fd 关闭通知回调, 解耦 fs→syscall 依赖
     // SAFETY: epoll_pwake 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
-        crate::kernel::framework::fd_notify::register_pwake(
-            crate::kernel::framework::syscall::epoll::epoll_pwake,
+        crate::framework::fd_notify::register_pwake(
+            crate::framework::syscall::epoll::epoll_pwake,
         );
     }
 }
@@ -128,7 +128,7 @@ pub(crate) mod raw {
 
     /// 校验用户缓冲区 [ptr, ptr+len) 是否完全在用户空间
     pub fn check_user_buf(ptr: u64, len: u64) -> bool {
-        crate::kernel::framework::userptr::validate_user_buf(ptr, len)
+        crate::framework::userptr::validate_user_buf(ptr, len)
     }
 
     // ============= 用户态读写助手（unsafe 集中点） =============
@@ -273,13 +273,13 @@ pub(crate) mod raw {
     /// 分配 count 个连续物理页。
     /// 委托到 `mm::api::pmm_alloc_pages`.
     pub fn alloc_pages(count: u64) -> *mut u8 {
-        crate::kernel::framework::mm::pmm_alloc_pages(count as usize)
+        crate::framework::mm::pmm_alloc_pages(count as usize)
     }
 
     /// 释放 count 个连续物理页。
     /// 委托到 `mm::api::pmm_free_pages`.
     pub fn free_pages(addr: *mut u8, count: u64) {
-        crate::kernel::framework::mm::pmm_free_pages(addr, count as usize);
+        crate::framework::mm::pmm_free_pages(addr, count as usize);
     }
 
     // ============= 时间 =============

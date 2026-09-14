@@ -1,7 +1,7 @@
 use super::check;
-use crate::kernel::framework::fs::vfs::types::{FsType, VfsDirEntry, VfsFileType, VfsSeekWhence};
-use crate::kernel::framework::fs::vfs::vfs::VfsManager;
-use crate::kernel::framework::tests::{TestResult, runner};
+use crate::framework::fs::vfs::types::{FsType, VfsDirEntry, VfsFileType, VfsSeekWhence};
+use crate::framework::fs::vfs::vfs::VfsManager;
+use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
 fn test_fstype_from_name() -> TestResult {
@@ -172,9 +172,9 @@ fn test_vfs_snapshot_restore() -> TestResult {
 
 fn test_fs_backend_registered_make_inode() -> TestResult {
     // 激活注册 (幂等: 重复注册 Err 被忽略)
-    crate::kernel::services::fs::init();
+    crate::services::fs::init();
     // 钩子必须返回真实 Inode — FallbackFsBackend 恒 Err, 本断言锁定回归
-    let result = crate::kernel::framework::fs::vfs::backend_trait::current_fs_backend()
+    let result = crate::framework::fs::vfs::backend_trait::current_fs_backend()
         .make_ramfs_inode(0, 0);
     check!(
         result.is_ok(),
@@ -184,12 +184,12 @@ fn test_fs_backend_registered_make_inode() -> TestResult {
 }
 
 fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
-    use crate::kernel::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
-    use crate::kernel::framework::fs::FileSystem;
+    use crate::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
+    use crate::framework::fs::FileSystem;
 
-    crate::kernel::services::fs::init();
+    crate::services::fs::init();
     // 建根目录 (幂等): RAMFS_DATA 初始为空, resolve_path("/") 需先 mount
-    crate::kernel::framework::fs::ramfs::init();
+    crate::framework::fs::ramfs::init();
 
     // 在 RamFS 根目录建文件 (锁内操作, 作用域结束释放锁)
     let created = {
@@ -223,8 +223,8 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
 }
 
 fn test_nestfs_fs_registered() -> TestResult {
-    crate::kernel::services::fs::init();
-    let Some(fs) = crate::kernel::framework::fs::vfs::backend_trait::nestfs_fs() else {
+    crate::services::fs::init();
+    let Some(fs) = crate::framework::fs::vfs::backend_trait::nestfs_fs() else {
         return TestResult::Fail("nestfs_fs() 未注册 — services::fs::init 未生效");
     };
     check!(fs.name() == "nestfs", "nestfs name mismatch");

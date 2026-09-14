@@ -6,6 +6,6 @@
 //!
 //! 类型定义于 2026-08-03 迁回 `framework::userctx` (按 I3 不变式).
 //! 本文件保留反向 re-export, 历史调用路径 (`services::userctx::UserContext`)
-//! 继续可用. 新代码应直接 `use crate::kernel::framework::userctx::UserContext`.
+//! 继续可用. 新代码应直接 `use crate::framework::userctx::UserContext`.
 
-pub use crate::kernel::framework::userctx::*;
+pub use crate::framework::userctx::*;

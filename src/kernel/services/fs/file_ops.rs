@@ -15,7 +15,7 @@
 //! - 通过 framework 公开 API 访问
 //! - 无 unsafe, 无裸指针
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 const POLLIN: i16 = 1;
 const POLLOUT: i16 = 4;
@@ -48,7 +48,7 @@ pub fn ioctl_syscall(_fd: i32, request: u64, arg: u64) -> i64 {
                 ws_xpixel: 0,
                 ws_ypixel: 0,
             };
-            if !crate::kernel::framework::syscall::api::write_struct_to_user(arg, &ws) {
+            if !crate::framework::syscall::api::write_struct_to_user(arg, &ws) {
                 return Errno::EFAULT.as_ret();
             }
             0
@@ -87,7 +87,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             revents: 0,
         };
 
-        if !crate::kernel::framework::syscall::api::read_struct_from_user(
+        if !crate::framework::syscall::api::read_struct_from_user(
             fds_ptr + offset,
             &mut pfd,
         ) {
@@ -97,16 +97,16 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
         pfd.revents = 0;
         if pfd.fd < 0 {
             // 写回原位
-            let _ = crate::kernel::framework::syscall::api::write_struct_to_user(
+            let _ = crate::framework::syscall::api::write_struct_to_user(
                 fds_ptr + offset,
                 &pfd,
             );
             continue;
         }
         if pfd.events & POLLIN != 0 {
-            let fd_table = crate::kernel::framework::fs::VFS_MANAGER.fd_table.lock();
+            let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
             // B06-07: fd 上限用 VFS_MAX_FDS (32) 而非硬编码 256, 防止越界索引 32 长数组
-            if (pfd.fd as usize) < crate::kernel::framework::fs::VFS_MAX_FDS
+            if (pfd.fd as usize) < crate::framework::fs::VFS_MAX_FDS
                 && fd_table[pfd.fd as usize].used
             {
                 pfd.revents |= POLLIN;
@@ -119,18 +119,18 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
         }
 
         let _ =
-            crate::kernel::framework::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
+            crate::framework::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
     }
     i64::from(ready)
 }
 
 /// chown(path, uid, gid) 策略
 pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
-    if path_ptr == 0 || !crate::kernel::framework::syscall::api::validate_user_ptr(path_ptr) {
+    if path_ptr == 0 || !crate::framework::syscall::api::validate_user_ptr(path_ptr) {
         return Errno::EFAULT.as_ret();
     }
     let path = path_ptr as *const u8;
-    let tbl = crate::kernel::framework::credo::identity::get_table();
+    let tbl = crate::framework::credo::identity::get_table();
     // B06-02: UID/GID 未注册时返回 EINVAL, 不得默认 root (原 map_or(0, ...) 存在提权漏洞)
     let owner_pwm = match tbl.find_by_uid(uid) {
         Some(e) => e.get_pwm().0,
@@ -140,8 +140,8 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
         Some(e) => e.get_pwm().0,
         None => return Errno::EINVAL.as_ret(),
     };
-    let pwm = crate::kernel::framework::credo::pwm_get_current();
-    i64::from(crate::kernel::framework::fs::vfs_chown_ext(
+    let pwm = crate::framework::credo::pwm_get_current();
+    i64::from(crate::framework::fs::vfs_chown_ext(
         path, owner_pwm, group_pwm, pwm,
     ))
 }
@@ -149,22 +149,22 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
 /// truncate(path, length) 策略
 pub fn truncate_syscall(path_ptr: u64, length: i64) -> i64 {
     if path_ptr == 0
-        || !crate::kernel::framework::syscall::api::validate_user_ptr(path_ptr)
+        || !crate::framework::syscall::api::validate_user_ptr(path_ptr)
         || length < 0
     {
         return Errno::EINVAL.as_ret();
     }
     let path = path_ptr as *const u8;
-    let fd = crate::kernel::framework::fs::vfs_open(
+    let fd = crate::framework::fs::vfs_open(
         path,
         0o2,
-        crate::kernel::framework::credo::pwm_get_current(),
+        crate::framework::credo::pwm_get_current(),
     );
     if fd < 0 {
         return Errno::ENOENT.as_ret();
     }
-    let result = crate::kernel::framework::fs::vfs_truncate_internal(fd as u32, length as u64);
-    crate::kernel::framework::fs::vfs_close(fd as u32);
+    let result = crate::framework::fs::vfs_truncate_internal(fd as u32, length as u64);
+    crate::framework::fs::vfs_close(fd as u32);
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
@@ -173,7 +173,7 @@ pub fn ftruncate_syscall(fd: i32, length: i64) -> i64 {
     if fd < 0 || length < 0 {
         return Errno::EINVAL.as_ret();
     }
-    let result = crate::kernel::framework::fs::vfs_truncate_internal(fd as u32, length as u64);
+    let result = crate::framework::fs::vfs_truncate_internal(fd as u32, length as u64);
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
@@ -183,22 +183,22 @@ pub fn ftruncate_syscall(fd: i32, length: i64) -> i64 {
 )]
 /// flock(fd, operation) 策略
 pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
-    use crate::kernel::framework::fs::{FlockResult, sys_flock as do_flock};
+    use crate::framework::fs::{FlockResult, sys_flock as do_flock};
 
     if fd < 0 {
         return Errno::EBADF.as_ret();
     }
 
     let ino = {
-        let fd_table = crate::kernel::framework::fs::VFS_MANAGER.fd_table.lock();
-        if (fd as usize) >= crate::kernel::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used
+        let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
+        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used
         {
             return Errno::EBADF.as_ret();
         }
         fd_table[fd as usize].node_id
     };
 
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
 
     match do_flock(fd, operation, pid, ino) {
         FlockResult::Ok => 0,

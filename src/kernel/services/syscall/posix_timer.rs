@@ -13,7 +13,7 @@
 //! - `QX_TIMER_GETOVERRUN` (744): 返回上次 read 之后补打的次数
 //! - `QX_CLOCK_GETRES`     (745): 时钟分辨率
 
-use crate::kernel::framework::proc as ptimer;
+use crate::framework::proc as ptimer;
 
 // ============================================================================
 // sys_timer_create

@@ -46,9 +46,9 @@ pub trait ConfigValidateHook: Send + Sync {
 // ============================================================================
 
 /// 全局配置自检策略注册表 — services 通过 `register_config_validate_hook` 注册
-static CONFIG_VALIDATE_HOOK: crate::kernel::framework::sync::OnceLock<
+static CONFIG_VALIDATE_HOOK: crate::framework::sync::OnceLock<
     &'static dyn ConfigValidateHook,
-> = crate::kernel::framework::sync::OnceLock::new();
+> = crate::framework::sync::OnceLock::new();
 
 /// 注册配置自检策略 (由 `services::config::validate_hook` 调用)
 ///

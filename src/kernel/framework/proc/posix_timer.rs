@@ -48,9 +48,9 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-use crate::kernel::framework::proc::{Pid, do_signal_send};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::timer::{
+use crate::framework::proc::{Pid, do_signal_send};
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::timer::{
     HrTimer, HrTimerRestart, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
 };
 
@@ -313,7 +313,7 @@ fn posix_timer_callback(timer: &HrTimer) -> HrTimerRestart {
 ///
 /// 返回 0 = 成功, 负数 = errno
 pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 {
-    use crate::kernel::framework::errno::Errno;
+    use crate::framework::errno::Errno;
 
     if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
         return Errno::EINVAL.as_ret();
@@ -322,7 +322,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
     // 解析 sigevent
     let mut sigev = Sigevent::default();
     if sigev_ptr != 0 {
-        if !crate::kernel::framework::userptr::read_struct_from_user(sigev_ptr, &mut sigev) {
+        if !crate::framework::userptr::read_struct_from_user(sigev_ptr, &mut sigev) {
             return Errno::EFAULT.as_ret();
         }
     } else {
@@ -340,7 +340,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
     }
 
     // 当前进程 pid
-    let current_pid = crate::kernel::framework::proc::SCHEDULER
+    let current_pid = crate::framework::proc::SCHEDULER
         .current()
         .unwrap_or(0);
 
@@ -364,7 +364,7 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
             slot.timer.init(posix_timer_callback);
 
             let timer_id = (i + 1) as i32;
-            if !crate::kernel::framework::userptr::write_struct_to_user(timer_id_ptr, &timer_id) {
+            if !crate::framework::userptr::write_struct_to_user(timer_id_ptr, &timer_id) {
                 return Errno::EFAULT.as_ret();
             }
 
@@ -393,8 +393,8 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
 /// `new_value_ptr`: 新 itimerspec (可为 null → disarm)
 /// `old_value_ptr`: 输出旧 itimerspec (可为 null)
 pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_value_ptr: u64) -> i64 {
-    use crate::kernel::framework::errno::Errno;
-    use crate::kernel::framework::userptr;
+    use crate::framework::errno::Errno;
+    use crate::framework::userptr;
 
     let idx = match id_to_idx(timer_id) {
         Some(i) => i,
@@ -494,8 +494,8 @@ pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_valu
 )]
 /// `timer_gettime` — 获取 timer 状态 (剩余时间 + interval)
 pub fn sys_timer_gettime(timer_id: i32, curr_value_ptr: u64) -> i64 {
-    use crate::kernel::framework::errno::Errno;
-    use crate::kernel::framework::userptr;
+    use crate::framework::errno::Errno;
+    use crate::framework::userptr;
 
     let idx = match id_to_idx(timer_id) {
         Some(i) => i,
@@ -537,7 +537,7 @@ pub fn sys_timer_gettime(timer_id: i32, curr_value_ptr: u64) -> i64 {
 )]
 /// `timer_delete` — 释放 timer
 pub fn sys_timer_delete(timer_id: i32) -> i64 {
-    use crate::kernel::framework::errno::Errno;
+    use crate::framework::errno::Errno;
 
     let idx = match id_to_idx(timer_id) {
         Some(i) => i,
@@ -575,7 +575,7 @@ pub fn sys_timer_delete(timer_id: i32) -> i64 {
 /// POSIX 语义: overrun = (实际到期次数) - 1 (正常情况下一次)。
 /// 当前实现: 总是返回 0 (我们没有维护 read 标记, 单次信号模式够用)。
 pub fn sys_timer_getoverrun(timer_id: i32) -> i64 {
-    use crate::kernel::framework::errno::Errno;
+    use crate::framework::errno::Errno;
 
     let idx = match id_to_idx(timer_id) {
         Some(i) => i,
@@ -597,8 +597,8 @@ pub fn sys_timer_getoverrun(timer_id: i32) -> i64 {
 /// `QueenX` 内置两种时钟: `CLOCK_REALTIME` (TICK 精度) / `CLOCK_MONOTONIC` (TICK 精度)
 /// 分辨率 = 1 tick = 1ms (hrtimer 配置, 暂以 1ms 作为标称分辨率)。
 pub fn sys_clock_getres(clockid: i32, res_ptr: u64) -> i64 {
-    use crate::kernel::framework::errno::Errno;
-    use crate::kernel::framework::userptr;
+    use crate::framework::errno::Errno;
+    use crate::framework::userptr;
 
     if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
         return Errno::EINVAL.as_ret();

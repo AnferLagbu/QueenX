@@ -40,7 +40,7 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
     // `userctx::UserContext` 强制类型化保证布局正确. `X8664::enter_user`
     // 内部执行 CR3 切换 + swapgs + 装载数据段 + iretq, 不会返回.
     unsafe {
-        <crate::kernel::framework::arch::X8664 as Arch>::enter_user(
+        <crate::framework::arch::X8664 as Arch>::enter_user(
             ctx.rip as usize,    // ELR/rip
             ctx.rsp as usize,    // stack pointer
             ctx.rdi as usize,    // arg0 (x86_64 calling convention)
@@ -59,7 +59,7 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
     // SAFETY: 同 x86_64 契约; aarch64 Aarch64::enter_user 设置 sp_el0 = sp,
     // elr_el1 = entry, spsr_el1 = EL0 模式位后 eret, 不会返回.
     unsafe {
-        <crate::kernel::framework::arch::Aarch64 as Arch>::enter_user(
+        <crate::framework::arch::Aarch64 as Arch>::enter_user(
             ctx.elr_el1 as usize, // ELR_EL1
             ctx.sp_el0 as usize,  // SP_EL0
             ctx.x0 as usize,      // arg0 (aarch64 calling convention)
@@ -80,5 +80,5 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
 pub fn dispatch_syscall(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     // SAFETY: syscall_dispatch 是 unsafe extern "C" 因为处理原始用户态参数.
     // 框架 (TCB) 负责在传递给 services 之前校验这些参数.
-    unsafe { crate::kernel::framework::syscall::syscall_dispatch(num, a0, a1, a2, a3, a4, a5) }
+    unsafe { crate::framework::syscall::syscall_dispatch(num, a0, a1, a2, a3, a4, a5) }
 }

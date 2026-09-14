@@ -10,7 +10,7 @@
 //! framework user_proc/process/scheduler 消费 + services 广泛消费 —
 //! 属机制项, 迁回 (依赖闭包仅 framework::config, 反转后同子树)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::types::*`
+//! services 侧改 `pub use crate::framework::proc::types::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 
 pub type Pid = u32;
@@ -287,7 +287,7 @@ impl Default for ProcessContext {
 //
 // 集中式 re-export: 所有 proc 子模块 (types/process/thread/user_proc) 共享同一组常量,
 // 避免分散定义与影子覆盖。user_proc.rs 等子模块通过 `use super::types::*;` 引入。
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     // 栈规模
     KERNEL_STACK_SIZE,
     MAX_OPEN_FILES,

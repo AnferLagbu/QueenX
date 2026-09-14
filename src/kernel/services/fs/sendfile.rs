@@ -5,13 +5,13 @@
 
 #![deny(unsafe_code)]
 
-pub use crate::kernel::framework::syscall::{
+pub use crate::framework::syscall::{
     SPLICE_F_GIFT, SPLICE_F_MORE, SPLICE_F_MOVE, SPLICE_F_NONBLOCK,
 };
 
 /// sendfile 系统调用
 pub fn sys_sendfile(out_fd: i32, in_fd: i32, offset_ptr: u64, count: usize) -> i64 {
-    crate::kernel::framework::syscall::sys_sendfile(out_fd, in_fd, offset_ptr, count)
+    crate::framework::syscall::sys_sendfile(out_fd, in_fd, offset_ptr, count)
 }
 
 /// splice 系统调用
@@ -23,5 +23,5 @@ pub fn sys_splice(
     len: usize,
     flags: u32,
 ) -> i64 {
-    crate::kernel::framework::syscall::sys_splice(fd_in, off_in, fd_out, off_out, len, flags)
+    crate::framework::syscall::sys_splice(fd_in, off_in, fd_out, off_out, len, flags)
 }

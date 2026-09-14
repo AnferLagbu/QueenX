@@ -1,18 +1,18 @@
-use crate::kernel::framework::idt::DetailedStatistics;
-use crate::kernel::framework::idt::handlers::{
+use crate::framework::idt::DetailedStatistics;
+use crate::framework::idt::handlers::{
     AccessType, DefaultHandler, DivisionByZeroHandler, ExceptionCategory, ExceptionHandler,
     ExceptionStatisticsCollector, FaultCause, Mode, PageFaultHandler, PanicInfo, RecoveryAction,
     Severity, create_handler,
 };
-use crate::kernel::framework::idt::{
+use crate::framework::idt::{
     CpuFeatures, is_null_or_invalid, is_valid_kernel_address, is_valid_user_address,
 };
-use crate::kernel::framework::idt::{
+use crate::framework::idt::{
     ErrorFlags, GDT_KERNEL_CODE, IDT_ENTRIES, IDT_TYPE_INTERRUPT, IRQ_BASE, IdtEntry, IdtPtr,
     InterruptFrame, InterruptStatistics, get_exception_name, get_irq_name,
 };
-use crate::kernel::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE};
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 use core::sync::atomic::Ordering;
 

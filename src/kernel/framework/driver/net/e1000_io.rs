@@ -12,8 +12,8 @@
 //!
 //! 该模块**不依赖** services 层任何代码, 完全基于 framework::iomem::IoMem.
 
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::PhysAddr;
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::PhysAddr;
 
 // ============================================================================
 // E1000 寄存器偏移常量
@@ -341,9 +341,9 @@ impl E1000Io {
 // 该结构原属 services (业务逻辑). 严格 framekernel 原则要求 framework 不依赖
 // services → E1000Driver 整体上移 framework. services 改为 re-export.
 
-use crate::kernel::framework::driver::net::dma_ring::{E1000_RX_RING_SIZE};
-use crate::kernel::framework::driver::net::e1000::{RxRing, TxRing};
-use crate::kernel::framework::driver::framework::DriverError;
+use crate::framework::driver::net::dma_ring::{E1000_RX_RING_SIZE};
+use crate::framework::driver::net::e1000::{RxRing, TxRing};
+use crate::framework::driver::framework::DriverError;
 use crate::klog_info;
 use crate::klog_warn;
 

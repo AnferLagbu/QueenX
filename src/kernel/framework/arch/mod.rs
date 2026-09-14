@@ -362,9 +362,9 @@ pub type CurrentArch = aarch64::Aarch64;
 #[macro_export]
 macro_rules! arch {
     ($method:ident ( $($arg:expr_2021),* $(,)? )) => {
-        <$crate::kernel::framework::arch::CurrentArch as $crate::kernel::framework::arch::Arch>::$method($($arg),*)
+        <$crate::framework::arch::CurrentArch as $crate::framework::arch::Arch>::$method($($arg),*)
     };
     ($method:ident ()) => {
-        <$crate::kernel::framework::arch::CurrentArch as $crate::kernel::framework::arch::Arch>::$method()
+        <$crate::framework::arch::CurrentArch as $crate::framework::arch::Arch>::$method()
     };
 }

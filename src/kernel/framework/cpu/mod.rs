@@ -348,7 +348,7 @@ impl CpuInfo {
 // 全局状态 (静态单例, 使用 OnceCell 保证只初始化一次)
 // ============================================================================
 
-use crate::kernel::framework::sync::once_lock::OnceLock;
+use crate::framework::sync::once_lock::OnceLock;
 
 /// 全局 CPU 信息实例 (延迟初始化, 线程安全)
 static CPU_INFO: OnceLock<CpuInfo> = OnceLock::new();
@@ -395,7 +395,7 @@ pub fn get_cpu_info() -> Option<&'static CpuInfo> {
     reason = "指针类型 cast 不变 constness (e.g. *mut T → *mut U); 改 .cast() 是机械替换不治根, 当前优先 expect 兑底"
 )]
 pub extern "C" fn cpu_init() -> i32 {
-    use crate::kernel::framework::klog::{LogCategory, LogLevel, klog_write};
+    use crate::framework::klog::{LogCategory, LogLevel, klog_write};
 
     static INIT_MSG: &[u8] = b"Initializing QX AMD64 CPU driver...\0";
     // SAFETY: FFI 日志调用; INIT_MSG 是带尾部 NUL 的静态字节切片,
@@ -774,7 +774,7 @@ fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
 
             // LSTAR: 64 位 syscall 入口点 (高半部分地址, KPTI 用户页表只映射高半区)
             let entry_addr = syscall_entry as *const () as u64;
-            let entry_hi = entry_addr + crate::kernel::framework::mm::KERNEL_BASE as u64;
+            let entry_hi = entry_addr + crate::framework::mm::KERNEL_BASE as u64;
             self::msr::write_msr(self::msr::IA32_LSTAR, entry_hi);
 
             // SFMASK: 进入内核时清除 IF (bit 9) 以禁用中断
@@ -924,5 +924,5 @@ mod tests {
 }
 #[cfg(feature = "kernel_test")]
 pub fn register_cpu_tests() {
-    crate::kernel::framework::tests::arch::register_cpu_tests();
+    crate::framework::tests::arch::register_cpu_tests();
 }

@@ -5,7 +5,7 @@
 //! `chitin_blk_read/write` 直接调用 `&mut dyn BlockDevice::blk_read/blk_write`,
 //! 0 unsafe, 编译期类型安全.
 
-use crate::kernel::framework::chitin::BlockDevice;
+use crate::framework::chitin::BlockDevice;
 
 /// 注册块设备到 Chitin
 ///
@@ -26,5 +26,5 @@ pub fn register_block_device(
     io_base: Option<u64>,
 ) -> u32 {
     let leaked: &'static mut dyn BlockDevice = alloc::boxed::Box::leak(alloc::boxed::Box::new(dev));
-    crate::kernel::framework::chitin::chitin_register_block_dev(name, io_base, None, leaked)
+    crate::framework::chitin::chitin_register_block_dev(name, io_base, None, leaked)
 }

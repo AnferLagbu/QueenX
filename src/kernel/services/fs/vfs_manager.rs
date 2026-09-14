@@ -8,4 +8,4 @@
 
 #![deny(unsafe_code)]
 
-pub use crate::kernel::framework::fs::vfs::vfs::*;
+pub use crate::framework::fs::vfs::vfs::*;

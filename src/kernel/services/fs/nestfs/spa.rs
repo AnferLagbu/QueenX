@@ -1,12 +1,12 @@
-use crate::kernel::framework::driver::block;
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::services::fs::nestfs::arc::NestArc;
-use crate::kernel::services::fs::nestfs::bp::{HV_DVA_MAX, NestBlockPointer, NestCksumType, NestCompType};
-use crate::kernel::services::fs::nestfs::checksum::NestChecksum;
-use crate::kernel::services::fs::nestfs::dva::NestDva;
-use crate::kernel::services::fs::nestfs::metaslab::NestMetaslab;
-use crate::kernel::services::fs::nestfs::vdev::{NestVdev, NestVdevConfig, NestVdevState};
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::framework::driver::block;
+use crate::framework::fs::KernelError;
+use crate::services::fs::nestfs::arc::NestArc;
+use crate::services::fs::nestfs::bp::{HV_DVA_MAX, NestBlockPointer, NestCksumType, NestCompType};
+use crate::services::fs::nestfs::checksum::NestChecksum;
+use crate::services::fs::nestfs::dva::NestDva;
+use crate::services::fs::nestfs::metaslab::NestMetaslab;
+use crate::services::fs::nestfs::vdev::{NestVdev, NestVdevConfig, NestVdevState};
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 

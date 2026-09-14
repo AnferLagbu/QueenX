@@ -5,7 +5,7 @@
 
 // 以下 import 在地址校验函数与 test 构建中使用 (aarch64 下 KERNEL_BASE 未用, 2026-09-11 实测需豁免)
 #[allow(unused_imports)]
-use crate::kernel::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE, USER_ADDR_FLOOR, USER_ADDR_MIN};
+use crate::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE, USER_ADDR_FLOOR, USER_ADDR_MIN};
 
 /// CPU 特性检测结果
 #[derive(Debug, Clone)]
@@ -324,5 +324,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_idt_safety_tests() {
-    crate::kernel::framework::tests::idt::register_idt_safety_tests();
+    crate::framework::tests::idt::register_idt_safety_tests();
 }

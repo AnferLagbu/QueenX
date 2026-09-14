@@ -13,8 +13,8 @@
 //! - 通过 framework::proc 公开 API 访问进程表
 //! - 无 unsafe, 无裸指针
 
-use crate::kernel::framework::proc::ProcessPriority;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::proc::ProcessPriority;
+use crate::framework::syscall::Errno;
 
 const PRIO_PROCESS: i32 = 0;
 
@@ -47,7 +47,7 @@ pub fn priority_to_nice(p: ProcessPriority) -> i32 {
 
 /// nice(inc) 系统调用策略
 pub fn nice_syscall(inc: i32) -> i64 {
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
     let current_nice = getpriority_syscall(PRIO_PROCESS, pid) as i32;
     if current_nice < 0 && current_nice != -38 {
         // getpriority 失败 (非 ENOSYS)
@@ -72,13 +72,13 @@ pub fn getpriority_syscall(which: i32, who: u32) -> i64 {
         return Errno::EINVAL.as_ret();
     }
     let pid = if who == 0 {
-        crate::kernel::framework::proc::process_get_current_pid()
+        crate::framework::proc::process_get_current_pid()
     } else {
         who
     };
-    let pri = match crate::kernel::framework::proc::process_with(
+    let pri = match crate::framework::proc::process_with(
         pid,
-        crate::kernel::framework::proc::process::Process::get_priority,
+        crate::framework::proc::process::Process::get_priority,
     ) {
         Some(p) => p,
         None => return Errno::ESRCH.as_ret(),
@@ -93,12 +93,12 @@ pub fn setpriority_syscall(which: i32, who: u32, prio: i32) -> i64 {
     }
     let clamped = prio.clamp(-20, 19);
     let pid = if who == 0 {
-        crate::kernel::framework::proc::process_get_current_pid()
+        crate::framework::proc::process_get_current_pid()
     } else {
         who
     };
     let new_pri = nice_to_priority(clamped);
-    match crate::kernel::framework::proc::process_with_mut(pid, |p| p.set_priority(new_pri)) {
+    match crate::framework::proc::process_with_mut(pid, |p| p.set_priority(new_pri)) {
         Some(()) => 0,
         None => Errno::ESRCH.as_ret(),
     }

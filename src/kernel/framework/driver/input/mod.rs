@@ -23,9 +23,9 @@ pub use keyboard::KeyboardDriver;
 #[cfg(target_arch = "x86_64")]
 pub fn input_init() {
     keyboard::keyboard_init();
-    crate::kernel::framework::chitin::chitin_register_driver(
+    crate::framework::chitin::chitin_register_driver(
         "ps2_keyboard",
-        crate::kernel::framework::chitin::ChitinProto::Input,
+        crate::framework::chitin::ChitinProto::Input,
         None,
         None,
         alloc::boxed::Box::new(keyboard::KeyboardDriver::new()),

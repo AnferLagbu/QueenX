@@ -8,7 +8,7 @@
 //! framework smp/cpu_local/rcu/irq 的 `static [T; MAX_CPUS]` per-CPU 数组直接
 //! 消费、`MAX_IRQS` 被 framework irq 机制消费 — 属机制容量常量, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::config::capacity::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::config::capacity::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯常量).
 
 // ============================================================================

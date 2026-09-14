@@ -116,7 +116,7 @@ fn memory_pressure_services_keeps_policy() {
         "DECISION-O ②: 分级算法 classify_pressure 必在 services"
     );
     assert!(
-        src.contains("pub use crate::kernel::framework::mm::pressure::"),
+        src.contains("pub use crate::framework::mm::pressure::"),
         "DECISION-O ②: services 必经 re-export 保持 API 兼容 (services→framework 合法方向)"
     );
 }

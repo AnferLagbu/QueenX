@@ -64,7 +64,7 @@ impl CpuQueue {
 }
 
 struct CpuQueues {
-    queues: UnsafeCell<[CpuQueue; crate::kernel::framework::config::MAX_CPUS]>,
+    queues: UnsafeCell<[CpuQueue; crate::framework::config::MAX_CPUS]>,
 }
 
 // SAFETY: CpuQueues 包装 UnsafeCell<[CpuQueue; MAX_CPUS]>.
@@ -74,18 +74,18 @@ unsafe impl Sync for CpuQueues {}
 
 static CPU_QUEUES: CpuQueues = CpuQueues {
     queues: UnsafeCell::new(
-        [const { CpuQueue::new() }; crate::kernel::framework::config::MAX_CPUS],
+        [const { CpuQueue::new() }; crate::framework::config::MAX_CPUS],
     ),
 };
 
 pub fn cpu_queue(cpu_id: u32) -> &'static CpuQueue {
-    let idx = cpu_id as usize % crate::kernel::framework::config::MAX_CPUS;
+    let idx = cpu_id as usize % crate::framework::config::MAX_CPUS;
     // SAFETY: `CPU_QUEUES` 由调用方保证为有效指针; 只读访问
     unsafe { &(&*CPU_QUEUES.queues.get())[idx] }
 }
 
 pub fn current_cpu_queue() -> &'static CpuQueue {
-    let cpu_id = crate::kernel::framework::smp::get_current_cpu();
+    let cpu_id = crate::framework::smp::get_current_cpu();
     cpu_queue(cpu_id)
 }
 
@@ -98,7 +98,7 @@ pub fn init_cpu_queue(cpu_id: u32, idle_pid: Pid) {
 
 /// 向目标 CPU 发送重新调度 IPI
 pub fn resched_cpu(target_cpu: u32) {
-    let current = crate::kernel::framework::smp::get_current_cpu();
+    let current = crate::framework::smp::get_current_cpu();
     if target_cpu == current {
         current_cpu_queue().set_need_reschedule();
         return;
@@ -106,7 +106,7 @@ pub fn resched_cpu(target_cpu: u32) {
 
     cpu_queue(target_cpu).set_need_reschedule();
 
-    let target_apic_id = crate::kernel::framework::smp::get_apic_id(target_cpu);
+    let target_apic_id = crate::framework::smp::get_apic_id(target_cpu);
     if target_apic_id != 0xFFFF {
         crate::arch!(send_ipi(target_apic_id, 0xFE));
     }
@@ -117,13 +117,13 @@ pub fn resched_cpu(target_cpu: u32) {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn resched_ipi_handler() {
-    crate::kernel::framework::irq::raise_softirq(crate::kernel::framework::irq::SoftirqVec::Sched);
+    crate::framework::irq::raise_softirq(crate::framework::irq::SoftirqVec::Sched);
 }
 
 /// 注册 softirq Sched handler (在 scheduler init 时调用)
 pub fn register_sched_softirq() {
-    crate::kernel::framework::irq::open_softirq(
-        crate::kernel::framework::irq::SoftirqVec::Sched,
+    crate::framework::irq::open_softirq(
+        crate::framework::irq::SoftirqVec::Sched,
         sched_softirq_handler,
     );
 }

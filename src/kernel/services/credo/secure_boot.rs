@@ -4,13 +4,13 @@
 //! 封装 `framework::credo::secure_boot` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::credo::{
+pub use crate::framework::credo::{
     ED25519_PUBKEY_LEN, ED25519_SIG_LEN, Ed25519PubKey, MAX_TRUST_CHAIN_DEPTH, PCR_COUNT, PcrIndex,
     SHA256_LEN, SecureBootSubsystem, TpmQuote, TpmSealedData, TpmSubsystem, TrustEntry, TrustRole,
     VerifyResult,
 };
 
-use crate::kernel::framework::credo::{
+use crate::framework::credo::{
     secure_boot_init, secure_boot_is_initialized, secure_boot_subsystem, sha256_extend,
     sha256_hash, sys_secure_boot, sys_tpm, tpm_init, tpm_is_initialized, tpm_subsystem,
 };

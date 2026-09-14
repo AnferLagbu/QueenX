@@ -50,7 +50,7 @@ fn test_sink_registry_caps_at_4() {
     assert!(src.contains("static LOG_SINK_COUNT: AtomicU8"), "必须有计数");
     // 新模式: LOG_SINKS 使用 IrqSpinLock 包装 SinkPtr 数组
     assert!(
-        src.contains("static LOG_SINKS: crate::kernel::framework::sync::IrqSpinLock<[SinkPtr"),
+        src.contains("static LOG_SINKS: crate::framework::sync::IrqSpinLock<[SinkPtr"),
         "必须有 IrqSpinLock 包装的 SinkPtr 注册表"
     );
 }

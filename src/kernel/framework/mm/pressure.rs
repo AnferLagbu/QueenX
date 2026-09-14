@@ -19,7 +19,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 
 // ============================================================================
 // 内存压力级别

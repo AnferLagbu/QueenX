@@ -2,8 +2,8 @@
 
 use super::WasiContext;
 use super::fd_table::write_u32_to_memory;
-use crate::kernel::services::wasm::interpreter::Interpreter;
-use crate::kernel::services::wasm::types::{Value, WasmError};
+use crate::services::wasm::interpreter::Interpreter;
+use crate::services::wasm::types::{Value, WasmError};
 use alloc::format;
 
 /// WASI `environ_sizes_get`: 获取环境变量数量和总缓冲区大小

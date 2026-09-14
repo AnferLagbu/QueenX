@@ -1,5 +1,5 @@
 use super::types::{CapBits, CapDomain, GrantRecord, MAX_GRANT_RECORDS, PwmError};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 /// Grant 记录表 — 替代 static mut, 由 `IrqSpinLock` 保护并发访问
 static GRANT_RECORDS: IrqSpinLock<[GrantRecord; MAX_GRANT_RECORDS]> =

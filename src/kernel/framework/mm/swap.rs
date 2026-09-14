@@ -44,10 +44,10 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use crate::kernel::framework::irq::{self, SoftirqVec};
-use crate::kernel::framework::mm::PfResult;
-use crate::kernel::framework::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm, vmm};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::irq::{self, SoftirqVec};
+use crate::framework::mm::PfResult;
+use crate::framework::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm, vmm};
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // Swap Entry 编码
@@ -594,7 +594,7 @@ pub fn swap_out(virt_addr: u64, phys_addr: u64, _dirty: bool) -> Option<SwapEntr
     let slot = area.alloc_slot()?;
 
     // 将页面数据写入 swap slot
-    let src_virt = phys_addr + crate::kernel::framework::mm::KERNEL_BASE;
+    let src_virt = phys_addr + crate::framework::mm::KERNEL_BASE;
     area.write_slot(slot, src_virt);
 
     let entry = SwapEntry::new(slot);
@@ -841,9 +841,9 @@ pub fn handle_swap_fault(pml4: u64, fault_addr: u64) -> PfResult {
     };
 
     // 重新建立映射
-    let flags = crate::kernel::framework::mm::PageFlags::PRESENT
-        | crate::kernel::framework::mm::PageFlags::WRITABLE
-        | crate::kernel::framework::mm::PageFlags::USER;
+    let flags = crate::framework::mm::PageFlags::PRESENT
+        | crate::framework::mm::PageFlags::WRITABLE
+        | crate::framework::mm::PageFlags::USER;
     vmm_inst.map_page_in_table(pml4, VirtAddr(fault_addr), new_phys, flags);
 
     PfResult::Fixed
@@ -961,8 +961,8 @@ pub fn kswapd_is_pending() -> bool {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_swap_entry_encoding() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test, check};
+fn test_swap_entry_encoding() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test, check};
 
     let entry = SwapEntry::new(42);
     assert_eq_test!(entry.slot(), 42, "slot decode");
@@ -983,8 +983,8 @@ fn test_swap_entry_encoding() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_swap_entry_large_slot() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_swap_entry_large_slot() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
 
     let entry = SwapEntry::new(0x003F_FFFF_FFFF_FFFF);
     assert_eq_test!(entry.slot(), 0x003F_FFFF_FFFF_FFFF, "max slot");
@@ -994,7 +994,7 @@ fn test_swap_entry_large_slot() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_swap_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("swap", "entry_encoding", test_swap_entry_encoding);
     r.register("swap", "entry_large_slot", test_swap_entry_large_slot);

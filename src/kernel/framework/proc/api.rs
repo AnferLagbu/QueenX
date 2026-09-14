@@ -32,7 +32,7 @@ use super::proc_ops;
 use super::sched_ops;
 use super::scheduler::SCHEDULER;
 use super::user_proc::USER_PROC_MANAGER;
-use crate::kernel::framework::mm::{PAGE_SIZE, pmm_alloc_pages, pmm_free_pages};
+use crate::framework::mm::{PAGE_SIZE, pmm_alloc_pages, pmm_free_pages};
 
 // 向后兼容 re-export: 将已拆分至 proc_ops / sched_ops 的函数重新导出
 // 使外部代码仍可通过 `proc::api::*` 路径访问
@@ -117,9 +117,9 @@ pub extern "C" fn user_proc_load_elf(path: *const u8, pwm: u64) -> i32 {
         return -1;
     }
 
-    let mut st: crate::kernel::framework::fs::VfsStat =
-        crate::kernel::framework::fs::VfsStat::default();
-    let stat_result = crate::kernel::framework::fs::vfs_stat(path, &mut st, pwm);
+    let mut st: crate::framework::fs::VfsStat =
+        crate::framework::fs::VfsStat::default();
+    let stat_result = crate::framework::fs::vfs_stat(path, &mut st, pwm);
     if stat_result < 0 {
         return -1;
     }
@@ -129,7 +129,7 @@ pub extern "C" fn user_proc_load_elf(path: *const u8, pwm: u64) -> i32 {
         return -1;
     }
 
-    let fd = crate::kernel::framework::fs::vfs_open(path, 0, pwm);
+    let fd = crate::framework::fs::vfs_open(path, 0, pwm);
     if fd < 0 {
         return -1;
     }
@@ -137,14 +137,14 @@ pub extern "C" fn user_proc_load_elf(path: *const u8, pwm: u64) -> i32 {
     let pages = file_size.div_ceil(PAGE_SIZE) as usize;
     let buffer = pmm_alloc_pages(pages);
     if buffer.is_null() {
-        crate::kernel::framework::fs::vfs_close(fd as u32);
+        crate::framework::fs::vfs_close(fd as u32);
         return -1;
     }
 
     let bytes_read =
-        crate::kernel::framework::fs::vfs_read(fd as u32, buffer as *mut u8, file_size as u32);
+        crate::framework::fs::vfs_read(fd as u32, buffer as *mut u8, file_size as u32);
 
-    crate::kernel::framework::fs::vfs_close(fd as u32);
+    crate::framework::fs::vfs_close(fd as u32);
 
     if bytes_read <= 0 {
         pmm_free_pages(buffer, pages);
@@ -281,7 +281,7 @@ pub extern "C" fn launch_first_user_process() -> ! {
     // 1. 挂载 ramfs 为根文件系统
     crate::klog_boot_info!("[USER] Mounting ramfs...");
     let mount_result =
-        crate::kernel::framework::fs::vfs_mount(b"/\0".as_ptr(), b"ramfs\0".as_ptr());
+        crate::framework::fs::vfs_mount(b"/\0".as_ptr(), b"ramfs\0".as_ptr());
     crate::klog_boot_info!("[USER] ramfs mount result={}", mount_result);
 
     if mount_result < 0 {
@@ -300,7 +300,7 @@ pub extern "C" fn launch_first_user_process() -> ! {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             let result = unsafe {
                 // DECOUPL-4: 使用 framework::fs::unpack 顶层路径
-                crate::kernel::framework::fs::unpack(initramfs.as_ptr(), initramfs.len())
+                crate::framework::fs::unpack(initramfs.as_ptr(), initramfs.len())
             };
             match result {
                 Ok(count) => {
@@ -338,13 +338,13 @@ pub extern "C" fn launch_first_user_process() -> ! {
 
         if bin_size == 0 {
             crate::klog_err!(Boot, "[USER] init binary is empty");
-            crate::kernel::framework::tests::qemu_exit(false);
+            crate::framework::tests::qemu_exit(false);
         }
 
         let pid = USER_PROC_MANAGER.load_elf_from_memory(bin_ptr, bin_size, 0);
         if pid <= 0 {
             crate::klog_err!(Boot, "[USER] Failed to load init ELF, pid={}", pid);
-            crate::kernel::framework::tests::qemu_exit(false);
+            crate::framework::tests::qemu_exit(false);
         }
 
         let pid_u32 = pid as u32;
@@ -370,13 +370,13 @@ pub extern "C" fn launch_first_user_process() -> ! {
 
         if bin_size == 0 {
             crate::klog_err!(Boot, "[USER] init binary is empty");
-            crate::kernel::framework::tests::qemu_exit(false);
+            crate::framework::tests::qemu_exit(false);
         }
 
         let pid = USER_PROC_MANAGER.load_elf_from_memory(bin_ptr, bin_size, 0);
         if pid <= 0 {
             crate::klog_err!(Boot, "[USER] Failed to load init ELF, pid={}", pid);
-            crate::kernel::framework::tests::qemu_exit(false);
+            crate::framework::tests::qemu_exit(false);
         }
 
         let pid_u32 = pid as u32;

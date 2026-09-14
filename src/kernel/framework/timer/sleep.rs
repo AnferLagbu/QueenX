@@ -21,7 +21,7 @@
 //! 关键路径函数已标记 `#[inline(always)]` 以优化性能。
 
 use super::tick::{get_ticks, is_initialized, ms_to_ticks};
-use crate::kernel::framework::cpu::{cycles_to_nanoseconds, read_tsc};
+use crate::framework::cpu::{cycles_to_nanoseconds, read_tsc};
 
 // ============================================================================
 // 忙等待实现 (Busy-wait)
@@ -200,7 +200,7 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
     // 1. 设置 hrtimer 到期回调唤醒当前进程
     // 2. 阻塞当前进程并让出 CPU
     // 3. hrtimer 到期时回调 unblock 唤醒进程
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
     if pid == 0 {
         // idle/内核线程回退到 yield 循环
         return timer_sleep_yield(ms);
@@ -210,19 +210,19 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
     SLEEP_WAKE_PID.store(pid, core::sync::atomic::Ordering::Relaxed);
 
     // 在栈上创建 HrTimer, 回调唤醒当前进程
-    let mut timer = crate::kernel::framework::timer::HrTimer::uninit();
+    let mut timer = crate::framework::timer::HrTimer::uninit();
     timer.init(sleep_timer_callback);
 
     let delay_ns = ms * 1_000_000;
-    crate::kernel::framework::timer::hrtimer_start_rel(&timer, delay_ns);
+    crate::framework::timer::hrtimer_start_rel(&timer, delay_ns);
 
     // 阻塞当前进程
-    crate::kernel::framework::proc::scheduler_block(
-        crate::kernel::framework::proc::BlockReason::Sleeping,
+    crate::framework::proc::scheduler_block(
+        crate::framework::proc::BlockReason::Sleeping,
     );
 
     // 被唤醒后取消可能残留的 timer
-    crate::kernel::framework::timer::hrtimer_cancel(&timer);
+    crate::framework::timer::hrtimer_cancel(&timer);
 
     Ok(())
 }
@@ -232,13 +232,13 @@ static SLEEP_WAKE_PID: core::sync::atomic::AtomicU32 = core::sync::atomic::Atomi
 
 /// hrtimer 回调: 唤醒被 `timer_sleep` 阻塞的进程
 fn sleep_timer_callback(
-    _timer: &crate::kernel::framework::timer::HrTimer,
-) -> crate::kernel::framework::timer::HrTimerRestart {
+    _timer: &crate::framework::timer::HrTimer,
+) -> crate::framework::timer::HrTimerRestart {
     let pid = SLEEP_WAKE_PID.load(core::sync::atomic::Ordering::Relaxed);
     if pid != 0 {
-        crate::kernel::framework::proc::scheduler_unblock(pid);
+        crate::framework::proc::scheduler_unblock(pid);
     }
-    crate::kernel::framework::timer::HrTimerRestart::OneShot
+    crate::framework::timer::HrTimerRestart::OneShot
 }
 
 /// yield 循环回退实现 (idle/内核线程或 hrtimer 不可用时)
@@ -541,7 +541,7 @@ mod tests {
     reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
 )]
 pub fn register_timer_sleep_tests() {
-    use crate::kernel::framework::tests::{TestFn, TestResult, runner};
+    use crate::framework::tests::{TestFn, TestResult, runner};
     let r = runner();
 
     fn busy_wait_zero_duration() -> TestResult {

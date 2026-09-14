@@ -13,9 +13,9 @@
 //!
 //! - Linux configfs 文档: Documentation/filesystems/configfs.rst
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::sync::OnceLock;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::OnceLock;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量

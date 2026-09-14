@@ -25,8 +25,8 @@
 //! - T5-3 (REVAL-6): epoll 策略迁移 (2026-06-22)
 //! - 互补: LEGACY-4 (`BlockDevice` trait 化) - 类似的机制/策略分离范式
 
-use crate::kernel::framework::fs::VfsFileType;
-use crate::kernel::framework::fs::vfs_poll_trait::{
+use crate::framework::fs::VfsFileType;
+use crate::framework::fs::vfs_poll_trait::{
     EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollPolicy,
 };
 
@@ -75,7 +75,7 @@ impl VfsPollPolicy for StandardVfsPollPolicy {
 /// 当注册失败 (如策略已被注册) 时返回 `Err(())`.
 pub fn register_default_vfs_poll_policy() -> Result<(), ()> {
     static POLICY: StandardVfsPollPolicy = StandardVfsPollPolicy;
-    crate::kernel::framework::fs::vfs_poll_trait::register_vfs_poll_policy(&POLICY)
+    crate::framework::fs::vfs_poll_trait::register_vfs_poll_policy(&POLICY)
         .then_some(())
         .ok_or(())
 }
@@ -92,7 +92,7 @@ pub fn register_default_vfs_poll_policy() -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::fs::vfs_poll_trait::{
+    use crate::framework::fs::vfs_poll_trait::{
         VfsPollContext, VfsPollPolicyRef, current_vfs_poll_policy,
     };
 

@@ -4,7 +4,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 pub const MAX_DEVICE_SNAPSHOTS: usize = 16;
 pub const MAX_REGISTERS_PER_DEVICE: usize = 32;
 

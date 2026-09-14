@@ -20,9 +20,9 @@ use super::{
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use crate::kernel::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
+use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 fn phys_to_virt(phys: u64) -> u64 {
     phys + super::KERNEL_BASE
 }

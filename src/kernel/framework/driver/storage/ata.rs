@@ -24,8 +24,8 @@
 #[cfg(target_arch = "x86_64")]
 use super::framework::Driver;
 use super::framework::{DeviceInfo, DeviceType, DriverError, Result};
-use crate::kernel::framework::ioport::IoPort;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::ioport::IoPort;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 // ============================================================================
 // ATA 硬件常量定义
@@ -647,9 +647,9 @@ pub extern "C" fn ata_init() {
 
     // 注册到几丁质框架 (非所有权指针)
     let raw_ptr: *mut AtaController = &mut *controller;
-    let _id = crate::kernel::framework::chitin::chitin_register(
+    let _id = crate::framework::chitin::chitin_register(
         "ata_controller",
-        crate::kernel::framework::chitin::ChitinProto::Block,
+        crate::framework::chitin::ChitinProto::Block,
         Some(0x1F0), // Primary IO
         Some(14),    // IRQ 14
         raw_ptr as *mut u8,

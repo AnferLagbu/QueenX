@@ -3,9 +3,9 @@
 //! ext2 `FileSystem` trait 实现
 
 use super::read::Ext2Fs;
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::services::fs::vfs_types::{
+use crate::framework::fs::KernelError;
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::services::fs::vfs_types::{
     FileSystem, KernelResult, VfsDirEntry, VfsSeekWhence, VfsStat,
 };
 
@@ -16,7 +16,7 @@ static EXT2_FS: Mutex<Option<Ext2Fs>> = Mutex::new(None);
 // Ext2 Inode — ext2 文件 Inode 实现
 // ============================================================================
 
-use crate::kernel::services::fs::inode::Inode;
+use crate::services::fs::inode::Inode;
 
 /// ext2 文件 Inode — 直接持有 inode 编号
 pub struct Ext2Inode {
@@ -139,7 +139,7 @@ impl FileSystem for Ext2FileSystem {
         rel_path: &str,
         _flags: u32,
         _pwm: u64,
-    ) -> KernelResult<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    ) -> KernelResult<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         let mut fs_guard = EXT2_FS.lock();
         let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
 
@@ -334,7 +334,7 @@ impl FileSystem for Ext2FileSystem {
         &self,
         inode_id: u32,
         mount_idx: u32,
-    ) -> Option<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    ) -> Option<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         Some(alloc::sync::Arc::new(Ext2Inode::new(inode_id, mount_idx)))
     }
 }

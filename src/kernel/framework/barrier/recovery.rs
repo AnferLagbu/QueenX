@@ -22,7 +22,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 pub type DomainId = u64;
 
 pub const DOMAIN_ID_NESTFS: DomainId = 2;

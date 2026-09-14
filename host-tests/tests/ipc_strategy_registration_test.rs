@@ -30,7 +30,7 @@ fn line_of(src: &str, needle: &str) -> usize {
 fn registration_precedes_interrupt_late_init() {
     // DECISION-K 注册点前置: 注册 (5.75) 必须在 interrupt_late_init (6) 之前
     // (匹配实际调用语句, 排除注释中的 "interrupt_late_init")
-    let src = read_src("src/rust/src/lib.rs");
+    let src = read_src("src/kernel/lib.rs");
     let reg_line = line_of(&src, "register_default_ipc_strategy");
     let irq_call = "Arch>::interrupt_late_init()";
     let irq_line = line_of(&src, irq_call);
@@ -42,7 +42,7 @@ fn registration_precedes_interrupt_late_init() {
 
 #[test]
 fn registration_has_contract_comment() {
-    let src = read_src("src/rust/src/lib.rs");
+    let src = read_src("src/kernel/lib.rs");
     assert!(
         src.contains("IPC 策略注册契约点") && src.contains("DECISION-K"),
         "lib.rs 注册点必须带 'IPC 策略注册契约点' + DECISION-K 注释 (启动契约化)"

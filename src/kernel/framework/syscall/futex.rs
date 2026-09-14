@@ -171,7 +171,7 @@ impl FutexBucket {
         for slot in &mut self.waiters {
             if slot.is_occupied() && slot.uaddr == uaddr && !slot.woken {
                 slot.woken = true;
-                crate::kernel::framework::proc::process_unblock(slot.pid);
+                crate::framework::proc::process_unblock(slot.pid);
                 woken += 1;
                 if woken >= max_count {
                     break;
@@ -200,7 +200,7 @@ impl FutexBucket {
 
             if woken < max_wake {
                 slot.woken = true;
-                crate::kernel::framework::proc::process_unblock(slot.pid);
+                crate::framework::proc::process_unblock(slot.pid);
                 woken += 1;
             } else if requeued < max_requeue {
                 slot.uaddr = uaddr2;
@@ -295,7 +295,7 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
     }
 
     // 3. 获取当前 PID
-    let current_pid = crate::kernel::framework::proc::process_get_current_pid();
+    let current_pid = crate::framework::proc::process_get_current_pid();
     if current_pid == 0 {
         return -(22i64); // -EINVAL
     }
@@ -318,7 +318,7 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
     }
 
     // 5. 阻塞当前线程
-    crate::kernel::framework::proc::process_block(current_pid);
+    crate::framework::proc::process_block(current_pid);
 
     // 6. 被唤醒后, 从等待队列中移除自己
     {
@@ -371,8 +371,8 @@ fn futex_requeue(uaddr: u64, max_wake: u32, uaddr2: u64, max_requeue: u32) -> i6
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_futex_op_mask() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_futex_op_mask() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
     assert_eq_test!(futex_op(0), 0, "FUTEX_WAIT");
     assert_eq_test!(futex_op(1), 1, "FUTEX_WAKE");
     assert_eq_test!(futex_op(128), 0, "FUTEX_WAIT_PRIVATE");
@@ -383,8 +383,8 @@ fn test_futex_op_mask() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_futex_hash() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_futex_hash() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     for &addr in &[0x1000u64, 0x2000, 0x7FFF00000000, 0xDEADBEEF] {
         let idx = hash_uaddr(addr);
         check!(idx < FUTEX_HASH_BUCKETS, "hash in range");
@@ -397,8 +397,8 @@ fn test_futex_hash() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_futex_bucket_push_remove() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_futex_bucket_push_remove() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     let mut bucket = FutexBucket::new();
     check!(bucket.count == 0, "empty bucket");
 
@@ -428,7 +428,7 @@ fn test_futex_bucket_push_remove() -> crate::kernel::framework::tests::TestResul
 
 #[cfg(feature = "kernel_test")]
 pub fn register_futex_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("futex", "op_mask", test_futex_op_mask);
     r.register("futex", "hash", test_futex_hash);

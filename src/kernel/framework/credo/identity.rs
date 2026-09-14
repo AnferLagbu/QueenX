@@ -607,8 +607,8 @@ impl IdentityTable {
 // [DEFAULT_ENTRY; 256] (100KB) 在栈上, 超过 KERNEL_STACK_SIZE (64KB),
 // 导致栈溢出. 修复: IdentityTable.entries 改用 Vec<PwmEntry> 直接
 // 堆分配, IdentityTable 自身仅 ~40 字节, OnceLock 静态可安全容纳.
-static GLOBAL_TABLE: crate::kernel::framework::sync::OnceLock<IdentityTable> =
-    crate::kernel::framework::sync::OnceLock::new();
+static GLOBAL_TABLE: crate::framework::sync::OnceLock<IdentityTable> =
+    crate::framework::sync::OnceLock::new();
 
 /// 获取全局身份表 (T4-1: `OnceLock` 包装, 自动初始化, 0 unsafe)
 pub fn get_table() -> &'static IdentityTable {

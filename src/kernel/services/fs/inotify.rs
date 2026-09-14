@@ -9,4 +9,4 @@
 //! 本文件仅 glob re-export 保持 `services::fs::inotify::*` 调用方路径不变
 //! (services→framework 合法方向)。
 
-pub use crate::kernel::framework::fs::vfs::inotify::*;
+pub use crate::framework::fs::vfs::inotify::*;

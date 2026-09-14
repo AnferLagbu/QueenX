@@ -11,7 +11,7 @@
 //!
 //! 2026-06-08
 
-use crate::kernel::framework::sync::pi_mutex as fw;
+use crate::framework::sync::pi_mutex as fw;
 pub use fw::PiMutex;
 
 // ============================================================================
@@ -31,13 +31,13 @@ pub enum PiMutexError {
     /// 资源耗尽 (无空闲槽位)
     Exhausted,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl PiMutexError {
     /// 映射为 POSIX errno
-    pub fn to_errno(self) -> crate::kernel::framework::syscall::Errno {
-        use crate::kernel::framework::syscall::Errno as E;
+    pub fn to_errno(self) -> crate::framework::syscall::Errno {
+        use crate::framework::syscall::Errno as E;
         match self {
             Self::NotOwner => E::EPERM,
             Self::Exhausted => E::ENOMEM,
@@ -96,7 +96,7 @@ pub fn try_lock<T>(
         Ok(mutex.lock(my_pid, my_base_priority))
     } else {
         Err(PiMutexError::Kernel(
-            crate::kernel::services::error::KernelError::WouldBlock,
+            crate::services::error::KernelError::WouldBlock,
         ))
     }
 }

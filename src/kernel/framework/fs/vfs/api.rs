@@ -25,8 +25,8 @@
 //! - fd 句柄操作 (open/close/read/write/seek/...) 见 [`handle`] (本模块
 //!   `pub use handle::*`)
 use super::types::KernelResult;
-use crate::kernel::framework::lib::CStrExt;
-use crate::kernel::framework::mm::PAGE_SIZE;
+use crate::framework::lib::CStrExt;
+use crate::framework::mm::PAGE_SIZE;
 
 /// B2: 4KB 对齐 read 时的 pcache 命中快路径上限 (16 页 = 64KB)
 pub(crate) const PCACHE_FAST_MAX_BYTES: usize = 64 * 1024;

@@ -4,13 +4,13 @@
 //! 封装 `framework::timer::time_sync` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::timer::{
+pub use crate::framework::timer::{
     ADJ_RATE_NS, ClockAdjState, MAX_FREQ_ADJUST_PPM, MAX_OFFSET_NS, NTP_EPOCH_OFFSET, NTP_PORT,
     NtpPacket, NtpResult, NtpTimestamp, PTP_EVENT_PORT, PTP_GENERAL_PORT, PtpMessageType,
     TimeSyncSubsystem,
 };
 
-use crate::kernel::framework::timer::{
+use crate::framework::timer::{
     sys_timesync, timesync_init, timesync_is_initialized, timesync_subsystem,
 };
 

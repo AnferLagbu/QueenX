@@ -88,8 +88,8 @@ impl AuditLog {
 
 // B03-09: GLOBAL_AUDIT 改用 IrqSpinLock<AuditLog> 包装, 消除 static mut 多核撕裂。
 // 写作常态, dump 读少, IrqSpinLock 持锁时间短 (< 微秒), 适合此场景。
-pub(crate) static GLOBAL_AUDIT: crate::kernel::framework::sync::IrqSpinLock<AuditLog> =
-    crate::kernel::framework::sync::IrqSpinLock::new(AuditLog::new());
+pub(crate) static GLOBAL_AUDIT: crate::framework::sync::IrqSpinLock<AuditLog> =
+    crate::framework::sync::IrqSpinLock::new(AuditLog::new());
 
 pub fn log(pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
     raw::log(pwm, action, target_pwm, domain, caps);

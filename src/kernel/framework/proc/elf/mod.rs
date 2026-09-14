@@ -23,8 +23,8 @@
 // P1-I-33: ELF 验证抽到 verify 子模块, 单一来源
 pub mod verify;
 
-use crate::kernel::framework::mm::{MmStruct, Vma, VmaType};
-use crate::kernel::framework::mm::{PAGE_SIZE, PageFlags, VirtAddr};
+use crate::framework::mm::{MmStruct, Vma, VmaType};
+use crate::framework::mm::{PAGE_SIZE, PageFlags, VirtAddr};
 
 #[repr(C)]
 pub struct Elf64Header {
@@ -174,7 +174,7 @@ pub fn elf_load_with_bias(
         phdr_addr: phdr_base as u64 + bias,
         phdr_count,
         brk_base: 0,
-        stack_top: crate::kernel::framework::config::aslr_stack_top(),
+        stack_top: crate::framework::config::aslr_stack_top(),
     };
 
     for i in 0..phdr_count {
@@ -248,15 +248,15 @@ pub fn elf_load_with_bias(
         mm.insert_vma(vma).map_err(|_| "VMA insertion failed")?;
 
         // 复制段数据到物理页
-        let vmm_inst = crate::kernel::framework::mm::get_vmm();
-        let pml4 = crate::kernel::framework::mm::get_current_pml4();
+        let vmm_inst = crate::framework::mm::get_vmm();
+        let pml4 = crate::framework::mm::get_current_pml4();
 
         let file_end = file_offset + filesz;
         let mut cur = vaddr_start;
 
         while cur < vaddr_end as u64 {
             let phys =
-                crate::kernel::framework::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
+                crate::framework::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
 
             let page_virt = phys.to_virt();
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -294,7 +294,7 @@ pub fn elf_load_with_bias(
     result.brk_base = (max_vaddr + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
     // 连接 MmStruct 到当前进程
-    crate::kernel::framework::mm::vma_set_current_mm(mm as *const MmStruct);
+    crate::framework::mm::vma_set_current_mm(mm as *const MmStruct);
 
     Ok(result)
 }

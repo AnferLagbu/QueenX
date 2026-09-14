@@ -10,4 +10,4 @@
 //! 为公开子模块 (`pub mod fd_alloc`), 可直接 glob re-export, 保持 services 侧
 //! API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::proc::fd_alloc::*;
+pub use crate::framework::proc::fd_alloc::*;

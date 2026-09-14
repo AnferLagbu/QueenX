@@ -9,12 +9,12 @@
 //! - 描述符结构 re-export (从 framework::dma_ring)
 //! - E1000Driver re-export (从 framework::e1000_io)
 //!
-//! 调用方仍可 `use crate::kernel::services::driver::net::e1000::*` 兼容.
+//! 调用方仍可 `use crate::services::driver::net::e1000::*` 兼容.
 
-pub use crate::kernel::framework::driver::net::dma_ring::{
+pub use crate::framework::driver::net::dma_ring::{
     E1000_RX_BUFFER_SIZE, E1000_RX_RING_SIZE, E1000RxDesc, E1000TxDesc,
 };
-pub use crate::kernel::framework::driver::net::e1000_io::E1000Driver;
+pub use crate::framework::driver::net::e1000_io::E1000Driver;
 
 // ============================================================================
 // 描述符状态/命令常量

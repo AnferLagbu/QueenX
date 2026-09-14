@@ -5,7 +5,7 @@
 //! 这是 services 层与 `kernel::syscall::syscall_init` 之间的**唯一** unsafe 边界。
 //! services 层 0 unsafe。
 
-use crate::kernel::framework::syscall;
+use crate::framework::syscall;
 
 /// 初始化 syscall 子系统 (仅 framework 层: MSR/STAR/LSTAR 配置)
 ///

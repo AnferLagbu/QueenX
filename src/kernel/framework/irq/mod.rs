@@ -27,7 +27,7 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::kernel::framework::config::MAX_CPUS;
+use crate::framework::config::MAX_CPUS;
 
 const MAX_SOFTIRQS: usize = 9;
 
@@ -210,7 +210,7 @@ pub extern "C" fn softirq_do() {
 // Tasklet 框架 — 轻量级延迟工作执行 (参考 Linux tasklet)
 // ============================================================================
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 /// Tasklet 回调函数类型
 pub type TaskletFn = fn();

@@ -7,7 +7,7 @@
 //! `RecoveryLayer`/`set_reset_in_progress` 等被 framework proc/scheduler 机制
 //! (Barrier 恢复域降级路径) 直接消费 — 属机制项, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::barrier::reset::config::*`
+//! services 侧改 `pub use crate::framework::barrier::reset::config::*`
 //! 保持 API 兼容。本文件 0 unsafe (纯配置 + 原子状态).
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};

@@ -19,9 +19,9 @@
 //! 映射表用 `Mutex<[(i32, u32); CAP]>` 保护; 槽位复用 (`slot_id` 单调递增)
 //! 防止 ABA 问题.
 
-use crate::kernel::framework::proc::fd_alloc::{FdSubsystem, alloc_fd, free_fd, idx_of};
-use crate::kernel::framework::sync::{Mutex, OnceLock};
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::proc::fd_alloc::{FdSubsystem, alloc_fd, free_fd, idx_of};
+use crate::framework::sync::{Mutex, OnceLock};
+use crate::framework::syscall::Errno;
 
 /// pidfd 标志位
 const PIDFD_NONBLOCK: u32 = 1;
@@ -67,7 +67,7 @@ fn pidfd_map() -> &'static Mutex<[Option<PidFdEntry>; PIDFD_CAP]> {
 /// - 映射表已满 → `EMFILE`
 fn alloc_entry(pid: u32) -> Result<i32, Errno> {
     // 先验证进程存在
-    if crate::kernel::framework::proc::PROCESS_TABLE.get(pid).is_none() {
+    if crate::framework::proc::PROCESS_TABLE.get(pid).is_none() {
         return Err(Errno::ESRCH);
     }
 
@@ -153,7 +153,7 @@ pub fn pidfd_send_signal(pidfd: u32, sig: i32, _siginfo: u64, _flags: u32) -> Re
     let pid = pid_of_fd(pidfd as i32).ok_or(Errno::EBADF)?;
 
     // 复用 kill_syscall 的 pid>0 语义 (framework 内部 4 路径分发)
-    let ret = crate::kernel::framework::syscall::api::sys_kill(pid as i32, sig);
+    let ret = crate::framework::syscall::api::sys_kill(pid as i32, sig);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

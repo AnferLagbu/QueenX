@@ -11,7 +11,7 @@
 //! - services 在 `init()` 中通过 `register_signal_decision()` 注册自己的策略实现
 
 pub use super::signal::SignalDefaultAction;
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 
 /// 信号决策接口 — services 实现, framework 调用
 ///

@@ -77,7 +77,7 @@ pub use pi_mutex::{
 ///
 /// **调用方约束**: 必须在中断上下文或单 CPU 上下文调用, 配对使用 `restore_interrupts`.
 pub fn disable_interrupts() -> IrqSaveFlags {
-    crate::kernel::framework::sync::disable_interrupts()
+    crate::framework::sync::disable_interrupts()
 }
 
 #[expect(
@@ -86,7 +86,7 @@ pub fn disable_interrupts() -> IrqSaveFlags {
 )]
 /// 恢复中断到指定 flags
 pub fn restore_interrupts(flags: &IrqSaveFlags) {
-    crate::kernel::framework::sync::restore_interrupts(flags);
+    crate::framework::sync::restore_interrupts(flags);
 }
 
 /// 中断禁用 RAII 守卫 (析构时自动恢复中断)
@@ -115,17 +115,17 @@ impl Drop for IrqDisabled {
 
 /// 写内存屏障 (跨 CPU 顺序)
 pub fn smp_wmb() {
-    crate::kernel::framework::sync::smp_wmb();
+    crate::framework::sync::smp_wmb();
 }
 
 /// 读内存屏障
 pub fn smp_rmb() {
-    crate::kernel::framework::sync::smp_rmb();
+    crate::framework::sync::smp_rmb();
 }
 
 /// 读写全屏障
 pub fn smp_mb() {
-    crate::kernel::framework::sync::smp_mb();
+    crate::framework::sync::smp_mb();
 }
 
 // ============================================================================
@@ -134,12 +134,12 @@ pub fn smp_mb() {
 
 /// 当前进程 PID (0 表示内核线程 / 启动期)
 pub fn current_pid() -> u32 {
-    crate::kernel::framework::proc::process_get_current_pid()
+    crate::framework::proc::process_get_current_pid()
 }
 
 /// 主动让出 CPU
 pub fn scheduler_yield() {
-    crate::kernel::framework::proc::scheduler_yield();
+    crate::framework::proc::scheduler_yield();
 }
 
 // ============================================================================
@@ -159,7 +159,7 @@ pub enum SyncError {
     /// 超时
     Timeout,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl SyncError {
@@ -174,7 +174,7 @@ impl SyncError {
     }
 
     pub fn from_i32(rc: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match rc {
             -11 => Self::Kernel(K::WouldBlock),
             -35 => Self::Deadlock,
@@ -186,7 +186,7 @@ impl SyncError {
 
 pub type SyncResult<T> = Result<T, SyncError>;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // Futex — 用户态同步原语

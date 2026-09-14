@@ -155,7 +155,7 @@ fn test_services_storage_init_uses_block_devices() {
 fn test_lib_rs_orchestrates_services_storage_init() {
     // crate root (合法双向编排者) 必须调用 services storage_init (x86_64 门控)
     let src =
-        fs::read_to_string("../src/rust/src/lib.rs").expect("read lib.rs failed");
+        fs::read_to_string("../src/kernel/lib.rs").expect("read lib.rs failed");
     assert!(
         src.contains("services::driver::storage::storage_init"),
         "crate root lib.rs 未编排 services storage_init"

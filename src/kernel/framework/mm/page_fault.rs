@@ -277,7 +277,7 @@ fn handle_file_fault(
             // 让 vfs_pread_inode 能走 FileSystem trait 分发而非硬编码 RamFS.
             let file_off = vma.offset + (aligned - vma.start) as u64;
             let mut page_buf = [0u8; PAGE_SIZE as usize];
-            let n = crate::kernel::framework::fs::vfs_pread_inode(
+            let n = crate::framework::fs::vfs_pread_inode(
                 vma.mount_idx,
                 vma.inode_id,
                 file_off,
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn test_stack_expansion_candidate() {
         // 回退策略与历史硬编码值一致: 栈顶 = USER_ADDR_MAX, 默认 8MB, guard 1 页
-        let p = crate::kernel::framework::mm::page_fault_policy::FallbackPageFaultPolicy;
+        let p = crate::framework::mm::page_fault_policy::FallbackPageFaultPolicy;
         let inside = (p.stack_top() - PAGE_SIZE) as usize;
         assert!(is_stack_expansion_candidate(inside));
 

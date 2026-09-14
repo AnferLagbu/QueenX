@@ -2,4 +2,4 @@
 //!
 //! 向后兼容重新导出。
 
-pub use crate::kernel::framework::driver::net::e1000;
+pub use crate::framework::driver::net::e1000;

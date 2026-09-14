@@ -13,9 +13,9 @@ use super::types::{
     KernelError, OpenFile, VFS_MAX_FDS, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
 use super::vfs::VFS_MANAGER;
-use crate::kernel::framework::fd_notify;
-use crate::kernel::framework::mm::{PAGE_SIZE, pcache};
-use crate::kernel::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
+use crate::framework::fd_notify;
+use crate::framework::mm::{PAGE_SIZE, pcache};
+use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
 
 // ============================================================================
 // VFS 核心接口 (内部)
@@ -435,7 +435,7 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
                     let mut entry_ref = unsafe { UserRefMut::new(entry) };
                     *entry_ref.as_mut() = dir_entry;
                     let new_offset = offset
-                        + core::mem::size_of::<crate::kernel::framework::fs::ramfs::RamFsDirEntry>()
+                        + core::mem::size_of::<crate::framework::fs::ramfs::RamFsDirEntry>()
                             as u64;
                     open_file.set_offset(new_offset);
                     1
@@ -658,7 +658,7 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
     let result = result.unwrap_or(-1);
 
     if result == 0 {
-        let tbl = crate::kernel::framework::credo::identity::get_table();
+        let tbl = crate::framework::credo::identity::get_table();
         let r = st_ref.as_mut();
         r.uid = tbl.uid_of(r.owner_pwm);
         r.gid = tbl.gid_of(r.group_pwm);

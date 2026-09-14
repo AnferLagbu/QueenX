@@ -286,10 +286,10 @@
     /// - `SmoltcpNetStack` 路径暂不调用本函数 (W4.2.3.4 整合)
     pub fn socket_open_stub(
         sockets: &mut SocketSet<'_>,
-        kind: crate::kernel::framework::net::iface_trait::SocketKind,
+        kind: crate::framework::net::iface_trait::SocketKind,
         slot_idx: usize,
     ) -> Option<smoltcp::iface::SocketHandle> {
-        use crate::kernel::framework::net::iface_trait::SocketKind;
+        use crate::framework::net::iface_trait::SocketKind;
 
         // SAFETY: 调用方持有 NET_STATE 锁, 整个函数体通过 raw accessor 访问 NetState.
         unsafe {
@@ -306,13 +306,13 @@
                 SocketKind::Tcp => {
                     // TD-07: TCP RX/TX 缓冲走 slab, 与 sm_socket 路径一致.
                     // SAFETY: k_malloc 在初始化后可用, 返回非空或 null. null 时立即返回 None.
-                    let rx_ptr = crate::kernel::framework::mm::k_malloc(TCP_BUF_SIZE);
+                    let rx_ptr = crate::framework::mm::k_malloc(TCP_BUF_SIZE);
                     if rx_ptr.is_null() {
                         return None;
                     }
-                    let tx_ptr = crate::kernel::framework::mm::k_malloc(TCP_BUF_SIZE);
+                    let tx_ptr = crate::framework::mm::k_malloc(TCP_BUF_SIZE);
                     if tx_ptr.is_null() {
-                        crate::kernel::framework::mm::k_free(rx_ptr);
+                        crate::framework::mm::k_free(rx_ptr);
                         return None;
                     }
                     // SAFETY: rx_ptr/tx_ptr 来自 k_malloc(TCP_BUF_SIZE), 长度合法, 唯一别名.
@@ -332,13 +332,13 @@
                 }
                 SocketKind::Udp => {
                     // TD-07: UDP RX/TX 缓冲走 slab. metas 仍静态 (16 KB).
-                    let rx_ptr = crate::kernel::framework::mm::k_malloc(UDP_BUF_SIZE);
+                    let rx_ptr = crate::framework::mm::k_malloc(UDP_BUF_SIZE);
                     if rx_ptr.is_null() {
                         return None;
                     }
-                    let tx_ptr = crate::kernel::framework::mm::k_malloc(UDP_BUF_SIZE);
+                    let tx_ptr = crate::framework::mm::k_malloc(UDP_BUF_SIZE);
                     if tx_ptr.is_null() {
-                        crate::kernel::framework::mm::k_free(rx_ptr);
+                        crate::framework::mm::k_free(rx_ptr);
                         return None;
                     }
                     // SAFETY: 同 TCP 注释, 'static 借用基于 slab 进程级 + 索引化管理.
@@ -359,13 +359,13 @@
                 }
                 SocketKind::Icmp => {
                     // ICMP socket: 使用 UDP socket buffer (ICMP 无连接, 类似 UDP)
-                    let rx_ptr = crate::kernel::framework::mm::k_malloc(UDP_BUF_SIZE);
+                    let rx_ptr = crate::framework::mm::k_malloc(UDP_BUF_SIZE);
                     if rx_ptr.is_null() {
                         return None;
                     }
-                    let tx_ptr = crate::kernel::framework::mm::k_malloc(UDP_BUF_SIZE);
+                    let tx_ptr = crate::framework::mm::k_malloc(UDP_BUF_SIZE);
                     if tx_ptr.is_null() {
-                        crate::kernel::framework::mm::k_free(rx_ptr);
+                        crate::framework::mm::k_free(rx_ptr);
                         return None;
                     }
                     // SAFETY: rx_ptr/tx_ptr 来自 k_malloc, 长度合法, 唯一别名
@@ -416,8 +416,8 @@
     pub fn dhcp_state_stub(
         sockets: &mut SocketSet<'_>,
         dhcp_handle: Option<smoltcp::iface::SocketHandle>,
-    ) -> crate::kernel::framework::net::iface_trait::DhcpState {
-        use crate::kernel::framework::net::iface_trait::DhcpState;
+    ) -> crate::framework::net::iface_trait::DhcpState {
+        use crate::framework::net::iface_trait::DhcpState;
         use core::sync::atomic::Ordering;
 
         // 读取 prev tag (Acquire 同步)
@@ -498,19 +498,19 @@
 
             // 5. 释放 slab buffer
             if !tcp_rx_buf(slot_idx).is_null() {
-                crate::kernel::framework::mm::k_free(tcp_rx_buf(slot_idx));
+                crate::framework::mm::k_free(tcp_rx_buf(slot_idx));
                 set_tcp_rx_buf(slot_idx, core::ptr::null_mut());
             }
             if !tcp_tx_buf(slot_idx).is_null() {
-                crate::kernel::framework::mm::k_free(tcp_tx_buf(slot_idx));
+                crate::framework::mm::k_free(tcp_tx_buf(slot_idx));
                 set_tcp_tx_buf(slot_idx, core::ptr::null_mut());
             }
             if !udp_rx_buf(slot_idx).is_null() {
-                crate::kernel::framework::mm::k_free(udp_rx_buf(slot_idx));
+                crate::framework::mm::k_free(udp_rx_buf(slot_idx));
                 set_udp_rx_buf(slot_idx, core::ptr::null_mut());
             }
             if !udp_tx_buf(slot_idx).is_null() {
-                crate::kernel::framework::mm::k_free(udp_tx_buf(slot_idx));
+                crate::framework::mm::k_free(udp_tx_buf(slot_idx));
                 set_udp_tx_buf(slot_idx, core::ptr::null_mut());
             }
 
@@ -530,8 +530,8 @@
     /// 驱动 smoltcp 协议栈轮询 (TX/RX + 定时器 + DHCP), 返回 `PollOutcome`.
     /// 与 `poll_network` 逻辑对称, 但由 `SmoltcpNetStack` 调用方主动触发
     /// (而非 timer ISR 自动轮询).
-    pub fn smoltcp_net_stack_poll() -> crate::kernel::framework::net::iface_trait::PollOutcome {
-        use crate::kernel::framework::net::iface_trait::PollOutcome;
+    pub fn smoltcp_net_stack_poll() -> crate::framework::net::iface_trait::PollOutcome {
+        use crate::framework::net::iface_trait::PollOutcome;
 
         let nic = match device_mut() {
             Some(d) => d,
@@ -574,8 +574,8 @@
     /// - 3: Bound (含 ipv4)
     /// - 4: Renewing
     /// - 5: Failed
-    fn tag_to_dhcp_state(tag: u8) -> crate::kernel::framework::net::iface_trait::DhcpState {
-        use crate::kernel::framework::net::iface_trait::DhcpState;
+    fn tag_to_dhcp_state(tag: u8) -> crate::framework::net::iface_trait::DhcpState {
+        use crate::framework::net::iface_trait::DhcpState;
         use core::sync::atomic::Ordering;
         match tag {
             0 => DhcpState::Idle,

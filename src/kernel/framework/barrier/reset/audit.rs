@@ -3,7 +3,7 @@
 use super::config::RecoveryLayer;
 use super::config::RecoveryResult;
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 pub const MAX_AUDIT_ENTRIES: usize = 16;
 
 #[derive(Debug)]
@@ -114,7 +114,7 @@ pub fn audit_record(layer: RecoveryLayer, result: RecoveryResult, reason: u32) {
     if !RECOVERY_CONFIG.audit_enabled {
         return;
     }
-    let tick = crate::kernel::framework::timer::get_ticks();
+    let tick = crate::framework::timer::get_ticks();
     let mut log = RESET_AUDIT_LOG.lock();
     log.record_simple(tick, layer, result, reason);
 }
@@ -131,7 +131,7 @@ pub fn audit_record_domain(
     if !RECOVERY_CONFIG.audit_enabled {
         return;
     }
-    let tick = crate::kernel::framework::timer::get_ticks();
+    let tick = crate::framework::timer::get_ticks();
     let mut log = RESET_AUDIT_LOG.lock();
     log.record(tick, layer, result, reason, domain_id, entries_rolled);
 }

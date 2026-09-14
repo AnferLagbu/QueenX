@@ -12,11 +12,11 @@
 //! - [`access_syscall`] 检查可访问性 (`R_OK/W_OK/X_OK/F_OK`)
 //! - [`unlink_syscall`] 解除链接 (删除文件)
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::credo::capability::{FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE};
-use crate::kernel::framework::fs::api as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::credo;
+use crate::framework::credo::capability::{FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE};
+use crate::framework::fs::api as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // 权限位

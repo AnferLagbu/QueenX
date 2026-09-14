@@ -25,7 +25,7 @@
 //! ```
 
 /// 中断安全自旋锁 (类型别名, 指向 framework 提供的 TCB 实现)。
-pub type IrqSpinLock<T> = crate::kernel::framework::sync::IrqSpinLock<T>;
+pub type IrqSpinLock<T> = crate::framework::sync::IrqSpinLock<T>;
 
 // ============================================================================
 // 单元自检

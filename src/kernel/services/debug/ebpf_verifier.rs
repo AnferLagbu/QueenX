@@ -27,7 +27,7 @@
 
 // BpfInsn 在部分构建下未使用 (2026-09-11 实测: 移除则报 unused import: BpfInsn)
 #[allow(unused_imports)]
-use crate::kernel::framework::debug::{
+use crate::framework::debug::{
     BPF_MAX_INSNS, BPF_REG_NUM, BPF_STACK_SIZE, BpfInsn, BpfProg, BpfVerifier, VerifyResult,
 };
 
@@ -89,7 +89,7 @@ impl RegState {
 /// # 使用方式
 ///
 /// ```ignore
-/// use crate::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
+/// use crate::services::debug::ebpf_verifier::STANDARD_VERIFIER;
 /// framework::debug::bpf_subsystem().set_verifier(&STANDARD_VERIFIER);
 /// ```
 pub struct StandardBpfVerifier;
@@ -508,8 +508,8 @@ fn is_valid_helper(id: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::debug::BpfProgType;
-    use crate::kernel::framework::debug::opcode;
+    use crate::framework::debug::BpfProgType;
+    use crate::framework::debug::opcode;
     use alloc::vec;
     use alloc::vec::Vec;
 

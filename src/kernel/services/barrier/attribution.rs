@@ -31,7 +31,7 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::kernel::services::credo::policy::{
+use crate::services::credo::policy::{
     CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix,
 };
 

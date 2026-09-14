@@ -25,8 +25,8 @@ use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
-use crate::kernel::framework::ipc::IPC_NAMESPACE;
-use crate::kernel::framework::ipc::types::*;
+use crate::framework::ipc::IPC_NAMESPACE;
+use crate::framework::ipc::types::*;
 // T6-1: 策略函数已迁移到 services 本地
 use super::msgq;
 use super::pipe;

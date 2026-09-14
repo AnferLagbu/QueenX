@@ -7,7 +7,7 @@
 //! 按"机制持有的数据结构/常量归 framework"统一判据反转：页大小/栈布局/
 //! ASLR 基址等被 framework arch/mm/proc 机制直接消费, 属机制常量, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::config::memory::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::config::memory::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯常量 + 运行时函数).
 
 // ============================================================================
@@ -105,7 +105,7 @@ pub const KERNEL_STACK_SIZE: usize = 65536;
 /// 页对齐的随机偏移 (字节)
 #[inline]
 pub fn aslr_random_offset(bits: u64) -> u64 {
-    let tsc = crate::kernel::framework::cpu::read_tsc();
+    let tsc = crate::framework::cpu::read_tsc();
     let mask = (1u64 << bits) - 1;
     (tsc & mask) * PAGE_SIZE
 }
@@ -141,8 +141,8 @@ pub fn aslr_pie_base() -> u64 {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_aslr_constants() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_aslr_constants() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // ASLR 偏移必须是页对齐的
     check!(PAGE_SIZE > 0, "PAGE_SIZE > 0");
     check!(USER_STACK_TOP > USER_STACK_SIZE, "stack_top > stack_size");
@@ -156,8 +156,8 @@ fn test_aslr_constants() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_aslr_random_offset_range() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_aslr_random_offset_range() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     // 多次调用应产生不同偏移 (概率性测试, 可能偶尔失败)
     let o1 = aslr_random_offset(8);
     let o2 = aslr_random_offset(8);
@@ -172,8 +172,8 @@ fn test_aslr_random_offset_range() -> crate::kernel::framework::tests::TestResul
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_aslr_stack_top_range() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_aslr_stack_top_range() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     let top = aslr_stack_top();
     // 栈顶应低于 USER_STACK_TOP
     check!(top <= USER_STACK_TOP, "stack_top <= USER_STACK_TOP");
@@ -185,8 +185,8 @@ fn test_aslr_stack_top_range() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_aslr_pie_base_range() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_aslr_pie_base_range() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
     let base = aslr_pie_base();
     // PIE 基址应 >= USER_PIE_BASE
     check!(base >= USER_PIE_BASE, "PIE base >= USER_PIE_BASE");
@@ -199,7 +199,7 @@ fn test_aslr_pie_base_range() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_aslr_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("aslr", "constants", test_aslr_constants);
     r.register("aslr", "random_offset_range", test_aslr_random_offset_range);

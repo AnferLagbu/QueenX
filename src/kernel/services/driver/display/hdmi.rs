@@ -8,7 +8,7 @@
 //!
 //! 硬件寄存器访问通过 IoMem 安全代理, 无 unsafe.
 
-use crate::kernel::framework::iomem::IoMem;
+use crate::framework::iomem::IoMem;
 
 // ============================================================================
 // DDC 寄存器偏移 (从 services::driver::display::ddc 重导出)

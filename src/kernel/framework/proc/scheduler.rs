@@ -20,7 +20,7 @@
 //! `schedule()` 严格按 DL → RT → CFS 顺序回退, 每个层级内部找不到可运行任务时
 //! 立即降级到下一层级, 与 Linux `pick_next_task` 行为一致.
 
-use crate::kernel::framework::sync::{IrqSpinLock as Mutex, OnceLock};
+use crate::framework::sync::{IrqSpinLock as Mutex, OnceLock};
 use alloc::collections::VecDeque;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -91,7 +91,7 @@ impl PwidQuota {
     }
 }
 
-use crate::kernel::framework::constants::limits::{MAX_LIMITS, MAX_QUOTAS};
+use crate::framework::constants::limits::{MAX_LIMITS, MAX_QUOTAS};
 
 pub struct PwidLimit {
     pub pwm: u64,
@@ -154,11 +154,11 @@ struct PerCpuSched {
 
 // 所有字段 (Mutex<VecDeque<Pid>>, Mutex<CfsRunQueue>, Mutex<DlRunQueue>, Atomic*) 自动实现 Send + Sync.
 
-static PER_CPU_SCHED: [OnceLock<PerCpuSched>; crate::kernel::framework::config::MAX_CPUS] =
-    [const { OnceLock::new() }; crate::kernel::framework::config::MAX_CPUS];
+static PER_CPU_SCHED: [OnceLock<PerCpuSched>; crate::framework::config::MAX_CPUS] =
+    [const { OnceLock::new() }; crate::framework::config::MAX_CPUS];
 
 pub fn init_per_cpu_sched(cpu_id: u32) {
-    let idx = (cpu_id as usize) % crate::kernel::framework::config::MAX_CPUS;
+    let idx = (cpu_id as usize) % crate::framework::config::MAX_CPUS;
     PER_CPU_SCHED[idx].get_or_init(|slot| {
         // SAFETY: OnceLock::get_or_init 保证闭包仅执行一次, slot 未初始化.
         unsafe {
@@ -178,8 +178,8 @@ pub fn init_per_cpu_sched(cpu_id: u32) {
 
 #[inline]
 fn per_cpu() -> &'static PerCpuSched {
-    let cpu = crate::kernel::framework::smp::get_current_cpu();
-    let idx = (cpu as usize) % crate::kernel::framework::config::MAX_CPUS;
+    let cpu = crate::framework::smp::get_current_cpu();
+    let idx = (cpu as usize) % crate::framework::config::MAX_CPUS;
     // 确保已初始化 (幂等)
     init_per_cpu_sched(cpu);
     // SAFETY: init_per_cpu_sched 后 OnceLock 已初始化, get_or_init 返回 &'static 引用.
@@ -188,7 +188,7 @@ fn per_cpu() -> &'static PerCpuSched {
 
 #[inline]
 fn per_cpu_for(cpu_id: u32) -> &'static PerCpuSched {
-    let idx = (cpu_id as usize) % crate::kernel::framework::config::MAX_CPUS;
+    let idx = (cpu_id as usize) % crate::framework::config::MAX_CPUS;
     // 确保已初始化 (幂等)
     init_per_cpu_sched(cpu_id);
     // SAFETY: init_per_cpu_sched 后 OnceLock 已初始化.
@@ -284,7 +284,7 @@ impl Scheduler {
         }
 
         // 初始化进程组 ID (POSIX: 新进程默认自成一组, pgid = pid)
-        crate::kernel::framework::proc::proc_init_pgid(pid);
+        crate::framework::proc::proc_init_pgid(pid);
 
         Some(pid)
     }
@@ -541,7 +541,7 @@ impl Scheduler {
         }
 
         // 4. 本地无候选时进行负载均衡
-        if next_pid.is_none() && crate::kernel::framework::smp::is_enabled() {
+        if next_pid.is_none() && crate::framework::smp::is_enabled() {
             self.load_balance();
             next_pid = self.pick_cfs_task();
         }
@@ -581,7 +581,7 @@ impl Scheduler {
             let _ = proc.set_state_safe(ProcessState::Running);
             let next_kernel_stack = proc.kernel_stack.load(Ordering::SeqCst);
             if next_kernel_stack != 0 {
-                crate::kernel::framework::cpu::arch::set_kernel_stack(next_kernel_stack);
+                crate::framework::cpu::arch::set_kernel_stack(next_kernel_stack);
             }
         });
 
@@ -607,7 +607,7 @@ impl Scheduler {
             unsafe {
                 let user_cr3 = (*user_proc).process().cr3.load(Ordering::SeqCst);
                 #[cfg(target_arch = "x86_64")]
-                crate::kernel::framework::arch::gdt::gdt_set_user_cr3(user_cr3);
+                crate::framework::arch::gdt::gdt_set_user_cr3(user_cr3);
                 let _ = user_cr3;
             }
         }
@@ -708,7 +708,7 @@ impl Scheduler {
             }
         }
 
-        crate::kernel::framework::sync::rcu::rcu_note_quiescent_state();
+        crate::framework::sync::rcu::rcu_note_quiescent_state();
 
         Some(next)
     }
@@ -829,7 +829,7 @@ impl Scheduler {
         let per_cpu = per_cpu();
         if let Some(pid) = self.current() {
             // 会话 leader 退出时释放控制终端
-            crate::kernel::framework::proc::session_leader_exit(pid);
+            crate::framework::proc::session_leader_exit(pid);
 
             let parent_pid_opt = PROCESS_TABLE.with_process(pid, |proc| {
                 let pwm = proc.get_pwm();
@@ -839,8 +839,8 @@ impl Scheduler {
 
                 // D2: 进程退出时从 cgroup 移除
                 let cg_id = proc.cgroup_id.load(core::sync::atomic::Ordering::Acquire);
-                if crate::kernel::framework::proc::cgroup_is_initialized() {
-                    let sub = crate::kernel::framework::proc::cgroup_subsystem();
+                if crate::framework::proc::cgroup_is_initialized() {
+                    let sub = crate::framework::proc::cgroup_subsystem();
                     if let Some(cg) = sub.find(cg_id) {
                         cg.detach_proc(pid);
                     }
@@ -963,34 +963,34 @@ impl Scheduler {
     pub fn tick(&self, cpu_id: usize) {
         // SMP: 禁用中断保护整个 tick 临界区
         // 防止非中断上下文的 schedule() 调用与 timer ISR 的 tick() 并发修改 per-CPU 状态
-        let flags = crate::kernel::framework::sync::disable_interrupts();
+        let flags = crate::framework::sync::disable_interrupts();
 
         let new_tick = TICK_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
         let per_cpu = per_cpu_for(cpu_id as u32);
 
-        crate::kernel::framework::barrier::RECOVERY_MANAGER
+        crate::framework::barrier::RECOVERY_MANAGER
             .lock()
             .tick(new_tick);
 
-        if crate::kernel::framework::barrier::check_and_clear_bsr_escalation() {
-            crate::kernel::framework::barrier::reset::config::set_reset_in_progress(true);
-            crate::kernel::framework::barrier::reset::config::set_current_layer(
-                crate::kernel::framework::barrier::reset::config::RecoveryLayer::Layer2,
+        if crate::framework::barrier::check_and_clear_bsr_escalation() {
+            crate::framework::barrier::reset::config::set_reset_in_progress(true);
+            crate::framework::barrier::reset::config::set_current_layer(
+                crate::framework::barrier::reset::config::RecoveryLayer::Layer2,
             );
-            crate::kernel::framework::barrier::reset::bsr::freeze_all_domains();
-            crate::kernel::framework::barrier::reset::bsr::rollback_to_init();
-            crate::kernel::framework::barrier::reset::bsr::reset_devices();
-            crate::kernel::framework::barrier::reset::bsr::unfreeze_all_domains();
-            crate::kernel::framework::barrier::reset::bsr::clear_panic_state();
+            crate::framework::barrier::reset::bsr::freeze_all_domains();
+            crate::framework::barrier::reset::bsr::rollback_to_init();
+            crate::framework::barrier::reset::bsr::reset_devices();
+            crate::framework::barrier::reset::bsr::unfreeze_all_domains();
+            crate::framework::barrier::reset::bsr::clear_panic_state();
         }
 
-        crate::kernel::framework::proc::oomd::OOMD.tick();
-        crate::kernel::framework::proc::SCHEDULER_EX.tick_accounting();
+        crate::framework::proc::oomd::OOMD.tick();
+        crate::framework::proc::SCHEDULER_EX.tick_accounting();
 
         // Periodic kswapd wakeup — 每 100 ticks 唤醒一次内存回收
         // (B3 完整实现: kswapd 走 softirq 路径, 由 scheduler tick 周期驱动)
         if new_tick.is_multiple_of(KSWAPD_TICK_INTERVAL) {
-            crate::kernel::framework::mm::kswapd_wakeup();
+            crate::framework::mm::kswapd_wakeup();
         }
 
         // 周期性 CFS 提升 —— 防止 vruntime 饥饿
@@ -1180,7 +1180,7 @@ impl Scheduler {
         // 周期性负载均衡
         if new_tick.is_multiple_of(64) {
             let local_load =
-                self.total_runnable_for(crate::kernel::framework::smp::get_current_cpu());
+                self.total_runnable_for(crate::framework::smp::get_current_cpu());
             if local_load < 2 {
                 self.load_balance();
             }
@@ -1190,7 +1190,7 @@ impl Scheduler {
             self.schedule();
         }
 
-        crate::kernel::framework::sync::restore_interrupts(&flags);
+        crate::framework::sync::restore_interrupts(&flags);
     }
 
     #[expect(
@@ -1226,7 +1226,7 @@ impl Scheduler {
         if pid == 0 {
             return true;
         }
-        let cpu_count = crate::kernel::framework::smp::get_cpu_count();
+        let cpu_count = crate::framework::smp::get_cpu_count();
         if cpu_count <= 1 || cpu_id >= cpu_count {
             return true;
         }
@@ -1245,7 +1245,7 @@ impl Scheduler {
     /// 单核: 直接返回当前 CPU.
     /// 找不到 allowed CPU: 返回 `hint_cpu` (退化路径, 调度器仍可工作).
     pub fn select_cpu_for(&self, pid: Pid, hint_cpu: u32) -> u32 {
-        let cpu_count = crate::kernel::framework::smp::get_cpu_count();
+        let cpu_count = crate::framework::smp::get_cpu_count();
         if cpu_count <= 1 {
             return hint_cpu.min(cpu_count.saturating_sub(1));
         }
@@ -1289,12 +1289,12 @@ impl Scheduler {
     }
 
     pub fn load_balance(&self) {
-        let cpu_count = crate::kernel::framework::smp::get_cpu_count();
+        let cpu_count = crate::framework::smp::get_cpu_count();
         if cpu_count <= 1 {
             return;
         }
 
-        let this_cpu = crate::kernel::framework::smp::get_current_cpu();
+        let this_cpu = crate::framework::smp::get_current_cpu();
         let local_weight = {
             let sched = per_cpu_for(this_cpu);
             sched.cfs_rq.lock().total_weight.load(Ordering::Acquire)

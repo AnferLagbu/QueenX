@@ -12,7 +12,7 @@
 //! 注入; 此处 trait 注入=空转抽象。裁决: DECISION-M 方案 B — 15 类型 + dispatch
 //! 迁回 framework, services 改 re-export 壳。
 //!
-//! services 侧改 `pub use crate::kernel::framework::driver::power::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::driver::power::*` 保持 API 兼容。
 //! 演进预留: 未来 governor 独立化再下沉, 不堵死。
 //!
 //! ## 职责
@@ -26,7 +26,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // 常量
@@ -708,7 +708,7 @@ fn arch_suspend_to_ram() {
 
 /// 架构相关: 关机
 fn arch_shutdown() {
-    crate::kernel::framework::driver::shutdown_all();
+    crate::framework::driver::shutdown_all();
 }
 
 // ============================================================================

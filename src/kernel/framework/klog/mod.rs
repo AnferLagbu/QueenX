@@ -82,7 +82,7 @@ macro_rules! klog_ffi {
         let mut buf: [u8; 256] = [0u8; 256];
         let mut cursor = 0;
         let _ = core::fmt::write(
-            &mut $crate::kernel::framework::klog::CursorWriter::new(&mut buf, &mut cursor),
+            &mut $crate::framework::klog::CursorWriter::new(&mut buf, &mut cursor),
             format_args!($($arg)*),
         );
         if cursor > 0 {
@@ -103,14 +103,14 @@ macro_rules! klog_ffi {
 #[macro_export]
 macro_rules! klog_fmt {
     ($lvl:ident, $cat:ident, $($arg:tt)*) => {{
-        let mut w = $crate::kernel::framework::klog::KlogWriter::new();
+        let mut w = $crate::framework::klog::KlogWriter::new();
         let _ = core::fmt::Write::write_fmt(&mut w, format_args!($($arg)*));
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         // cast 已知安全: LogLevel/LogCategory 枚举值 < 256; ptr 改用 .cast() 根治 ptr_as_ptr
         unsafe {
-            $crate::kernel::framework::klog::klog_write(
-                $crate::kernel::framework::klog::LogLevel::$lvl as u8,
-                $crate::kernel::framework::klog::LogCategory::$cat as u8,
+            $crate::framework::klog::klog_write(
+                $crate::framework::klog::LogLevel::$lvl as u8,
+                $crate::framework::klog::LogCategory::$cat as u8,
                 core::ptr::null(), core::ptr::null(), 0,
                 w.as_slice().as_ptr().cast::<u8>(),
             );
@@ -199,7 +199,7 @@ mod serial_impl {
 
 #[cfg(target_arch = "aarch64")]
 mod serial_impl {
-    use crate::kernel::framework::arch::uart;
+    use crate::framework::arch::uart;
 
     pub fn serial_init() {
         // UART 已在 entry.rs 中初始化
@@ -306,8 +306,8 @@ const fn make_null_sinks() -> [SinkPtr; MAX_LOG_SINKS] {
 unsafe impl Send for SinkPtr {}
 // SAFETY: 同上, 日志路径由调用方序列化, 跨线程访问安全.
 unsafe impl Sync for SinkPtr {}
-static LOG_SINKS: crate::kernel::framework::sync::IrqSpinLock<[SinkPtr; MAX_LOG_SINKS]> =
-    crate::kernel::framework::sync::IrqSpinLock::new(make_null_sinks());
+static LOG_SINKS: crate::framework::sync::IrqSpinLock<[SinkPtr; MAX_LOG_SINKS]> =
+    crate::framework::sync::IrqSpinLock::new(make_null_sinks());
 static LOG_SINK_COUNT: AtomicU8 = AtomicU8::new(0);
 
 /// 注册 sink, 失败返回 `None` (已满).
@@ -662,7 +662,7 @@ fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
     ring.push_str(msg);
     ring.push(b'\n');
 
-    crate::kernel::framework::console::gfx_console_write(msg);
+    crate::framework::console::gfx_console_write(msg);
 }
 
 // ============================================================================

@@ -26,7 +26,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -49,7 +49,7 @@ pub const MAX_TRUST_CHAIN_DEPTH: usize = 4;
 // 删除本地重复 K 常量表/填充/轮函数 — 原注释"后者输出 48 字节"已被 B07-07 证伪)
 // ============================================================================
 
-use crate::kernel::framework::credo::sha256::sha256;
+use crate::framework::credo::sha256::sha256;
 
 /// 计算 SHA-256 哈希 (标准 32 字节输出, 委托 services 规范实现)
 pub fn sha256_hash(data: &[u8]) -> [u8; SHA256_LEN] {

@@ -5,7 +5,7 @@
 //! ## 使用方式
 //!
 //! ```rust,ignore
-//! use crate::kernel::services::sync::lockdep;
+//! use crate::services::sync::lockdep;
 //!
 //! // 注册锁类 (通常在 static 初始化时)
 //! static MY_LOCK_CLASS: LockClassId = LockClassId::INVALID;
@@ -29,14 +29,14 @@
 #![deny(unsafe_code)]
 
 // Re-export 类型
-pub use crate::kernel::framework::sync::{LockClassDesc, LockClassId, LockKind};
+pub use crate::framework::sync::{LockClassDesc, LockClassId, LockKind};
 
 /// 注册锁类
 ///
 /// 返回全局唯一的 `LockClassId`, 后续 acquire/release 使用此 ID。
 /// 同名锁类只注册一次 (幂等)。
 pub fn register_class(name: &'static str, kind: LockKind) -> LockClassId {
-    crate::kernel::framework::sync::register_class(LockClassDesc { name, kind })
+    crate::framework::sync::register_class(LockClassDesc { name, kind })
 }
 
 /// 锁获取通知
@@ -54,52 +54,52 @@ pub fn register_class(name: &'static str, kind: LockKind) -> LockClassId {
 /// - `true`: 正常
 /// - `false`: 检测到违规 (已打印警告)
 pub fn acquire(class_id: LockClassId, irq_context: bool) -> bool {
-    crate::kernel::framework::sync::acquire(class_id, irq_context)
+    crate::framework::sync::acquire(class_id, irq_context)
 }
 
 /// 锁释放通知
 ///
 /// 在锁释放前调用。从持有栈中移除。
 pub fn release(class_id: LockClassId) {
-    crate::kernel::framework::sync::release(class_id);
+    crate::framework::sync::release(class_id);
 }
 
 /// 标记进入中断上下文
 pub fn irq_enter() {
-    crate::kernel::framework::sync::irq_enter();
+    crate::framework::sync::irq_enter();
 }
 
 /// 标记退出中断上下文
 pub fn irq_exit() {
-    crate::kernel::framework::sync::irq_exit();
+    crate::framework::sync::irq_exit();
 }
 
 /// 当前是否在中断上下文
 pub fn in_irq_context() -> bool {
-    crate::kernel::framework::sync::in_irq_context()
+    crate::framework::sync::in_irq_context()
 }
 
 /// 查询当前持有锁深度
 pub fn held_depth() -> usize {
-    crate::kernel::framework::sync::held_depth()
+    crate::framework::sync::held_depth()
 }
 
 /// 查询已注册锁类数
 pub fn num_classes() -> usize {
-    crate::kernel::framework::sync::num_classes()
+    crate::framework::sync::num_classes()
 }
 
 /// 查询检测到的违规数
 pub fn num_violations() -> u32 {
-    crate::kernel::framework::sync::num_violations()
+    crate::framework::sync::num_violations()
 }
 
 /// 检查是否已检测到死锁
 pub fn deadlock_detected() -> bool {
-    crate::kernel::framework::sync::deadlock_detected()
+    crate::framework::sync::deadlock_detected()
 }
 
 /// 打印当前锁依赖状态 (调试用)
 pub fn dump_state() {
-    crate::kernel::framework::sync::dump_state();
+    crate::framework::sync::dump_state();
 }

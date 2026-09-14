@@ -14,12 +14,12 @@
 //! - 通过 framework::syscall::api 安全写入用户空间
 //! - 无 unsafe, 无裸指针
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// getrusage(who, rusage) 策略
 pub fn getrusage_syscall(who: i32, rusage_ptr: u64) -> i64 {
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
-    i64::from(crate::kernel::framework::proc::proc_get_rusage(
+    let pid = crate::framework::proc::process_get_current_pid();
+    i64::from(crate::framework::proc::proc_get_rusage(
         pid,
         who,
         rusage_ptr as *mut u8,
@@ -55,7 +55,7 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
         mem_unit: u32,
     }
 
-    let ticks = crate::kernel::framework::syscall::api::get_ticks();
+    let ticks = crate::framework::syscall::api::get_ticks();
     let si = SysInfo {
         uptime: (ticks / 1000) as i64,
         loads: [0, 0, 0],
@@ -72,7 +72,7 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
         mem_unit: 1,
     };
 
-    if !crate::kernel::framework::syscall::api::write_struct_to_user(info_ptr, &si) {
+    if !crate::framework::syscall::api::write_struct_to_user(info_ptr, &si) {
         return Errno::EFAULT.as_ret();
     }
     0
@@ -100,7 +100,7 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
         rlim_max: u64::MAX,
     };
 
-    if !crate::kernel::framework::syscall::api::write_struct_to_user(rlim_ptr, &r) {
+    if !crate::framework::syscall::api::write_struct_to_user(rlim_ptr, &r) {
         return Errno::EFAULT.as_ret();
     }
     0
@@ -111,7 +111,7 @@ pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     if buf_ptr == 0 || size == 0 {
         return Errno::EFAULT.as_ret();
     }
-    if !crate::kernel::framework::syscall::api::validate_user_buf(buf_ptr, size) {
+    if !crate::framework::syscall::api::validate_user_buf(buf_ptr, size) {
         return Errno::EFAULT.as_ret();
     }
 
@@ -119,7 +119,7 @@ pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     let copy_len = hostname.len().min(size as usize);
     // 使用 write_struct_to_user 逐字节写入
     for (i, &byte) in hostname.iter().enumerate().take(copy_len) {
-        if !crate::kernel::framework::syscall::api::write_struct_to_user(buf_ptr + i as u64, &byte)
+        if !crate::framework::syscall::api::write_struct_to_user(buf_ptr + i as u64, &byte)
         {
             return Errno::EFAULT.as_ret();
         }
@@ -132,8 +132,8 @@ pub fn sethostname_syscall(name_ptr: u64, len: u64) -> i64 {
     if name_ptr == 0 || len == 0 || len > 63 {
         return Errno::EINVAL.as_ret();
     }
-    let pwm = crate::kernel::framework::credo::pwm_get_current();
-    if !crate::kernel::framework::credo::pwm_has_capability(pwm, 0, 9) {
+    let pwm = crate::framework::credo::pwm_get_current();
+    if !crate::framework::credo::pwm_has_capability(pwm, 0, 9) {
         return Errno::EACCES.as_ret();
     }
     0
@@ -142,7 +142,7 @@ pub fn sethostname_syscall(name_ptr: u64, len: u64) -> i64 {
 /// `boot_check(check_type)` 策略
 pub fn boot_check_syscall(check_type: i32) -> i64 {
     match check_type {
-        0 => i64::from(crate::kernel::framework::credo::pwm_any_identity_exists()),
+        0 => i64::from(crate::framework::credo::pwm_any_identity_exists()),
         _ => -1,
     }
 }
@@ -151,9 +151,9 @@ pub fn boot_check_syscall(check_type: i32) -> i64 {
 ///
 /// PWM 权限检查 + 委托 framework 执行重启机制
 pub fn reboot_syscall(cmd: i32) -> i64 {
-    let pwm = crate::kernel::framework::credo::pwm_get_current();
-    if !crate::kernel::framework::credo::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::credo::pwm_get_current();
+    if !crate::framework::credo::pwm_has_capability(pwm, 0, 0x01) {
         return Errno::EACCES.as_ret();
     }
-    crate::kernel::framework::syscall::api::reboot_mechanism(cmd)
+    crate::framework::syscall::api::reboot_mechanism(cmd)
 }

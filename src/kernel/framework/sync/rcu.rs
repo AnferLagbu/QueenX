@@ -70,7 +70,7 @@ const GP_WAIT: u32 = 1;
 const GP_DONE: u32 = 2;
 
 struct RcuGlobal {
-    data: UnsafeCell<[PerCpuRcu; crate::kernel::framework::config::MAX_CPUS]>,
+    data: UnsafeCell<[PerCpuRcu; crate::framework::config::MAX_CPUS]>,
 }
 
 // SAFETY: 每个 PerCpuRcu[i] 通常仅由 CPU i 访问.
@@ -78,7 +78,7 @@ struct RcuGlobal {
 unsafe impl Sync for RcuGlobal {}
 
 static RCU_GLOBAL: RcuGlobal = RcuGlobal {
-    data: UnsafeCell::new([const { PerCpuRcu::new() }; crate::kernel::framework::config::MAX_CPUS]),
+    data: UnsafeCell::new([const { PerCpuRcu::new() }; crate::framework::config::MAX_CPUS]),
 };
 
 static RCU_GP_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -91,7 +91,7 @@ fn rcu_data(cpu: u32) -> &'static PerCpuRcu {
 
 #[inline]
 fn current_rcu() -> &'static PerCpuRcu {
-    let cpu = crate::kernel::framework::smp::get_current_cpu();
+    let cpu = crate::framework::smp::get_current_cpu();
     rcu_data(cpu)
 }
 
@@ -164,23 +164,23 @@ fn synchronize_rcu_impl() {
     let start_gp = RCU_GP_COUNTER.load(Ordering::Relaxed);
     RCU_GP_COUNTER.store(start_gp.wrapping_add(1), Ordering::Release);
 
-    let cpu_count = crate::kernel::framework::smp::get_cpu_count();
-    let current_cpu = crate::kernel::framework::smp::get_current_cpu();
+    let cpu_count = crate::framework::smp::get_cpu_count();
+    let current_cpu = crate::framework::smp::get_current_cpu();
 
     for i in 0..cpu_count {
         if i == current_cpu {
             continue;
         }
-        if !crate::kernel::framework::smp::is_cpu_online(i) {
+        if !crate::framework::smp::is_cpu_online(i) {
             let data = rcu_data(i);
             data.gp_state.store(GP_DONE, Ordering::Release);
             continue;
         }
         let data = rcu_data(i);
         data.gp_state.store(GP_WAIT, Ordering::Release);
-        let apic_id = crate::kernel::framework::smp::get_apic_id(i);
+        let apic_id = crate::framework::smp::get_apic_id(i);
         if apic_id != 0xFFFF {
-            crate::kernel::framework::smp::send_reschedule_ipi(apic_id as u8);
+            crate::framework::smp::send_reschedule_ipi(apic_id as u8);
         }
     }
 
@@ -249,7 +249,7 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
     }
 
     let data = current_rcu();
-    let flags = crate::kernel::framework::sync::disable_interrupts();
+    let flags = crate::framework::sync::disable_interrupts();
 
     // SAFETY: Interrupts disabled — callback list manipulation is atomic
     let tail = unsafe { *data.callback_tail.get() };
@@ -272,9 +272,9 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
     data.callback_count.fetch_add(1, Ordering::Relaxed);
     data.need_callback_process.store(true, Ordering::Release);
 
-    crate::kernel::framework::sync::restore_interrupts(&flags);
+    crate::framework::sync::restore_interrupts(&flags);
 
-    crate::kernel::framework::irq::raise_softirq(crate::kernel::framework::irq::SoftirqVec::High);
+    crate::framework::irq::raise_softirq(crate::framework::irq::SoftirqVec::High);
 }
 
 /// 检查当前上下文是否在 RCU 读临界区内
@@ -290,7 +290,7 @@ pub fn process_callbacks() {
         return;
     }
 
-    let flags = crate::kernel::framework::sync::disable_interrupts();
+    let flags = crate::framework::sync::disable_interrupts();
 
     // SAFETY: Interrupts disabled — exclusive access to callback list
     let head = unsafe { *data.callbacks.get() };
@@ -302,7 +302,7 @@ pub fn process_callbacks() {
     data.callback_count.store(0, Ordering::Relaxed);
     data.need_callback_process.store(false, Ordering::Release);
 
-    crate::kernel::framework::sync::restore_interrupts(&flags);
+    crate::framework::sync::restore_interrupts(&flags);
 
     let mut cur = head;
     while !cur.is_null() {
@@ -343,13 +343,13 @@ pub fn rcu_note_quiescent_state() {
 
 /// 通知所有 CPU 的 RCU 回调 (由同步宽限期调用)
 pub fn rcu_process_all_callbacks() {
-    let cpu_count = crate::kernel::framework::smp::get_cpu_count();
+    let cpu_count = crate::framework::smp::get_cpu_count();
     for i in 0..cpu_count {
         let data = rcu_data(i);
         if data.need_callback_process.load(Ordering::Acquire) {
             // 使用 IPI 或直接处理 — 简化实现: 直接处理
             // 注意: 在单核或特定场景下可行; 完整实现需 IPI
-            let flags = crate::kernel::framework::sync::disable_interrupts();
+            let flags = crate::framework::sync::disable_interrupts();
             // SAFETY: `data` 由调用方保证为有效指针; 只读访问
             let head = unsafe { *data.callbacks.get() };
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -359,7 +359,7 @@ pub fn rcu_process_all_callbacks() {
             }
             data.callback_count.store(0, Ordering::Relaxed);
             data.need_callback_process.store(false, Ordering::Release);
-            crate::kernel::framework::sync::restore_interrupts(&flags);
+            crate::framework::sync::restore_interrupts(&flags);
 
             let mut cur = head;
             while !cur.is_null() {
@@ -384,7 +384,7 @@ pub fn rcu_gp_count() -> u32 {
 }
 
 pub fn rcu_callback_count() -> u32 {
-    let cpu = crate::kernel::framework::smp::get_current_cpu();
+    let cpu = crate::framework::smp::get_current_cpu();
     rcu_data(cpu).callback_count.load(Ordering::Relaxed)
 }
 

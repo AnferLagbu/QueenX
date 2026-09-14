@@ -87,8 +87,8 @@ fn kmalloc_source_uses_irq_save_flags_signature() {
     );
     // 必须导入 disable_interrupts / restore_interrupts
     assert!(
-        (source.contains("use crate::kernel::framework::sync::spinlock::")
-            || source.contains("use crate::kernel::framework::sync::"))
+        (source.contains("use crate::framework::sync::spinlock::")
+            || source.contains("use crate::framework::sync::"))
             && source.contains("disable_interrupts")
             && source.contains("restore_interrupts"),
         "P1-I-28: kmalloc.rs 必须导入 disable/restore 中断原语"
@@ -112,7 +112,7 @@ fn kmalloc_slab_source_uses_irq_save_flags_signature() {
     let source = include_str!("../../src/kernel/framework/mm/kmalloc_slab.rs");
     // 新模式: SLAB_CACHES 使用 IrqSpinLock 包装, 通过 .lock() 访问
     assert!(
-        source.contains("static SLAB_CACHES: crate::kernel::framework::sync::IrqSpinLock<"),
+        source.contains("static SLAB_CACHES: crate::framework::sync::IrqSpinLock<"),
         "P1-I-28: kmalloc_slab.rs::SLAB_CACHES 必须使用 IrqSpinLock 包装"
     );
     assert!(

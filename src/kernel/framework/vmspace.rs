@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::kernel::framework::mm::{PageFlags, PageSize, PhysAddr, VirtAddr, get_vmm};
+use crate::framework::mm::{PageFlags, PageSize, PhysAddr, VirtAddr, get_vmm};
 
 #[cfg(target_arch = "x86_64")]
 const USER_VADDR_MASK: u64 = 0x00007FFF_FFFFFFFF;

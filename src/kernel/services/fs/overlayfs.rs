@@ -3,9 +3,9 @@
 //! overlayfs 文件系统实现
 
 
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::services::fs::vfs_types::*;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::fs::KernelError;
+use crate::services::fs::vfs_types::*;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -47,9 +47,9 @@ pub struct OverlayFsData {
     /// 挂载配置
     pub mount: OverlayMount,
     /// upperdir 的 ramfs 数据
-    pub upper_data: crate::kernel::framework::fs::ramfs::RamFsData,
+    pub upper_data: crate::framework::fs::ramfs::RamFsData,
     /// workdir 的 ramfs 数据
-    pub work_data: crate::kernel::framework::fs::ramfs::RamFsData,
+    pub work_data: crate::framework::fs::ramfs::RamFsData,
     /// lowerdir 路径 (只读引用)
     pub lower_path: String,
 }
@@ -59,8 +59,8 @@ impl OverlayFsData {
     pub fn new(mount: OverlayMount) -> Self {
         Self {
             mount,
-            upper_data: crate::kernel::framework::fs::ramfs::RamFsData::new(),
-            work_data: crate::kernel::framework::fs::ramfs::RamFsData::new(),
+            upper_data: crate::framework::fs::ramfs::RamFsData::new(),
+            work_data: crate::framework::fs::ramfs::RamFsData::new(),
             lower_path: mount.lowerdir.clone(),
         }
     }
@@ -133,7 +133,7 @@ static OVERLAY_FS: Mutex<Option<OverlayFsData>> = Mutex::new(None);
 // ============================================================================
 
 use alloc::sync::Arc;
-use crate::kernel::services::fs::inode::Inode;
+use crate::services::fs::inode::Inode;
 
 /// OverlayFS 文件 Inode — 委托给 upperdir 的 RamFsData
 pub struct OverlayFsInode {
@@ -242,7 +242,7 @@ impl FileSystem for OverlayFsFileSystem {
         Ok(())
     }
 
-    fn fs_open(&self, rel_path: &str, _flags: u32, _pwm: u64) -> KernelResult<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    fn fs_open(&self, rel_path: &str, _flags: u32, _pwm: u64) -> KernelResult<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         let mut fs_guard = OVERLAY_FS.lock();
         let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
 
@@ -396,7 +396,7 @@ impl FileSystem for OverlayFsFileSystem {
     }
 
     // L4 重构: 扩展方法实现 (override trait 默认实现)
-    fn fs_resolve_inode(&self, inode_id: u32, mount_idx: u32) -> Option<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    fn fs_resolve_inode(&self, inode_id: u32, mount_idx: u32) -> Option<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         Some(alloc::sync::Arc::new(OverlayFsInode::new(inode_id, mount_idx, 0, "")))
     }
 }

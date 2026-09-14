@@ -19,7 +19,7 @@
 // 我们提供一个同名 `init` 桩模块, 让现有函数体零改动, 公共 API 表面保持稳定
 // (services 调用方不需要 cfg 化).
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::net::init;
+use crate::framework::net::init;
 
 // kernel_test 桩: 签名与真实 `unsafe extern "C" fn` 对齐, 但 no-op.
 // 提供与 `init::*` 19 个函数同名的桩, 让 `init::xxx()` 路径在两种 build 下都有效.

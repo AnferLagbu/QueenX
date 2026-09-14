@@ -13,9 +13,9 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::types::{IRQ_BASE, InterruptFrame};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 /// 中断事件记录 (用于历史追踪)
 #[derive(Debug, Clone, Copy)]
 pub struct InterruptEvent {
@@ -454,7 +454,7 @@ pub fn get_detailed_statistics() -> &'static DetailedStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::idt::handlers::PanicInfo;
+    use crate::framework::idt::handlers::PanicInfo;
 
     #[test]
     fn test_statistics_initialization() {
@@ -545,5 +545,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_idt_statistics_tests() {
-    crate::kernel::framework::tests::idt::register_idt_statistics_tests();
+    crate::framework::tests::idt::register_idt_statistics_tests();
 }

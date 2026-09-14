@@ -15,7 +15,7 @@
 
 use core::cell::UnsafeCell;
 
-use crate::kernel::framework::config::MAX_CPUS;
+use crate::framework::config::MAX_CPUS;
 
 /// Per-CPU 数据容器。
 ///

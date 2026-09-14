@@ -8,7 +8,7 @@
 //! 被 framework mm/vmm_x86_64 的 KPTI 决策直接消费、`ConfigSummary` 被 framework
 //! config 机制 (init/print_config_table) 消费 — 属机制类型, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::config::caps::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::config::caps::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + 编译期 cfg 检测 + 运行时查询函数).
 
 // ============================================================================
@@ -72,7 +72,7 @@ use super::memory::PAGE_SIZE;
 pub fn get_config_summary() -> ConfigSummary {
     ConfigSummary {
         max_cpus: MAX_CPUS,
-        actual_cpus: crate::kernel::framework::smp::get_cpu_count(),
+        actual_cpus: crate::framework::smp::get_cpu_count(),
         max_irqs: MAX_IRQS,
         max_processes: MAX_PROCESSES,
         max_threads: MAX_THREADS,
@@ -87,7 +87,7 @@ pub fn get_config_summary() -> ConfigSummary {
 /// 跨架构安全: 在 `x86_64` 上查 APIC 状态, 其他架构默认 false。
 #[cfg(target_arch = "x86_64")]
 fn apic_initialized() -> bool {
-    crate::kernel::framework::arch::apic::is_initialized()
+    crate::framework::arch::apic::is_initialized()
 }
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -97,7 +97,7 @@ fn apic_initialized() -> bool {
 
 #[cfg(target_arch = "x86_64")]
 fn ioapic_initialized() -> bool {
-    crate::kernel::framework::arch::ioapic::is_initialized()
+    crate::framework::arch::ioapic::is_initialized()
 }
 
 #[cfg(not(target_arch = "x86_64"))]

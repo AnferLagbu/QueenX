@@ -5,7 +5,7 @@
 //! 策略代码于 2026-06-17 从 framework::config::procfs 迁移至此。
 //! framework 层仅保留 re-export 保持调用方兼容。
 
-use crate::kernel::framework::config::get_config_summary;
+use crate::framework::config::get_config_summary;
 
 /// `/proc/sys/config` 读取时的文本格式选择器.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

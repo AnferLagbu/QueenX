@@ -42,11 +42,11 @@
 //! - [docs/plan/smoltcp-framekernel-wrapper.md] §3 关键设计决策
 //! - [docs/plan/maintenance-cycle-2026-06-19.md] §9.5 REVAL-W 第 6 组
 
-use crate::kernel::framework::net::iface_trait::{
+use crate::framework::net::iface_trait::{
     DhcpState, IpAddr, Ipv4Addr, Ipv6Addr, NetConfig, NetEndpoint, NetError, NetStack, PollOutcome,
     Result, SocketHandle, SocketKind,
 };
-use crate::kernel::framework::net_socket as fw_net_socket;
+use crate::framework::net_socket as fw_net_socket;
 // REVAL-W W4.2.3.4 步骤 3: 调用 framework::init 的 safe wrapper, 实现
 // 实际 smoltcp socket 创建. smoltcp_impl 是 services 层唯一允许直接使用
 // smoltcp 类型的文件, 但 socket_open 的实际 smoltcp 操作 (k_malloc +
@@ -55,9 +55,9 @@ use crate::kernel::framework::net_socket as fw_net_socket;
 // kernel_test 模式下 framework::net::init 被 cfg-out, 用 services::net::init
 // 的桩实现 (其中 smoltcp_net_stack_* 函数为 no-op stub).
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::net::init as fw_init;
+use crate::framework::net::init as fw_init;
 #[cfg(feature = "kernel_test")]
-use crate::kernel::services::net::init as fw_init;
+use crate::services::net::init as fw_init;
 
 // ============================================================================
 // 编译期常量
@@ -1474,8 +1474,8 @@ mod tests {
 
     // ---- 8. W6: DHCP 策略接入 ----
 
-    use crate::kernel::framework::net::iface_trait::Ipv4Addr;
-    use crate::kernel::services::net::dhcp_policy::{
+    use crate::framework::net::iface_trait::Ipv4Addr;
+    use crate::services::net::dhcp_policy::{
         DefaultDhcpPolicy, DhcpPolicy, DhcpPolicyConfig,
     };
 

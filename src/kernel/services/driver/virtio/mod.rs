@@ -4,7 +4,7 @@
 //! `VirtIO` 设备驱动 — services 层 (Phase 2.1.2 + 2.1.3)
 //!
 //! 提供 virtio-blk (Phase 2.1.3) 和 virtio-net (Phase 2.1.2) 的 100% safe 设备驱动。
-//! MMIO transport 机制由 framework [`crate::kernel::framework::driver::virtio::VirtioMmioDevice`]
+//! MMIO transport 机制由 framework [`crate::framework::driver::virtio::VirtioMmioDevice`]
 //! 提供 (单一实现, 批次 Z ③ transport 去重), services 层仅承载设备业务。
 //!
 //! ## 模块结构
@@ -30,12 +30,12 @@ pub mod net;
 /// DRIVER_OK + RX 预填) 后经 framework `register_net_device` 桥接为
 /// `NetDeviceRegistration`。由 framework `nic_probe_all` 在 e1000 探测
 /// 失败后经槽位调用 (启动临界区单线程)。
-fn virtio_net_registration() -> Option<crate::kernel::framework::net::NetDeviceRegistration> {
-    use crate::kernel::framework::driver::virtio::{
+fn virtio_net_registration() -> Option<crate::framework::net::NetDeviceRegistration> {
+    use crate::framework::driver::virtio::{
         VIRTIO_ID_NET, VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE,
         VirtioMmioDevice,
     };
-    use crate::kernel::framework::net::register_net_device;
+    use crate::framework::net::register_net_device;
 
     for i in 0..VIRTIO_MMIO_MAX_DEVICES {
         let base = VIRTIO_MMIO_BASE + u64::from(i) * VIRTIO_MMIO_STRIDE;
@@ -74,7 +74,7 @@ fn virtio_net_registration() -> Option<crate::kernel::framework::net::NetDeviceR
 /// framework `nic_probe_all` 在 e1000 探测失败后经槽位调用探测回调拉取
 /// `NetDeviceRegistration`。crate root lib.rs 在 `qx_net_init` 之前编排调用。
 pub fn net_init() {
-    let _ = crate::kernel::framework::net::net_register_services_driver(virtio_net_registration);
+    let _ = crate::framework::net::net_register_services_driver(virtio_net_registration);
 }
 
 /// 初始化 VirtIO 块设备并注册到 Chitin (§6.4 直接方案 B: services 权威)
@@ -86,8 +86,8 @@ pub fn net_init() {
 /// framework 保留: `VirtioMmioDevice` (MMIO 传输机制) + `queue` (DMA 环机制)。
 /// aarch64 (QEMU -M virt) 是 virtio-blk 的主战场; x86_64 走 PCI AHCI/NVMe。
 pub fn blk_init() {
-    use crate::kernel::framework::chitin::proto_block::register_block_device;
-    use crate::kernel::framework::driver::virtio::{
+    use crate::framework::chitin::proto_block::register_block_device;
+    use crate::framework::driver::virtio::{
         VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE, VIRTIO_ID_BLOCK,
         VirtioMmioDevice,
     };

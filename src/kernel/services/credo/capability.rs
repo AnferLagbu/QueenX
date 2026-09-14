@@ -7,4 +7,4 @@
 //! `framework/credo/capability.rs` (第二十五批反转归位, DECISION-K 项 5
 //! credo 判据). 本文件仅 re-export 保持 services 内部消费者路径兼容.
 
-pub use crate::kernel::framework::credo::capability::*;
+pub use crate::framework::credo::capability::*;

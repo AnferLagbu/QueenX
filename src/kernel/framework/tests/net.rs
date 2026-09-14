@@ -4,16 +4,16 @@
 // 本文件也同步 gate, 使整个文件在 kernel_test build 下为空, 不产生编译错误.
 // 真实硬件测试请在 QEMU + e1000 模拟或真实硬件上跑 (不在本周期范围).
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::driver::{DeviceType, Driver};
+use crate::framework::driver::{DeviceType, Driver};
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::driver::{
+use crate::framework::driver::{
     E1000_RX_BUFFER_SIZE, E1000_RX_RING_SIZE, E1000_TX_RING_SIZE, E1000Device, E1000RxDesc,
     E1000TxDesc, virt_to_phys,
 };
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::mm::KERNEL_BASE;
+use crate::framework::mm::KERNEL_BASE;
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 #[cfg(not(feature = "kernel_test"))]
 use crate::register_tests_inner;
 

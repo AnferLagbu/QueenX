@@ -23,7 +23,8 @@ build_arch() {
     echo -e "${YELLOW}[CI] Building ARCH=${arch} (target: ${target})...${NC}"
 
     pushd src/rust > /dev/null
-    if cargo build --release --target "${target}" "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
+    # 方案 D: 内核独立 crate, 裸机 build 指向 kernel manifest (queenx 壳仅 host).
+    if cargo build --manifest-path ../kernel/Cargo.toml --release --target "${target}" --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
         echo -e "${GREEN}[CI] ARCH=${arch}: build passed${NC}"
         popd > /dev/null
         return 0

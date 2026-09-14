@@ -9,7 +9,7 @@
 //!
 //! 所有测试在 UDS TCB 的全局表上操作, 顺序执行 (单核 + 启动期)
 use super::{TestResult, runner};
-use crate::kernel::services::net::unix as uds;
+use crate::services::net::unix as uds;
 use crate::register_tests_inner;
 
 #[expect(

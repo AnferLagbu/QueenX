@@ -32,9 +32,9 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::timer::{
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::syscall::Errno;
+use crate::framework::timer::{
     HrTimer, HrTimerRestart, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
 };
 
@@ -46,7 +46,7 @@ use crate::kernel::framework::timer::{
 pub const TFD_MAX_SLOTS: usize = 16;
 /// TD-15: FD 空间基址来源已迁移至 `framework::proc::FdPlan::TIMER_FD` 单一来源 (1160),
 /// 不再硬编码 240 (旧值与 smoltcp [0, 256) 重叠).
-pub const TFD_FD_BASE: i32 = crate::kernel::framework::proc::FdPlan::TIMER_FD.base;
+pub const TFD_FD_BASE: i32 = crate::framework::proc::FdPlan::TIMER_FD.base;
 /// `TFD_CLOEXEC`
 pub const TFD_CLOEXEC: i32 = 0o2000000;
 /// `TFD_NONBLOCK`
@@ -162,14 +162,14 @@ pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
-        crate::kernel::framework::proc::fd_alloc::FdSubsystem::TimerFd,
+    let fd = match crate::framework::proc::fd_alloc::alloc_fd(
+        crate::framework::proc::fd_alloc::FdSubsystem::TimerFd,
     ) {
         Some(f) => f,
         None => return Errno::EMFILE.as_ret(),
     };
 
-    let slot = match crate::kernel::framework::proc::fd_alloc::idx_of(fd) {
+    let slot = match crate::framework::proc::fd_alloc::idx_of(fd) {
         Some((_sub, s)) => s,
         None => return Errno::EBADF.as_ret(),
     };
@@ -477,7 +477,7 @@ fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
     }
 
     // 唤醒 epoll
-    crate::kernel::framework::syscall::epoll::epoll_pwake(fd);
+    crate::framework::syscall::epoll::epoll_pwake(fd);
 
     // 周期定时器: 重新入队
     if interval_ns > 0 {
@@ -515,7 +515,7 @@ fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
 ///
 /// 返回 EPOLLIN (有到期事件) 或 0
 pub fn timerfd_poll_events(fd: i32) -> u32 {
-    use crate::kernel::framework::syscall::{EPOLLERR, EPOLLIN};
+    use crate::framework::syscall::{EPOLLERR, EPOLLIN};
 
     let idx = match fd_to_idx(fd) {
         Some(i) => i,
@@ -541,8 +541,8 @@ pub fn timerfd_poll_events(fd: i32) -> u32 {
 /// TD-15: 改走 `fd_alloc::idx_of` 集中反查, 本地不再持有 `TFD_FD_BASE` 字面量 +
 /// 减法边界检查.
 fn fd_to_idx(fd: i32) -> Option<usize> {
-    match crate::kernel::framework::proc::idx_of(fd) {
-        Some((crate::kernel::framework::proc::FdSubsystem::TimerFd, slot)) => Some(slot),
+    match crate::framework::proc::idx_of(fd) {
+        Some((crate::framework::proc::FdSubsystem::TimerFd, slot)) => Some(slot),
         _ => None,
     }
 }
@@ -552,8 +552,8 @@ fn fd_to_idx(fd: i32) -> Option<usize> {
 /// TD-15: 改走 `fd_alloc::idx_of`, 不再持有 `TFD_FD_BASE` 字面量 + 算术.
 pub fn is_timerfd_fd(fd: i32) -> bool {
     matches!(
-        crate::kernel::framework::proc::idx_of(fd),
-        Some((crate::kernel::framework::proc::FdSubsystem::TimerFd, _))
+        crate::framework::proc::idx_of(fd),
+        Some((crate::framework::proc::FdSubsystem::TimerFd, _))
     )
 }
 
@@ -562,8 +562,8 @@ pub fn is_timerfd_fd(fd: i32) -> bool {
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_timerfd_create() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_timerfd_create() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     let fd = sys_timerfd_create(CLOCK_MONOTONIC, 0);
     check!(fd >= 240, "timerfd returns fd >= 240");
@@ -576,8 +576,8 @@ fn test_timerfd_create() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_timerfd_settime_disarm() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_timerfd_settime_disarm() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     let fd = sys_timerfd_create(CLOCK_MONOTONIC, 0);
     check!(fd >= 240, "timerfd create ok");
@@ -592,8 +592,8 @@ fn test_timerfd_settime_disarm() -> crate::kernel::framework::tests::TestResult 
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_timerfd_read_empty() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_timerfd_read_empty() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     let fd = sys_timerfd_create(CLOCK_MONOTONIC, 0);
     check!(fd >= 240, "timerfd create ok");
@@ -609,7 +609,7 @@ fn test_timerfd_read_empty() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_timerfd_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("timerfd", "create", test_timerfd_create);
     r.register("timerfd", "settime_disarm", test_timerfd_settime_disarm);

@@ -8,4 +8,4 @@
 //! `framework/proc/cfs.rs` — CfsRunQueue/DlRunQueue 是 scheduler 机制
 //! 运行队列状态。glob re-export 保持 services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::cfs::*;
+pub use crate::framework::proc::cfs::*;

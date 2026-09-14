@@ -3,7 +3,7 @@
 //! 提供 setxattr/getxattr/listxattr/removexattr 系统调用的实现。
 //! 调用 framework 层的 vfs_*_internal 函数处理指针转换。
 
-use crate::kernel::services::syscall::types::Errno;
+use crate::services::syscall::types::Errno;
 
 /// 设置扩展属性
 ///
@@ -20,7 +20,7 @@ pub fn setxattr_syscall(
         return Err(Errno::EFAULT);
     }
 
-    let r = crate::kernel::framework::fs::vfs::api::vfs_setxattr_internal(
+    let r = crate::framework::fs::vfs::api::vfs_setxattr_internal(
         path_ptr as *const u8,
         name_ptr as *const u8,
         value_ptr as *const u8,
@@ -50,7 +50,7 @@ pub fn getxattr_syscall(
         return Err(Errno::EFAULT);
     }
 
-    let r = crate::kernel::framework::fs::vfs::api::vfs_getxattr_internal(
+    let r = crate::framework::fs::vfs::api::vfs_getxattr_internal(
         path_ptr as *const u8,
         name_ptr as *const u8,
         buf_ptr as *mut u8,
@@ -79,7 +79,7 @@ pub fn listxattr_syscall(
         return Err(Errno::EFAULT);
     }
 
-    let r = crate::kernel::framework::fs::vfs::api::vfs_listxattr_internal(
+    let r = crate::framework::fs::vfs::api::vfs_listxattr_internal(
         path_ptr as *const u8,
         buf_ptr as *mut u8,
         buf_len as u32,
@@ -102,7 +102,7 @@ pub fn removexattr_syscall(path_ptr: u64, name_ptr: u64, pwm: u64) -> Result<usi
         return Err(Errno::EFAULT);
     }
 
-    let r = crate::kernel::framework::fs::vfs::api::vfs_removexattr_internal(
+    let r = crate::framework::fs::vfs::api::vfs_removexattr_internal(
         path_ptr as *const u8,
         name_ptr as *const u8,
         pwm,

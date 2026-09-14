@@ -15,10 +15,10 @@
 //!
 //! ## 不允许简化: 即使 credo 私有, 仍走 services 业务 + 鉴权 + 校验三段式.
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::driver::block as blk;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::credo;
+use crate::framework::driver::block as blk;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 /// credo disk 域 = 4 (PWM domain 4 = storage 域)
 const PWM_DOMAIN_STORAGE: u16 = 4;

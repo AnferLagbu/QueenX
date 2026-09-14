@@ -76,10 +76,10 @@ else
                   build/arch/x86_64/trampoline.o
 endif
 
-RUST_LIB = src/rust/target/$(RUST_TARGET)/release/libqueenx.a
-RUST_LIB_TEST = src/rust/target/test-release/$(RUST_TARGET)/release/libqueenx.a
-RUST_LIB_CHAOS = src/rust/target/chaos-release/$(RUST_TARGET)/release/libqueenx.a
-RUST_LIB_TEST_DEBUG = src/rust/target/test-debug/$(RUST_TARGET)/test-debug/libqueenx.a
+RUST_LIB = src/rust/target/$(RUST_TARGET)/release/libkernel.a
+RUST_LIB_TEST = src/rust/target/test-release/$(RUST_TARGET)/release/libkernel.a
+RUST_LIB_CHAOS = src/rust/target/chaos-release/$(RUST_TARGET)/release/libkernel.a
+RUST_LIB_TEST_DEBUG = src/rust/target/test-debug/$(RUST_TARGET)/test-debug/libkernel.a
 
 RUST_USER_DIR = src/user
 RUST_USER_TARGET = $(RUST_USER_DIR)/target/$(RUST_TARGET)/release
@@ -119,7 +119,7 @@ arch-switch-clean:
 	@rm -f build/boot.o build/entry.o build/isr.o build/switch.o \
 	       build/arch/x86_64/trampoline.o build/gdt_asm.o \
 	       build/kernel.bin build/kernel.flat build/kernel.map
-	@cd src/rust && cargo clean >/dev/null 2>&1 || true
+	@cd src/kernel && cargo clean >/dev/null 2>&1 || true
 	@cd src/user && cargo clean >/dev/null 2>&1 || true
 	@rm -f build/user/*.bin
 	@echo $(ARCH) > $(ARCH_STAMP)
@@ -196,30 +196,30 @@ build/user/init.bin: $(USER_INIT_ELF)
 
 $(RUST_LIB): build/user/init.bin
 	@echo "Building Rust kernel module..."
-	@cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG)
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --target-dir ../rust/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
-$(RUST_LIB): $(STAGE1_BIN) build/user/init.bin $(shell find src/rust/src -name '*.rs' 2>/dev/null)
+$(RUST_LIB): $(STAGE1_BIN) build/user/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
-	@cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG)
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --target-dir ../rust/target
 endif
 
 # RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):
 # 否则 .a 已存在时 make 跳过 cargo 重建, kernel_test.bin 长期使用陈旧二进制 (E-06 验证踩坑, 2026-09-07)
-$(RUST_LIB_TEST): $(shell find src/rust/src src/kernel -name '*.rs' 2>/dev/null)
+$(RUST_LIB_TEST): $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust test kernel..."
-	cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir target/test-release
+	cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-release
 
 $(RUST_LIB_CHAOS):
 	@echo "Building Rust chaos kernel (fault_injection enabled)..."
-	cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir target/chaos-release
+	cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir ../rust/target/chaos-release
 
 # 2026-06-29 新增: 调试构建 (LTO=false + debug info + opt-level=0), 用于排查 OnceLock 静态初始化 hang
 $(RUST_LIB_TEST_DEBUG):
 	@echo "Building Rust test kernel (debug profile)..."
-	cd src/rust && cargo build --profile test-debug --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir target/test-debug
+	cd src/kernel && cargo build --profile test-debug --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-debug
 
 build/%.o: src/kernel/framework/%.asm
 	@mkdir -p $(dir $@)
@@ -282,7 +282,7 @@ iso: all user
 
 clean:
 	rm -rf build/ isodir/
-	cd src/rust && cargo clean
+	cd src/kernel && cargo clean
 	cd $(RUST_USER_DIR) && cargo clean
 
 # QEMU CPU 模型配置 (用于硬件仿真测试)

@@ -9,7 +9,7 @@
 //!   6. Timer 初始化
 //!   7. 跳转 kernel_init()
 
-use crate::kernel::framework::arch::uart;
+use crate::framework::arch::uart;
 
 // ============================================================================
 // 启动入口
@@ -37,19 +37,19 @@ pub unsafe extern "C" fn entry() -> ! {
         // 1.1 写入 boot 栈 canary 到 stack_bottom (栈溢出检测)
         // 与 x86_64 boot.asm trampoline64_high 对齐
         // 必须在 clear_bss 之后, 否则 canary 会被清零覆盖
-        crate::kernel::framework::proc::write_boot_stack_canary();
+        crate::framework::proc::write_boot_stack_canary();
 
         // 2. 初始化 MMU (identity mapping + TTBR1)
         //    必须在 UART 之前, 因为 UART 使用 TTBR1 高半区地址 (0xFFFF_0000_0900_0000),
         //    在 MMU 启用前该地址为无效物理地址, 会导致立即崩溃.
-        crate::kernel::framework::arch::mmu::init();
+        crate::framework::arch::mmu::init();
 
         // 3. 初始化 UART (使用 TTBR1 高半区地址, 依赖 MMU)
         uart::init();
         uart::puts("[BOOT] QueenX starting...");
 
         // 3.1 验证 canary (UART 已可用, 异常向量表尚未设置, 崩了就是真崩)
-        let canary_ok = crate::kernel::framework::proc::check_boot_stack_canary();
+        let canary_ok = crate::framework::proc::check_boot_stack_canary();
         if !canary_ok {
             uart::puts("[BOOT] FATAL: canary lost between write and kernel_init!");
             loop {}
@@ -57,16 +57,16 @@ pub unsafe extern "C" fn entry() -> ! {
 
         // 4. 初始化异常向量表
         uart::puts("[BOOT] Setting up exception vectors...");
-        crate::kernel::framework::arch::exception::init();
+        crate::framework::arch::exception::init();
 
         // 5. 初始化 GICv3 (使用 TTBR1 高半区地址, 依赖 MMU)
         uart::puts("[BOOT] Initializing GICv3...");
-        crate::kernel::framework::arch::gic::init();
+        crate::framework::arch::gic::init();
 
         // 6. 初始化定时器 (仅配置, 不启用 — 稍后在 kernel_init 中启用)
         uart::puts("[BOOT] Initializing timer...");
-        let (_freq, interval) = crate::kernel::framework::arch::timer::init_deferred();
-        crate::kernel::framework::arch::exception::TIMER_INTERVAL_TICKS
+        let (_freq, interval) = crate::framework::arch::timer::init_deferred();
+        crate::framework::arch::exception::TIMER_INTERVAL_TICKS
             .store(interval, core::sync::atomic::Ordering::Relaxed);
 
         // 7. 跳转统一内核入口

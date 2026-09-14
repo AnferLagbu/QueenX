@@ -132,9 +132,9 @@ pub mod userctx;
 #[macro_export]
 macro_rules! slog {
     ($lvl:ident, $cat:ident, $($arg:tt)*) => {
-        $crate::kernel::framework::klog::log(
-            $crate::kernel::framework::klog::LogLevel::$lvl,
-            $crate::kernel::framework::klog::LogCategory::$cat,
+        $crate::framework::klog::log(
+            $crate::framework::klog::LogLevel::$lvl,
+            $crate::framework::klog::LogCategory::$cat,
             format_args!($($arg)*),
         )
     };

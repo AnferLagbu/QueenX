@@ -32,7 +32,7 @@
 // ## 与 Framekernel 安全契约
 //
 // 快照不含敏感凭证 (无密码无 key), 仅网络配置 + FD 索引.
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 
 /// 快照魔数 (`"ANXS"` 0x584E414C  小端)
 pub const NET_SNAPSHOT_MAGIC: u32 = 0x584E_4153;

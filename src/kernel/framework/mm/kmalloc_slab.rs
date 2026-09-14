@@ -23,8 +23,8 @@ const CACHE_SIZES: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 2048];
 
 /// Slab 缓存数组 - 用 Option 安全处理初始化失败
 /// None 表示缓存创建失败, 不应使用
-static SLAB_CACHES: crate::kernel::framework::sync::IrqSpinLock<[Option<KmemCache>; 8]> =
-    crate::kernel::framework::sync::IrqSpinLock::new([
+static SLAB_CACHES: crate::framework::sync::IrqSpinLock<[Option<KmemCache>; 8]> =
+    crate::framework::sync::IrqSpinLock::new([
         None, None, None, None, None, None, None, None,
     ]);
 static SLAB_READY: AtomicBool = AtomicBool::new(false);

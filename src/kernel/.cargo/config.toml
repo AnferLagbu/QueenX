@@ -1,0 +1,12 @@
+# 方案 D: kernel 独立 crate 统一 target-dir 到 src/rust/target (与 queenx/CI/审计
+# 共用同一 target 缓存). 避免 src/kernel/target 独立产物被 forbidden-patterns 等
+# 审计脚本误扫描 (target/ 下的依赖 probe.rs 含裸 asm). 构建时仍可用 --target-dir 覆盖.
+[build]
+target-dir = "../rust/target"
+
+# G-01/G-05 (2026-09-06 用户决策委托修复): 固化 curve25519-dalek 后端为 serial.
+# 与 src/rust/.cargo/config.toml 同源 (kernel 独立后须各自声明): LLVM 22 对
+# curve25519-dalek 5.0.0 SIMD/AVX2 后端 rustc SIGILL (信号 4); serial 后端全量
+# 构建+链接通过. 官方支持 env 选择后端.
+[env]
+CARGO_CFG_CURVE25519_DALEK_BACKEND = "serial"

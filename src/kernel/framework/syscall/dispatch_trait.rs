@@ -47,15 +47,15 @@ pub struct FallbackSyscallDispatch;
 impl SyscallDispatch for FallbackSyscallDispatch {
     fn dispatch(&self, _num: u64, _args: [u64; 6]) -> i64 {
         // ENOSYS = 38, 返回 -38 (ENOSYS_RET 哨兵, DECISION-J 后定义于 framework types)
-        crate::kernel::framework::syscall::types::ENOSYS_RET
+        crate::framework::syscall::types::ENOSYS_RET
     }
 }
 
 static FALLBACK_DISPATCH: FallbackSyscallDispatch = FallbackSyscallDispatch;
 
 /// 全局策略注册表 — services 通过 `register_syscall_dispatch` 注册
-static SYSCALL_DISPATCH: crate::kernel::framework::sync::OnceLock<&'static dyn SyscallDispatch> =
-    crate::kernel::framework::sync::OnceLock::new();
+static SYSCALL_DISPATCH: crate::framework::sync::OnceLock<&'static dyn SyscallDispatch> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册系统调用分发策略 (由 `services::syscall::init` 调用)
 ///

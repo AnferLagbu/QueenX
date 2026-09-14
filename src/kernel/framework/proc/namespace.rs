@@ -10,7 +10,7 @@
 //! framework syscall/clone.rs `clone_from` 消费 + proc 顶层导出
 //! (sys_setns/sys_unshare) — 属机制项, 迁回。依赖闭包仅 framework。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::namespace::*`
+//! services 侧改 `pub use crate::framework::proc::namespace::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //! sys_unshare/sys_setns 使用 framework 的安全 API (PROCESS_TABLE, process_get_current_pid).
 //!
@@ -39,9 +39,9 @@ use core::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量
@@ -782,9 +782,9 @@ pub fn ns_register(ns_set: &NamespaceSet) {
 
 /// `sys_unshare` — 取消共享指定 namespace
 pub fn sys_unshare(flags: u64) -> i64 {
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
 
-    let result = crate::kernel::framework::proc::PROCESS_TABLE
+    let result = crate::framework::proc::PROCESS_TABLE
         .with_process_mut(pid, |p| p.namespaces.lock().unshare(flags));
 
     match result {
@@ -814,14 +814,14 @@ pub fn sys_setns(ns_type: u64, target_ns_id: u64) -> i64 {
     };
 
     // B06-20: setns 切换 namespace 需 CAP_SYS_ADMIN (SYSTEM 域 0x01), 与 mount/umount2 先例一致
-    let pwm = crate::kernel::framework::credo::pwm_get_current();
-    if !crate::kernel::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::credo::pwm_get_current();
+    if !crate::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
         return -(Errno::EPERM as i64);
     }
 
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
 
-    let result = crate::kernel::framework::proc::PROCESS_TABLE.with_process_mut(pid, |p| {
+    let result = crate::framework::proc::PROCESS_TABLE.with_process_mut(pid, |p| {
         p.namespaces.lock().setns_by_type(ns_t, target_ns_id)
     });
 

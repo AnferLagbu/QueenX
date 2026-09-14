@@ -51,7 +51,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::pci;
+use crate::framework::pci;
 
 // ============================================================================
 // Capability ID 常量
@@ -373,7 +373,7 @@ pub fn msix_enable(dev: &pci::PciDevice, num_vectors: u16) -> Option<MsixConfig>
                     // MSIX-03 修复: MSI-X addr 应含 destination 字段 (bits 19:12 = LAPIC ID).
                     // 此前硬编码 0xFEE00000 (dest=0) 在多 LAPIC 系统上不投递 (QEMU 默认
                     // LAPIC ID=0x01000000 拆 bits 19:12 = 0x10, dest=0 无法匹配任何 CPU).
-                    let lapic_id = crate::kernel::framework::arch::apic::get_id() as u32;
+                    let lapic_id = crate::framework::arch::apic::get_id() as u32;
                     entry.msg_addr_lo = 0xFEE00000 | ((lapic_id & 0xFF) << 12);
                     entry.msg_addr_hi = 0;
                 }
@@ -493,8 +493,8 @@ pub fn msix_unmask_vector(dev: &pci::PciDevice, config: &MsixConfig, index: u16)
 // ============================================================================
 
 #[cfg(feature = "kernel_test")]
-fn test_msi_vector_alloc_free() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, check};
+fn test_msi_vector_alloc_free() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, check};
 
     // 重置位图
     MSI_VECTORS.store(0, Ordering::SeqCst);
@@ -519,8 +519,8 @@ fn test_msi_vector_alloc_free() -> crate::kernel::framework::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn test_msi_ctrl_bits() -> crate::kernel::framework::tests::TestResult {
-    use crate::kernel::framework::tests::{TestResult, assert_eq_test};
+fn test_msi_ctrl_bits() -> crate::framework::tests::TestResult {
+    use crate::framework::tests::{TestResult, assert_eq_test};
 
     assert_eq_test!(MSI_CTRL_ENABLE, 0x0001, "MSI enable bit");
     assert_eq_test!(MSI_CTRL_64BIT, 0x0080, "MSI 64-bit bit");
@@ -532,7 +532,7 @@ fn test_msi_ctrl_bits() -> crate::kernel::framework::tests::TestResult {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_msi_tests() {
-    use crate::kernel::framework::tests::runner;
+    use crate::framework::tests::runner;
     let r = runner();
     r.register("msi", "vector_alloc_free", test_msi_vector_alloc_free);
     r.register("msi", "ctrl_bits", test_msi_ctrl_bits);

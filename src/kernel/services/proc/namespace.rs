@@ -8,4 +8,4 @@
 //! `framework/proc/namespace.rs` — NamespaceSet 是 Process 机制字段, 被
 //! framework clone 消费。glob re-export 保持 services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::namespace::*;
+pub use crate::framework::proc::namespace::*;

@@ -25,12 +25,12 @@ pub mod pl011;
 /// 负责 (crate root lib.rs 编排调用)。
 #[cfg(target_arch = "aarch64")]
 pub fn char_init() {
-    use crate::kernel::framework::chitin::ChitinOps;
+    use crate::framework::chitin::ChitinOps;
 
-    crate::kernel::framework::chitin::chitin_register_driver_with_ops(
+    crate::framework::chitin::chitin_register_driver_with_ops(
         "pl011",
-        crate::kernel::framework::chitin::ChitinProto::Char,
-        Some(crate::kernel::framework::arch::uart::base()),
+        crate::framework::chitin::ChitinProto::Char,
+        Some(crate::framework::arch::uart::base()),
         None,
         alloc::boxed::Box::new(pl011::Pl011Driver::new()),
         ChitinOps::Char(&pl011::PL011_CHAR_OPS),

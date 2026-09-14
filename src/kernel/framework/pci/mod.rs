@@ -34,7 +34,7 @@
 //! 这是有意为之: e1000 需要特殊的 MMIO 页表设置, 与其 probe 紧耦合.
 //! 详见 `src/net/driver/e1000.c` → `e1000_probe()`.
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::fmt;
 #[cfg(target_arch = "aarch64")]

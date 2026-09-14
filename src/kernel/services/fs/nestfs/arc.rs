@@ -1,4 +1,4 @@
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -290,7 +290,7 @@ impl NestArc {
     /// 调用者仍需在访问后调用 release(key) 释放引用计数
     pub fn lookup_slice(&self, key: &NestArcKey, len: usize) -> Option<&[u8]> {
         let ptr = self.lookup(key)?;
-        crate::kernel::framework::fs::nestfs::arc_safe::ptr_to_slice(ptr, len)
+        crate::framework::fs::nestfs::arc_safe::ptr_to_slice(ptr, len)
     }
 
     pub fn insert(&self, key: NestArcKey, data: &[u8], buf_type: NestArcBufType) -> Option<*const u8> {

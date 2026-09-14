@@ -7,7 +7,7 @@
 //! `ConfigError` 为 `ConfigValidateHook` trait 的返回类型 (DECISION-K 项 2),
 //! 被 framework config 机制 (启动校验编排) 直接消费 — 属机制类型, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::config::ConfigError`
+//! services 侧改 `pub use crate::framework::config::ConfigError`
 //! (config 子模块私有, 经顶层显式转发) 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型 + Display).
 

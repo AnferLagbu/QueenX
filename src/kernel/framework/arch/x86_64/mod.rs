@@ -34,7 +34,7 @@ pub struct X8664;
 // 每个 trait 互不依赖，可独立单元测试。
 // ============================================================================
 
-use crate::kernel::framework::arch::{Arch, CoreArch, InterruptArch, MmuArch, SystemArch};
+use crate::framework::arch::{Arch, CoreArch, InterruptArch, MmuArch, SystemArch};
 
 // ── CoreArch: 基础核心 ──────────────────────────────────────────────────
 
@@ -57,12 +57,12 @@ impl CoreArch for X8664 {
         }
         #[cfg(not(feature = "host-test"))]
         {
-            use crate::kernel::framework::arch::x86_64::apic;
+            use crate::framework::arch::x86_64::apic;
             let id = apic::get_id();
             if id != 0 {
                 return id;
             }
-            let (_, ebx, _, _) = crate::kernel::framework::cpu::cpuid::cpuid(1, 0);
+            let (_, ebx, _, _) = crate::framework::cpu::cpuid::cpuid(1, 0);
             ebx >> 24
         }
     }
@@ -301,19 +301,19 @@ impl InterruptArch for X8664 {
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     #[expect(clippy::cast_possible_truncation)]
     fn send_ipi(target_cpu: u32, vector: u8) {
-        use crate::kernel::framework::arch::x86_64::apic;
+        use crate::framework::arch::x86_64::apic;
         apic::send_ipi(target_cpu as u8, vector);
     }
 
     /// 广播 IPI 到所有 CPU (不含自身)。
     #[inline(always)]
     fn broadcast_ipi(vector: u8) {
-        use crate::kernel::framework::arch::x86_64::apic;
+        use crate::framework::arch::x86_64::apic;
         apic::broadcast_ipi(vector);
     }
 
     fn interrupt_early_init() {
-        crate::kernel::framework::idt::idt_init();
+        crate::framework::idt::idt_init();
     }
 
     #[expect(
@@ -323,9 +323,9 @@ impl InterruptArch for X8664 {
     fn interrupt_late_init() {
         // cpu_init 必须在 gdt_init 之前调用:
         // kpti_init 依赖 has_invpcid() → get_cpu_info() → cpu_init
-        crate::kernel::framework::cpu::cpu_init();
+        crate::framework::cpu::cpu_init();
 
-        crate::kernel::framework::arch::x86_64::gdt::gdt_init();
+        crate::framework::arch::x86_64::gdt::gdt_init();
 
         // 配置 SYSCALL/SYSRET 指令
         // 设置 EFER.SCE, STAR, LSTAR (高半部分地址), SFMASK
@@ -339,12 +339,12 @@ impl InterruptArch for X8664 {
 
             // SAFETY: MSR 写入在 boot 阶段单线程执行
             unsafe {
-                let efer = crate::kernel::framework::cpu::msr::read_msr(IA32_EFER);
-                crate::kernel::framework::cpu::msr::write_msr(IA32_EFER, efer | EFER_SCE);
+                let efer = crate::framework::cpu::msr::read_msr(IA32_EFER);
+                crate::framework::cpu::msr::write_msr(IA32_EFER, efer | EFER_SCE);
 
                 // STAR: [63:48] = SYSRET CS base (0x10), [47:32] = SYSCALL CS base (0x08)
                 let star = (0x10u64 << 48) | (0x08u64 << 32);
-                crate::kernel::framework::cpu::msr::write_msr(IA32_STAR, star);
+                crate::framework::cpu::msr::write_msr(IA32_STAR, star);
 
                 // LSTAR: syscall 入口点 (高半部分地址, KPTI 用户页表只映射高半区)
                 // 注意: 函数指针返回的是 LMA (低地址), 需要转换为 VMA (高地址)
@@ -372,17 +372,17 @@ impl InterruptArch for X8664 {
                     entry_lma,
                     entry_hi
                 );
-                crate::kernel::framework::cpu::msr::write_msr(IA32_LSTAR, entry_hi);
+                crate::framework::cpu::msr::write_msr(IA32_LSTAR, entry_hi);
 
                 // SFMASK: 进入内核时清除 IF
-                crate::kernel::framework::cpu::msr::write_msr(IA32_SFMASK, 1 << 9);
+                crate::framework::cpu::msr::write_msr(IA32_SFMASK, 1 << 9);
             }
         }
 
-        crate::kernel::framework::idt::idt_init();
-        crate::kernel::framework::arch::x86_64::apic::apic_init();
-        crate::kernel::framework::smp::init();
-        crate::kernel::framework::arch::x86_64::smp_init::init();
+        crate::framework::idt::idt_init();
+        crate::framework::arch::x86_64::apic::apic_init();
+        crate::framework::smp::init();
+        crate::framework::arch::x86_64::smp_init::init();
     }
 }
 

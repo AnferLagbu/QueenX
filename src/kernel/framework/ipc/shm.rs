@@ -8,10 +8,10 @@
 //! - 用户空间指针通过 `UserRefMut` 安全访问.
 
 use super::types::IpcId;
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::ipc::strategy::current_ipc_strategy;
-use crate::kernel::framework::proc::process_get_current_pid;
-use crate::kernel::framework::userptr::UserRefMut;
+use crate::framework::errno::Errno;
+use crate::framework::ipc::strategy::current_ipc_strategy;
+use crate::framework::proc::process_get_current_pid;
+use crate::framework::userptr::UserRefMut;
 
 // ============================================================================
 // FFI 导出函数

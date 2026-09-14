@@ -96,7 +96,7 @@ impl IrqLine {
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     pub fn enable(&self) {
-        crate::kernel::framework::arch::ioapic::unmask_irq(self.irq as u8);
+        crate::framework::arch::ioapic::unmask_irq(self.irq as u8);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -109,7 +109,7 @@ impl IrqLine {
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
     pub fn disable(&self) {
-        crate::kernel::framework::arch::ioapic::mask_irq(self.irq as u8);
+        crate::framework::arch::ioapic::mask_irq(self.irq as u8);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -135,9 +135,9 @@ const MAX_ISR_VECTORS: usize = 256;
 
 /// 全局 ISR 函数指针表, 由 idt handlers 分发调用。
 /// 使用 `IrqSpinLock` 保护, 中断安全 (`dispatch_irq` 在中断上下文调用).
-static ISR_TABLE: crate::kernel::framework::sync::IrqSpinLock<
+static ISR_TABLE: crate::framework::sync::IrqSpinLock<
     [Option<InterruptHandler>; MAX_ISR_VECTORS],
-> = crate::kernel::framework::sync::IrqSpinLock::new([None; MAX_ISR_VECTORS]);
+> = crate::framework::sync::IrqSpinLock::new([None; MAX_ISR_VECTORS]);
 
 /// 注册中断向量对应的 ISR 处理器。
 ///

@@ -36,7 +36,7 @@ pub const INIT_STATUS_RUNNING: u32 = 3;
 /// 查询 init 启动状态
 #[inline]
 pub fn init_launch_status() -> u32 {
-    crate::kernel::framework::proc::init_launch_status()
+    crate::framework::proc::init_launch_status()
 }
 
 /// init 是否已运行 (>= 3 表示已进入 Ring 3)

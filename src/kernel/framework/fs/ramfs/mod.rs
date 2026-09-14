@@ -22,18 +22,18 @@ pub mod ramfs_node;
 pub use ramfs_data::*;
 pub use ramfs_node::*;
 
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::framework::fs::{
+use crate::framework::fs::KernelError;
+use crate::framework::fs::{
     FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence,
     VfsStat,
 };
-use crate::kernel::framework::fs::vfs::backend_trait::current_fs_backend;
-use crate::kernel::framework::fs::vfs::inode::Inode;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::fs::vfs::backend_trait::current_fs_backend;
+use crate::framework::fs::vfs::inode::Inode;
+use crate::framework::sync::IrqSpinLock as Mutex;
 
 pub(crate) const RAMFS_MAX_NODES: usize = 256;
 pub(crate) const RAMFS_MAX_BLOCKS: usize = 2048;
-pub(crate) const RAMFS_BLOCK_SIZE: usize = crate::kernel::framework::mm::PAGE_SIZE as usize;
+pub(crate) const RAMFS_BLOCK_SIZE: usize = crate::framework::mm::PAGE_SIZE as usize;
 pub(crate) const RAMFS_MAX_ACES: usize = 128;
 pub(crate) const INDIRECT_BLOCKS_PER_BLOCK: usize = RAMFS_BLOCK_SIZE / 4;
 pub(crate) const SENSITIVITY_PUBLIC: u8 = 0;
@@ -131,7 +131,7 @@ impl FileSystem for RamFsData {
         match ramfs.resolve_path(rel_path) {
             Some(node_id) => {
                 drop(ramfs); // 释放锁, 尝试 icache
-                if let Some(cached) = crate::kernel::framework::fs::vfs::dcache::icache_lookup(node_id) {
+                if let Some(cached) = crate::framework::fs::vfs::dcache::icache_lookup(node_id) {
                     return Ok(VfsStat {
                         node_id: cached.ino,
                         file_type: cached.file_type,
@@ -148,7 +148,7 @@ impl FileSystem for RamFsData {
                 ramfs
                     .stat(node_id)
                     .inspect(|st| {
-                        crate::kernel::framework::fs::vfs::dcache::icache_insert(
+                        crate::framework::fs::vfs::dcache::icache_insert(
                             node_id,
                             st.file_type,
                             st.perm,

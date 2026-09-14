@@ -1,14 +1,14 @@
-use crate::kernel::framework::cpu::{CacheInfo, CpuSignature, CpuVendor, TopologyInfo};
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::cpu::{CacheInfo, CpuSignature, CpuVendor, TopologyInfo};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::arch::x86_64::gdt::{
+use crate::framework::arch::x86_64::gdt::{
     AccessByte, GdtEntry, Granularity, SELECTOR_KERNEL_CODE, SELECTOR_KERNEL_DATA, SELECTOR_NULL,
     SELECTOR_TSS, SELECTOR_USER_CODE, SELECTOR_USER_DATA,
 };
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::arch::x86_64::tss::{DEFAULT_IOMAP_BASE, TSS_SIZE, TaskStateSegment};
+use crate::framework::arch::x86_64::tss::{DEFAULT_IOMAP_BASE, TSS_SIZE, TaskStateSegment};
 
 #[cfg(target_arch = "x86_64")]
 fn gdt_entry_null() -> TestResult {

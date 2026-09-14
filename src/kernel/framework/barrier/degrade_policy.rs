@@ -87,9 +87,9 @@ static FALLBACK_BARRIER_DEGRADE_POLICY: FallbackBarrierDegradePolicy =
     FallbackBarrierDegradePolicy;
 
 /// 全局策略注册表 — services 通过 `register_barrier_degrade_policy` 注册
-static BARRIER_DEGRADE_POLICY: crate::kernel::framework::sync::OnceLock<
+static BARRIER_DEGRADE_POLICY: crate::framework::sync::OnceLock<
     &'static dyn BarrierDegradePolicy,
-> = crate::kernel::framework::sync::OnceLock::new();
+> = crate::framework::sync::OnceLock::new();
 
 /// 注册栏栈降级策略 (由 `services::barrier::init` 调用)
 ///

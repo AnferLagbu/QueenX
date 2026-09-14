@@ -11,12 +11,12 @@
 //! policy.rs), 与 `services::credo::types` (framework::credo::types re-export,
 //! test_pwm.rs 测) 是不同对象.
 
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
-use crate::kernel::services::credo::capability::{
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::services::credo::capability::{
     FS_CAP_CHOWN, FS_CAP_DELETE, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE, PROC_CAP_EXEC,
     PROC_CAP_FORK, PROC_CAP_KILL, SYS_CAP_ALL,
 };
-use crate::kernel::services::credo::policy::{
+use crate::services::credo::policy::{
     CapBits, CapDomain, CapMatrix, CapabilityMatrix, InMemoryMatrix, VIABLE_FLOOR,
 };
 use crate::register_tests_inner;

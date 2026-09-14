@@ -17,8 +17,8 @@
 //!
 //! 评估日期: 2026-06-04
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::credo_pwm;
+use crate::framework::credo;
+use crate::framework::credo_pwm;
 
 // ============================================================================
 // 强类型 re-export
@@ -57,7 +57,7 @@ pub enum PwmError {
     /// 密码过短 / 不合法
     WeakPassword,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl PwmError {
@@ -74,7 +74,7 @@ impl PwmError {
 
     /// 从内核 `i32` 错误码翻译
     pub fn from_i32(code: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match code {
             -2 => Self::TableFull,
             -3 => Self::Kernel(K::FileNotFound),
@@ -90,7 +90,7 @@ impl PwmError {
 
 pub type PwmResult<T> = Result<T, PwmError>;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 初始化与发现
@@ -495,15 +495,15 @@ mod tests {
         assert_eq!(PwmError::from_i32(-2), PwmError::TableFull);
         assert_eq!(
             PwmError::from_i32(-3),
-            PwmError::Kernel(crate::kernel::services::error::KernelError::FileNotFound)
+            PwmError::Kernel(crate::services::error::KernelError::FileNotFound)
         );
         assert_eq!(
             PwmError::from_i32(0),
-            PwmError::Kernel(crate::kernel::services::error::KernelError::Other(0))
+            PwmError::Kernel(crate::services::error::KernelError::Other(0))
         );
         assert_eq!(
             PwmError::from_i32(42),
-            PwmError::Kernel(crate::kernel::services::error::KernelError::Other(42))
+            PwmError::Kernel(crate::services::error::KernelError::Other(42))
         );
     }
 

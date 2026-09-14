@@ -23,7 +23,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // 常量
@@ -137,8 +137,8 @@ impl NtpPacket {
     }
 
     fn read_clock_ns() -> u64 {
-        crate::kernel::framework::timer::tick::ticks_to_ns(
-            crate::kernel::framework::timer::tick::get_ticks(),
+        crate::framework::timer::tick::ticks_to_ns(
+            crate::framework::timer::tick::get_ticks(),
         )
     }
 }
@@ -441,8 +441,8 @@ impl TimeSyncSubsystem {
     }
 
     fn read_clock_ns() -> u64 {
-        crate::kernel::framework::timer::tick::ticks_to_ns(
-            crate::kernel::framework::timer::tick::get_ticks(),
+        crate::framework::timer::tick::ticks_to_ns(
+            crate::framework::timer::tick::get_ticks(),
         )
     }
 }

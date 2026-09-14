@@ -9,4 +9,4 @@
 //! framework syscall dispatch 消费。glob re-export 保持 services 侧 API
 //! 兼容。
 
-pub use crate::kernel::framework::proc::session::*;
+pub use crate::framework::proc::session::*;

@@ -50,9 +50,9 @@ impl WasiErrno {
         reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
     )]
     /// 从 `QueenX` `KernelError` 映射到 WASI errno
-    pub fn from_kernel_error(err: crate::kernel::services::wasm::types::WasmError) -> Self {
+    pub fn from_kernel_error(err: crate::services::wasm::types::WasmError) -> Self {
         match err {
-            crate::kernel::services::wasm::types::WasmError::MemoryOutOfBounds => Self::Fault,
+            crate::services::wasm::types::WasmError::MemoryOutOfBounds => Self::Fault,
             _ => Self::Io,
         }
     }
@@ -68,7 +68,7 @@ pub fn wasi_errno(e: WasiErrno) -> i32 {
     e.as_i32()
 }
 
-impl From<WasiErrno> for crate::kernel::services::wasm::types::WasmError {
+impl From<WasiErrno> for crate::services::wasm::types::WasmError {
     fn from(e: WasiErrno) -> Self {
         match e {
             WasiErrno::Fault => Self::MemoryOutOfBounds,

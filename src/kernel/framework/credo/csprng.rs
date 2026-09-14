@@ -13,7 +13,7 @@ fn check_rdrand() -> bool {
     if RDRAND_CHECKED.load(Ordering::Relaxed) {
         return RDRAND_AVAILABLE.load(Ordering::Relaxed);
     }
-    let (_, _, ecx, _) = crate::kernel::framework::cpu::cpuid::cpuid(1, 0);
+    let (_, _, ecx, _) = crate::framework::cpu::cpuid::cpuid(1, 0);
     let available = ecx & (1 << 30) != 0;
     RDRAND_AVAILABLE.store(available, Ordering::Relaxed);
     RDRAND_CHECKED.store(true, Ordering::Relaxed);

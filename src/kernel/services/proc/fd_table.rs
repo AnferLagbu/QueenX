@@ -8,4 +8,4 @@
 //! framework"迁回 `framework/proc/fd_table.rs` — FdTable 是 Process
 //! 机制字段。glob re-export 保持 services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::fd_table::*;
+pub use crate::framework::proc::fd_table::*;

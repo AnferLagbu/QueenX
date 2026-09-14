@@ -1,10 +1,10 @@
 #![deny(unsafe_code)]
 
 use super::nestfs_data::{NestfsData, get_nestfs};
-use crate::kernel::framework::fs::{
+use crate::framework::fs::{
     KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat,
 };
-use crate::kernel::services::fs::inode::Inode;
+use crate::services::fs::inode::Inode;
 
 /// `NestFS` 文件 Inode — 直接持有 fd 编号
 pub struct NestfsInode {
@@ -125,26 +125,26 @@ impl Inode for NestfsInode {
 // E6-4: FileSystem trait 实现
 // ============================================================================
 
-impl crate::kernel::framework::fs::FileSystem for NestfsData {
+impl crate::framework::fs::FileSystem for NestfsData {
     fn name(&self) -> &'static str {
         "nestfs"
     }
 
-    fn fs_init(&self) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_init(&self) -> crate::framework::fs::KernelResult<()> {
         if !self.is_initialized() {
             self.init();
         }
         Ok(())
     }
 
-    fn fs_mount(&self, _path: &str) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_mount(&self, _path: &str) -> crate::framework::fs::KernelResult<()> {
         if !self.is_initialized() {
             self.init();
         }
         Ok(())
     }
 
-    fn fs_format(&self) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_format(&self) -> crate::framework::fs::KernelResult<()> {
         // DECISION-K 项 6: 封装原 framework fsformat 路径的字段级访问,
         // 磁盘选择策略 (已发现驱动器优先, 回退启动盘) 归 services.
         let (drive_id, part_start) = self.drives_discovered.lock().first().copied().unwrap_or((
@@ -157,7 +157,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         if self.is_disk_mode() {
             Ok(())
         } else {
-            Err(crate::kernel::framework::fs::KernelError::NotSupported)
+            Err(crate::framework::fs::KernelError::NotSupported)
         }
     }
 
@@ -166,8 +166,8 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         rel_path: &str,
         flags: u32,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<
-        alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>,
+    ) -> crate::framework::fs::KernelResult<
+        alloc::sync::Arc<dyn crate::services::fs::inode::Inode>,
     > {
         match self.open(rel_path, flags, pwm) {
             Ok(fd) => Ok(alloc::sync::Arc::new(NestfsInode::new(
@@ -177,7 +177,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         }
     }
 
-    fn fs_close(&self, handle: u32) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_close(&self, handle: u32) -> crate::framework::fs::KernelResult<()> {
         let result = self.close(handle);
         if result == 0 {
             Ok(())
@@ -192,7 +192,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         offset: u64,
         buf: &mut [u8],
         _pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<usize> {
+    ) -> crate::framework::fs::KernelResult<usize> {
         let _ = offset;
         let result = self.read(handle, buf, buf.len() as u32);
         if result < 0 {
@@ -208,7 +208,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         offset: u64,
         buf: &[u8],
         _pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<usize> {
+    ) -> crate::framework::fs::KernelResult<usize> {
         let _ = offset;
         let result = self.write(handle, buf, buf.len() as u32);
         if result < 0 {
@@ -222,10 +222,10 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         &self,
         rel_path: &str,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<crate::kernel::framework::fs::VfsStat> {
+    ) -> crate::framework::fs::KernelResult<crate::framework::fs::VfsStat> {
         self.stat(rel_path, pwm)
             .map_or(Err(KernelError::FileNotFound), |obj| {
-                Ok(crate::kernel::framework::fs::VfsStat {
+                Ok(crate::framework::fs::VfsStat {
                     node_id: obj.obj_id as u32,
                     mode: obj.pwm_perm,
                     size: obj.size as u32,
@@ -234,9 +234,9 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
                     perm: obj.pwm_perm,
                     sensitivity: obj.sensitivity,
                     file_type: if obj.is_dir() {
-                        crate::kernel::framework::fs::VfsFileType::Dir.as_u8()
+                        crate::framework::fs::VfsFileType::Dir.as_u8()
                     } else {
-                        crate::kernel::framework::fs::VfsFileType::File.as_u8()
+                        crate::framework::fs::VfsFileType::File.as_u8()
                     },
                     ..Default::default()
                 })
@@ -248,7 +248,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         rel_path: &str,
         mode: u16,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.chmod(rel_path, mode, pwm);
         if result == 0 {
             Ok(())
@@ -263,7 +263,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         owner_pwm: u64,
         group_pwm: u64,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.chown_ext(rel_path, owner_pwm, group_pwm, pwm);
         if result == 0 {
             Ok(())
@@ -272,7 +272,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         }
     }
 
-    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> crate::framework::fs::KernelResult<()> {
         let result = self.mkdir(rel_path, pwm);
         if result == 0 {
             Ok(())
@@ -285,7 +285,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         &self,
         rel_path: &str,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.unlink(rel_path, pwm);
         if result == 0 {
             Ok(())
@@ -294,7 +294,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         }
     }
 
-    fn fs_rmdir(&self, rel_path: &str, pwm: u64) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_rmdir(&self, rel_path: &str, pwm: u64) -> crate::framework::fs::KernelResult<()> {
         let result = self.unlink(rel_path, pwm);
         if result == 0 {
             Ok(())
@@ -308,7 +308,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         old_path: &str,
         new_path: &str,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.rename(old_path, new_path, pwm);
         if result == 0 {
             Ok(())
@@ -321,8 +321,8 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         &self,
         _handle: u32,
         _offset: u64,
-        _entry: &mut crate::kernel::framework::fs::VfsDirEntry,
-    ) -> crate::kernel::framework::fs::KernelResult<bool> {
+        _entry: &mut crate::framework::fs::VfsDirEntry,
+    ) -> crate::framework::fs::KernelResult<bool> {
         Err(KernelError::NotSupported)
     }
 
@@ -331,7 +331,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         target: &str,
         link_path: &str,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.symlink(target, link_path, pwm);
         if result == 0 {
             Ok(())
@@ -344,7 +344,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         &self,
         rel_path: &str,
         buf: &mut [u8],
-    ) -> crate::kernel::framework::fs::KernelResult<usize> {
+    ) -> crate::framework::fs::KernelResult<usize> {
         let result = self.readlink(rel_path, buf, 0);
         if result < 0 {
             Err(KernelError::Io)
@@ -358,7 +358,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         old_path: &str,
         new_path: &str,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.link(old_path, new_path, pwm);
         if result == 0 {
             Ok(())
@@ -371,9 +371,9 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         &self,
         handle: u32,
         offset: i64,
-        whence: crate::kernel::framework::fs::VfsSeekWhence,
+        whence: crate::framework::fs::VfsSeekWhence,
         _current: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<u64> {
+    ) -> crate::framework::fs::KernelResult<u64> {
         let result = self.seek(handle, offset, whence as u32);
         if result < 0 {
             Err(KernelError::InvalidArgument)
@@ -383,7 +383,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
     }
 
     // P3-I-18: trait fs_sync 包装 self.sync() (i32 → KernelResult<()>).
-    fn fs_sync(&self) -> crate::kernel::framework::fs::KernelResult<()> {
+    fn fs_sync(&self) -> crate::framework::fs::KernelResult<()> {
         let r = self.sync();
         if r == 0 { Ok(()) } else { Err(KernelError::Io) }
     }
@@ -392,7 +392,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         &self,
         inode_id: u32,
         mount_idx: u32,
-    ) -> Option<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    ) -> Option<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         Some(alloc::sync::Arc::new(NestfsInode::new(
             inode_id, mount_idx, "",
         )))
@@ -406,7 +406,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         name: &str,
         value: &[u8],
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.setxattr(rel_path, name, value, pwm);
         if result == 0 {
             Ok(())
@@ -421,7 +421,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         name: &str,
         buf: &mut [u8],
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<usize> {
+    ) -> crate::framework::fs::KernelResult<usize> {
         let result = self.getxattr(rel_path, name, buf, pwm);
         if result < 0 {
             Err(KernelError::FileNotFound)
@@ -435,7 +435,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         rel_path: &str,
         buf: &mut [u8],
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<usize> {
+    ) -> crate::framework::fs::KernelResult<usize> {
         let result = self.listxattr(rel_path, buf, pwm);
         if result < 0 {
             Err(KernelError::FileNotFound)
@@ -449,7 +449,7 @@ impl crate::kernel::framework::fs::FileSystem for NestfsData {
         rel_path: &str,
         name: &str,
         pwm: u64,
-    ) -> crate::kernel::framework::fs::KernelResult<()> {
+    ) -> crate::framework::fs::KernelResult<()> {
         let result = self.removexattr(rel_path, name, pwm);
         if result == 0 {
             Ok(())

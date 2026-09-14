@@ -10,15 +10,15 @@
 //! `BlockDevice` trait 定义在 chitin (设备框架) 中, 本模块 re-export.
 //! `hdd_*` 函数提供向后兼容的 Chitin 代理.
 
-use crate::kernel::framework::fs::{KernelError, KernelResult};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::fs::{KernelError, KernelResult};
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering, fence};
 
 // ── BlockDevice Trait (定义在 chitin, 此处 re-export) ──
 
-pub use crate::kernel::framework::chitin::BlockDevice;
+pub use crate::framework::chitin::BlockDevice;
 
 // ── SMP 安全基础设施 ──
 //
@@ -207,38 +207,38 @@ pub fn write_sectors(
 // 这确保 NestFS 的所有块设备访问都经过 Chitin。
 
 pub fn hdd_read_sector(drive: u8, sector: u64, buf: &mut [u8]) -> i32 {
-    crate::kernel::framework::chitin::chitin_blk_read(drive, sector, buf)
+    crate::framework::chitin::chitin_blk_read(drive, sector, buf)
 }
 
 pub fn hdd_write_sector(drive: u8, sector: u64, buf: &[u8]) -> i32 {
-    crate::kernel::framework::chitin::chitin_blk_write(drive, sector, buf)
+    crate::framework::chitin::chitin_blk_write(drive, sector, buf)
 }
 
 pub fn hdd_is_present(drive: u8) -> bool {
-    crate::kernel::framework::chitin::chitin_blk_is_present(drive)
+    crate::framework::chitin::chitin_blk_is_present(drive)
 }
 
 pub fn hdd_total_sectors(drive: u8) -> u64 {
-    crate::kernel::framework::chitin::chitin_blk_total_sectors(drive)
+    crate::framework::chitin::chitin_blk_total_sectors(drive)
 }
 
 pub fn block_device_name(drive: u8) -> Option<&'static str> {
-    crate::kernel::framework::chitin::chitin_blk_name(drive)
+    crate::framework::chitin::chitin_blk_name(drive)
 }
 
 pub fn block_device_info(drive: u8) -> (&'static str, bool, u64) {
-    crate::kernel::framework::chitin::chitin_blk_info(drive)
+    crate::framework::chitin::chitin_blk_info(drive)
 }
 
 pub fn block_device_count() -> usize {
-    crate::kernel::framework::chitin::chitin_blk_count()
+    crate::framework::chitin::chitin_blk_count()
 }
 
 pub fn block_device_list() -> Vec<(usize, &'static str, u64)> {
-    let devices = crate::kernel::framework::chitin::CHITIN_DEVICES.lock();
+    let devices = crate::framework::chitin::CHITIN_DEVICES.lock();
     devices
         .iter()
-        .filter(|d| d.proto == crate::kernel::framework::chitin::ChitinProto::Block)
+        .filter(|d| d.proto == crate::framework::chitin::ChitinProto::Block)
         .enumerate()
         .map(|(i, d)| {
             let sectors = d.block_dev.as_ref().map_or(0, |bd| bd.blk_total_sectors());

@@ -32,11 +32,11 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.3 任务: `NVMe` 存储控制器迁移
 
-use crate::kernel::framework::driver::BlockDevice;
-use crate::kernel::framework::driver::storage::nvme as fw_nvme;
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::PhysAddr;
-use crate::kernel::framework::pci::PciDevice;
+use crate::framework::driver::BlockDevice;
+use crate::framework::driver::storage::nvme as fw_nvme;
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::PhysAddr;
+use crate::framework::pci::PciDevice;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::NVME_CONTROLLERS;
@@ -785,7 +785,7 @@ impl NvmeController {
         let db_stride = self.admin_queue.db_stride();
 
         // 通过 framework safe wrapper 执行 unsafe 队列操作
-        let result = crate::kernel::framework::driver::storage::nvme_submit_admin_cmd(
+        let result = crate::framework::driver::storage::nvme_submit_admin_cmd(
             sq_virt,
             cq_virt,
             cmd,
@@ -833,7 +833,7 @@ impl NvmeController {
         let db_stride = self.io_queue.db_stride();
         let io_db_offset = self.io_db_offset();
 
-        crate::kernel::framework::driver::storage::nvme_submit_io_cmd(
+        crate::framework::driver::storage::nvme_submit_io_cmd(
             sq_virt,
             cq_virt,
             cmd,
@@ -883,7 +883,7 @@ impl NvmeController {
 
         // 分配 Admin 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供寄存器写入)
         let ((sq_virt, sq_phys), (cq_virt, cq_phys)) =
-            if let Some(v) = crate::kernel::framework::driver::storage::nvme_alloc_admin_queues() {
+            if let Some(v) = crate::framework::driver::storage::nvme_alloc_admin_queues() {
                 v
             } else {
                 slog_warn!(Driver, "Admin 队列 DMA 分配失败");
@@ -923,7 +923,7 @@ impl NvmeController {
     pub fn identify_controller(&mut self) -> bool {
         let buf_size = 4096; // Identify 数据为 4KB
         let (vaddr, paddr, actual_size) = if let Some(v) =
-            crate::kernel::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
+            crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
         {
             v
         } else {
@@ -932,7 +932,7 @@ impl NvmeController {
         };
 
         // 清零缓冲区
-        crate::kernel::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
 
         let cmd = fw_nvme::NvmeCommand::identify(0, IDENTIFY_CNS_CONTROLLER, paddr);
         let result = self.submit_admin_cmd(cmd);
@@ -942,7 +942,7 @@ impl NvmeController {
             // §6.4 storage 专项 0 号子步: 经 framework DMA 拷贝读取数据字节,
             // 解析 (纯函数) 在 services 层完成
             let mut data = [0u8; 520];
-            crate::kernel::framework::driver::storage::nvme_copy_from_dma(
+            crate::framework::driver::storage::nvme_copy_from_dma(
                 data.as_mut_ptr(),
                 vaddr,
                 520,
@@ -962,7 +962,7 @@ impl NvmeController {
             }
         }
 
-        crate::kernel::framework::driver::storage::nvme_free_dma_buffer(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_free_dma_buffer(vaddr, actual_size);
         success
     }
 
@@ -974,7 +974,7 @@ impl NvmeController {
     pub fn identify_namespace(&mut self, nsid: u32) -> bool {
         let buf_size = 4096;
         let (vaddr, paddr, actual_size) = if let Some(v) =
-            crate::kernel::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
+            crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
         {
             v
         } else {
@@ -982,7 +982,7 @@ impl NvmeController {
             return false;
         };
 
-        crate::kernel::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
 
         let cmd = fw_nvme::NvmeCommand::identify(nsid, IDENTIFY_CNS_NAMESPACE, paddr);
         let result = self.submit_admin_cmd(cmd);
@@ -992,7 +992,7 @@ impl NvmeController {
             // §6.4 storage 专项 0 号子步: 经 framework DMA 拷贝读取数据字节,
             // 解析 (纯函数) 在 services 层完成
             let mut data = [0u8; 192];
-            crate::kernel::framework::driver::storage::nvme_copy_from_dma(
+            crate::framework::driver::storage::nvme_copy_from_dma(
                 data.as_mut_ptr(),
                 vaddr,
                 192,
@@ -1020,7 +1020,7 @@ impl NvmeController {
             }
         }
 
-        crate::kernel::framework::driver::storage::nvme_free_dma_buffer(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_free_dma_buffer(vaddr, actual_size);
         success
     }
 
@@ -1036,7 +1036,7 @@ impl NvmeController {
     pub fn create_io_queue(&mut self) -> bool {
         // 分配 I/O 队列 DMA 内存 (virt 供 CPU 侧访问, phys 供 Create 命令)
         let ((sq_virt, sq_phys), (cq_virt, cq_phys)) =
-            if let Some(v) = crate::kernel::framework::driver::storage::nvme_alloc_io_queues() {
+            if let Some(v) = crate::framework::driver::storage::nvme_alloc_io_queues() {
                 v
             } else {
                 slog_warn!(Driver, "I/O 队列 DMA 分配失败");
@@ -1129,7 +1129,7 @@ impl NvmeController {
 
         // 分配 DMA 缓冲区
         let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::kernel::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
+            match crate::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
                 Some(v) => v,
                 None => return Err(()),
             };
@@ -1146,12 +1146,12 @@ impl NvmeController {
 
         if result.is_ok() {
             // 从 DMA 缓冲区复制到用户缓冲区
-            crate::kernel::framework::driver::storage::nvme_copy_from_dma(
+            crate::framework::driver::storage::nvme_copy_from_dma(
                 buffer, buf_vaddr, byte_count,
             );
         }
 
-        crate::kernel::framework::driver::storage::nvme_free_dma_buffer(buf_vaddr, buf_size);
+        crate::framework::driver::storage::nvme_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
@@ -1183,13 +1183,13 @@ impl NvmeController {
 
         // 分配 DMA 缓冲区
         let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::kernel::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
+            match crate::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
                 Some(v) => v,
                 None => return Err(()),
             };
 
         // 复制数据到 DMA 缓冲区
-        crate::kernel::framework::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer, byte_count);
+        crate::framework::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer, byte_count);
 
         let nlb = ((byte_count + (self.lba_format_size as usize) - 1)
             / (self.lba_format_size as usize)) as u16;
@@ -1200,7 +1200,7 @@ impl NvmeController {
 
         let result = self.submit_io_cmd(cmd);
 
-        crate::kernel::framework::driver::storage::nvme_free_dma_buffer(buf_vaddr, buf_size);
+        crate::framework::driver::storage::nvme_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
@@ -1234,7 +1234,7 @@ impl NvmeController {
     /// 不触碰控制器状态, 故为关联函数); `irq_vector` 由调用方在 ISR 注册
     /// 成功后经 [`Self::set_irq_vector`] 显式置位 (注册失败保持 None = 轮询回退)。
     pub fn enable_msix(dev: &PciDevice) -> Option<u8> {
-        use crate::kernel::framework::pci::msi;
+        use crate::framework::pci::msi;
         // 启用 MSI-X, 请求 1 个向量 (NVMe 单 I/O CQ 中断, Table entry 0)
         let config = msi::msix_enable(dev, 1)?;
         Some(config.base_vector)
@@ -1271,7 +1271,7 @@ impl NvmeController {
         let before = self.io_cq_isr_processed.load(Ordering::Acquire);
         let depth = self.io_queue.depth();
         let io_db_offset = self.io_db_offset();
-        crate::kernel::framework::driver::storage::nvme_submit_io_cmd_noblock(
+        crate::framework::driver::storage::nvme_submit_io_cmd_noblock(
             self.io_sq_virt,
             cmd,
             &mut self.io_queue.sq_tail,
@@ -1300,7 +1300,7 @@ impl NvmeController {
 
         // Admin CQ 排空 (doorbell = DB_BASE + 4: QID 0 completion 槽)
         let (admin_drained, _) =
-            crate::kernel::framework::driver::storage::nvme_drain_completions(
+            crate::framework::driver::storage::nvme_drain_completions(
                 self.admin_cq_virt,
                 &mut self.admin_queue.cq_head,
                 &mut self.admin_queue.admin_cq_phase,
@@ -1311,7 +1311,7 @@ impl NvmeController {
 
         // I/O CQ 排空 + 完成计数递增 (Release 配对提交者 Acquire 等待)
         let (io_drained, status) =
-            crate::kernel::framework::driver::storage::nvme_drain_completions(
+            crate::framework::driver::storage::nvme_drain_completions(
                 self.io_cq_virt,
                 &mut self.io_queue.cq_head,
                 &mut self.io_queue.io_cq_phase,

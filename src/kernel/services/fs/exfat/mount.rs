@@ -3,9 +3,9 @@
 //! exFAT `FileSystem` trait 实现
 
 use super::read::ExfatFs;
-use crate::kernel::framework::fs::KernelError;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::services::fs::vfs_types::{
+use crate::framework::fs::KernelError;
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::services::fs::vfs_types::{
     FileSystem, KernelResult, VfsDirEntry, VfsSeekWhence, VfsStat,
 };
 
@@ -16,7 +16,7 @@ static EXFAT_FS: Mutex<Option<ExfatFs>> = Mutex::new(None);
 // ExfatInode — exFAT 文件 Inode 实现
 // ============================================================================
 
-use crate::kernel::services::fs::inode::Inode;
+use crate::services::fs::inode::Inode;
 
 /// exFAT 文件 Inode — 直接持有 cluster 编号
 pub struct ExfatInode {
@@ -113,7 +113,7 @@ impl FileSystem for ExfatFileSystem {
         rel_path: &str,
         _flags: u32,
         _pwm: u64,
-    ) -> KernelResult<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    ) -> KernelResult<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         let fs_guard = EXFAT_FS.lock();
         let fs = fs_guard.as_ref().ok_or(KernelError::NotInitialized)?;
 
@@ -229,7 +229,7 @@ impl FileSystem for ExfatFileSystem {
         &self,
         inode_id: u32,
         mount_idx: u32,
-    ) -> Option<alloc::sync::Arc<dyn crate::kernel::services::fs::inode::Inode>> {
+    ) -> Option<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>> {
         Some(alloc::sync::Arc::new(ExfatInode::new(inode_id, mount_idx)))
     }
 }

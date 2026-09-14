@@ -96,5 +96,5 @@ mod tests {
 }
 #[cfg(feature = "kernel_test")]
 pub fn register_cpuid_tests() {
-    crate::kernel::framework::tests::arch::register_cpuid_tests();
+    crate::framework::tests::arch::register_cpuid_tests();
 }

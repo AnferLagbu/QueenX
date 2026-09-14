@@ -1,6 +1,6 @@
-use crate::kernel::services::fs::nestfs::bp::NestBlockPointer;
-use crate::kernel::services::fs::nestfs::dataset::NestDataset;
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::services::fs::nestfs::bp::NestBlockPointer;
+use crate::services::fs::nestfs::dataset::NestDataset;
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 

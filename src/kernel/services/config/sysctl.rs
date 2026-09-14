@@ -17,7 +17,7 @@
 //! IrqSpinLock 在 framework::sync 已就绪, const fn new 支持静态分配.
 //! 实施时遵循最小可用原则: 不实现 netlink/IPC, 仅做静态注册 + 简单读写.
 
-use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock;
+use crate::framework::sync::irq_spinlock::IrqSpinLock;
 use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 // ============================================================================

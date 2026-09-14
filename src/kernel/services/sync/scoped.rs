@@ -21,7 +21,7 @@
 
 use core::ops::{Deref, DerefMut};
 
-use crate::kernel::framework::sync::{
+use crate::framework::sync::{
     mutex::{Mutex, MutexGuard},
     rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard},
     spinlock::{SpinLock, SpinLockGuard},

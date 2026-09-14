@@ -17,12 +17,12 @@ use super::session::SESSION_MANAGER;
 use super::types::{BlockReason, Pid, ProcessId, ProcessState};
 use super::user_proc::USER_PROC_MANAGER;
 pub use super::user_proc::proc_alloc_pid;
-use crate::kernel::framework::lib::CStrExt;
-use crate::kernel::framework::mm::{
+use crate::framework::lib::CStrExt;
+use crate::framework::mm::{
     get_kernel_pml4, vmm_clone_user_page_table_cow, vmm_destroy_page_table, vmm_switch_page_table,
 };
-use crate::kernel::framework::racy_cell::RacyCell;
-use crate::kernel::framework::timer::timer_get_ticks;
+use crate::framework::racy_cell::RacyCell;
+use crate::framework::timer::timer_get_ticks;
 
 // === 特权层: 进程子系统裸指针/FFI 桥接集中地 ===
 //
@@ -132,7 +132,7 @@ pub mod raw {
     /// - `msg` 必须为以 `\0` 结尾的有效 C 字符串。
     pub fn klog_info(msg: &[u8]) {
         // SAFETY: msg 来自上层调用, 上层中只传入静态字节串字面量。
-        unsafe { crate::kernel::framework::klog::klog_ffi_info(msg.as_ptr()) }
+        unsafe { crate::framework::klog::klog_ffi_info(msg.as_ptr()) }
     }
 }
 
@@ -380,8 +380,8 @@ pub extern "C" fn process_exit(exit_code: u32) {
     let current_pid = SCHEDULER.current().unwrap_or(0);
     if current_pid != 0 {
         // 释放该进程持有的所有文件锁
-        crate::kernel::framework::fs::flock_release_pid(current_pid);
-        crate::kernel::framework::fs::posix_lock_release_pid(current_pid);
+        crate::framework::fs::flock_release_pid(current_pid);
+        crate::framework::fs::posix_lock_release_pid(current_pid);
 
         let kernel_cr3 = get_kernel_pml4();
         if kernel_cr3 != 0 {
@@ -641,7 +641,7 @@ pub extern "C" fn proc_exec_replace(path: *const u8, argv: *const *const u8, arg
     }
 
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)
-    crate::kernel::framework::proc::reset_signal_state_on_exec(current_pid);
+    crate::framework::proc::reset_signal_state_on_exec(current_pid);
 
     // 6. 同步当前进程信息
     C_CURRENT_PROCESS.map_mut(|p| {
@@ -732,7 +732,7 @@ pub extern "C" fn proc_sleep_ms(ms: u64) {
 /// InterruptFrame 恢复, 首次被调度的子进程 (fork/clone) 由 process_switch_asm
 /// iretq 前从 extra_regs 恢复 (继承 fork 时父进程的 rdi 等). rax 由 fork/clone
 /// 在子 context 上改写为 0.
-pub fn proc_save_user_regs(pid: Pid, f: &crate::kernel::framework::idt::InterruptFrame) {
+pub fn proc_save_user_regs(pid: Pid, f: &crate::framework::idt::InterruptFrame) {
     if pid == 0 {
         return;
     }
@@ -799,7 +799,7 @@ pub extern "C" fn sys_fork() -> Pid {
 
     // COW 页表克隆: 父子共享物理页, 写入时触发 page fault 复制
     // KPTI 修复: page fault handler 现在使用 get_user_pml4() 获取正确的用户页表
-    let child_cr3 = crate::kernel::framework::mm::cow::clone_user_page_table_cow(parent_cr3)
+    let child_cr3 = crate::framework::mm::cow::clone_user_page_table_cow(parent_cr3)
         .unwrap_or(parent_cr3);
     child.cr3.store(child_cr3, Ordering::SeqCst);
     child.pwm.store(0, Ordering::SeqCst);
@@ -867,7 +867,7 @@ pub extern "C" fn sys_fork() -> Pid {
                 parent_kstack - kstack_size as u64,
                 kstack_size,
             );
-            crate::kernel::framework::proc::kernel_stack_write_canary(
+            crate::framework::proc::kernel_stack_write_canary(
                 child.kernel_stack.load(Ordering::SeqCst),
             );
         }
@@ -994,11 +994,11 @@ pub extern "C" fn proc_get_create_time(pid: u32) -> u64 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_alarm(pid: u32, seconds: u32) -> u32 {
-    let hz = u64::from(crate::kernel::framework::timer::get_frequency());
+    let hz = u64::from(crate::framework::timer::get_frequency());
     if hz == 0 {
         return 0;
     }
-    let now = crate::kernel::framework::timer::get_ticks();
+    let now = crate::framework::timer::get_ticks();
     let prev_remaining = PROCESS_TABLE
         .with_process(pid as Pid, |p| {
             let deadline = p.alarm_deadline.load(Ordering::SeqCst);
@@ -1025,7 +1025,7 @@ pub extern "C" fn proc_alarm(pid: u32, seconds: u32) -> u32 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_check_alarm(pid: u32) -> i32 {
-    let now = crate::kernel::framework::timer::get_ticks();
+    let now = crate::framework::timer::get_ticks();
     let triggered = PROCESS_TABLE
         .with_process(pid as Pid, |p| {
             let d = p.alarm_deadline.load(Ordering::SeqCst);
@@ -1039,7 +1039,7 @@ pub extern "C" fn proc_check_alarm(pid: u32) -> i32 {
         .unwrap_or(false);
     if triggered {
         // 14 = SIGALRM
-        let _ = crate::kernel::framework::proc::do_signal_send(pid as Pid, 14);
+        let _ = crate::framework::proc::do_signal_send(pid as Pid, 14);
         1
     } else {
         0
@@ -1056,11 +1056,11 @@ pub extern "C" fn proc_setitimer_real(
     out_old_seconds: *mut u64,
     out_old_remaining: *mut u64,
 ) -> i32 {
-    let hz = u64::from(crate::kernel::framework::timer::get_frequency());
+    let hz = u64::from(crate::framework::timer::get_frequency());
     if hz == 0 {
         return -1;
     }
-    let now = crate::kernel::framework::timer::get_ticks();
+    let now = crate::framework::timer::get_ticks();
     let result: i32 = 0;
     PROCESS_TABLE.with_process(pid as Pid, |p| {
         if !out_old_seconds.is_null() {
@@ -1100,8 +1100,8 @@ pub extern "C" fn proc_getitimer_real(pid: u32, out_remaining_seconds: *mut u64)
     if out_remaining_seconds.is_null() {
         return -1;
     }
-    let hz = u64::from(crate::kernel::framework::timer::get_frequency());
-    let now = crate::kernel::framework::timer::get_ticks();
+    let hz = u64::from(crate::framework::timer::get_frequency());
+    let now = crate::framework::timer::get_ticks();
     let res = PROCESS_TABLE.with_process(pid as Pid, |p| {
         let d = p.itimer_real_deadline.load(Ordering::SeqCst);
         if d == 0 || hz == 0 || now >= d {
@@ -1121,7 +1121,7 @@ pub extern "C" fn proc_getitimer_real(pid: u32, out_remaining_seconds: *mut u64)
 /// 调度器 tick 时检查 `itimer_real` 是否到期.
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_check_itimer_real(pid: u32) -> i32 {
-    let now = crate::kernel::framework::timer::get_ticks();
+    let now = crate::framework::timer::get_ticks();
     let mut triggered = false;
     PROCESS_TABLE.with_process(pid as Pid, |p| {
         let d = p.itimer_real_deadline.load(Ordering::SeqCst);
@@ -1140,7 +1140,7 @@ pub extern "C" fn proc_check_itimer_real(pid: u32) -> i32 {
         }
     });
     if triggered {
-        let _ = crate::kernel::framework::proc::do_signal_send(pid as Pid, 14);
+        let _ = crate::framework::proc::do_signal_send(pid as Pid, 14);
         1
     } else {
         0
@@ -1165,7 +1165,7 @@ pub extern "C" fn proc_get_rusage(pid: u32, who: i32, out: *mut u8, out_len: u64
     if who != 0 && who != 1 && who != 2 {
         return -1;
     }
-    let hz = u64::from(crate::kernel::framework::timer::get_frequency());
+    let hz = u64::from(crate::framework::timer::get_frequency());
     if hz == 0 {
         return -1;
     }

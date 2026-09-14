@@ -10,7 +10,7 @@
 //! `sys_inotify_read` (用户缓冲区写入) 本就属 framework 机制, 一并归位。
 //! 依赖闭包仅 framework (IrqSpinLock/Errno/fd_alloc 均为 framework 项)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::fs::vfs::inotify::*`
+//! services 侧改 `pub use crate::framework::fs::vfs::inotify::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //!
 //! ## 安全契约
@@ -23,8 +23,8 @@
 
 use alloc::vec::Vec;
 
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::errno::Errno;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::Ordering;
 
 // ============================================================================
@@ -91,7 +91,7 @@ const INOTIFY_MAX_EVENTS: usize = 64;
 /// 文件名最大长度 (`inotify_event.name`)
 const INOTIFY_MAX_NAME: usize = 32;
 /// TD-02: 基址来源已迁移至 `framework::proc::FdPlan::INOTIFY` 单一来源, 不再硬编码.
-pub const INOTIFY_FD_BASE: i32 = crate::kernel::framework::proc::FdPlan::INOTIFY.base;
+pub const INOTIFY_FD_BASE: i32 = crate::framework::proc::FdPlan::INOTIFY.base;
 
 // ============================================================================
 // inotify 数据结构
@@ -228,8 +228,8 @@ impl InotifyInstance {
     /// 获取该实例的 fd
     fn fd(&self) -> i32 {
         // TD-02 V3: 通过 fd_alloc 集中计算 FD 编号
-        crate::kernel::framework::proc::fd_at(
-            crate::kernel::framework::proc::FdSubsystem::Inotify,
+        crate::framework::proc::fd_at(
+            crate::framework::proc::FdSubsystem::Inotify,
             self.slot_idx as usize,
         )
     }
@@ -346,14 +346,14 @@ pub fn sys_inotify_init1(flags: i32) -> i64 {
     }
 
     // V2: 使用集中分配器获取 FD
-    let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
-        crate::kernel::framework::proc::fd_alloc::FdSubsystem::Inotify,
+    let fd = match crate::framework::proc::fd_alloc::alloc_fd(
+        crate::framework::proc::fd_alloc::FdSubsystem::Inotify,
     ) {
         Some(f) => f,
         None => return Errno::EMFILE.as_ret(),
     };
 
-    let slot_idx = match crate::kernel::framework::proc::fd_alloc::idx_of(fd) {
+    let slot_idx = match crate::framework::proc::fd_alloc::idx_of(fd) {
         Some((_sub, s)) => s,
         None => return Errno::EBADF.as_ret(),
     };
@@ -585,9 +585,9 @@ pub fn inotify_notify(ino: u32, mask: u32, name: &str, is_dir: bool) {
         for i in 0..INOTIFY_MAX_INSTANCES {
             if notified_fds[i] {
                 // TD-02 V3: 通过 fd_alloc 集中计算 FD 编号
-                crate::kernel::framework::syscall::epoll::epoll_pwake(
-                    crate::kernel::framework::proc::fd_at(
-                        crate::kernel::framework::proc::FdSubsystem::Inotify,
+                crate::framework::syscall::epoll::epoll_pwake(
+                    crate::framework::proc::fd_at(
+                        crate::framework::proc::FdSubsystem::Inotify,
                         i,
                     ),
                 );

@@ -20,7 +20,7 @@
 //! 评估日期: 2026-06-04
 
 use super::net_stack;
-use crate::kernel::framework::net::iface_trait::{Ipv4Addr, NetEndpoint};
+use crate::framework::net::iface_trait::{Ipv4Addr, NetEndpoint};
 
 // ============================================================================
 // 错误
@@ -31,14 +31,14 @@ use crate::kernel::framework::net::iface_trait::{Ipv4Addr, NetEndpoint};
 /// 历史: `SocketError` 自带 17 个字段 (与 `UnixSocketError` 高度重叠).
 /// 现在所有共享错误统一在 `services::error::KernelError`, `SocketError` 仅保留别名.
 /// 子系统特有错误 (无 — INET socket 全部错误都在 `KernelError`) 用 0 字段表达.
-pub use crate::kernel::services::error::KernelError as SocketError;
+pub use crate::services::error::KernelError as SocketError;
 
 /// services 层结果类型
 pub type SocketResult<T> = Result<T, SocketError>;
 
 /// 将 framework 层的 `NetError` 精确映射为 `KernelError`
-fn map_net_error(e: crate::kernel::framework::net::iface_trait::NetError) -> SocketError {
-    use crate::kernel::framework::net::iface_trait::NetError;
+fn map_net_error(e: crate::framework::net::iface_trait::NetError) -> SocketError {
+    use crate::framework::net::iface_trait::NetError;
     match e {
         NetError::NoFreeSocket => SocketError::ProcessFileLimit,
         NetError::InvalidHandle => SocketError::BadFd,
@@ -58,7 +58,7 @@ fn map_net_error(e: crate::kernel::framework::net::iface_trait::NetError) -> Soc
 // `framework::net::socket_types` — 用户态 ABI 协议类型由 framework TCB raw
 // 桥接 (net/syscall.rs) 从用户内存构造, 属机制的安全导出面。此处 re-export
 // 保持 API 兼容 (services→framework 合法方向)。
-pub use crate::kernel::framework::net::socket_types::{Domain, SockAddrIn, SockType};
+pub use crate::framework::net::socket_types::{Domain, SockAddrIn, SockType};
 
 // ============================================================================
 // Socket API

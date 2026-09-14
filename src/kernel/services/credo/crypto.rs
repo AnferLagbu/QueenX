@@ -17,7 +17,7 @@
 //!
 //! 评估日期: 2026-06-04
 
-use crate::kernel::framework::credo;
+use crate::framework::credo;
 
 // ============================================================================
 // 常量 (re-export)
@@ -238,7 +238,7 @@ pub enum StorageError {
     /// CRC / 校验和不匹配
     ChecksumMismatch,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl StorageError {
@@ -255,7 +255,7 @@ impl StorageError {
 
     /// 从内核 `i32` 错误码翻译
     pub fn from_i32(code: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match code {
             -1 => Self::Kernel(K::Other(code)),
             -2 => Self::Kernel(K::NameTooLong),
@@ -271,7 +271,7 @@ impl StorageError {
 
 pub type StorageResult<T> = Result<T, StorageError>;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 持久化 API
@@ -396,16 +396,16 @@ mod tests {
     fn storage_error_translation() {
         assert_eq!(
             StorageError::from_i32(-1),
-            StorageError::Kernel(crate::kernel::services::error::KernelError::Other(-1))
+            StorageError::Kernel(crate::services::error::KernelError::Other(-1))
         );
         assert_eq!(
             StorageError::from_i32(-3),
-            StorageError::Kernel(crate::kernel::services::error::KernelError::Fault)
+            StorageError::Kernel(crate::services::error::KernelError::Fault)
         );
         assert_eq!(StorageError::from_i32(-4), StorageError::BadMagic);
         assert_eq!(
             StorageError::from_i32(0),
-            StorageError::Kernel(crate::kernel::services::error::KernelError::Other(0))
+            StorageError::Kernel(crate::services::error::KernelError::Other(0))
         );
     }
 

@@ -10,4 +10,4 @@
 //! 模块为私有, 故经其顶层 re-export (`framework::config::ConfigSummary` 等) 显式
 //! 转发, 保持 services 侧 API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::config::{ConfigSummary, KernelCapabilities};
+pub use crate::framework::config::{ConfigSummary, KernelCapabilities};

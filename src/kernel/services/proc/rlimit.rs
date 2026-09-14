@@ -8,4 +8,4 @@
 //! `framework/proc/rlimit.rs`（RlimitTable 是 Process 机制字段, syscall
 //! 入口同时合并回该文件）。glob re-export 保持 services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::rlimit::*;
+pub use crate::framework::proc::rlimit::*;

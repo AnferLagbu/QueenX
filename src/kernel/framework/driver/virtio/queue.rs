@@ -7,7 +7,7 @@
 //!
 //! 内存布局遵循 `VirtIO` 1.0 规范第 2.6 节 "Split Virtqueues".
 
-use crate::kernel::framework::mm::{KERNEL_BASE, PAGE_SIZE};
+use crate::framework::mm::{KERNEL_BASE, PAGE_SIZE};
 
 /// virtqueue 项最大数量 (必须为 2 的幂).
 pub const VQ_SIZE: u16 = 32;
@@ -220,7 +220,7 @@ impl VirtQueue {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
             // 全内存屏障: 确保描述符与 ring 写入全局可见
-            crate::kernel::framework::sync::arch::fence();
+            crate::framework::sync::arch::fence();
             core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
             core::ptr::write_volatile(&mut (*self.avail).idx, self.next_avail_idx);
         }

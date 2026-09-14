@@ -26,7 +26,7 @@
 //! - 编译期类型安全 (驱动方必须 impl `VfsPollPolicy`)
 
 use super::VfsFileType;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 
 // ============================================================================
 // epoll 事件位常量 (从 epoll.rs 提取)

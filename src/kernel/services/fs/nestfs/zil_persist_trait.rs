@@ -109,7 +109,7 @@ impl ZilPersist for StandardZilPersist {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecordType};
+    use crate::services::fs::nestfs::zil::{NestZil, NestZilRecordType};
     use alloc::vec;
 
     /// 1. serialize 记录为空 → None

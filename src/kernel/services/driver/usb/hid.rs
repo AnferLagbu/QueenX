@@ -9,4 +9,4 @@
 //! 评估日期: 2026-07-22
 
 // 重导出 framework hid 全部公共类型/函数
-pub use crate::kernel::framework::driver::usb::hid::*;
+pub use crate::framework::driver::usb::hid::*;

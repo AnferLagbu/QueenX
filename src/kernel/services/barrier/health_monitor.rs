@@ -42,7 +42,7 @@ impl DomainHealth {
     /// 转为 `FaultSignal` (供 Policy 决策)
     pub const fn to_fault_signal(&self, heartbeat_gap: u64, dependents: u32) -> FaultSignal {
         FaultSignal {
-            attribution: crate::kernel::services::barrier::attribution::FaultAttribution::Service {
+            attribution: crate::services::barrier::attribution::FaultAttribution::Service {
                 domain_id: self.domain_id,
                 recoverable: true,
             },

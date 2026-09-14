@@ -6,8 +6,8 @@ use super::block_group::Ext2BlockGroupDescriptor;
 use super::dir::Ext2DirEntry;
 use super::inode::Ext2Inode;
 use super::super_block::Ext2SuperBlock;
-use crate::kernel::framework::driver::block::{read_sectors, with_device};
-use crate::kernel::framework::fs::KernelError;
+use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::fs::KernelError;
 use alloc::format;
 use alloc::vec::Vec;
 

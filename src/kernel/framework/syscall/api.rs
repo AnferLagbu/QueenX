@@ -197,16 +197,16 @@ pub fn reboot_mechanism(cmd: i32) -> i64 {
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             () => loop {},
         },
-        _ => crate::kernel::framework::syscall::Errno::EINVAL.as_ret(),
+        _ => crate::framework::syscall::Errno::EINVAL.as_ret(),
     }
 }
 
 /// mmap 机制: 获取当前进程 mm 或分配裸页 (TCB: 操作页分配器)
 pub fn mmap_get_mm_or_alloc(size: u64) -> Option<*mut u8> {
-    if crate::kernel::framework::mm::vma_get_current_mm().is_some() {
+    if crate::framework::mm::vma_get_current_mm().is_some() {
         return None; // 有 mm, 走 VMA 路径
     }
-    let pages = size.div_ceil(crate::kernel::framework::mm::PAGE_SIZE);
+    let pages = size.div_ceil(crate::framework::mm::PAGE_SIZE);
     // SAFETY: alloc_pages 在无 mm 时由 mmap 路径调用,
     // pages 由 size 向上取整计算, 不会溢出
     let ptr = unsafe { super::raw::alloc_pages(pages) };
@@ -215,7 +215,7 @@ pub fn mmap_get_mm_or_alloc(size: u64) -> Option<*mut u8> {
 
 /// munmap 机制: 无 mm 时释放裸页 (TCB: 操作页分配器)
 pub fn munmap_free_pages(addr: u64, size: u64) {
-    let pages = size.div_ceil(crate::kernel::framework::mm::PAGE_SIZE);
+    let pages = size.div_ceil(crate::framework::mm::PAGE_SIZE);
     // SAFETY: free_pages 在无 mm 时由 munmap 路径调用,
     // addr 来自之前的 alloc_pages 返回值, pages 计算与分配时一致
     unsafe { super::raw::free_pages(addr as *mut u8, pages) }

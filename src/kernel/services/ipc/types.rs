@@ -12,4 +12,4 @@
 //! 本文件保留 re-export 保持 services 侧 API 兼容 (services→framework 合法方向)。
 //! services/ipc/{pipe,shm,msgq,sem,signal}.rs 的策略实现 (T6 迁移权威) 不受影响。
 
-pub use crate::kernel::framework::ipc::types::*;
+pub use crate::framework::ipc::types::*;

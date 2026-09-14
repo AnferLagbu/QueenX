@@ -27,11 +27,11 @@
 //!   0x09 — x2APIC
 //! ```
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-pub use crate::kernel::framework::config::MAX_CPUS;
+pub use crate::framework::config::MAX_CPUS;
 
 /// MADT 条目类型
 const MADT_TYPE_LAPIC: u8 = 0x00;
@@ -124,7 +124,7 @@ fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
             if is_valid_rsdp(rsdp_ptr) {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
-                    crate::kernel::framework::klog::klog_info(
+                    crate::framework::klog::klog_info(
                         c"[ACPI] RSDP found via Multiboot2".as_ptr(),
                     );
                 }
@@ -165,7 +165,7 @@ fn scan_memory_range(start: u64, len: u64) -> Option<u64> {
         if is_valid_rsdp(addr) {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                crate::kernel::framework::klog::klog_info(
+                crate::framework::klog::klog_info(
                     c"[ACPI] RSDP found via BIOS scan".as_ptr(),
                 );
             }
@@ -314,7 +314,7 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     } else {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            crate::kernel::framework::klog::klog_info(c"[ACPI] RSDP not found".as_ptr());
+            crate::framework::klog::klog_info(c"[ACPI] RSDP not found".as_ptr());
         }
         return false;
     };
@@ -324,7 +324,7 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     } else {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            crate::kernel::framework::klog::klog_info(c"[ACPI] RSDT/XSDT not found".as_ptr());
+            crate::framework::klog::klog_info(c"[ACPI] RSDT/XSDT not found".as_ptr());
         }
         return false;
     };
@@ -368,7 +368,7 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
-        crate::kernel::framework::klog::klog_info(c"[ACPI] MADT not found in RSDT/XSDT".as_ptr());
+        crate::framework::klog::klog_info(c"[ACPI] MADT not found in RSDT/XSDT".as_ptr());
     }
     false
 }
@@ -436,7 +436,7 @@ fn parse_madt_entries(madt_ptr: u64) {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
         let _count = AP_COUNT.load(Ordering::Acquire);
-        crate::kernel::framework::klog::klog_info(
+        crate::framework::klog::klog_info(
             c"[ACPI] MADT: LAPIC base=0xXXXXXXXX, AP count=N".as_ptr(),
         );
     }

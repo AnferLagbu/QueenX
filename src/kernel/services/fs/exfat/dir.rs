@@ -3,8 +3,8 @@
 //! exFAT 目录项数据结构
 
 use super::super_block::ExfatSuperBlock;
-use crate::kernel::framework::driver::block::{read_sectors, with_device};
-use crate::kernel::framework::fs::KernelError;
+use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::fs::KernelError;
 use alloc::vec;
 use alloc::vec::Vec;
 

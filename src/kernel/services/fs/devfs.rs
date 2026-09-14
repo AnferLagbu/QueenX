@@ -8,4 +8,4 @@
 //! 本文件仅 glob re-export 保持 `services::fs::devfs::*` 调用方路径不变
 //! (services→framework 合法方向)。
 
-pub use crate::kernel::framework::fs::devfs::*;
+pub use crate::framework::fs::devfs::*;

@@ -10,7 +10,7 @@
 //! re-export (`framework::config::PAGE_SIZE` 等) 显式转发, 保持 services 侧
 //! API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     ASLR_HEAP_BITS, ASLR_MMAP_BITS, ASLR_PIE_BITS, ASLR_STACK_BITS, HUGE_PAGE_1G_SHIFT,
     HUGE_PAGE_1G_SIZE, HUGE_PAGE_2M_SHIFT, HUGE_PAGE_2M_SIZE, KERNEL_STACK_SIZE, PAGE_SHIFT,
     PAGE_SIZE, USER_CODE_BASE, USER_HEAP_BASE, USER_KSTACK_SIZE, USER_MMAP_BASE, USER_PIE_BASE,

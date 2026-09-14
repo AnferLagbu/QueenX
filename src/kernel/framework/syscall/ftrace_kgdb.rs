@@ -26,9 +26,9 @@
 //! - 用户态指针经 `check_user_ptr` / `check_user_buf` 校验
 //! - `kgdb_enter` 要求串口已注册 (`kgdb_serial_ready`), 否则返回 ENODEV
 
-use crate::kernel::framework::debug::TraceEvent;
-use crate::kernel::framework::debug::api;
-use crate::kernel::framework::syscall::raw as raw_sync;
+use crate::framework::debug::TraceEvent;
+use crate::framework::debug::api;
+use crate::framework::syscall::raw as raw_sync;
 use core::mem;
 use core::ptr;
 

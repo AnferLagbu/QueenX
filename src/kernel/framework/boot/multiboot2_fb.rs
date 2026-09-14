@@ -7,7 +7,7 @@
 //! `FB_INFO` 使用 `spin::Once` 确保启动早期写入一次，之后只读。
 //! `FRAMEBUFFER_TAG_TYPE` = 8 对应 Multiboot2 spec 3.6.12。
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 pub const MULTIBOOT2_TAG_FRAMEBUFFER: u32 = 8;
 
 #[derive(Debug, Clone, Copy)]

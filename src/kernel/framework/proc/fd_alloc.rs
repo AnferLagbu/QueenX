@@ -8,7 +8,7 @@
 //! (sm_fi/eventfd/signalfd/timerfd) + services (inotify/pidfd) 消费 — 属机制项,
 //! 迁回。依赖闭包为空 (纯 core 原子 + 编译期 const 规划)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::fd_alloc::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::proc::fd_alloc::*` 保持 API 兼容。
 //! 本文件 0 unsafe.
 //!
 //! ## 背景

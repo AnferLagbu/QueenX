@@ -19,8 +19,8 @@
 use core::fmt;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::mm::PAGE_SIZE;
-use crate::kernel::framework::mm::PhysAddr;
+use crate::framework::mm::PAGE_SIZE;
+use crate::framework::mm::PhysAddr;
 
 /// 一个带引用计数和自定义元数据的物理帧。
 ///
@@ -131,7 +131,7 @@ impl Frame {
     /// 优先使用 `as_virt_slice()` 安全 API (生命周期绑定 `&self`)。
     /// 仅在 FFI / DMA 等需要 raw pointer 的场景保留。
     pub fn as_virt_ptr(&self) -> *mut u8 {
-        crate::kernel::framework::mm::phys_to_virt(self.phys.as_u64()) as *mut u8
+        crate::framework::mm::phys_to_virt(self.phys.as_u64()) as *mut u8
     }
 
     /// B03-26: 安全 API — 返回生命周期绑定 `&self` 的可变字节切片。
@@ -143,7 +143,7 @@ impl Frame {
         unsafe {
             core::slice::from_raw_parts_mut(
                 ptr,
-                crate::kernel::framework::mm::PAGE_SIZE as usize,
+                crate::framework::mm::PAGE_SIZE as usize,
             )
         }
     }

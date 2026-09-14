@@ -10,4 +10,4 @@
 //! 全在 framework 内)。framework/net 的 route 为公开子模块 (`pub mod route`),
 //! 可直接 glob re-export, 保持 services 侧 API 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::net::route::*;
+pub use crate::framework::net::route::*;

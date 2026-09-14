@@ -1,13 +1,13 @@
 //! PCI 总线驱动 (PCI Bus Driver)
 //!
-//! 对接真实的 PCI 子系统 (`crate::kernel::framework::pci`)，
+//! 对接真实的 PCI 子系统 (`crate::framework::pci`)，
 //! 提供设备枚举、配置空间访问和 C FFI 导出。
 //!
 //! 通过 Chitin 框架注册为 Bus 类型设备。
 
 #![cfg(target_arch = "x86_64")]
 
-use crate::kernel::framework::driver::{DeviceType, Driver, DriverError};
+use crate::framework::driver::{DeviceType, Driver, DriverError};
 use crate::klog_info;
 
 struct PciBusDriver;
@@ -50,11 +50,11 @@ impl Driver for PciBusDriver {
 // 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
 #[expect(clippy::cast_possible_truncation)]
 pub extern "C" fn pci_init() -> i32 {
-    let count = crate::kernel::framework::pci::init() as i32;
+    let count = crate::framework::pci::init() as i32;
 
-    crate::kernel::framework::chitin::chitin_register_driver(
+    crate::framework::chitin::chitin_register_driver(
         "pci-bus",
-        crate::kernel::framework::chitin::ChitinProto::Bus,
+        crate::framework::chitin::ChitinProto::Bus,
         Some(0xCF8),
         None,
         alloc::boxed::Box::new(PciBusDriver),
@@ -62,7 +62,7 @@ pub extern "C" fn pci_init() -> i32 {
 
     // 演进 6: PCI init 完成后做 driver 维度自检
     // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
-    if let Some(hook) = crate::kernel::framework::config::current_config_validate_hook() {
+    if let Some(hook) = crate::framework::config::current_config_validate_hook() {
         if let Err(e) = hook.validate_pci_subsystem() {
             crate::klog_drv_warn!("PCI validation: {}", e);
         }
@@ -73,7 +73,7 @@ pub extern "C" fn pci_init() -> i32 {
 
 /// 扫描所有 PCI 总线并返回设备列表
 pub fn pci_scan() {
-    let devices = crate::kernel::framework::pci::scan_all_buses();
+    let devices = crate::framework::pci::scan_all_buses();
     for dev in &devices {
         klog_info!(
             Driver,
@@ -91,7 +91,7 @@ pub fn pci_scan() {
 
 /// 获取已发现的 PCI 设备数量
 pub fn pci_device_count() -> usize {
-    crate::kernel::framework::pci::device_count()
+    crate::framework::pci::device_count()
 }
 
 // 注意: pci_read_config_word / pci_write_config_word C FFI 符号

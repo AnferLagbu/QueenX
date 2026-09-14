@@ -345,7 +345,7 @@ mod tests {
     reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
 )]
 pub fn register_pit_tests() {
-    use crate::kernel::framework::tests::{TestFn, TestResult, runner};
+    use crate::framework::tests::{TestFn, TestResult, runner};
     let r = runner();
 
     fn constants() -> TestResult {

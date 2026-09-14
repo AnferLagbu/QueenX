@@ -408,8 +408,8 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 背景：`src/rust/src/lib.rs:188` `#[path = "../../kernel/mod.rs"] pub mod kernel;` 使 rust-analyzer 报 `unresolved module`（跨 crate 目录 `#[path]` 是 RA 已知解析缺陷），但 cargo 双架构 0 error（路径实际有效）。
   - 方案：将 kernel 改为 workspace 独立 crate（成员 crate），lib.rs 以正常 `use` 依赖而非 `#[path]` 内嵌模块——RA 原生支持 crate 依赖，根治误报。
   - 代价：Cargo.toml workspace 成员 + 全部 `crate::kernel::` 路径引用改写（大量），独立工程。
-  - 状态：**待后续单独立项**（非本工程范围；当前 RA 误报无害，cargo/CI 不受影响）。
-  - 关联：与分册 9 B09-19 孤儿测试治理无冲突；与 F/S 分层无冲突（纯工程结构改造）。
+  - 状态：**实施完成（2026-09-14）**。kernel 独立 crate（src/kernel）+ queenx 壳（pub use kernel）；`crate::kernel::`→`crate::` 3370 处；Makefile/CI/audit 检查点指向 kernel manifest + clippy.toml/rustfmt.toml/.cargo config 随迁；host-tests 静态契约测试同步；RA 误报根因（跨 crate #[path]）移除。验证：双架构 0w0e + clippy + audit quick + host-tests 755/0 + QEMU 双机型 + kernel_test 链接。实施记录见 `docs/plan/kernel-crate-separation.md`。
+  - 关联：与分册 9 B09-19 孤儿测试治理无冲突；与 F/S 分层无冲突（纯工程结构改造）；为后续拆 services 独立 crate（编译器级 F1 services 0 unsafe / F3 无环依赖）铺路。
 - **预存审计积压登记（登记，2026-09-13）：六项审计积压处置分类**
   - 来源：委托人报告（§12.5 报告），按"登记待处置"处理，与方案 D 同类，**不阻塞批次 Z 开工**。
   - 项目与处置：

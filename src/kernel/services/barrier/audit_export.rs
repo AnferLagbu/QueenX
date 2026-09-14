@@ -12,7 +12,7 @@
 //! 本文件不含 `unsafe`. 通过 `framework::barrier::types` 的 `RollbackEvent`
 //! 与 TCB 交互.
 
-use crate::kernel::framework::barrier::{ROLLBACK_LOG, recovery_rollback_log_count};
+use crate::framework::barrier::{ROLLBACK_LOG, recovery_rollback_log_count};
 
 /// 审计摘要 (压缩视图, 适合 dmesg 导出)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

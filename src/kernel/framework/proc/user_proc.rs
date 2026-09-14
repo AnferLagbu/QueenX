@@ -1,7 +1,7 @@
 use super::process::{FdTable, PROCESS_TABLE, Process};
 use super::types::{ProcessContext, ProcessId, ProcessPriority, ProcessState};
-use crate::kernel::framework::mm::KERNEL_BASE;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::mm::KERNEL_BASE;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::klog_error;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -56,7 +56,7 @@ pub const PAGE_WRITABLE: u64 = 2;
 pub const PAGE_USER: u64 = 4;
 
 /// 类型化页面标志 (从 `framework::mm` 引入, 在 FFI 边界通过 .`bits()` 转 u64)
-use crate::kernel::framework::mm::PageFlags;
+use crate::framework::mm::PageFlags;
 
 pub const GDT_USER_DATA: u64 = 0x18;
 pub const GDT_USER_CODE: u64 = 0x20;
@@ -326,7 +326,7 @@ pub(crate) mod raw {
         )]
         /// 检查进程是否在运行状态 (Running = 2)
         pub fn is_running(&self) -> bool {
-            use crate::kernel::framework::proc::types::ProcessState;
+            use crate::framework::proc::types::ProcessState;
             ProcessState::from_u32(self.load_state()).is_alive()
         }
 
@@ -336,7 +336,7 @@ pub(crate) mod raw {
         )]
         /// 检查进程是否已退出 (Zombie = 4 或 Terminated = 5)
         pub fn is_exited(&self) -> bool {
-            use crate::kernel::framework::proc::types::ProcessState;
+            use crate::framework::proc::types::ProcessState;
             let state = ProcessState::from_u32(self.load_state());
             matches!(state, ProcessState::Zombie | ProcessState::Terminated)
         }
@@ -606,7 +606,7 @@ pub(crate) mod raw {
         // SAFETY: kproc_ptr 来自 alloc_kernel_process (基于 alloc_zeroed -> kmalloc).
         //         调用方保证此后不再访问该指针.
         unsafe {
-            crate::kernel::framework::mm::kfree(kproc_ptr as *mut u8);
+            crate::framework::mm::kfree(kproc_ptr as *mut u8);
         }
     }
 
@@ -627,7 +627,7 @@ pub(crate) mod raw {
         // SAFETY: proc_ptr 来自 alloc_user_process (基于 alloc_zeroed -> kmalloc).
         //         调用方保证此后不再访问该指针.
         unsafe {
-            crate::kernel::framework::mm::kfree(proc_ptr as *mut u8);
+            crate::framework::mm::kfree(proc_ptr as *mut u8);
         }
     }
 
@@ -660,7 +660,7 @@ pub(crate) mod raw {
         kstack: u64,
         ustack: u64,
     ) {
-        use crate::kernel::framework::proc::SchedPolicy;
+        use crate::framework::proc::SchedPolicy;
         // SAFETY: kproc_ptr 来自 alloc_kernel_process, 已清零, 字段可被 ptr::write 覆盖。
         unsafe {
             core::ptr::write(&mut (*kproc_ptr).pid, ProcessId(pid));
@@ -715,7 +715,7 @@ pub(crate) mod raw {
             // 计数 → 溢出 abort (ud2). 必须显式初始化为 init namespace 集合.
             core::ptr::write(
                 &mut (*kproc_ptr).namespaces,
-                Mutex::new(crate::kernel::framework::proc::NamespaceSet::new_init()),
+                Mutex::new(crate::framework::proc::NamespaceSet::new_init()),
             );
         }
     }
@@ -1005,7 +1005,7 @@ impl UserProcManager {
 
         let stack_phys = stack_pages as u64;
         // ASLR: 随机化栈顶地址
-        let aslr_stack_top = crate::kernel::framework::config::aslr_stack_top();
+        let aslr_stack_top = crate::framework::config::aslr_stack_top();
         let stack_virt = aslr_stack_top - USER_STACK_SIZE - USER_STACK_GUARD;
 
         crate::klog_boot_info!(
@@ -1063,7 +1063,7 @@ impl UserProcManager {
             kstack_top,
             KERNEL_BASE
         );
-        crate::kernel::framework::proc::kernel_stack_write_canary(kstack_top);
+        crate::framework::proc::kernel_stack_write_canary(kstack_top);
 
         // ✅ PID 分配延后到所有内存/页表/栈资源就绪后:
         //   避免 `alloc_kernel_process` 或 `alloc_user_process` 失败时, 已分配
@@ -1083,7 +1083,7 @@ impl UserProcManager {
         proc.store_kernel_stack(kstack_top);
         proc.store_user_stack(initial_rsp);
         proc.store_stack_bottom(initial_stack_bottom);
-        proc.set_create_time(crate::kernel::framework::timer::get_ticks());
+        proc.set_create_time(crate::framework::timer::get_ticks());
 
         self.processes.lock().insert(pid, NonNull::new(proc_ptr)?);
 
@@ -1134,7 +1134,7 @@ impl UserProcManager {
         let _cs_val = GDT_USER_CODE | 0x03;
         let _rflags_val: u64 = 0x3202;
 
-        crate::kernel::framework::cpu::arch::set_kernel_stack(kstack);
+        crate::framework::cpu::arch::set_kernel_stack(kstack);
 
         // 更新 per-CPU 用户页表 CR3, 使 syscall/中断返回用户态时
         // 从 [gs:USER_PML4_OFF] 读取到正确的进程用户页表.
@@ -1142,7 +1142,7 @@ impl UserProcManager {
         // 当前在调度器上下文, 独占访问 per-CPU 数据.
         unsafe {
             #[cfg(target_arch = "x86_64")]
-            crate::kernel::framework::arch::gdt::gdt_set_user_cr3(cr3);
+            crate::framework::arch::gdt::gdt_set_user_cr3(cr3);
             let _ = cr3;
         }
 
@@ -1161,13 +1161,13 @@ impl UserProcManager {
             // 检测 iretq_frame_addr 是物理地址还是虚拟地址
             // 物理地址 < KERNEL_BASE，虚拟地址 >= KERNEL_BASE
             let (rsp0_virt, rsp0_phys) =
-                if iretq_frame_addr < crate::kernel::framework::mm::KERNEL_BASE as u64 {
+                if iretq_frame_addr < crate::framework::mm::KERNEL_BASE as u64 {
                     // iretq_frame_addr 是物理地址，转换为虚拟地址
-                    let virt = iretq_frame_addr + crate::kernel::framework::mm::KERNEL_BASE as u64;
+                    let virt = iretq_frame_addr + crate::framework::mm::KERNEL_BASE as u64;
                     (virt & !(PAGE_SIZE - 1), iretq_frame_addr & !(PAGE_SIZE - 1))
                 } else {
                     // iretq_frame_addr 是虚拟地址，转换为物理地址
-                    let phys = iretq_frame_addr - crate::kernel::framework::mm::KERNEL_BASE as u64;
+                    let phys = iretq_frame_addr - crate::framework::mm::KERNEL_BASE as u64;
                     (iretq_frame_addr & !(PAGE_SIZE - 1), phys & !(PAGE_SIZE - 1))
                 };
 
@@ -1179,13 +1179,13 @@ impl UserProcManager {
                 rsp0_phys
             );
 
-            crate::kernel::framework::mm::get_vmm().map_kernel_page_in_table(
+            crate::framework::mm::get_vmm().map_kernel_page_in_table(
                 cr3,
-                crate::kernel::framework::mm::VirtAddr(rsp0_virt),
-                crate::kernel::framework::mm::PhysAddr(rsp0_phys),
-                crate::kernel::framework::mm::PageFlags::PRESENT
-                    | crate::kernel::framework::mm::PageFlags::WRITABLE
-                    | crate::kernel::framework::mm::PageFlags::USER,
+                crate::framework::mm::VirtAddr(rsp0_virt),
+                crate::framework::mm::PhysAddr(rsp0_phys),
+                crate::framework::mm::PageFlags::PRESENT
+                    | crate::framework::mm::PageFlags::WRITABLE
+                    | crate::framework::mm::PageFlags::USER,
             );
         }
 
@@ -1196,12 +1196,12 @@ impl UserProcManager {
         // 自检式调试: 验证用户页表关键映射
         #[cfg(target_arch = "x86_64")]
         {
-            let vmm = crate::kernel::framework::mm::get_vmm();
+            let vmm = crate::framework::mm::get_vmm();
 
             // 检查用户代码页 (0x400000) — 含 PTE 权限位自检
             let code_page_virt = rip_val & !(PAGE_SIZE - 1);
             if let Some(phys) = vmm
-                .get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(code_page_virt))
+                .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page_virt))
             {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_code virt={:#X} -> phys={:#X} ✓",
@@ -1210,7 +1210,7 @@ impl UserProcManager {
                 );
                 // 检查 PTE 原始值: 验证 PRESENT/USER/NX 位
                 if let Some(pte_raw) =
-                    vmm.get_pte_value(cr3, crate::kernel::framework::mm::VirtAddr(code_page_virt))
+                    vmm.get_pte_value(cr3, crate::framework::mm::VirtAddr(code_page_virt))
                 {
                     let present = (pte_raw & 0x001) != 0;
                     let writable = (pte_raw & 0x002) != 0;
@@ -1250,7 +1250,7 @@ impl UserProcManager {
             let first_access_virt = (rsp_val - 8) & !(PAGE_SIZE - 1);
             if let Some(phys) = vmm.get_physical_in_pml4(
                 cr3,
-                crate::kernel::framework::mm::VirtAddr(first_access_virt),
+                crate::framework::mm::VirtAddr(first_access_virt),
             ) {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) -> phys={:#X} ✓",
@@ -1269,7 +1269,7 @@ impl UserProcManager {
             // 检查 RSP 指向的地址本身 (应该是 guard page 或未映射)
             let rsp_page = rsp_val & !(PAGE_SIZE - 1);
             if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(rsp_page))
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(rsp_page))
             {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_rsp_page virt={:#X} -> phys={:#X} (unexpected: should be guard/unmapped)",
@@ -1286,7 +1286,7 @@ impl UserProcManager {
             // 检查内核栈页 (RSP0, iretq 帧所在页)
             let rsp0_check_virt = (kstack - 40) & !(PAGE_SIZE - 1);
             if let Some(phys) = vmm
-                .get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(rsp0_check_virt))
+                .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(rsp0_check_virt))
             {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: rsp0_stack virt={:#X} -> phys={:#X} ✓",
@@ -1336,10 +1336,10 @@ impl UserProcManager {
             // 扩展自检: 验证用户代码页内容 (检查是否有有效指令)
             let code_page_virt = rip_val & !(PAGE_SIZE - 1);
             if let Some(phys) = vmm
-                .get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(code_page_virt))
+                .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page_virt))
             {
                 // 通过内核映射读取用户代码页内容
-                let kernel_virt = phys.0 + crate::kernel::framework::mm::KERNEL_BASE as u64;
+                let kernel_virt = phys.0 + crate::framework::mm::KERNEL_BASE as u64;
                 let code_ptr = kernel_virt as *const u8;
                 // 读取前 16 字节作为指令样本
                 let mut instr_sample = [0u8; 16];
@@ -1383,13 +1383,13 @@ impl UserProcManager {
 
             // SAFETY: 仅读取 MSR, 无副作用, boot 阶段单线程
             unsafe {
-                let efer = crate::kernel::framework::cpu::msr::read_msr(IA32_EFER);
-                let star = crate::kernel::framework::cpu::msr::read_msr(IA32_STAR);
-                let lstar = crate::kernel::framework::cpu::msr::read_msr(IA32_LSTAR);
-                let sfmask = crate::kernel::framework::cpu::msr::read_msr(IA32_SFMASK);
-                let gs_base = crate::kernel::framework::cpu::msr::read_msr(IA32_GS_BASE);
+                let efer = crate::framework::cpu::msr::read_msr(IA32_EFER);
+                let star = crate::framework::cpu::msr::read_msr(IA32_STAR);
+                let lstar = crate::framework::cpu::msr::read_msr(IA32_LSTAR);
+                let sfmask = crate::framework::cpu::msr::read_msr(IA32_SFMASK);
+                let gs_base = crate::framework::cpu::msr::read_msr(IA32_GS_BASE);
                 let kernel_gs_base =
-                    crate::kernel::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
+                    crate::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
 
                 let sce = (efer & 1) != 0;
                 crate::klog_boot_info!(
@@ -1422,12 +1422,12 @@ impl UserProcManager {
 
                 // 验证 LSTAR 页面在用户页表中映射且可执行
                 let lstar_page = lstar & !(PAGE_SIZE - 1);
-                let vmm = crate::kernel::framework::mm::get_vmm();
+                let vmm = crate::framework::mm::get_vmm();
                 if let Some(phys) = vmm
-                    .get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(lstar_page))
+                    .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(lstar_page))
                 {
                     if let Some(pte_raw) =
-                        vmm.get_pte_value(cr3, crate::kernel::framework::mm::VirtAddr(lstar_page))
+                        vmm.get_pte_value(cr3, crate::framework::mm::VirtAddr(lstar_page))
                     {
                         let present = (pte_raw & 0x001) != 0;
                         let user = (pte_raw & 0x004) != 0;
@@ -1478,7 +1478,7 @@ impl UserProcManager {
             // SAFETY: 使用物理地址 + KERNEL_BASE 访问页表, 只读操作
             unsafe {
                 let pml4_virt =
-                    (cr3 + crate::kernel::framework::mm::KERNEL_BASE as u64) as *const u64;
+                    (cr3 + crate::framework::mm::KERNEL_BASE as u64) as *const u64;
                 let pml4e = pml4_virt.add(pml4_idx as usize).read_volatile();
                 let pml4e_present = (pml4e & 1) != 0;
                 let pml4e_user = (pml4e & 4) != 0;
@@ -1500,7 +1500,7 @@ impl UserProcManager {
                 }
 
                 if pml4e_present {
-                    let pdpt_virt = (pml4e_frame + crate::kernel::framework::mm::KERNEL_BASE as u64)
+                    let pdpt_virt = (pml4e_frame + crate::framework::mm::KERNEL_BASE as u64)
                         as *const u64;
                     let pdpte = pdpt_virt.add(pdpt_idx as usize).read_volatile();
                     let pdpte_present = (pdpte & 1) != 0;
@@ -1525,7 +1525,7 @@ impl UserProcManager {
 
                     if pdpte_present && !pdpte_huge {
                         let pd_virt = (pdpte_frame
-                            + crate::kernel::framework::mm::KERNEL_BASE as u64)
+                            + crate::framework::mm::KERNEL_BASE as u64)
                             as *const u64;
                         let pde = pd_virt.add(pd_idx as usize).read_volatile();
                         let pde_present = (pde & 1) != 0;
@@ -1550,7 +1550,7 @@ impl UserProcManager {
 
                         if pde_present && !pde_huge {
                             let pt_virt = (pde_frame
-                                + crate::kernel::framework::mm::KERNEL_BASE as u64)
+                                + crate::framework::mm::KERNEL_BASE as u64)
                                 as *const u64;
                             let pte = pt_virt.add(pt_idx as usize).read_volatile();
                             let pte_present = (pte & 1) != 0;
@@ -1587,10 +1587,10 @@ impl UserProcManager {
         // aarch64 页表诊断: 验证用户代码页和栈页的映射
         #[cfg(target_arch = "aarch64")]
         {
-            let vmm = crate::kernel::framework::mm::get_vmm();
+            let vmm = crate::framework::mm::get_vmm();
             let code_page = rip_val & !(PAGE_SIZE - 1);
             if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(code_page))
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page))
             {
                 crate::klog_boot_info!(
                     "[USER] A64-SELF-CHECK: code_page virt={:#X} -> phys={:#X} ✓",
@@ -1605,7 +1605,7 @@ impl UserProcManager {
             }
             let stack_page = (rsp_val - 8) & !(PAGE_SIZE - 1);
             if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::kernel::framework::mm::VirtAddr(stack_page))
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(stack_page))
             {
                 crate::klog_boot_info!(
                     "[USER] A64-SELF-CHECK: stack_page virt={:#X} -> phys={:#X} ✓",
@@ -1792,7 +1792,7 @@ impl UserProcManager {
         // PIE (ET_DYN) 支持: 检测 ELF 类型并计算 load_bias
         let is_pie = verified.is_pie;
         let load_bias: u64 = if is_pie {
-            crate::kernel::framework::config::aslr_pie_base()
+            crate::framework::config::aslr_pie_base()
         } else {
             0
         };
@@ -2013,8 +2013,8 @@ pub fn init() {
     // 注册 memlock 限制查询回调, 解耦 mm→proc 依赖
     // SAFETY: get_memlock_limit 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
-        crate::kernel::framework::rlimit_query::register_memlock_limit(
-            crate::kernel::framework::proc::get_memlock_limit,
+        crate::framework::rlimit_query::register_memlock_limit(
+            crate::framework::proc::get_memlock_limit,
         );
     }
 }
@@ -2071,7 +2071,7 @@ pub extern "C" fn user_proc_clone(parent_pid: u32, child_pid: u32) -> i32 {
         child_ref.store_stack_bottom(parent_ref.load_stack_bottom());
         child_ref.set_entry(parent_ref.entry());
         child_ref.store_state(1);
-        child_ref.set_create_time(crate::kernel::framework::timer::get_ticks());
+        child_ref.set_create_time(crate::framework::timer::get_ticks());
 
         USER_PROC_MANAGER.processes.lock().insert(
             child_pid,

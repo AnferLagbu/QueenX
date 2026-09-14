@@ -18,9 +18,9 @@
 //! # Safety
 //! 此模块直接操作 PS/2 控制器硬件。
 
-use crate::kernel::framework::driver::{DeviceInfo, DeviceType, Driver, DriverError, DriverResult};
-use crate::kernel::framework::ioport::IoPort;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::driver::{DeviceInfo, DeviceType, Driver, DriverError, DriverResult};
+use crate::framework::ioport::IoPort;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 // ============================================================================
 // 硬件常量定义
@@ -783,13 +783,13 @@ pub extern "C" fn keyboard_init() {
     let _ = driver.init();
 
     let raw_ptr: *mut KeyboardDriver = &mut *driver;
-    let _id = crate::kernel::framework::chitin::chitin_register_with_ops(
+    let _id = crate::framework::chitin::chitin_register_with_ops(
         "ps2_keyboard",
-        crate::kernel::framework::chitin::ChitinProto::Input,
+        crate::framework::chitin::ChitinProto::Input,
         None,
         Some(1),
         raw_ptr as *mut u8,
-        crate::kernel::framework::chitin::ChitinOps::Input(&PS2_KEYBOARD_INPUT_OPS),
+        crate::framework::chitin::ChitinOps::Input(&PS2_KEYBOARD_INPUT_OPS),
     );
 
     *KEYBOARD_DEVICE.lock() = Some(driver);
@@ -811,14 +811,14 @@ pub extern "C" fn keyboard_irq_handler() {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn keyboard_read_char() -> i32 {
-    crate::kernel::framework::chitin::chitin_input_read().map_or(-1, i32::from)
+    crate::framework::chitin::chitin_input_read().map_or(-1, i32::from)
 }
 
 /// 检查是否有可读字符 (C 兼容接口) — 委托到 Chitin 统一输入路径
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn keyboard_has_char() -> i32 {
-    i32::from(crate::kernel::framework::chitin::chitin_input_has_data())
+    i32::from(crate::framework::chitin::chitin_input_has_data())
 }
 
 /// C 兼容别名: `keyboard_has_data` (旧C代码/FFI调用的名称)
@@ -949,7 +949,7 @@ mod tests {
 // InputOps 桥接 — 供 Chitin 统一输入设备 I/O
 // ============================================================================
 
-use crate::kernel::framework::chitin::InputOps;
+use crate::framework::chitin::InputOps;
 
 #[expect(
     clippy::ptr_as_ptr,

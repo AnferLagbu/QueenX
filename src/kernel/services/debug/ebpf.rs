@@ -4,13 +4,13 @@
 //! 封装 `framework::debug::ebpf` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::debug::{
+pub use crate::framework::debug::{
     BPF_MAX_INSNS, BPF_MAX_MAPS, BPF_MAX_PROGS, BPF_REG_NUM, BPF_STACK_SIZE, BpfCtx, BpfHelper,
     BpfInsn, BpfInterpreter, BpfMap, BpfMapDef, BpfMapType, BpfProg, BpfProgType, BpfSubsystem,
     BpfVerifier,
 };
 
-use crate::kernel::framework::debug::{bpf_init, bpf_is_initialized, bpf_subsystem, sys_bpf};
+use crate::framework::debug::{bpf_init, bpf_is_initialized, bpf_subsystem, sys_bpf};
 
 /// 初始化 eBPF 子系统 + 注册标准验证器 (Safe Policy Injection, T4-3)
 ///

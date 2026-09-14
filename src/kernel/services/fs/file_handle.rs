@@ -15,12 +15,12 @@
 //! - Linux name_to_handle_at(2) 手册页
 //! - Linux open_by_handle_at(2) 手册页
 
-use crate::kernel::framework::mm::copy_user::{copy_from_user, copy_to_user};
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::services::fs::inode::Inode;
-use crate::kernel::services::fs::open_file_table::OPEN_FILE_TABLE;
-use crate::kernel::services::fs::vfs_manager::VFS_MANAGER;
-use crate::kernel::services::fs::vfs_types::OpenFile;
+use crate::framework::mm::copy_user::{copy_from_user, copy_to_user};
+use crate::framework::syscall::Errno;
+use crate::services::fs::inode::Inode;
+use crate::services::fs::open_file_table::OPEN_FILE_TABLE;
+use crate::services::fs::vfs_manager::VFS_MANAGER;
+use crate::services::fs::vfs_types::OpenFile;
 use alloc::sync::Arc;
 
 /// 文件句柄类型 (与 Linux 兼容)
@@ -77,7 +77,7 @@ pub fn name_to_handle_at_syscall(
     }
 
     // 通过 VFS 解析路径, 获取 inode_id 和 mount_idx
-    use crate::kernel::framework::lib::CStrExt;
+    use crate::framework::lib::CStrExt;
     let path_ptr_raw = path_ptr as *const u8;
     let path = path_ptr_raw.as_kstr();
     if path.is_empty() {
@@ -146,8 +146,8 @@ pub fn open_by_handle_at_syscall(
 
     // 权限检查: open_by_handle_at 按句柄绕过路径权限打开任意 inode, 属特权操作
     // B06-03: 采用 SYSTEM 域 CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致 (services/fs/mount.rs:52)
-    let pwm = crate::kernel::framework::credo::session::get_current_pwm();
-    if !crate::kernel::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::framework::credo::session::get_current_pwm();
+    if !crate::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
         return Err(Errno::EPERM);
     }
 
@@ -184,7 +184,7 @@ pub fn open_by_handle_at_syscall(
 
     // 通过 FileSystem trait 构造正确的 Inode (非 LegacyInode)
     // fs_resolve_inode 是 FileSystem trait 的可选方法, 各 FS 可 override
-    let pwm = crate::kernel::framework::credo::session::get_current_pwm();
+    let pwm = crate::framework::credo::session::get_current_pwm();
 
     // 尝试通过 fs_resolve_inode 获取原生 Inode
     // 如果 FS 未实现, 回退到 LegacyInode
@@ -192,7 +192,7 @@ pub fn open_by_handle_at_syscall(
         // 回退: 使用 LegacyInode (stat/chmod 等需要路径的操作将不可用)
         let rel_path = alloc::string::String::new();
         Arc::new(
-            crate::kernel::services::fs::inode::LegacyInode::from_fs_result(
+            crate::services::fs::inode::LegacyInode::from_fs_result(
                 inode_id, mount_idx, 0, &rel_path,
             ),
         )

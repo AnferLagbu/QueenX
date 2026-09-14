@@ -12,7 +12,7 @@
 //! - services 层: 验证参数类型/范围,委托 framework 实现
 //! - framework 层: 实际访问 VFS / 创建内核对象
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// pipe 系统调用安全代理
 ///
@@ -24,7 +24,7 @@ pub fn pipe_syscall(fds: u64) -> Result<usize, Errno> {
     if fds == 0 {
         return Err(Errno::EFAULT);
     }
-    let ret = crate::kernel::framework::syscall::io::sys_pipe(fds);
+    let ret = crate::framework::syscall::io::sys_pipe(fds);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -42,7 +42,7 @@ pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
     if fds == 0 {
         return Err(Errno::EFAULT);
     }
-    let ret = crate::kernel::framework::syscall::io::sys_pipe2(fds, flags);
+    let ret = crate::framework::syscall::io::sys_pipe2(fds, flags);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -58,7 +58,7 @@ pub fn dup_syscall(oldfd: i32) -> Result<usize, Errno> {
     if oldfd < 0 {
         return Err(Errno::EBADF);
     }
-    let ret = crate::kernel::framework::syscall::io::sys_dup(oldfd);
+    let ret = crate::framework::syscall::io::sys_dup(oldfd);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -74,7 +74,7 @@ pub fn dup2_syscall(oldfd: i32, newfd: i32) -> Result<usize, Errno> {
     if oldfd < 0 || newfd < 0 {
         return Err(Errno::EBADF);
     }
-    let ret = crate::kernel::framework::syscall::io::sys_dup2(oldfd, newfd);
+    let ret = crate::framework::syscall::io::sys_dup2(oldfd, newfd);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -91,7 +91,7 @@ pub fn dup3_syscall(oldfd: i32, newfd: i32, flags: i32) -> Result<usize, Errno> 
     if oldfd < 0 || newfd < 0 {
         return Err(Errno::EBADF);
     }
-    let ret = crate::kernel::framework::syscall::io::sys_dup3(oldfd, newfd, flags);
+    let ret = crate::framework::syscall::io::sys_dup3(oldfd, newfd, flags);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -107,7 +107,7 @@ pub fn fcntl_syscall(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::EBADF);
     }
-    let ret = crate::kernel::framework::syscall::io::sys_fcntl(fd, cmd, arg);
+    let ret = crate::framework::syscall::io::sys_fcntl(fd, cmd, arg);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -161,7 +161,7 @@ pub fn copy_file_range_syscall(
         let to_read = remaining.min(chunk_size);
 
         // 从源 fd 读取
-        let read_ret = crate::kernel::framework::fs::api::vfs_read(
+        let read_ret = crate::framework::fs::api::vfs_read(
             fd_in as u32,
             buf.as_mut_ptr(),
             to_read as u32,
@@ -178,7 +178,7 @@ pub fn copy_file_range_syscall(
         }
 
         // 写入目标 fd
-        let write_ret = crate::kernel::framework::fs::api::vfs_write(
+        let write_ret = crate::framework::fs::api::vfs_write(
             fd_out as u32,
             buf.as_ptr(),
             bytes_read as u32,

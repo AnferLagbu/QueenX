@@ -5,10 +5,10 @@
 
 // framework::errno 中性 re-export: ('proc','syscall') 不在 ALLOWED_INTER_DEPS,
 // 直接走 services::syscall 会触发跨模块依赖违规 (见 errno.rs 头注释).
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::services::fs::anonymous::ANONYMOUS_FS;
-use crate::kernel::services::fs::open_file_table::OPEN_FILE_TABLE;
-use crate::kernel::services::fs::vfs_types::OpenFile;
+use crate::framework::errno::Errno;
+use crate::services::fs::anonymous::ANONYMOUS_FS;
+use crate::services::fs::open_file_table::OPEN_FILE_TABLE;
+use crate::services::fs::vfs_types::OpenFile;
 
 /// `MFD_CLOEXEC` 标志位
 const MFD_CLOEXEC: u32 = 0x0001;
@@ -43,13 +43,13 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     let inode_id = ANONYMOUS_FS.alloc_inode().ok_or(Errno::ENOMEM)?;
 
     // 创建匿名 Inode
-    let inode = crate::kernel::services::fs::inode::new_anonymous_inode(inode_id);
+    let inode = crate::services::fs::inode::new_anonymous_inode(inode_id);
 
     // 创建 OpenFile (匿名文件)
     let open_file = OpenFile::new_anonymous(
         inode,
         0x0003, // O_RDWR
-        crate::kernel::framework::credo::session::get_current_pwm(),
+        crate::framework::credo::session::get_current_pwm(),
         0, // File
     );
 
@@ -58,7 +58,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
 
     // 在当前进程 fd 表中分配 fd
     // TODO: 使用 per-process fd 表
-    let fd = crate::kernel::framework::fs::api::vfs_open(
+    let fd = crate::framework::fs::api::vfs_open(
         b"/dev/null\0".as_ptr() as *const u8,
         0x0003, // O_RDWR
         0,
@@ -70,7 +70,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     }
 
     // 设置 handle_id
-    crate::kernel::framework::fs::api::vfs_set_fd_handle(fd as usize, handle_id);
+    crate::framework::fs::api::vfs_set_fd_handle(fd as usize, handle_id);
 
     // 如果设置了 CLOEXEC, 标记 fd
     let _ = flags & MFD_CLOEXEC;

@@ -47,7 +47,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // 常量

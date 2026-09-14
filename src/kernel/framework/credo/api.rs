@@ -43,7 +43,7 @@ use super::identity;
 use super::session;
 use super::storage;
 use super::types::{AuditAction, CapBits, CapDomain, PwmEntry};
-use crate::kernel::framework::lib::CStrExt;
+use crate::framework::lib::CStrExt;
 
 macro_rules! klog_pwm {
     ($($arg:tt)*) => {

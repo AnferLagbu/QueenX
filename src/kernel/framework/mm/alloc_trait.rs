@@ -88,8 +88,8 @@ impl FrameAllocDecision for FallbackAllocPolicy {
 static FALLBACK_POLICY: FallbackAllocPolicy = FallbackAllocPolicy;
 
 /// 全局策略注册表 — services 通过 `register_alloc_decision` 注册
-static ALLOC_DECISION: crate::kernel::framework::sync::OnceLock<&'static dyn FrameAllocDecision> =
-    crate::kernel::framework::sync::OnceLock::new();
+static ALLOC_DECISION: crate::framework::sync::OnceLock<&'static dyn FrameAllocDecision> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册分配决策策略 (由 `services::mm::init` 调用)
 ///

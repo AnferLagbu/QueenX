@@ -16,7 +16,7 @@
 //! `framework::proc::scheduler` 中的 enum (Normal/Fifo/Rr/Idle/Deadline) 占用.
 
 pub use super::types::ThreadPriority;
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 
 /// 调度决策接口 — services 实现, framework 调用
 ///

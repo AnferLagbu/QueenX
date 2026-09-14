@@ -33,7 +33,7 @@ fn read(path: &str) -> String {
 fn fs_error_is_thin_wrapper() {
     let src = read(RAMFS_RS);
     assert!(
-        src.contains("Kernel(crate::kernel::services::error::KernelError)"),
+        src.contains("Kernel(crate::services::error::KernelError)"),
         "FsError 必须含 `Kernel(KernelError)` 共享包装字段"
     );
 }
@@ -77,8 +77,8 @@ fn fs_error_preserves_three_fs_specific_variants() {
 fn to_errno_method_present() {
     let src = read(RAMFS_RS);
     assert!(
-        src.contains("pub fn to_errno(self) -> crate::kernel::framework::syscall::types::Errno")
-            || src.contains("pub fn to_errno(self) -> crate::kernel::framework::syscall::Errno"),
+        src.contains("pub fn to_errno(self) -> crate::framework::syscall::types::Errno")
+            || src.contains("pub fn to_errno(self) -> crate::framework::syscall::Errno"),
         "FsError 必须有 to_errno() 方法 (4 变体全覆盖)"
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
@@ -96,7 +96,7 @@ fn to_errno_method_present() {
 fn from_kernel_error_impl() {
     let src = read(RAMFS_RS);
     assert!(
-        src.contains("impl From<crate::kernel::services::error::KernelError> for FsError"),
+        src.contains("impl From<crate::services::error::KernelError> for FsError"),
         "FsError 必须有 From<KernelError> 包装实现"
     );
 }

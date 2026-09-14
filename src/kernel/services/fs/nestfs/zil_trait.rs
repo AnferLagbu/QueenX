@@ -178,7 +178,7 @@ impl ZilLog for StandardZil {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::services::fs::nestfs::zil::{NestZilRecord, NestZilRecordType};
+    use crate::services::fs::nestfs::zil::{NestZilRecord, NestZilRecordType};
 
     /// 1. new + init
     #[test]

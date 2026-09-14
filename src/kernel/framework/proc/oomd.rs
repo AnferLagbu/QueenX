@@ -10,7 +10,7 @@
 //! 机制组件 (scheduler.rs:987 `OOMD.tick()`), 压力级别判定与回收调度是
 //! 调度器机制内联行为 — 属机制项, 迁回 (同 DECISION-M sys_pm_dispatch 判据)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::oomd::*`
+//! services 侧改 `pub use crate::framework::proc::oomd::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //!
 //! ## 策略
@@ -22,12 +22,12 @@
 //! | Critical | Top-3 RSS 进程降优先级, 阻塞新 mmap |
 //! | Emergency | SIGTERM → 最大 RSS 进程, 5s 后 SIGKILL |
 
-use crate::kernel::framework::mm::{self as mm_api};
-use crate::kernel::framework::proc::scheduler::TICK_COUNT;
+use crate::framework::mm::{self as mm_api};
+use crate::framework::proc::scheduler::TICK_COUNT;
 // DECISION-O ②: 压力类型/状态/update_pressure 包装归 framework::mm::pressure
 // (机制持有, OOMD 是调度器 tick 直接驱动的机制组件); 分级算法经
 // register_pressure_classifier 由 services::mm::init 注入 — 消除反向依赖
-use crate::kernel::framework::mm::pressure::{MemoryPressure, update_pressure};
+use crate::framework::mm::pressure::{MemoryPressure, update_pressure};
 use crate::slog_err;
 use crate::slog_info;
 use crate::slog_warn;

@@ -24,7 +24,7 @@ use alloc::collections::BTreeMap;
 use super::vmm;
 use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 static COW_REFS: IrqSpinLock<Option<BTreeMap<u64, u32>>> = IrqSpinLock::new(None);
 
 pub fn cow_init() {

@@ -9,8 +9,8 @@ use super::api::ptr_to_str;
 use super::backend_trait::nestfs_fs;
 use super::types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
 use super::vfs::VFS_MANAGER;
-use crate::kernel::framework::fs::devfs::{DEVFS_DATA, DevfsData};
-use crate::kernel::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
+use crate::framework::fs::devfs::{DEVFS_DATA, DevfsData};
+use crate::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
 
 static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 

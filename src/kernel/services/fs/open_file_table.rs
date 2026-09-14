@@ -8,4 +8,4 @@
 
 #![deny(unsafe_code)]
 
-pub use crate::kernel::framework::fs::vfs::open_file_table::*;
+pub use crate::framework::fs::vfs::open_file_table::*;

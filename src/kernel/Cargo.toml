@@ -1,0 +1,95 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "QueenX 内核本体 (framekernel 架构, x86_64 + aarch64) — 方案 D 独立 crate"
+repository = "https://gitee.com/AnferLagbu/QueenX"
+readme = "../../README.md"
+keywords = ["kernel", "os", "framekernel", "no_std"]
+categories = ["os", "no-std", "embedded"]
+
+[lib]
+name = "kernel"
+path = "lib.rs"
+# 方案 D: staticlib 供 Makefile 链接内核; rlib 供 queenx 壳依赖 (host-tests).
+crate-type = ["staticlib", "rlib"]
+test = false
+
+[profile.dev]
+panic = "abort"
+lto = false
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "z"
+
+# 调试专用 profile (与 queenx 原配置一致), 用于排查深水区问题.
+[profile.test-debug]
+inherits = "release"
+lto = false
+opt-level = 0
+debug = 2
+
+[dependencies]
+# 方案 D: kernel 直接依赖 (从 queenx Cargo.toml 迁移, 仅 kernel 实际使用).
+# spin/zerocopy/ed25519-dalek 由 kernel 代码直接引用; bitflags 经 `bitflags::bitflags!`
+# 宏调用 (mm/credo/cpu 等 7 文件); smoltcp 为 kernel 内部 vendored.
+spin = "0.9"
+bitflags = "2.4"
+zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
+# DECISION-078: 真实 Ed25519 签名验证 (RFC 8032). BSD-3-Clause OR Apache-2.0.
+ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
+smoltcp = { path = "services/net/smoltcp", default-features = false, features = [
+    "medium-ethernet",
+    "proto-ipv4",
+    "proto-ipv4-fragmentation",
+    "proto-ipv6",
+    "proto-dhcpv4",
+    "proto-dns",
+    "socket-raw",
+    "socket-icmp",
+    "socket-udp",
+    "socket-tcp",
+    "socket-tcp-cubic",
+    "socket-dhcpv4",
+    "socket-dns",
+] }
+
+[features]
+default = []
+# e1000 真实硬件 EEPROM 读取路径 (关闭时走 QEMU 仿真兼容路径).
+e1000-real-hw = []
+e1000-verbose = []
+# host-test: 剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
+# 供 host-tests 经 queenx 壳引用 services 真实源码.
+host-test = []
+kernel_test = []
+fault_injection = []
+smp = []
+net = []
+alloc = []
+async = []
+lock_stats = []
+debug_mutex = []
+# initramfs: 从 build/user/initramfs.cpio 加载根文件系统
+initramfs = []
+atomic_stats = []
+log = []
+json_export = []
+ipv6 = []
+dhcp = []
+http_client = []
+mdns = []
+mqtt = []
+sntp = []
+smtp = []
+tftp = []
+snmp = []
+netbios = []
+preempt = []
+kaslr = []
+barrier = []
+# syscall 入口诊断串口输出 (仅调试)
+debug_syscall = []

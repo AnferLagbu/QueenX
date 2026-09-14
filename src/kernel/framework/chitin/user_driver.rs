@@ -1,17 +1,17 @@
-use crate::kernel::framework::chitin::{ChitinProto, DeviceState};
-use crate::kernel::framework::chitin::{
+use crate::framework::chitin::{ChitinProto, DeviceState};
+use crate::framework::chitin::{
     NodeId, PropertyValue, devtree_clear_user_mapped, devtree_clear_user_mapped_by_pid,
     devtree_get_node, devtree_get_user_mapped, devtree_set_user_mapped,
 };
-use crate::kernel::framework::credo::engine;
-use crate::kernel::framework::credo::{
+use crate::framework::credo::engine;
+use crate::framework::credo::{
     CAP_DOMAIN_DEVICE, DEVICE_CAP_BIND, DEVICE_CAP_IRQ, DEVICE_CAP_MMIO,
 };
-use crate::kernel::framework::credo::{CapBits, CapDomain};
-use crate::kernel::framework::mm::get_vmm;
-use crate::kernel::framework::mm::{MmStruct, Vma, VmaType};
-use crate::kernel::framework::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
-use crate::kernel::framework::proc::{
+use crate::framework::credo::{CapBits, CapDomain};
+use crate::framework::mm::get_vmm;
+use crate::framework::mm::{MmStruct, Vma, VmaType};
+use crate::framework::mm::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
+use crate::framework::proc::{
     process_dec_ref, process_exists, process_get_cr3, process_get_pwm, process_try_inc_ref,
 };
 use crate::klog_info;
@@ -405,7 +405,7 @@ pub extern "C" fn process_signal_pending_set(pid: u32, sig: u32) {
     if !process_try_inc_ref(pid) {
         return;
     }
-    crate::kernel::framework::proc::process_signal_pending_set(pid, sig);
+    crate::framework::proc::process_signal_pending_set(pid, sig);
     process_dec_ref(pid);
 }
 

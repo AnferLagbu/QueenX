@@ -6,7 +6,7 @@
 //! 按"机制持有的数据结构/常量归 framework"统一判据反转：`SLAB_*` 被 framework
 //! mm/slab 机制 (per-cache 数组/对象上限) 直接消费 — 属机制常量, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::config::slab::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::config::slab::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯常量).
 
 use super::memory::PAGE_SIZE;

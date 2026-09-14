@@ -9,10 +9,10 @@
 //! - FFI 函数通过 `RacyCell::get_mut()` 安全访问全局 IPC_NAMESPACE.
 //! - 用户空间指针通过 `UserReadPtr/WritePtr/RefMut` 安全访问.
 
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::ipc::strategy::current_ipc_strategy;
-use crate::kernel::framework::proc::process_get_current_pid;
-use crate::kernel::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
+use crate::framework::errno::Errno;
+use crate::framework::ipc::strategy::current_ipc_strategy;
+use crate::framework::proc::process_get_current_pid;
+use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
 
 /// 判断 fd 是否为 pipe fd (公开接口, 供 sendfile/splice 使用)
 pub fn is_pipe_fd(fd: i32) -> bool {

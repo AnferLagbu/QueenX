@@ -610,12 +610,12 @@ impl SchedulerEx {
 
             // TD-10: 按 in_kern 状态记账到 user_time / sys_time.
             // user_time 持续累加, sys_time 仅在 syscall 期间累加.
-            let in_kern = crate::kernel::framework::proc::proc_get_in_kern();
-            crate::kernel::framework::proc::proc_account_tick(in_kern);
+            let in_kern = crate::framework::proc::proc_get_in_kern();
+            crate::framework::proc::proc_account_tick(in_kern);
 
             let sleep_until = thread.load_sleep_until();
             if sleep_until != 0 {
-                let ticks = crate::kernel::framework::timer::get_ticks();
+                let ticks = crate::framework::timer::get_ticks();
                 if ticks >= sleep_until {
                     thread.store_sleep_until(0);
                     let _ = thread.set_state(ThreadState::Ready);
@@ -695,7 +695,7 @@ impl SchedulerEx {
         // 更新 TSS 内核栈
         let kernel_stack = next_ref.kernel_stack();
         if kernel_stack != 0 {
-            crate::kernel::framework::cpu::arch::set_kernel_stack(kernel_stack);
+            crate::framework::cpu::arch::set_kernel_stack(kernel_stack);
         }
 
         // 硬件上下文切换
@@ -727,7 +727,7 @@ impl SchedulerEx {
             }
         }
 
-        crate::kernel::framework::sync::rcu::rcu_note_quiescent_state();
+        crate::framework::sync::rcu::rcu_note_quiescent_state();
 
         self.need_reschedule.store(0, Ordering::SeqCst);
     }

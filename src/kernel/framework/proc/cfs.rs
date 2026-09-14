@@ -11,13 +11,13 @@
 //! 脱离机制状态独立存在 (同 DECISION-M sys_pm_dispatch 判据: 算法本质是
 //! 机制状态操作) — 迁回。依赖闭包仅 framework。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::cfs::*`
+//! services 侧改 `pub use crate::framework::proc::cfs::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 
 use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::framework::proc::Pid;
+use crate::framework::proc::Pid;
 
 // ============================================================================
 // CFS Constants
@@ -25,7 +25,7 @@ use crate::kernel::framework::proc::Pid;
 
 // DECISION-O ②: CFS_* 权威归 framework/config/sched (机制常量), services 侧
 // 纯 re-export — cfs 依赖收敛单向 (本文件零 services 引用)
-pub use crate::kernel::framework::config::{
+pub use crate::framework::config::{
     CFS_BOOST_INTERVAL as CFS_BOOST_INTERVAL_TICKS,
     CFS_DL_MAX_UTILIZATION_PCT as DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD as DL_MIN_PERIOD_TICKS,
     CFS_DL_MIN_RUNTIME as DL_MIN_RUNTIME_TICKS, CFS_MIN_GRANULARITY as MIN_GRANULARITY_TICKS,
@@ -310,8 +310,8 @@ pub fn cfs_should_preempt(curr_vruntime: u64, min_vruntime: u64, weight: u64) ->
 // 调度策略实现 — services 层策略主体
 // ============================================================================
 
-use crate::kernel::framework::proc::sched_trait::SchedDecision;
-use crate::kernel::framework::proc::types::ThreadPriority;
+use crate::framework::proc::sched_trait::SchedDecision;
+use crate::framework::proc::types::ThreadPriority;
 
 /// 默认调度策略 — services 层安全实现
 ///
@@ -345,7 +345,7 @@ impl SchedDecision for DefaultPolicy {
     }
 
     fn time_slice_for(&self, priority: ThreadPriority) -> u32 {
-        use crate::kernel::framework::config::{
+        use crate::framework::config::{
             SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM,
             SCHED_LEVEL_3_QUANTUM,
         };
@@ -374,7 +374,7 @@ impl SchedDecision for DefaultPolicy {
 /// 当调度策略已被注册时返回 `Err(())`.
 pub fn register_default_policy() -> Result<(), ()> {
     static POLICY: DefaultPolicy = DefaultPolicy;
-    crate::kernel::framework::proc::register_sched_decision(&POLICY).map_err(|_| ())
+    crate::framework::proc::register_sched_decision(&POLICY).map_err(|_| ())
 }
 
 // ============================================================================
@@ -391,7 +391,7 @@ pub fn register_default_policy() -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::services::config::{
+    use crate::services::config::{
         SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM, SCHED_LEVEL_3_QUANTUM,
     };
 

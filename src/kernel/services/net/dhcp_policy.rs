@@ -33,7 +33,7 @@
 //!
 //! REVAL-W 第 6 组 (W6), 2026-06-25 实装.
 
-use crate::kernel::framework::net::iface_trait::{DhcpState, Ipv4Addr, NetConfig};
+use crate::framework::net::iface_trait::{DhcpState, Ipv4Addr, NetConfig};
 
 // ============================================================================
 // DHCP 策略决策
@@ -216,7 +216,7 @@ impl DhcpPolicy for DefaultDhcpPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::net::iface_trait::NetConfig;
+    use crate::framework::net::iface_trait::NetConfig;
 
     /// 验证 Idle 状态: 启动 Discover.
     #[test]

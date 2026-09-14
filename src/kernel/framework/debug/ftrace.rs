@@ -215,8 +215,8 @@ pub fn rd_timestamp() -> u64 {
 #[macro_export]
 macro_rules! trace_event {
     ($name:expr_2021) => {{
-        $crate::kernel::framework::debug::ftrace::record_named(
-            $crate::kernel::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
+        $crate::framework::debug::ftrace::record_named(
+            $crate::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
             0,
             0,
             0,
@@ -224,8 +224,8 @@ macro_rules! trace_event {
         );
     }};
     ($name:expr_2021, $a0:expr_2021) => {{
-        $crate::kernel::framework::debug::ftrace::record_named(
-            $crate::kernel::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
+        $crate::framework::debug::ftrace::record_named(
+            $crate::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
             $a0 as u64,
             0,
             0,
@@ -233,8 +233,8 @@ macro_rules! trace_event {
         );
     }};
     ($name:expr_2021, $a0:expr_2021, $a1:expr_2021) => {{
-        $crate::kernel::framework::debug::ftrace::record_named(
-            $crate::kernel::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
+        $crate::framework::debug::ftrace::record_named(
+            $crate::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
             $a0 as u64,
             $a1 as u64,
             0,
@@ -242,8 +242,8 @@ macro_rules! trace_event {
         );
     }};
     ($name:expr_2021, $a0:expr_2021, $a1:expr_2021, $a2:expr_2021) => {{
-        $crate::kernel::framework::debug::ftrace::record_named(
-            $crate::kernel::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
+        $crate::framework::debug::ftrace::record_named(
+            $crate::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
             $a0 as u64,
             $a1 as u64,
             $a2 as u64,
@@ -251,8 +251,8 @@ macro_rules! trace_event {
         );
     }};
     ($name:expr_2021, $a0:expr_2021, $a1:expr_2021, $a2:expr_2021, $a3:expr_2021) => {{
-        $crate::kernel::framework::debug::ftrace::record_named(
-            $crate::kernel::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
+        $crate::framework::debug::ftrace::record_named(
+            $crate::framework::debug::ftrace::fnv1a_32($name.as_bytes()),
             $a0 as u64,
             $a1 as u64,
             $a2 as u64,

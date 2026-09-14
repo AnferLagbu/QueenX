@@ -123,7 +123,7 @@ impl Font {
 }
 
 /// 全局默认字体
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 static DEFAULT_FONT: OnceLock<Font> = OnceLock::new();
 
 pub fn default_font() -> &'static Font {

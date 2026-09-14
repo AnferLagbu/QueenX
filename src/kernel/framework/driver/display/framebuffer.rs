@@ -17,7 +17,7 @@
 //! ```
 
 use super::super::framework::{DeviceInfo, DeviceType, Driver, Result};
-use crate::kernel::framework::iomem::IoMem;
+use crate::framework::iomem::IoMem;
 
 // ============================================================================
 // 像素格式定义

@@ -6,9 +6,9 @@
 //! 取代 `src/kernel/dma.c` 中的 C 实现, 采用类型安全的
 //! `PhysAddr`/`VirtAddr` 与无锁统计.
 
-use crate::kernel::framework::mm::get_vmm;
-use crate::kernel::framework::mm::{CACHE_LINE_SIZE, KERNEL_BASE, PAGE_SIZE, PhysAddr, VirtAddr};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::mm::get_vmm;
+use crate::framework::mm::{CACHE_LINE_SIZE, KERNEL_BASE, PAGE_SIZE, PhysAddr, VirtAddr};
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::collections::BTreeMap;
 use core::ptr::{self};
 use core::sync::atomic::{AtomicU64, Ordering};

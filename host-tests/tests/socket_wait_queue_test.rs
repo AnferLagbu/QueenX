@@ -148,8 +148,8 @@ fn wait_queue_module_registered_in_net_mod() {
 fn wait_queue_uses_irqspinlock_not_spin() {
     let src = read_src("src/kernel/framework/net/wait_queue.rs");
     assert!(
-        src.contains("use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock as Mutex")
-            || src.contains("use crate::kernel::framework::sync::IrqSpinLock as Mutex"),
+        src.contains("use crate::framework::sync::irq_spinlock::IrqSpinLock as Mutex")
+            || src.contains("use crate::framework::sync::IrqSpinLock as Mutex"),
         "P2-I-41: wait_queue 必须使用 IrqSpinLock (关中断), 与框架同步原语保持一致"
     );
 }

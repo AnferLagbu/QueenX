@@ -10,7 +10,7 @@
 //! ## API 形态
 //!
 //! ```ignore
-//! use crate::kernel::services::timer::posix_timer;
+//! use crate::services::timer::posix_timer;
 //!
 //! // 启动
 //! let new_value = Itimerspec { it_interval_sec: 1, it_interval_nsec: 0,
@@ -41,13 +41,13 @@
 //! 两者底层共用 hrtimer, 但用户态交互方式不同。
 
 // Re-export framework 层的类型和常量
-pub use crate::kernel::framework::proc::{
+pub use crate::framework::proc::{
     CLOCK_MONOTONIC, CLOCK_REALTIME, Itimerspec, MAX_POSIX_TIMERS, SIGEV_NONE, SIGEV_SIGNAL,
     Sigevent, TFD_TIMER_ABSTIME, posix_timer_active_count,
 };
 
 // §6.1 下沉: 系统调用包装迁至 services/syscall/posix_timer (纯策略)
-use crate::kernel::services::syscall::posix_timer as syscall_ptimer;
+use crate::services::syscall::posix_timer as syscall_ptimer;
 
 // ============================================================================
 // 系统调用安全包装

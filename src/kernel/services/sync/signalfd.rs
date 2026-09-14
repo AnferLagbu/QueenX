@@ -12,19 +12,19 @@
 //! - 原始指针 (`mask_ptr` / `buf`) 委托给 framework 层
 //!   (指针合法性由 syscall 入口 `check_user_ptr` 保证)
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// `SFD_NONBLOCK` 标志
-pub const SFD_NONBLOCK: i32 = crate::kernel::framework::syscall::signalfd::SFD_NONBLOCK;
+pub const SFD_NONBLOCK: i32 = crate::framework::syscall::signalfd::SFD_NONBLOCK;
 /// `SFD_CLOEXEC` 标志
-pub const SFD_CLOEXEC: i32 = crate::kernel::framework::syscall::signalfd::SFD_CLOEXEC;
+pub const SFD_CLOEXEC: i32 = crate::framework::syscall::signalfd::SFD_CLOEXEC;
 
 /// signalfd FD 空间起始
-pub const SFD_FD_BASE: i32 = crate::kernel::framework::syscall::signalfd::SFD_FD_BASE;
+pub const SFD_FD_BASE: i32 = crate::framework::syscall::signalfd::SFD_FD_BASE;
 
 /// `signalfd_siginfo` 大小
 pub const SIGNALFD_SIGINFO_SIZE: usize =
-    crate::kernel::framework::syscall::signalfd::SIGNALFD_SIGINFO_SIZE;
+    crate::framework::syscall::signalfd::SIGNALFD_SIGINFO_SIZE;
 
 /// signalfd 安全代理
 ///
@@ -44,7 +44,7 @@ pub fn signalfd_syscall(fd: i32, mask_ptr: u64, flags: i32) -> Result<usize, Err
     }
 
     // fd 校验
-    if fd != -1 && !crate::kernel::framework::syscall::signalfd::is_signalfd_fd(fd) {
+    if fd != -1 && !crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
         return Err(Errno::EBADF);
     }
 
@@ -53,7 +53,7 @@ pub fn signalfd_syscall(fd: i32, mask_ptr: u64, flags: i32) -> Result<usize, Err
         return Err(Errno::EFAULT);
     }
 
-    let ret = crate::kernel::framework::syscall::signalfd::sys_signalfd(fd, mask_ptr, flags);
+    let ret = crate::framework::syscall::signalfd::sys_signalfd(fd, mask_ptr, flags);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -71,14 +71,14 @@ pub fn signalfd_syscall(fd: i32, mask_ptr: u64, flags: i32) -> Result<usize, Err
 /// - `buf == 0` → `EFAULT`
 /// - 底层 `sys_signalfd_read` 返回负值时转换为对应的 `Errno`
 pub fn signalfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
-    if !crate::kernel::framework::syscall::signalfd::is_signalfd_fd(fd) {
+    if !crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
         return Err(Errno::EBADF);
     }
     if buf == 0 {
         return Err(Errno::EFAULT);
     }
 
-    let ret = crate::kernel::framework::syscall::signalfd::sys_signalfd_read(fd, buf);
+    let ret = crate::framework::syscall::signalfd::sys_signalfd_read(fd, buf);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -95,11 +95,11 @@ pub fn signalfd_read_syscall(fd: i32, buf: u64) -> Result<usize, Errno> {
 /// - `fd` 不在 signalfd FD 空间 → `EBADF`
 /// - 底层 `sys_signalfd_close` 返回负值时转换为对应的 `Errno`
 pub fn signalfd_close_syscall(fd: i32) -> Result<usize, Errno> {
-    if !crate::kernel::framework::syscall::signalfd::is_signalfd_fd(fd) {
+    if !crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
         return Err(Errno::EBADF);
     }
 
-    let ret = crate::kernel::framework::syscall::signalfd::sys_signalfd_close(fd);
+    let ret = crate::framework::syscall::signalfd::sys_signalfd_close(fd);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

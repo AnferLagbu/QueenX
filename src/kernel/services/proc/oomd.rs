@@ -8,4 +8,4 @@
 //! `framework/proc/oomd.rs` — OOMD 是 framework scheduler tick 直接驱动的
 //! 机制组件。glob re-export 保持 services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::oomd::*;
+pub use crate::framework::proc::oomd::*;

@@ -42,7 +42,7 @@ static RECOVERY_DOMAIN_POOL: [RecoveryDomain; MAX_RECOVERY_DOMAINS] = {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_barrier_maintenance() {
-    let tick = crate::kernel::framework::tick_query::current_tick();
+    let tick = crate::framework::tick_query::current_tick();
 
     let mgr = super::RECOVERY_MANAGER.lock();
     mgr.tick(tick);
@@ -96,7 +96,7 @@ pub extern "C" fn recovery_domain_unregister(domain_id: u64) -> i32 {
 #[cfg(feature = "kernel_test")]
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_test_rollback(domain_id: u64, crash_fingerprint: u64) -> i32 {
-    let tick = crate::kernel::framework::tick_query::current_tick();
+    let tick = crate::framework::tick_query::current_tick();
     let mgr = super::RECOVERY_MANAGER.lock();
     let rollbacks = mgr.cascade_rollback(domain_id, tick, crash_fingerprint);
     if rollbacks > 0 { 0 } else { -1 }
@@ -117,7 +117,7 @@ pub extern "C" fn recovery_panic_flag_clear() {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn recovery_try_recover_from_idt() -> i32 {
-    let tick = crate::kernel::framework::tick_query::current_tick();
+    let tick = crate::framework::tick_query::current_tick();
 
     if RECOVERY_ATTEMPTED.swap(true, Ordering::SeqCst) {
         return -2;

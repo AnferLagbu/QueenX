@@ -39,8 +39,9 @@ fn test_smoltcp_vendored_version_is_0_14() {
 }
 
 #[test]
-fn test_queenx_consumes_smoltcp_via_path_not_crates_io() {
-    let manifest = repo_root().join("src/rust/Cargo.toml");
+fn test_kernel_consumes_smoltcp_via_path_not_crates_io() {
+    // 方案 D: kernel 独立 crate, smoltcp 依赖在 src/kernel/Cargo.toml.
+    let manifest = repo_root().join("src/kernel/Cargo.toml");
     let content = fs::read_to_string(&manifest)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", manifest.display(), e));
 
@@ -68,20 +69,20 @@ fn test_queenx_consumes_smoltcp_via_path_not_crates_io() {
             };
             assert!(
                 block.contains("path ="),
-                "queenx 必须 path 依赖 vendored smoltcp, 不应从 crates.io 取.\n当前: {}",
+                "kernel 必须 path 依赖 vendored smoltcp, 不应从 crates.io 取.\n当前: {}",
                 block
             );
             // 反向断言: 不能 version = "0.14"
             assert!(
                 !block.contains("version =") || !block.contains("\"0.14"),
-                "queenx 不能从 crates.io 拉 smoltcp 0.14, 应保持 vendored.\n当前: {}",
+                "kernel 不能从 crates.io 拉 smoltcp 0.14, 应保持 vendored.\n当前: {}",
                 block
             );
             return;
         }
         i += 1;
     }
-    panic!("queenx/Cargo.toml 缺少 smoltcp 依赖");
+    panic!("kernel/Cargo.toml 缺少 smoltcp 依赖");
 }
 
 #[test]

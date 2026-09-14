@@ -20,9 +20,9 @@
 //! └── DPCD: 显示端口配置数据
 //! ```
 
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::PhysAddr;
-use crate::kernel::services::error::KernelError;
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::PhysAddr;
+use crate::services::error::KernelError;
 use alloc::vec;
 use alloc::vec::Vec;
 

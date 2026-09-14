@@ -7,7 +7,7 @@
 //! - 委托 framework/proc/coredump 实际完成 core dump 生成
 //! - 提供查询接口: `coredump_allowed` / `coredump_limit`
 
-use crate::kernel::framework::proc::coredump as fw;
+use crate::framework::proc::coredump as fw;
 
 /// 检查当前进程是否允许生成 core dump (`RLIMIT_CORE` > 0)
 pub fn coredump_allowed() -> bool {

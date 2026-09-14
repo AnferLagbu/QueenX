@@ -7,15 +7,15 @@
 //! `sys_nf_*` 被 framework syscall dispatch 机制直接调用 (同 io/iouring) —
 //! 属机制项, 迁回。依赖闭包全在 framework 内 (sync::IrqSpinLock + syscall::Errno)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::net::netfilter::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::net::netfilter::*` 保持 API 兼容。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::sync::IrqSpinLock;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::sync::IrqSpinLock;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量

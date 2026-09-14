@@ -1,4 +1,4 @@
-use crate::kernel::services::fs::nestfs::bp::NestCompType;
+use crate::services::fs::nestfs::bp::NestCompType;
 use alloc::vec::Vec;
 
 pub const HV_COMP_MIN_SIZE: usize = 64;

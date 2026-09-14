@@ -36,9 +36,9 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.4 任务: 存储设备 (AHCI) 迁移
 
-use crate::kernel::framework::driver::BlockDevice;
-use crate::kernel::framework::iomem::IoMem;
-use crate::kernel::framework::mm::PhysAddr;
+use crate::framework::driver::BlockDevice;
+use crate::framework::iomem::IoMem;
+use crate::framework::mm::PhysAddr;
 
 use super::AHCI_CONTROLLERS;
 
@@ -644,7 +644,7 @@ impl AhciPort {
             return true;
         }
         let handle =
-            if let Some(h) = crate::kernel::framework::driver::storage::ahci_alloc_port_dma() {
+            if let Some(h) = crate::framework::driver::storage::ahci_alloc_port_dma() {
                 h
             } else {
                 slog_warn!(Driver, "端口 {} DMA 分配失败", self.port_num);
@@ -771,12 +771,12 @@ impl AhciPort {
         let slot = 0u32; // 使用 slot 0
 
         // 1. 填充命令表: H2D FIS + PRDT
-        crate::kernel::framework::driver::storage::ahci_fill_h2d_fis(
+        crate::framework::driver::storage::ahci_fill_h2d_fis(
             dma.cmd_table_virt,
             fis as *const _ as *const u8 as usize,
             core::mem::size_of::<H2dFis>(),
         );
-        crate::kernel::framework::driver::storage::ahci_fill_prdt(
+        crate::framework::driver::storage::ahci_fill_prdt(
             dma.cmd_table_virt,
             0,
             buffer_phys,
@@ -785,7 +785,7 @@ impl AhciPort {
         );
 
         // 2. 填充命令头
-        crate::kernel::framework::driver::storage::ahci_fill_cmd_header(
+        crate::framework::driver::storage::ahci_fill_cmd_header(
             dma.cmd_list_virt,
             slot,
             5, // FIS length = 5 DWORDs
@@ -878,7 +878,7 @@ impl AhciPort {
 
         // 分配 DMA 缓冲区
         let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::kernel::framework::driver::storage::ahci_alloc_dma_buffer(
+            match crate::framework::driver::storage::ahci_alloc_dma_buffer(
                 byte_count as usize,
             ) {
                 Some(v) => v,
@@ -890,14 +890,14 @@ impl AhciPort {
 
         // 复制数据到用户 buffer
         if result.is_ok() {
-            crate::kernel::framework::driver::storage::ahci_copy_from_dma(
+            crate::framework::driver::storage::ahci_copy_from_dma(
                 buffer,
                 buf_vaddr,
                 byte_count as usize,
             );
         }
 
-        crate::kernel::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
+        crate::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
@@ -935,7 +935,7 @@ impl AhciPort {
 
         // 分配 DMA 缓冲区
         let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::kernel::framework::driver::storage::ahci_alloc_dma_buffer(
+            match crate::framework::driver::storage::ahci_alloc_dma_buffer(
                 byte_count as usize,
             ) {
                 Some(v) => v,
@@ -943,7 +943,7 @@ impl AhciPort {
             };
 
         // 复制数据到 DMA 缓冲区
-        crate::kernel::framework::driver::storage::ahci_copy_to_dma(
+        crate::framework::driver::storage::ahci_copy_to_dma(
             buf_vaddr,
             buffer,
             byte_count as usize,
@@ -952,7 +952,7 @@ impl AhciPort {
         let fis = H2dFis::write_dma(lba, count);
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, true);
 
-        crate::kernel::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
+        crate::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
@@ -976,7 +976,7 @@ impl AhciPort {
 
         let byte_count = SECTOR_SIZE as u32;
         let Some((buf_vaddr, buf_paddr, buf_size)) =
-            crate::kernel::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
+            crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
         else {
             return Err(());
         };
@@ -985,14 +985,14 @@ impl AhciPort {
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);
 
         if result.is_ok() {
-            crate::kernel::framework::driver::storage::ahci_copy_from_dma(
+            crate::framework::driver::storage::ahci_copy_from_dma(
                 buffer,
                 buf_vaddr,
                 byte_count as usize,
             );
         }
 
-        crate::kernel::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
+        crate::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 }

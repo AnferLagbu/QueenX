@@ -3,7 +3,7 @@
 //! 从 `mod.rs` 拆分而来, 包含主分发函数和所有 `sys_*` 处理函数。
 
 #[cfg(target_arch = "x86_64")]
-use crate::kernel::framework::idt::InterruptFrame;
+use crate::framework::idt::InterruptFrame;
 use core::sync::atomic::Ordering;
 
 use super::raw;
@@ -26,7 +26,7 @@ use super::types::SYS_CREDO_DISK_INSTALL;
 
 /// fb_mmap 目标虚拟地址上界 — 集中定义于 `framework::constants::limits`
 /// (与用户指针校验边界语义不同, 见该常量注释).
-use crate::kernel::framework::constants::limits::FB_MMAP_ADDR_MAX;
+use crate::framework::constants::limits::FB_MMAP_ADDR_MAX;
 
 /// 用户态寄存器值 → 文件描述符 (i32) 严格转换
 ///
@@ -78,21 +78,21 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         // 需在 rt_sigreturn 处理前保存 (sigreturn 之后 frame 被恢复为 signal 帧,
         // 保存的是恢复后的用户寄存器, 同样正确).
         {
-            let cur = crate::kernel::framework::proc::SCHEDULER.current().unwrap_or(0);
+            let cur = crate::framework::proc::SCHEDULER.current().unwrap_or(0);
             if cur != 0 {
-                crate::kernel::framework::proc::proc_save_user_regs(cur, f);
+                crate::framework::proc::proc_save_user_regs(cur, f);
             }
         }
 
         // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch
         // Linux x86_64 编号 15 / aarch64 编号 139
         #[cfg(target_arch = "x86_64")]
-        let is_rt_sigreturn = syscall_num == crate::kernel::framework::syscall::types::SYS_rt_sigreturn;
+        let is_rt_sigreturn = syscall_num == crate::framework::syscall::types::SYS_rt_sigreturn;
         #[cfg(target_arch = "aarch64")]
         let is_rt_sigreturn = syscall_num == 139;
 
         if is_rt_sigreturn {
-            let sigframe_ptr = (f.rsp + 8) as *const crate::kernel::framework::proc::SignalFrame;
+            let sigframe_ptr = (f.rsp + 8) as *const crate::framework::proc::SignalFrame;
             if !sigframe_ptr.is_null() {
                 let sigframe = core::ptr::read_unaligned(sigframe_ptr);
                 f.r15 = sigframe.r15;
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
 
         // 返回用户态前检查待投递信号
         // SAFETY: frame 有效, 当前在当前 CPU 的 syscall 上下文
-        crate::kernel::framework::proc::do_signal_deliver(frame);
+        crate::framework::proc::do_signal_deliver(frame);
     }
 }
 
@@ -140,7 +140,7 @@ macro_rules! dispatch {
         // SAFETY: klog_write 是 C-ABI 日志函数，$name 是 Rust 静态字符串
         // (字节切片)，传给 C 时按指针 + 长度传递。
         unsafe {
-            crate::kernel::framework::klog::klog_write(
+            crate::framework::klog::klog_write(
                 0,
                 7,
                 core::ptr::null(),
@@ -169,10 +169,10 @@ pub unsafe extern "C" fn syscall_dispatch(
     a5: u64,
 ) -> i64 {
     // TD-10: 进入内核态, tick 期间 sys_time 累加.
-    crate::kernel::framework::proc::proc_set_in_kern(1);
+    crate::framework::proc::proc_set_in_kern(1);
     let result = syscall_dispatch_impl(num, a0, a1, a2, a3, a4, a5);
     // 出口恢复用户态, tick 期间 user_time 累加.
-    crate::kernel::framework::proc::proc_set_in_kern(0);
+    crate::framework::proc::proc_set_in_kern(0);
     result
 }
 
@@ -193,13 +193,13 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
     // C7: Seccomp 过滤检查 (在 dispatch 之前)
     let args = [a0, a1, a2, a3, a4, a5];
-    if let Some(ret) = crate::kernel::framework::proc::seccomp_check(num, &args) {
+    if let Some(ret) = crate::framework::proc::seccomp_check(num, &args) {
         return ret;
     }
 
     // L-01: 优先委托 services 层策略分发
     let svc_ret = super::dispatch_trait::current_syscall_dispatch().dispatch(num, args);
-    if svc_ret != crate::kernel::framework::syscall::types::ENOSYS_RET {
+    if svc_ret != crate::framework::syscall::types::ENOSYS_RET {
         return svc_ret;
     }
 
@@ -223,187 +223,187 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
         // ==================== 设备固件加载 ====================
         QX_FW_LOAD => dispatch!(
-            crate::kernel::framework::syscall::firmware::sys_fw_load(a0, a1, a2, a3),
+            crate::framework::syscall::firmware::sys_fw_load(a0, a1, a2, a3),
             b"fw_load\0"
         ),
         QX_FW_GET => dispatch!(
-            crate::kernel::framework::syscall::firmware::sys_fw_get(a0, a1, a2, a3),
+            crate::framework::syscall::firmware::sys_fw_get(a0, a1, a2, a3),
             b"fw_get\0"
         ),
         QX_FW_GET_INFO => dispatch!(
-            crate::kernel::framework::syscall::firmware::sys_fw_get_info(a0, a1),
+            crate::framework::syscall::firmware::sys_fw_get_info(a0, a1),
             b"fw_get_info\0"
         ),
         QX_FW_DETACH => dispatch!(
-            crate::kernel::framework::syscall::firmware::sys_fw_detach(a0),
+            crate::framework::syscall::firmware::sys_fw_detach(a0),
             b"fw_detach\0"
         ),
 
         // ==================== 调试 / 跟踪 ====================
         QX_FTRACE_ENABLE => dispatch!(
-            crate::kernel::framework::syscall::ftrace_kgdb::sys_ftrace_enable(),
+            crate::framework::syscall::ftrace_kgdb::sys_ftrace_enable(),
             b"ftrace_enable\0"
         ),
         QX_FTRACE_DISABLE => dispatch!(
-            crate::kernel::framework::syscall::ftrace_kgdb::sys_ftrace_disable(),
+            crate::framework::syscall::ftrace_kgdb::sys_ftrace_disable(),
             b"ftrace_disable\0"
         ),
         QX_FTRACE_READ => dispatch!(
-            crate::kernel::framework::syscall::ftrace_kgdb::sys_ftrace_read(a0),
+            crate::framework::syscall::ftrace_kgdb::sys_ftrace_read(a0),
             b"ftrace_read\0"
         ),
         QX_FTRACE_STAT => dispatch!(
-            crate::kernel::framework::syscall::ftrace_kgdb::sys_ftrace_stat(a0),
+            crate::framework::syscall::ftrace_kgdb::sys_ftrace_stat(a0),
             b"ftrace_stat\0"
         ),
         QX_KGDB_ENTER => dispatch!(
-            crate::kernel::framework::syscall::ftrace_kgdb::sys_kgdb_enter(),
+            crate::framework::syscall::ftrace_kgdb::sys_kgdb_enter(),
             b"kgdb_enter\0"
         ),
 
         // ==================== C7: Seccomp / prctl ====================
         QX_SECCOMP => dispatch!(
-            crate::kernel::framework::proc::sys_seccomp(a0 as u32, a1 as u32, a2),
+            crate::framework::proc::sys_seccomp(a0 as u32, a1 as u32, a2),
             b"seccomp\0"
         ),
         QX_PRCTL => dispatch!(
-            crate::kernel::framework::proc::sys_prctl_prctl(a0 as i64, a1, a2, a3, a4),
+            crate::framework::proc::sys_prctl_prctl(a0 as i64, a1, a2, a3, a4),
             b"prctl\0"
         ),
 
         // ==================== C5: 路由表 ====================
         QX_ROUTE_ADD => dispatch!(
-            crate::kernel::framework::net::route::sys_route_add(a0, a1, a2),
+            crate::framework::net::route::sys_route_add(a0, a1, a2),
             b"route_add\0"
         ),
         QX_ROUTE_DEL => dispatch!(
-            crate::kernel::framework::net::route::sys_route_del(a0, a1, a2),
+            crate::framework::net::route::sys_route_del(a0, a1, a2),
             b"route_del\0"
         ),
         QX_ROUTE_QUERY => dispatch!(
-            crate::kernel::framework::net::route::sys_route_query(a0),
+            crate::framework::net::route::sys_route_query(a0),
             b"route_query\0"
         ),
 
         // ==================== C5: Netfilter ====================
         QX_NF_ADD_RULE => dispatch!(
-            crate::kernel::framework::net::netfilter::sys_nf_add_rule(a0, a1, a2, a3, a4, a5),
+            crate::framework::net::netfilter::sys_nf_add_rule(a0, a1, a2, a3, a4, a5),
             b"nf_add_rule\0"
         ),
         QX_NF_DEL_RULE => dispatch!(
-            crate::kernel::framework::net::netfilter::sys_nf_del_rule(a0, a1),
+            crate::framework::net::netfilter::sys_nf_del_rule(a0, a1),
             b"nf_del_rule\0"
         ),
 
         // ==================== C4: io_uring ====================
         QX_IO_URING_SETUP => dispatch!(
-            crate::kernel::framework::io::iouring::sys_io_uring_setup(a0),
+            crate::framework::io::iouring::sys_io_uring_setup(a0),
             b"io_uring_setup\0"
         ),
         QX_IO_URING_ENTER => dispatch!(
-            crate::kernel::framework::io::iouring::sys_io_uring_enter(a0, a1, a2),
+            crate::framework::io::iouring::sys_io_uring_enter(a0, a1, a2),
             b"io_uring_enter\0"
         ),
         QX_IO_URING_REGISTER => dispatch!(
-            crate::kernel::framework::io::iouring::sys_io_uring_register(a0, a1, a2, a3),
+            crate::framework::io::iouring::sys_io_uring_register(a0, a1, a2, a3),
             b"io_uring_register\0"
         ),
         QX_IO_URING_SUBMIT => dispatch!(
-            crate::kernel::framework::io::iouring::sys_io_uring_submit_sqe(a0, a1, a2, a3, a4, a5),
+            crate::framework::io::iouring::sys_io_uring_submit_sqe(a0, a1, a2, a3, a4, a5),
             b"io_uring_submit\0"
         ),
 
         // ==================== D1: Namespace ====================
         QX_UNSHARE => dispatch!(
-            crate::kernel::framework::proc::sys_unshare(a0),
+            crate::framework::proc::sys_unshare(a0),
             b"unshare\0"
         ),
         QX_SETNS => dispatch!(
-            crate::kernel::framework::proc::sys_setns(a0, a1),
+            crate::framework::proc::sys_setns(a0, a1),
             b"setns\0"
         ),
 
         // ==================== D2: cgroup ====================
         QX_CGROUP_CREATE => dispatch!(
-            crate::kernel::framework::proc::sys_cgroup_create(a0, a1, a2),
+            crate::framework::proc::sys_cgroup_create(a0, a1, a2),
             b"cgroup_create\0"
         ),
         QX_CGROUP_DESTROY => dispatch!(
-            crate::kernel::framework::proc::sys_cgroup_destroy(a0),
+            crate::framework::proc::sys_cgroup_destroy(a0),
             b"cgroup_destroy\0"
         ),
         QX_CGROUP_ATTACH => dispatch!(
-            crate::kernel::framework::proc::sys_cgroup_attach(a0, a1),
+            crate::framework::proc::sys_cgroup_attach(a0, a1),
             b"cgroup_attach\0"
         ),
         QX_CGROUP_SET_LIMIT => dispatch!(
-            crate::kernel::framework::proc::sys_cgroup_set_limit(a0, a1, a2),
+            crate::framework::proc::sys_cgroup_set_limit(a0, a1, a2),
             b"cgroup_set_limit\0"
         ),
         QX_CGROUP_GET_STAT => dispatch!(
-            crate::kernel::framework::proc::sys_cgroup_get_stat(a0, a1),
+            crate::framework::proc::sys_cgroup_get_stat(a0, a1),
             b"cgroup_get_stat\0"
         ),
 
         // ==================== D4: eBPF ====================
         QX_BPF => dispatch!(
-            crate::kernel::framework::debug::sys_bpf(a0, a1, a2),
+            crate::framework::debug::sys_bpf(a0, a1, a2),
             b"bpf\0"
         ),
 
         // ==================== D5: 电源管理 ====================
         QX_PM => dispatch!(
-            crate::kernel::framework::driver::sys_pm(a0, a1, a2),
+            crate::framework::driver::sys_pm(a0, a1, a2),
             b"pm\0"
         ),
 
         // ==================== D6: 安全启动 + TPM ====================
         QX_SECURE_BOOT => dispatch!(
-            crate::kernel::framework::credo::sys_secure_boot(a0, a1, a2, a3),
+            crate::framework::credo::sys_secure_boot(a0, a1, a2, a3),
             b"secure_boot\0"
         ),
         QX_TPM => dispatch!(
-            crate::kernel::framework::credo::sys_tpm(a0, a1, a2, a3),
+            crate::framework::credo::sys_tpm(a0, a1, a2, a3),
             b"tpm\0"
         ),
 
         // ==================== D7: Shadow Stack (CET) ====================
         QX_CET => dispatch!(
-            crate::kernel::framework::arch::shadow_stack::sys_cet(a0, a1, a2),
+            crate::framework::arch::shadow_stack::sys_cet(a0, a1, a2),
             b"cet\0"
         ),
 
         // ==================== D8: 无 tick 模式 (NO_HZ) ====================
         QX_TICKLESS => dispatch!(
-            crate::kernel::framework::timer::sys_tickless(a0, a1, a2),
+            crate::framework::timer::sys_tickless(a0, a1, a2),
             b"tickless\0"
         ),
 
         // ==================== D9: NTP/PTP 时钟同步 ====================
         QX_TIMESYNC => dispatch!(
-            crate::kernel::framework::timer::sys_timesync(a0, a1, a2),
+            crate::framework::timer::sys_timesync(a0, a1, a2),
             b"timesync\0"
         ),
 
         // ==================== D10: kexec ====================
         QX_KEXEC => dispatch!(
-            crate::kernel::framework::driver::sys_kexec(a0, a1, a2, a3),
+            crate::framework::driver::sys_kexec(a0, a1, a2, a3),
             b"kexec\0"
         ),
 
         // ==================== D11: UEFI ====================
         QX_UEFI => dispatch!(
-            crate::kernel::framework::driver::sys_uefi(a0, a1, a2),
+            crate::framework::driver::sys_uefi(a0, a1, a2),
             b"uefi\0"
         ),
 
         // ==================== 进程 ====================
         QX_TCGETPGRP => dispatch!(
-            crate::kernel::framework::proc::session::sys_tcgetpgrp(a0 as i32),
+            crate::framework::proc::session::sys_tcgetpgrp(a0 as i32),
             b"tcgetpgrp\0"
         ),
         QX_TCSETPGRP => dispatch!(
-            crate::kernel::framework::proc::session::sys_tcsetpgrp(a0 as i32, a1 as i32),
+            crate::framework::proc::session::sys_tcsetpgrp(a0 as i32, a1 as i32),
             b"tcsetpgrp\0"
         ),
 
@@ -421,7 +421,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
         // ==================== 进程创建 ====================
         QX_EXECVE => dispatch!(
-            crate::kernel::framework::syscall::execve::ExecveResult::from_ret(sys_execve(
+            crate::framework::syscall::execve::ExecveResult::from_ret(sys_execve(
                 a0 as *const u8,
                 a1 as *const *const u8,
                 a2 as *const *const u8
@@ -432,14 +432,14 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
         // ==================== 时间 ====================
         QX_SETRLIMIT => dispatch!(
-            crate::kernel::framework::proc::sys_setrlimit(a0 as i32, a1),
+            crate::framework::proc::sys_setrlimit(a0 as i32, a1),
             b"setrlimit\0"
         ),
         QX_TGKILL => dispatch!(sys_tgkill(a0 as i32, a1 as i32, a2 as i32), b"tgkill\0"),
 
         // ==================== sendfile / splice ====================
         QX_SENDFILE => dispatch!(
-            crate::kernel::framework::syscall::sendfile::sys_sendfile(
+            crate::framework::syscall::sendfile::sys_sendfile(
                 a0 as i32,
                 a1 as i32,
                 a2,
@@ -448,7 +448,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
             b"sendfile\0"
         ),
         QX_SPLICE => dispatch!(
-            crate::kernel::framework::syscall::sendfile::sys_splice(
+            crate::framework::syscall::sendfile::sys_splice(
                 a0 as i32,
                 a1,
                 a2 as i32,
@@ -515,19 +515,19 @@ fn sys_read(fd: i32, buf: *mut u8, count: u64) -> i64 {
         }
         return 0;
     }
-    if crate::kernel::framework::syscall::eventfd::is_eventfd_fd(fd) {
-        return crate::kernel::framework::syscall::eventfd::sys_eventfd_read(fd, buf as u64);
+    if crate::framework::syscall::eventfd::is_eventfd_fd(fd) {
+        return crate::framework::syscall::eventfd::sys_eventfd_read(fd, buf as u64);
     }
-    if crate::kernel::framework::syscall::signalfd::is_signalfd_fd(fd) {
-        return crate::kernel::framework::syscall::signalfd::sys_signalfd_read(fd, buf as u64);
+    if crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
+        return crate::framework::syscall::signalfd::sys_signalfd_read(fd, buf as u64);
     }
-    if crate::kernel::framework::syscall::timerfd::is_timerfd_fd(fd) {
-        return crate::kernel::framework::syscall::timerfd::sys_timerfd_read(fd, buf as u64);
+    if crate::framework::syscall::timerfd::is_timerfd_fd(fd) {
+        return crate::framework::syscall::timerfd::sys_timerfd_read(fd, buf as u64);
     }
-    if crate::kernel::framework::fs::is_inotify_fd(fd) {
-        return crate::kernel::framework::fs::sys_inotify_read(i64::from(fd), buf, count as usize);
+    if crate::framework::fs::is_inotify_fd(fd) {
+        return crate::framework::fs::sys_inotify_read(i64::from(fd), buf, count as usize);
     }
-    i64::from(crate::kernel::framework::fs::vfs_read(
+    i64::from(crate::framework::fs::vfs_read(
         fd as u32,
         buf,
         count as u32,
@@ -544,9 +544,9 @@ fn copy_from_user_buf(user_buf: *const u8, kernel_buf: &mut [u8], user_cr3: u64)
     if user_buf.is_null() || kernel_buf.is_empty() || user_cr3 == 0 {
         return 0;
     }
-    let vmm = crate::kernel::framework::mm::get_vmm();
-    let page_size = crate::kernel::framework::mm::PAGE_SIZE as u64;
-    let kernel_base = crate::kernel::framework::mm::KERNEL_BASE as u64;
+    let vmm = crate::framework::mm::get_vmm();
+    let page_size = crate::framework::mm::PAGE_SIZE as u64;
+    let kernel_base = crate::framework::mm::KERNEL_BASE as u64;
     let total = kernel_buf.len();
     let mut copied: usize = 0;
     while copied < total {
@@ -555,7 +555,7 @@ fn copy_from_user_buf(user_buf: *const u8, kernel_buf: &mut [u8], user_cr3: u64)
         let offset = user_va & (page_size - 1);
         let step = (page_size - offset).min((total - copied) as u64) as usize;
         let phys = match vmm
-            .get_physical_in_pml4(user_cr3, crate::kernel::framework::mm::VirtAddr(page_va))
+            .get_physical_in_pml4(user_cr3, crate::framework::mm::VirtAddr(page_va))
         {
             Some(p) => p.as_u64(),
             None => break,
@@ -582,7 +582,7 @@ fn sys_write(fd: i32, buf: *const u8, count: u64) -> i64 {
         return Errno::EFAULT.as_ret();
     }
     if fd == 1 || fd == 2 {
-        let user_cr3 = crate::kernel::framework::mm::read_user_cr3_asm();
+        let user_cr3 = crate::framework::mm::read_user_cr3_asm();
         let mut remaining = (count as usize).min(4096);
         let mut buf_off: usize = 0;
         while remaining > 0 {
@@ -597,26 +597,26 @@ fn sys_write(fd: i32, buf: *const u8, count: u64) -> i64 {
             if copied == 0 {
                 return Errno::EFAULT.as_ret();
             }
-            crate::kernel::framework::klog::serial_write_bytes(&kernel_buf[..copied]);
+            crate::framework::klog::serial_write_bytes(&kernel_buf[..copied]);
             buf_off += copied;
             remaining -= copied;
         }
         return count as i64;
     }
-    if crate::kernel::framework::syscall::eventfd::is_eventfd_fd(fd) {
+    if crate::framework::syscall::eventfd::is_eventfd_fd(fd) {
         if count < 8 {
             return Errno::EINVAL.as_ret();
         }
-        let user_cr3 = crate::kernel::framework::mm::read_user_cr3_asm();
+        let user_cr3 = crate::framework::mm::read_user_cr3_asm();
         let mut val_buf = [0u8; 8];
         if copy_from_user_buf(buf, &mut val_buf, user_cr3) < 8 {
             return Errno::EFAULT.as_ret();
         }
         let value = u64::from_ne_bytes(val_buf);
-        return crate::kernel::framework::syscall::eventfd::sys_eventfd_write(fd, value);
+        return crate::framework::syscall::eventfd::sys_eventfd_write(fd, value);
     }
     // 文件写入: 分块拷贝用户数据到内核缓冲区, 再走 VFS
-    let user_cr3 = crate::kernel::framework::mm::read_user_cr3_asm();
+    let user_cr3 = crate::framework::mm::read_user_cr3_asm();
     let total = (count as usize).min(4096);
     let mut kernel_buf = [0u8; 256];
     let mut written: usize = 0;
@@ -631,7 +631,7 @@ fn sys_write(fd: i32, buf: *const u8, count: u64) -> i64 {
         if copied == 0 {
             break;
         }
-        let n = crate::kernel::framework::fs::vfs_write_safe(fd as u32, &kernel_buf[..copied]);
+        let n = crate::framework::fs::vfs_write_safe(fd as u32, &kernel_buf[..copied]);
         if n < 0 {
             return i64::from(n);
         }
@@ -678,19 +678,19 @@ fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *const u8) -
     }
 
     // SUID 处理
-    let mut stat_buf = core::mem::MaybeUninit::<crate::kernel::framework::fs::VfsStat>::uninit();
-    let current_pwm = crate::kernel::framework::credo::get_current_pwm();
+    let mut stat_buf = core::mem::MaybeUninit::<crate::framework::fs::VfsStat>::uninit();
+    let current_pwm = crate::framework::credo::get_current_pwm();
     let stat_result =
-        crate::kernel::framework::fs::vfs_stat_internal(path, stat_buf.as_mut_ptr(), current_pwm);
+        crate::framework::fs::vfs_stat_internal(path, stat_buf.as_mut_ptr(), current_pwm);
     if stat_result == 0 {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let st = unsafe { stat_buf.assume_init() };
         if (st.perm & 0o4000) != 0 && st.owner_pwm != 0 {
-            crate::kernel::framework::credo::elevate_for_suid(st.owner_pwm);
+            crate::framework::credo::elevate_for_suid(st.owner_pwm);
         }
     }
 
-    let result = crate::kernel::framework::proc::proc_exec_replace(path, argv, argc);
+    let result = crate::framework::proc::proc_exec_replace(path, argv, argc);
     if result < 0 {
         Errno::ENOENT.as_ret()
     } else {
@@ -700,12 +700,12 @@ fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *const u8) -
 
 #[cfg(feature = "net")]
 fn sys_getsockname(sockfd: i32, addr: u64, addrlen: u64) -> i64 {
-    crate::kernel::framework::net::syscall::getsockname_syscall(sockfd, addr, addrlen)
+    crate::framework::net::syscall::getsockname_syscall(sockfd, addr, addrlen)
 }
 
 #[cfg(feature = "net")]
 fn sys_getpeername(sockfd: i32, addr: u64, addrlen: u64) -> i64 {
-    crate::kernel::framework::net::syscall::getpeername_syscall(sockfd, addr, addrlen)
+    crate::framework::net::syscall::getpeername_syscall(sockfd, addr, addrlen)
 }
 
 #[expect(
@@ -737,14 +737,14 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
     }
 
     if total_ns < 1_000_000 {
-        let start = crate::kernel::framework::timer::hrtimer_clock_read();
+        let start = crate::framework::timer::hrtimer_clock_read();
         let target = start + total_ns;
-        while crate::kernel::framework::timer::hrtimer_clock_read() < target {
+        while crate::framework::timer::hrtimer_clock_read() < target {
             core::hint::spin_loop();
         }
     } else {
         let total_ms = total_ns / 1_000_000;
-        let _ = crate::kernel::framework::timer::sleep::timer_sleep(total_ms);
+        let _ = crate::framework::timer::sleep::timer_sleep(total_ms);
     }
 
     let _ = rem;
@@ -755,7 +755,7 @@ pub(crate) fn sys_kill(pid: i32, sig: i32) -> i64 {
     if !(0..=31).contains(&sig) {
         return Errno::EINVAL.as_ret();
     }
-    match crate::kernel::framework::proc::do_signal_send_extended(pid, sig as u8) {
+    match crate::framework::proc::do_signal_send_extended(pid, sig as u8) {
         Ok(_) => 0,
         Err(-1) => Errno::EINVAL.as_ret(),
         Err(-2) => Errno::ESRCH.as_ret(),
@@ -780,7 +780,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let pid = match crate::kernel::framework::proc::process_get_current_pid() {
+    let pid = match crate::framework::proc::process_get_current_pid() {
         0 => return Errno::ESRCH.as_ret(),
         p => p,
     };
@@ -789,7 +789,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         if !raw::check_user_buf(oact, 8) {
             return Errno::EFAULT.as_ret();
         }
-        let old = crate::kernel::framework::proc::get_sigaction(pid, signum as u8);
+        let old = crate::framework::proc::get_sigaction(pid, signum as u8);
         match old {
             // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
             Some(v) => unsafe { raw::write_u64(oact as *mut u64, v) },
@@ -803,7 +803,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
         }
         // SAFETY: `const` 由调用方保证为有效指针; 只读访问
         let new_action = unsafe { raw::read_u64(act as *const u64) };
-        match crate::kernel::framework::proc::set_sigaction(pid, signum as u8, new_action) {
+        match crate::framework::proc::set_sigaction(pid, signum as u8, new_action) {
             Some(_) => {}
             None => return Errno::EINVAL.as_ret(),
         }
@@ -813,7 +813,7 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
 }
 
 pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
-    let pid = match crate::kernel::framework::proc::process_get_current_pid() {
+    let pid = match crate::framework::proc::process_get_current_pid() {
         0 => return Errno::ESRCH.as_ret(),
         p => p,
     };
@@ -822,7 +822,7 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
         if !raw::check_user_buf(oset, 8) {
             return Errno::EFAULT.as_ret();
         }
-        let old = crate::kernel::framework::proc::get_blocked_mask(pid);
+        let old = crate::framework::proc::get_blocked_mask(pid);
         // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
         unsafe { raw::write_u64(oset as *mut u64, old) };
     }
@@ -833,7 +833,7 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
         }
         // SAFETY: `const` 由调用方保证为有效指针; 只读访问
         let new_set = unsafe { raw::read_u64(set as *const u64) };
-        let old = crate::kernel::framework::proc::get_blocked_mask(pid);
+        let old = crate::framework::proc::get_blocked_mask(pid);
         let updated = match how {
             SIG_BLOCK => old | new_set,
             SIG_UNBLOCK => old & !new_set,
@@ -841,7 +841,7 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
             _ => return Errno::EINVAL.as_ret(),
         };
         let updated = updated & !((1u64 << 9) | (1u64 << 19));
-        crate::kernel::framework::proc::set_blocked_mask(pid, updated);
+        crate::framework::proc::set_blocked_mask(pid, updated);
     }
 
     0
@@ -849,12 +849,12 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
 
 fn sys_rt_sigreturn() -> i64 {
     if let Some(pid) =
-        Some(crate::kernel::framework::proc::process_get_current_pid()).filter(|&p| p != 0)
+        Some(crate::framework::proc::process_get_current_pid()).filter(|&p| p != 0)
     {
-        crate::kernel::framework::proc::process_with_mut(pid, |proc| {
+        crate::framework::proc::process_with_mut(pid, |proc| {
             let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
             proc.sigaltstack_flags.store(
-                flags & !crate::kernel::framework::proc::SS_ONSTACK,
+                flags & !crate::framework::proc::SS_ONSTACK,
                 Ordering::Release,
             );
         });
@@ -863,14 +863,14 @@ fn sys_rt_sigreturn() -> i64 {
 }
 
 pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
-    use crate::kernel::framework::proc::{SS_DISABLE, SS_ONSTACK};
+    use crate::framework::proc::{SS_DISABLE, SS_ONSTACK};
 
-    let pid = match crate::kernel::framework::proc::process_get_current_pid() {
+    let pid = match crate::framework::proc::process_get_current_pid() {
         0 => return Errno::ESRCH.as_ret(),
         p => p,
     };
 
-    let result = crate::kernel::framework::proc::process_with_mut(pid, |proc| {
+    let result = crate::framework::proc::process_with_mut(pid, |proc| {
         if old_ss != 0 {
             if !raw::check_user_buf(old_ss, 24) {
                 return Errno::EFAULT.as_ret();
@@ -927,7 +927,7 @@ fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
         return Errno::EFAULT.as_ret();
     }
 
-    let status = crate::kernel::framework::driver::hotplug::HOTPLUG_MANAGER.status();
+    let status = crate::framework::driver::hotplug::HOTPLUG_MANAGER.status();
 
     let mut offset: u32 = 0;
 
@@ -1043,15 +1043,15 @@ fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
     }
 
     let fb_addr =
-        crate::kernel::framework::driver::FB_PHYS_ADDR.load(core::sync::atomic::Ordering::Acquire);
+        crate::framework::driver::FB_PHYS_ADDR.load(core::sync::atomic::Ordering::Acquire);
     if fb_addr == 0 {
         return Errno::ENODEV.as_ret();
     }
 
     let fb_size =
-        crate::kernel::framework::driver::FB_PHYS_SIZE.load(core::sync::atomic::Ordering::Acquire);
+        crate::framework::driver::FB_PHYS_SIZE.load(core::sync::atomic::Ordering::Acquire);
 
-    let (width, height, pitch, bpp) = match crate::kernel::framework::driver::get_framebuffer() {
+    let (width, height, pitch, bpp) = match crate::framework::driver::get_framebuffer() {
         Some(guard) => {
             let fb = guard.as_ref().unwrap();
             (
@@ -1089,39 +1089,39 @@ fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
     }
 
     let fb_phys =
-        crate::kernel::framework::driver::FB_PHYS_ADDR.load(core::sync::atomic::Ordering::Acquire);
+        crate::framework::driver::FB_PHYS_ADDR.load(core::sync::atomic::Ordering::Acquire);
     if fb_phys == 0 {
         return Errno::ENODEV.as_ret();
     }
 
     let fb_total =
-        crate::kernel::framework::driver::FB_PHYS_SIZE.load(core::sync::atomic::Ordering::Acquire);
+        crate::framework::driver::FB_PHYS_SIZE.load(core::sync::atomic::Ordering::Acquire);
     if size > fb_total {
         return Errno::EINVAL.as_ret();
     }
 
-    let cr3 = crate::kernel::framework::proc::user_proc::user_entry_cr3
+    let cr3 = crate::framework::proc::user_proc::user_entry_cr3
         .load(core::sync::atomic::Ordering::SeqCst);
     if cr3 == 0 {
         return Errno::ENODEV.as_ret();
     }
 
-    let vmm = crate::kernel::framework::mm::get_vmm();
-    let flags = crate::kernel::framework::mm::PageFlags::PRESENT
-        | crate::kernel::framework::mm::PageFlags::WRITABLE
-        | crate::kernel::framework::mm::PageFlags::USER
-        | crate::kernel::framework::mm::PageFlags::WRITE_THROUGH;
+    let vmm = crate::framework::mm::get_vmm();
+    let flags = crate::framework::mm::PageFlags::PRESENT
+        | crate::framework::mm::PageFlags::WRITABLE
+        | crate::framework::mm::PageFlags::USER
+        | crate::framework::mm::PageFlags::WRITE_THROUGH;
 
-    let phys_page_aligned = fb_phys & !(crate::kernel::framework::mm::PAGE_SIZE - 1);
+    let phys_page_aligned = fb_phys & !(crate::framework::mm::PAGE_SIZE - 1);
     let offset = fb_phys - phys_page_aligned;
-    let pages = (size + offset).div_ceil(crate::kernel::framework::mm::PAGE_SIZE);
+    let pages = (size + offset).div_ceil(crate::framework::mm::PAGE_SIZE);
 
     for i in 0..pages {
-        let pa = crate::kernel::framework::mm::PhysAddr(
-            phys_page_aligned + i * crate::kernel::framework::mm::PAGE_SIZE,
+        let pa = crate::framework::mm::PhysAddr(
+            phys_page_aligned + i * crate::framework::mm::PAGE_SIZE,
         );
-        let va = crate::kernel::framework::mm::VirtAddr(
-            target_vaddr + i * crate::kernel::framework::mm::PAGE_SIZE,
+        let va = crate::framework::mm::VirtAddr(
+            target_vaddr + i * crate::framework::mm::PAGE_SIZE,
         );
         vmm.map_page_in_table(cr3, va, pa, flags);
     }
@@ -1154,21 +1154,21 @@ const BOOT_PART_SECTORS: u32 = 16384;
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 fn sys_boot_install(disk_id: u32) -> i64 {
-    let pwm = crate::kernel::framework::credo::pwm_get_current();
-    if !crate::kernel::framework::credo::pwm_has_capability(pwm, 4, 0) {
+    let pwm = crate::framework::credo::pwm_get_current();
+    if !crate::framework::credo::pwm_has_capability(pwm, 4, 0) {
         return Errno::EACCES.as_ret();
     }
     let stage1 = include_bytes!("../../../../build/stage1.bin");
-    if !crate::kernel::framework::driver::hdd_is_present(disk_id as u8) {
+    if !crate::framework::driver::hdd_is_present(disk_id as u8) {
         return Errno::ENOENT.as_ret();
     }
     let mut mbr = [0u8; 512];
-    if crate::kernel::framework::driver::hdd_read_sector(disk_id as u8, 0, &mut mbr) < 0 {
+    if crate::framework::driver::hdd_read_sector(disk_id as u8, 0, &mut mbr) < 0 {
         return Errno::EIO.as_ret();
     }
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
-    let total_sectors = crate::kernel::framework::driver::hdd_total_sectors(disk_id as u8);
+    let total_sectors = crate::framework::driver::hdd_total_sectors(disk_id as u8);
     let nestfs_start = BOOT_PART_SECTORS;
     let nestfs_sectors = if total_sectors > u64::from(nestfs_start) + 1 {
         total_sectors - u64::from(nestfs_start)
@@ -1190,7 +1190,7 @@ fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut mbr, 474, nestfs_len);
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
-    if crate::kernel::framework::driver::hdd_write_sector(disk_id as u8, 0, &mbr) < 0 {
+    if crate::framework::driver::hdd_write_sector(disk_id as u8, 0, &mbr) < 0 {
         return Errno::EIO.as_ret();
     }
     let kernel_ptr = raw::kernel_start_ptr();
@@ -1218,7 +1218,7 @@ fn sys_boot_install(disk_id: u32) -> i64 {
         unsafe {
             core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
         }
-        if crate::kernel::framework::driver::hdd_write_sector(disk_id as u8, u64::from(1 + s), &buf)
+        if crate::framework::driver::hdd_write_sector(disk_id as u8, u64::from(1 + s), &buf)
             < 0
         {
             return Errno::EIO.as_ret();
@@ -1232,6 +1232,6 @@ fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut cfg, 4, BOOT_PART_SECTORS);
     cfg[510] = 0x55;
     cfg[511] = 0xAA;
-    crate::kernel::framework::driver::hdd_write_sector(disk_id as u8, 2046, &cfg);
+    crate::framework::driver::hdd_write_sector(disk_id as u8, 2046, &cfg);
     0
 }

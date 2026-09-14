@@ -25,7 +25,7 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.5 任务: 串口设备迁移
 
-use crate::kernel::framework::ioport::IoPort;
+use crate::framework::ioport::IoPort;
 
 // ── 缓冲区大小 ──
 
@@ -580,22 +580,22 @@ impl SerialPort {
 // Chitin Driver trait 实现 (§6.4 直接方案 B: services 权威注册)
 // ============================================================================
 
-impl crate::kernel::framework::driver::Driver for SerialPort {
+impl crate::framework::driver::Driver for SerialPort {
     /// 驱动名 (与 framework 原注册名保持一致: "serial0")
     fn name(&self) -> &'static str {
         "serial0"
     }
 
-    fn device_type(&self) -> crate::kernel::framework::driver::DeviceType {
-        crate::kernel::framework::driver::DeviceType::Char
+    fn device_type(&self) -> crate::framework::driver::DeviceType {
+        crate::framework::driver::DeviceType::Char
     }
 
     /// `SerialPort::new` 已 apply_config, 此处保持幂等
-    fn init(&mut self) -> Result<(), crate::kernel::framework::driver::DriverError> {
+    fn init(&mut self) -> Result<(), crate::framework::driver::DriverError> {
         Ok(())
     }
 
-    fn shutdown(&mut self) -> Result<(), crate::kernel::framework::driver::DriverError> {
+    fn shutdown(&mut self) -> Result<(), crate::framework::driver::DriverError> {
         Ok(())
     }
 }

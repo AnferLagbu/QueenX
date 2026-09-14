@@ -76,7 +76,7 @@ fn test_ipc_error_variants_complete() {
     //                (例如在 msgq 上调用 shm 专属 API, 跨子系统语义)
     //
     // 必须保留的包装变体:
-    //   - Kernel(crate::kernel::services::error::KernelError)
+    //   - Kernel(crate::services::error::KernelError)
     //     单一来源, 与 TD-20 错误统一测试保持一致.
     let invalid_op_needles = [
         "    InvalidOp,\n",
@@ -88,7 +88,7 @@ fn test_ipc_error_variants_complete() {
         "IpcError 必须保留 InvalidOp 域语义变体 (TD-14 + TD-08 薄包装)"
     );
     assert!(
-        src.contains("Kernel(crate::kernel::services::error::KernelError)"),
+        src.contains("Kernel(crate::services::error::KernelError)"),
         "IpcError 必须以 Kernel(KernelError) 共享包装 (TD-08 薄包装)"
     );
     // 旧版 7 变体已废弃, 不得再出现在 IpcError 定义中.

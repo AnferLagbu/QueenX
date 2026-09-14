@@ -8,7 +8,7 @@
 //! 等是其数组元素类型、`IPC_MAX_*`/`PIPE_BUFFER_SIZE` 等为机制常量 — 均为
 //! framework 机制直接持有的数据结构/常量, 故迁回 framework。
 //!
-//! services 侧改 `pub use crate::kernel::framework::ipc::types::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::ipc::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯类型定义 + 常量 + 等待队列机制)。
 
 use core::sync::atomic::AtomicPtr;
@@ -183,7 +183,7 @@ pub struct WaitQueue {
     /// 中断上下文登记的唤醒请求, 由进程上下文 `drain_pending` 补唤醒
     wake_pending: bool,
     /// 队列锁 (中断安全)
-    lock: crate::kernel::framework::sync::IrqSpinLock<()>,
+    lock: crate::framework::sync::IrqSpinLock<()>,
 }
 
 impl WaitQueue {
@@ -192,7 +192,7 @@ impl WaitQueue {
             items: [const { None }; 4],
             count: 0,
             wake_pending: false,
-            lock: crate::kernel::framework::sync::IrqSpinLock::new(()),
+            lock: crate::framework::sync::IrqSpinLock::new(()),
         }
     }
 

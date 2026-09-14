@@ -10,7 +10,7 @@
 //! - 通过 framework::proc 和 framework::syscall 公开 API 访问
 //! - 无 unsafe, 无裸指针
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 #[expect(
     clippy::manual_let_else,
@@ -30,17 +30,17 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     if cpusetsize < 8 {
         return Errno::EINVAL.as_ret();
     }
-    if mask_ptr == 0 || !crate::kernel::framework::syscall::api::validate_user_buf(mask_ptr, 8) {
+    if mask_ptr == 0 || !crate::framework::syscall::api::validate_user_buf(mask_ptr, 8) {
         return Errno::EFAULT.as_ret();
     }
 
-    let mask = match crate::kernel::framework::syscall::api::read_u64_from_user(mask_ptr) {
+    let mask = match crate::framework::syscall::api::read_u64_from_user(mask_ptr) {
         Some(v) => v,
         None => return Errno::EFAULT.as_ret(),
     };
 
     let target_pid = if pid == 0 {
-        crate::kernel::framework::proc::process_get_current_pid()
+        crate::framework::proc::process_get_current_pid()
     } else if pid > 0 {
         pid as u32
     } else {
@@ -51,7 +51,7 @@ pub fn sched_setaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
         return Errno::ESRCH.as_ret();
     }
 
-    let ok = crate::kernel::framework::proc::process_with_mut(target_pid, |p| {
+    let ok = crate::framework::proc::process_with_mut(target_pid, |p| {
         use core::sync::atomic::Ordering;
         p.cpuset_allowed.store(mask, Ordering::Release);
     })
@@ -77,12 +77,12 @@ pub fn sched_getaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
     if cpusetsize < 8 {
         return Errno::EINVAL.as_ret();
     }
-    if mask_ptr == 0 || !crate::kernel::framework::syscall::api::validate_user_buf(mask_ptr, 8) {
+    if mask_ptr == 0 || !crate::framework::syscall::api::validate_user_buf(mask_ptr, 8) {
         return Errno::EFAULT.as_ret();
     }
 
     let target_pid = if pid == 0 {
-        crate::kernel::framework::proc::process_get_current_pid()
+        crate::framework::proc::process_get_current_pid()
     } else if pid > 0 {
         pid as u32
     } else {
@@ -93,13 +93,13 @@ pub fn sched_getaffinity_syscall(pid: i32, cpusetsize: u32, mask_ptr: u64) -> i6
         return Errno::ESRCH.as_ret();
     }
 
-    let mask = crate::kernel::framework::proc::process_with(target_pid, |p| {
+    let mask = crate::framework::proc::process_with(target_pid, |p| {
         use core::sync::atomic::Ordering;
         p.cpuset_allowed.load(Ordering::Acquire)
     })
     .unwrap_or(u64::MAX);
 
-    if !crate::kernel::framework::syscall::api::write_u64_to_user(mask_ptr, mask) {
+    if !crate::framework::syscall::api::write_u64_to_user(mask_ptr, mask) {
         return Errno::EFAULT.as_ret();
     }
 

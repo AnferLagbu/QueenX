@@ -20,10 +20,10 @@
 //! 当前简化实现: 同步等待直至子进程变为 Zombie 或 Terminated.
 //! 非阻塞模式 (WNOHANG) 通过 SCHEDULER.block + 调度器轮询实现.
 
-use crate::kernel::framework::proc::ProcessState;
-use crate::kernel::framework::proc::api;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::proc::ProcessState;
+use crate::framework::proc::api;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 use core::sync::atomic::Ordering;
 
@@ -119,7 +119,7 @@ pub fn sys_wait4(pid: i32, wstatus_ptr: u64, options: i32) -> i64 {
         }
 
         // 子进程未退出, 阻塞当前进程并调度到子进程
-        crate::kernel::framework::proc::scheduler_yield();
+        crate::framework::proc::scheduler_yield();
     }
 }
 

@@ -2,8 +2,8 @@
 
 use super::fd_table::write_i64_to_memory;
 use super::{WasiContext, WasiErrno, wasi_errno, wasi_success};
-use crate::kernel::services::wasm::interpreter::Interpreter;
-use crate::kernel::services::wasm::types::{Value, WasmError};
+use crate::services::wasm::interpreter::Interpreter;
+use crate::services::wasm::types::{Value, WasmError};
 
 /// WASI clock IDs
 const CLOCK_REALTIME: u32 = 0;
@@ -24,7 +24,7 @@ pub fn wasi_clock_time_get(
     let nanos: u64 = match clock_id {
         CLOCK_MONOTONIC | CLOCK_REALTIME => {
             // 单一实时时钟 (简化: 单一时钟源)
-            crate::kernel::framework::timer::calibration::get_time_ns().unwrap_or(0)
+            crate::framework::timer::calibration::get_time_ns().unwrap_or(0)
         }
         _ => {
             interp
@@ -49,7 +49,7 @@ pub fn wasi_random_get(_ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
 
     if let Some(ref mut mem) = interp.memory {
         for i in 0..buf_len {
-            let byte = crate::kernel::framework::proc::canary::next_random_u64() as u8;
+            let byte = crate::framework::proc::canary::next_random_u64() as u8;
             let _ = mem.write_u8(buf_ptr + i, byte);
         }
     }

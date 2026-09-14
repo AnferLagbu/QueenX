@@ -27,7 +27,7 @@ fn read(path: &str) -> String {
 fn signal_error_is_kernel_error_alias() {
     let src = read(SIGNAL_RS);
     assert!(
-        src.contains("pub use crate::kernel::services::error::KernelError as SignalError;"),
+        src.contains("pub use crate::services::error::KernelError as SignalError;"),
         "SignalError 必须为 KernelError 的 type alias (TD-16)"
     );
 }

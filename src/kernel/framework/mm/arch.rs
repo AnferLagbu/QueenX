@@ -15,7 +15,7 @@
 //! - 零依赖: 直接调用 Arch trait，无中间层
 //! - 可替换: Phase 2/3 只需更新 Arch impl，此处无需改动
 
-use crate::kernel::framework::arch::Arch;
+use crate::framework::arch::Arch;
 
 /// 刷新单个虚拟地址的 TLB 条目 (invlpg / tlbi vaae1)。
 #[inline(always)]
@@ -24,7 +24,7 @@ use crate::kernel::framework::arch::Arch;
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn tlb_flush_page(vaddr: usize) {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::tlb_flush_page(vaddr);
+    <crate::framework::arch::CurrentArch as Arch>::tlb_flush_page(vaddr);
 }
 
 /// 刷新整个 TLB (写 CR3 / tlbi vmalle1)。
@@ -34,7 +34,7 @@ pub fn tlb_flush_page(vaddr: usize) {
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn tlb_flush_all() {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::tlb_flush_all();
+    <crate::framework::arch::CurrentArch as Arch>::tlb_flush_all();
 }
 
 /// 读取当前页表基地址 (CR3 / `TTBR0_EL1`)。
@@ -44,7 +44,7 @@ pub fn tlb_flush_all() {
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn read_page_table_base() -> u64 {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::read_page_table_base()
+    <crate::framework::arch::CurrentArch as Arch>::read_page_table_base()
 }
 
 /// 写入页表基地址 (写 CR3 / `TTBR0_EL1`)。
@@ -58,11 +58,11 @@ pub fn read_page_table_base() -> u64 {
     reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
 )]
 pub fn write_page_table_base(paddr: u64) {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::write_page_table_base(paddr);
+    <crate::framework::arch::CurrentArch as Arch>::write_page_table_base(paddr);
 }
 
 /// 读取触发页错误的地址 (CR2 / `FAR_EL1`)。
 #[inline(always)]
 pub fn read_fault_address() -> usize {
-    <crate::kernel::framework::arch::CurrentArch as Arch>::read_fault_address()
+    <crate::framework::arch::CurrentArch as Arch>::read_fault_address()
 }

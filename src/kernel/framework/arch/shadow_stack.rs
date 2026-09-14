@@ -38,8 +38,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::kernel::framework::config::PAGE_SIZE;
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::config::PAGE_SIZE;
+use crate::framework::sync::IrqSpinLock;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -271,7 +271,7 @@ impl CetSubsystem {
             let s_cet_val: u64 = 0x3; // SH_STK_EN | WR_SHSTK_EN
             // SAFETY: 写入 IA32_S_CET MSR 配置内核态 CET
             unsafe {
-                crate::kernel::framework::cpu::msr::write_msr(x86_msrs::IA32_S_CET, s_cet_val);
+                crate::framework::cpu::msr::write_msr(x86_msrs::IA32_S_CET, s_cet_val);
             }
 
             crate::klog_ffi!(
@@ -317,7 +317,7 @@ impl CetSubsystem {
             if self.caps.lock().shadow_stack_enabled {
                 // SAFETY: 写入 IA32_PL0_SSP 设置内核态 Shadow Stack 指针
                 unsafe {
-                    crate::kernel::framework::cpu::msr::write_msr(x86_msrs::IA32_PL0_SSP, ssp);
+                    crate::framework::cpu::msr::write_msr(x86_msrs::IA32_PL0_SSP, ssp);
                 }
             }
         }
@@ -340,10 +340,10 @@ impl CetSubsystem {
 
         // 分配 Shadow Stack 物理页
         let pages_needed = (actual_size + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
-        let phys_addr = crate::kernel::framework::mm::pmm_alloc_pages_phys(pages_needed)?;
+        let phys_addr = crate::framework::mm::pmm_alloc_pages_phys(pages_needed)?;
 
         // 将物理地址转换为内核虚拟地址
-        let virt_addr = phys_addr.as_u64() + crate::kernel::framework::mm::KERNEL_BASE;
+        let virt_addr = phys_addr.as_u64() + crate::framework::mm::KERNEL_BASE;
 
         // 创建 Shadow Stack 描述符
         let ss = ShadowStack::new(virt_addr, actual_size as u64);
@@ -409,12 +409,12 @@ impl CetSubsystem {
 
             // SAFETY: 写入 IA32_U_CET 配置用户态 CET
             unsafe {
-                crate::kernel::framework::cpu::msr::write_msr(x86_msrs::IA32_U_CET, u_cet_val);
+                crate::framework::cpu::msr::write_msr(x86_msrs::IA32_U_CET, u_cet_val);
             }
 
             // SAFETY: 写入 IA32_PL3_SSP 设置用户态 Shadow Stack 指针
             unsafe {
-                crate::kernel::framework::cpu::msr::write_msr(x86_msrs::IA32_PL3_SSP, ssp);
+                crate::framework::cpu::msr::write_msr(x86_msrs::IA32_PL3_SSP, ssp);
             }
 
             crate::klog_ffi!(
@@ -455,7 +455,7 @@ impl CetSubsystem {
 
             // SAFETY: 写入 IA32_INTERRUPT_SSP_TABLE 设置中断 Shadow Stack 表
             unsafe {
-                crate::kernel::framework::cpu::msr::write_msr(
+                crate::framework::cpu::msr::write_msr(
                     x86_msrs::IA32_INTERRUPT_SSP_TABLE,
                     table_addr,
                 );

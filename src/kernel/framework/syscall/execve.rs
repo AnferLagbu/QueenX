@@ -10,7 +10,7 @@
 //!
 //! services 层 0 unsafe — 本文件不含 unsafe 代码.
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// execve 结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

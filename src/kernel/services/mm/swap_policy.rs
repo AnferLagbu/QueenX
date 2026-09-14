@@ -21,7 +21,7 @@
 //! - T2-4: Swap 策略完整迁移 (2026-06-19)
 //! - 互补: pmm_trait::PmmPolicy (物理页分配策略)
 
-use crate::kernel::framework::mm::swap_trait::{LruPageInfo, SwapPolicy, SwapPolicyContext};
+use crate::framework::mm::swap_trait::{LruPageInfo, SwapPolicy, SwapPolicyContext};
 
 // ============================================================================
 // 默认 Swap 策略 — 标准 swap 行为
@@ -85,7 +85,7 @@ impl SwapPolicy for DefaultSwapPolicy {
 /// 当 Swap 策略已被注册时返回 `Err(())`.
 pub fn register_default_swap_policy() -> Result<(), ()> {
     static POLICY: DefaultSwapPolicy = DefaultSwapPolicy;
-    crate::kernel::framework::mm::register_swap_policy(&POLICY).map_err(|_| ())
+    crate::framework::mm::register_swap_policy(&POLICY).map_err(|_| ())
 }
 
 // ============================================================================
@@ -101,7 +101,7 @@ pub fn register_default_swap_policy() -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::mm::swap_trait::{LruPageInfo, SwapPolicyContext};
+    use crate::framework::mm::swap_trait::{LruPageInfo, SwapPolicyContext};
     use alloc::vec;
     use alloc::vec::Vec;
 

@@ -145,6 +145,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kernel"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "ed25519-dalek",
+ "smoltcp",
+ "spin",
+ "zerocopy",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -178,11 +189,7 @@ dependencies = [
 name = "queenx"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.11.1",
- "ed25519-dalek",
- "smoltcp",
- "spin",
- "zerocopy",
+ "kernel",
 ]
 
 [[package]]

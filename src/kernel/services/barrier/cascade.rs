@@ -241,7 +241,7 @@ pub struct CascadePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::services::barrier::attribution::TcbModule;
+    use crate::services::barrier::attribution::TcbModule;
 
     fn build_topology() -> DomainTopology {
         let mut topo = DomainTopology::new();

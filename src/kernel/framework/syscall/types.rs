@@ -11,7 +11,7 @@
 //! services dispatch 消费, 依赖闭包为空 (纯 const + type alias, 仅
 //! re-export framework::errno::Errno) — 属机制项, 迁回 (同 fd_alloc 模式)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::syscall::types::*`
+//! services 侧改 `pub use crate::framework::syscall::types::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 
 // POSIX errno 命名约定 (EAGAIN/EACCES/...) — 全大写缩写是有意的
@@ -774,7 +774,7 @@ pub const QX_SNAPSHOT_CLONE: u64 = 898;
 //
 // B09-12/DECISION-H13 P0-1: Errno 定义已迁回 framework (framework::errno),
 // 本处 re-export 保持调用方兼容 (services→framework 单向依赖).
-pub use crate::kernel::framework::errno::Errno;
+pub use crate::framework::errno::Errno;
 
 // ==================== 辅助类型 ====================
 

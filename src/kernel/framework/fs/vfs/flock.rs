@@ -10,7 +10,7 @@
 //! 路径调用 `posix_lock_release_inode`), 锁表是 VFS 机制状态的一部分 —
 //! 属机制项, 迁回。依赖闭包仅 framework (IrqSpinLock + core 原子), 0 unsafe。
 //!
-//! services 侧改 `pub use crate::kernel::framework::fs::vfs::flock::*`
+//! services 侧改 `pub use crate::framework::fs::vfs::flock::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //!
 //! ## 架构
@@ -54,7 +54,7 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 
 // ============================================================================
 // 常量

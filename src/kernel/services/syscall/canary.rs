@@ -8,7 +8,7 @@
 //!
 //! 纯策略包装: 实际熵源/用户拷贝由 framework `proc::canary` 提供。
 
-use crate::kernel::framework::proc;
+use crate::framework::proc;
 
 /// `getrandom(buf, buflen, flags)` — 熵源读取
 ///

@@ -11,9 +11,9 @@
 //! - [`chdir_syscall`] 切换当前工作目录
 //! - [`getcwd_syscall`] 取当前工作目录到用户缓冲
 
-use crate::kernel::framework::fs::api as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::fs::api as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // chdir

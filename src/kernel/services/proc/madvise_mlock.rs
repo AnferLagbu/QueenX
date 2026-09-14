@@ -12,7 +12,7 @@
 //! 与 Linux `<sys/mman.h>` API 对齐:
 //!
 //! ```ignore
-//! use crate::kernel::services::proc::madvise_mlock as ml;
+//! use crate::services::proc::madvise_mlock as ml;
 //!
 //! // 内存建议
 //! ml::madvise(addr, len, Advice::Sequential)?;
@@ -36,9 +36,9 @@
 //! - mlock 锁定的页不会被 swap/reclaim, 但会参与 `madvise(MADV_PAGEOUT)` 的忽略
 //! - 进程退出时由 `framework::proc::vma::MmStruct::release` 释放所有锁定
 
-use crate::kernel::framework::mm::PAGE_SIZE;
-use crate::kernel::framework::proc::madvise_mlock as fw_ml;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::mm::PAGE_SIZE;
+use crate::framework::proc::madvise_mlock as fw_ml;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // Advice 枚举
@@ -176,7 +176,7 @@ pub enum MlockError {
     /// 当前进程无 `MmStruct` (kernel thread 路径)
     NotMapped,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl MlockError {
@@ -190,7 +190,7 @@ impl MlockError {
     }
 
     pub fn from_errno(e: Errno) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match e {
             Errno::EINVAL => Self::Kernel(K::InvalidArgument),
             Errno::EFAULT => Self::Kernel(K::Fault),
@@ -308,7 +308,7 @@ pub fn mincore(addr: usize, len: usize, vec: &mut [u8]) -> MlockResult<()> {
     let expected_pages = (len + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
     if vec.len() < expected_pages {
         return Err(MlockError::Kernel(
-            crate::kernel::services::error::KernelError::InvalidArgument,
+            crate::services::error::KernelError::InvalidArgument,
         ));
     }
     let rc = fw_ml::sys_mincore(addr as u64, len as u64, vec.as_mut_ptr() as u64);

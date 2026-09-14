@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 
 use super::fault_inject::maybe_inject_fault;
 use super::undo_log::UndoLog;
-use crate::kernel::framework::sync::{IrqSpinLock, IrqSpinLockGuard};
+use crate::framework::sync::{IrqSpinLock, IrqSpinLockGuard};
 
 pub trait Snapshot: Copy + Sized {
     #[expect(

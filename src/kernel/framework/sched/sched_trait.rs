@@ -16,8 +16,8 @@
 use core::fmt;
 use core::sync::atomic::Ordering;
 
-use crate::kernel::framework::proc::Process;
-use crate::kernel::framework::proc::{BlockReason, Pid};
+use crate::framework::proc::Process;
+use crate::framework::proc::{BlockReason, Pid};
 
 // ============================================================================
 // Task 抽象 — 进程/线程控制块安全句柄
@@ -169,42 +169,42 @@ pub struct QueenXScheduler;
 
 impl Scheduler for QueenXScheduler {
     fn enqueue(&self, pid: Pid) {
-        crate::kernel::framework::proc::SCHEDULER.add(pid);
+        crate::framework::proc::SCHEDULER.add(pid);
     }
 
     fn set_nice(&self, pid: Pid, nice: i8) {
-        crate::kernel::framework::proc::SCHEDULER.set_nice(pid, nice);
+        crate::framework::proc::SCHEDULER.set_nice(pid, nice);
     }
 
     fn schedule(&self) -> Option<Pid> {
-        crate::kernel::framework::proc::SCHEDULER.schedule()
+        crate::framework::proc::SCHEDULER.schedule()
     }
 
     fn current(&self) -> Option<Pid> {
-        crate::kernel::framework::proc::SCHEDULER.current()
+        crate::framework::proc::SCHEDULER.current()
     }
 
     fn block_current(&self, reason: BlockReason) {
-        crate::kernel::framework::proc::SCHEDULER.block(reason);
+        crate::framework::proc::SCHEDULER.block(reason);
     }
 
     fn unblock(&self, pid: Pid) {
-        crate::kernel::framework::proc::SCHEDULER.unblock(pid);
+        crate::framework::proc::SCHEDULER.unblock(pid);
     }
 
     fn exit_current(&self, exit_code: u32) {
-        crate::kernel::framework::proc::SCHEDULER.exit(exit_code);
+        crate::framework::proc::SCHEDULER.exit(exit_code);
     }
 
     fn yield_current(&self) {
-        crate::kernel::framework::proc::SCHEDULER.yield_current();
+        crate::framework::proc::SCHEDULER.yield_current();
     }
 
     fn set_need_reschedule(&self) {
-        crate::kernel::framework::proc::SCHEDULER.set_need_reschedule();
+        crate::framework::proc::SCHEDULER.set_need_reschedule();
     }
 
     fn has_runnable(&self) -> bool {
-        crate::kernel::framework::proc::SCHEDULER.has_any_runnable()
+        crate::framework::proc::SCHEDULER.has_any_runnable()
     }
 }

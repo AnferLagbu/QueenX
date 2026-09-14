@@ -14,8 +14,8 @@
 //! - prot → `PageFlags` 转换 (策略决策)
 //! - 委托 framework 层执行页表修改 (机制)
 
-use crate::kernel::framework::mm::{PageFlags, vma_get_current_mm};
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::mm::{PageFlags, vma_get_current_mm};
+use crate::framework::syscall::Errno;
 
 /// PROT 常量
 pub const PROT_NONE: i32 = 0x0;

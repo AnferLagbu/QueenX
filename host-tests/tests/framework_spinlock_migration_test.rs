@@ -114,13 +114,13 @@ fn irq_spinlock_adopted_in_migrated_files() {
     for f in files {
         let content = read_src(f);
         assert!(
-            content.contains("use crate::kernel::framework::sync::IrqSpinLock")
+            content.contains("use crate::framework::sync::IrqSpinLock")
                 || content.contains(
-                    "use crate::kernel::framework::sync::IrqSpinLock as Mutex",
+                    "use crate::framework::sync::IrqSpinLock as Mutex",
                 )
-                || content.contains("use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock")
+                || content.contains("use crate::framework::sync::irq_spinlock::IrqSpinLock")
                 || content.contains(
-                    "use crate::kernel::framework::sync::irq_spinlock::IrqSpinLock as Mutex",
+                    "use crate::framework::sync::irq_spinlock::IrqSpinLock as Mutex",
                 ),
             "P1-I-17: {} 必须从 framework 路径导入 IrqSpinLock",
             f

@@ -7,8 +7,8 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::framework::mm::{PAGE_SIZE, pmm_alloc_pages, vma_get_current_mm};
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::mm::{PAGE_SIZE, pmm_alloc_pages, vma_get_current_mm};
+use crate::framework::syscall::Errno;
 
 /// 用户空间最大地址
 #[cfg(target_arch = "x86_64")]

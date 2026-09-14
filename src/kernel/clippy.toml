@@ -1,0 +1,36 @@
+# Clippy configuration for QueenX kernel
+# Enforce strict safety and code quality standards
+#
+# 适用: QueenX Framekernel (Rust no_std 内核, 裸机)
+# 内核风格: 文档化所有公开 API, 强制 SAFETY 注释紧邻 unsafe 块。
+
+# ── 内核风格阈值 ──────────────────────────────────────────────
+# Cognitive complexity limit - keep functions understandable
+cognitive-complexity-threshold = 25
+
+# Type complexity limit
+type-complexity-threshold = 250
+
+# Function body length limit
+too-many-lines-threshold = 100
+
+# Avoid large types passed by value
+# 旧名 trivially-copy-pass-by-ref-threshold 已弃用, 改为 trivial-copy-size-limit
+trivial-copy-size-limit = 16
+
+# ── 文档要求 ──────────────────────────────────────────────────
+# 内核风格: 文档化所有公开 API
+missing-docs-in-crate-items = true
+
+# 抑制部分对 no_std 内核不适用的 lint
+# (内核导出 API 时可自由重构, 不应触发稳定化警告)
+avoid-breaking-exported-api = false
+
+# ── 标准宏 ────────────────────────────────────────────────────
+# 格式: { name = "宏名", brace = "<单个字符>" }, 字符为左/右配对中的"开括号"
+# 配对规则: () → ( ; [] → [ ; {} → { ; <> → <
+standard-macro-braces = [
+    { name = "klog_pmm", brace = "(" },
+    { name = "klog_slab", brace = "(" },
+    { name = "klog_error", brace = "(" },
+]

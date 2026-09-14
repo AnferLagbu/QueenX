@@ -10,19 +10,19 @@
 //! 被 framework syscall 分发路径消费 — 属机制项, 迁回。
 //! 依赖闭包仅 framework (sync/errno)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::seccomp::*`
+//! services 侧改 `pub use crate::framework::proc::seccomp::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use alloc::vec::Vec;
 
-use crate::kernel::framework::proc::PROCESS_TABLE;
-use crate::kernel::framework::proc::Pid;
-use crate::kernel::framework::proc::do_signal_send;
-use crate::kernel::framework::proc::process_get_current_pid;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::proc::PROCESS_TABLE;
+use crate::framework::proc::Pid;
+use crate::framework::proc::do_signal_send;
+use crate::framework::proc::process_get_current_pid;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 常量

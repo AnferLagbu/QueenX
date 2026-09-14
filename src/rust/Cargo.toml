@@ -3,7 +3,7 @@ name = "queenx"
 version = "0.1.0"
 edition = "2024"
 license = "MPL-2.0"
-description = "QueenX 自研操作系统内核 (framekernel 架构, x86_64 + aarch64)"
+description = "QueenX 自研操作系统内核壳 crate (方案 D: 内核本体独立为 kernel crate)"
 repository = "https://gitee.com/AnferLagbu/QueenX"
 readme = "../../README.md"
 keywords = ["kernel", "os", "framekernel", "no_std"]
@@ -13,9 +13,8 @@ categories = ["os", "no-std", "embedded"]
 name = "queenx"
 # B08-04: 显式声明 lib 路径, 消除 src/rust/lib.rs 空文件歧义
 path = "src/lib.rs"
-# B08-12: 追加 rlib — host-tests 以 path 依赖引用 queenx (host-test feature) 时,
-# 需 rlib 才能作为 Rust crate 链接; 裸机 Makefile 仍取 staticlib (libqueenx.a), 不受影响.
-crate-type = ["staticlib", "rlib"]
+# 方案 D: 壳仅以 rlib 供 host-tests 引用 (re-export kernel); 裸机 staticlib 由 kernel crate 产出.
+crate-type = ["rlib"]
 test = false
 
 [profile.dev]
@@ -27,9 +26,7 @@ panic = "abort"
 lto = true
 opt-level = "z"
 
-# 2026-06-29 新增: 调试专用 profile, 关闭 LTO + 加 debug info + 关闭优化.
-# 用于排查 engine::check / OnceLock 静态初始化 hang 等深水区问题.
-# 默认测试仍用 [profile.release] (lto=true, opt-level=z).
+# 调试专用 profile (与 kernel/queenx 原配置一致), 用于排查深水区问题.
 [profile.test-debug]
 inherits = "release"
 lto = false
@@ -37,69 +34,40 @@ opt-level = 0
 debug = 2
 
 [dependencies]
-spin = "0.9"
-bitflags = "2.4"
-zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
-# B07-06 (DECISION-078): 真实 Ed25519 签名验证 (RFC 8032).
-# default-features = false 保持 no_std 兼容; fast 启用预计算表加速验证.
-# 许可证 BSD-3-Clause OR Apache-2.0 (deny.toml 已放行).
-ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
-smoltcp = { path = "../kernel/services/net/smoltcp", default-features = false, features = [
-    "medium-ethernet",
-    "proto-ipv4",
-    "proto-ipv4-fragmentation",
-    "proto-ipv6",
-    "proto-dhcpv4",
-    "proto-dns",
-    "socket-raw",
-    "socket-icmp",
-    "socket-udp",
-    "socket-tcp",
-    "socket-tcp-cubic",
-    "socket-dhcpv4",
-    "socket-dns",
-] }
-
-[build-dependencies]
+# 方案 D: 内核本体独立 crate (src/kernel), 本壳仅 re-export.
+# spin/zerocopy/ed25519-dalek/smoltcp 等内核依赖已迁至 kernel/Cargo.toml.
+kernel = { path = "../kernel" }
 
 [features]
 default = []
-# 启用真实硬件 e1000 EEPROM 读取路径 (EERD 寄存器轮询).
-# 关闭时 (默认) 走 QEMU 仿真兼容路径: 立即返回 0xFFFF, MAC 填入 QEMU 默认值.
-# 真实硬件 (i210/i219/i211 等) 需要打开此 feature 才能读取 NIC EEPROM 中的真实 MAC.
-e1000-real-hw = []
-e1000-verbose = []
-# B08-12 (DECISION-052): host-test 宿主编译 feature.
-# 启用后剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
-# 使内核 crate 可在 host (std) 环境编译, 供 host-tests 直接引用 services 真实源码.
-# 门控语义与 kernel_test (QEMU 裸机测试模式) 正交: 见 audit-fix-08 工程计划 E-03.
-host-test = []
-kernel_test = []
-fault_injection = []
-smp = []
-net = []
-alloc = []
-async = []
-lock_stats = []
-debug_mutex = []
-# 启用 initramfs 支持: 从 build/user/initramfs.cpio 加载根文件系统
-initramfs = []
-atomic_stats = []
-log = []
-json_export = []
-ipv6 = []
-dhcp = []
-http_client = []
-mdns = []
-mqtt = []
-sntp = []
-smtp = []
-tftp = []
-snmp = []
-netbios = []
-preempt = []
-kaslr = []
-barrier = []
-# syscall 入口诊断串口输出 (仅调试; 生产构建不包含)
-debug_syscall = []
-
+# e1000 真实硬件 EEPROM 读取路径 (转发至 kernel).
+e1000-real-hw = ["kernel/e1000-real-hw"]
+e1000-verbose = ["kernel/e1000-verbose"]
+# host-test: 剥离裸机专属顶层约束, 供 host-tests 引用内核 services 真实源码 (转发至 kernel).
+host-test = ["kernel/host-test"]
+kernel_test = ["kernel/kernel_test"]
+fault_injection = ["kernel/fault_injection"]
+smp = ["kernel/smp"]
+net = ["kernel/net"]
+alloc = ["kernel/alloc"]
+async = ["kernel/async"]
+lock_stats = ["kernel/lock_stats"]
+debug_mutex = ["kernel/debug_mutex"]
+initramfs = ["kernel/initramfs"]
+atomic_stats = ["kernel/atomic_stats"]
+log = ["kernel/log"]
+json_export = ["kernel/json_export"]
+ipv6 = ["kernel/ipv6"]
+dhcp = ["kernel/dhcp"]
+http_client = ["kernel/http_client"]
+mdns = ["kernel/mdns"]
+mqtt = ["kernel/mqtt"]
+sntp = ["kernel/sntp"]
+smtp = ["kernel/smtp"]
+tftp = ["kernel/tftp"]
+snmp = ["kernel/snmp"]
+netbios = ["kernel/netbios"]
+preempt = ["kernel/preempt"]
+kaslr = ["kernel/kaslr"]
+barrier = ["kernel/barrier"]
+debug_syscall = ["kernel/debug_syscall"]

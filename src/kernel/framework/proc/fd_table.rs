@@ -19,7 +19,7 @@
 //! 旧: entries`[`i`]` = global_fd (i32)
 //! 新: entries`[`i`]` = handle_id (u32) → OpenFile (共享 offset)
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
 /// 每进程 FD 表上限
 pub const MAX_FDS_PER_PROCESS: usize = 64;

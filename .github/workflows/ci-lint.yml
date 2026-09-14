@@ -239,17 +239,19 @@ jobs:
           echo "      不阻断 rustdoc 内部 HTML tag 自动生成警告 (无源码位置)."
           cd src/rust
           # x86_64
-          # 方案 B: 裸机构建显式注入 build-std (config.toml 已删全局, E0152 同族根治)
+          # 方案 D: 裸机 doc 指向 kernel manifest; 方案 B: 注入 build-std
           RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc --release \
+            --manifest-path ../kernel/Cargo.toml \
             --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' \
-            --target x86_64-unknown-none \
+            --target x86_64-unknown-none --target-dir target \
             --lib --bins --examples --no-deps 2>&1 | tee /tmp/rustdoc-x86.log | tail -5
           DOC_EXIT_X86=${PIPESTATUS[0]}
           # aarch64
-          # 方案 B: 裸机构建显式注入 build-std (config.toml 已删全局, E0152 同族根治)
+          # 方案 D: 裸机 doc 指向 kernel manifest; 方案 B: 注入 build-std
           RUSTDOCFLAGS="-D rustdoc::broken-intra-doc-links" cargo doc --release \
+            --manifest-path ../kernel/Cargo.toml \
             --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' \
-            --target aarch64-unknown-none \
+            --target aarch64-unknown-none --target-dir target \
             --lib --bins --examples --no-deps 2>&1 | tee /tmp/rustdoc-aarch64.log | tail -5
           DOC_EXIT_ARM=${PIPESTATUS[0]}
           echo ""

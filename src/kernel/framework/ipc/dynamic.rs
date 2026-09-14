@@ -20,8 +20,8 @@
 use super::types::{
     IpcId, Message, MsgQueue, Pipe, SHM_MAX_SIZE, Semaphore, ShmSegment, WaitQueue,
 };
-use crate::kernel::framework::mm::PAGE_SIZE;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::mm::PAGE_SIZE;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicPtr;
@@ -62,7 +62,7 @@ pub(crate) mod raw {
     }
 }
 
-use crate::kernel::framework::racy_cell::RacyCell;
+use crate::framework::racy_cell::RacyCell;
 use raw::MessageRef;
 
 pub struct DynIpcNamespace {
@@ -136,7 +136,7 @@ impl DynIpcNamespace {
         }
 
         let pages = (size as usize).div_ceil(PAGE_SIZE as usize);
-        let phys = crate::kernel::framework::mm::pmm_alloc_pages(pages);
+        let phys = crate::framework::mm::pmm_alloc_pages(pages);
         if phys.is_null() {
             return Err(-3);
         }
@@ -167,7 +167,7 @@ impl DynIpcNamespace {
         let pos = segs.iter().position(|s| s.id == id).ok_or(-1)?;
         let seg = segs.remove(pos);
         let pages = (seg.size as usize).div_ceil(PAGE_SIZE as usize);
-        crate::kernel::framework::mm::pmm_free_pages(seg.phys_addr as *mut u8, pages);
+        crate::framework::mm::pmm_free_pages(seg.phys_addr as *mut u8, pages);
         Ok(())
     }
 

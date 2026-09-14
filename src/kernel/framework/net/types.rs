@@ -7,7 +7,7 @@
 //! `FALLBACK_*` 常量被 framework net init/dns 机制直接消费、`NET_READY`/
 //! `NET_CONFIGURED` 为机制持有的全局状态 — 属机制项, 迁回。
 //!
-//! services 侧改 `pub use crate::kernel::framework::net::types::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::net::types::*` 保持 API 兼容。
 //! 本文件 0 unsafe (纯常量 + AtomicBool 全局状态).
 
 use core::sync::atomic::AtomicBool;

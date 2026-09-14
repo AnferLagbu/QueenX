@@ -11,12 +11,12 @@
 //! `validate_*` 函数经 `ConfigValidateHook` 实现 (`DefaultConfigValidateHook`) 注册,
 //! framework config::init()/pci/net 自检经 trait 调用。
 
-use crate::kernel::framework::config::ConfigError;
-use crate::kernel::framework::config::{
+use crate::framework::config::ConfigError;
+use crate::framework::config::{
     HUGE_PAGE_2M_SIZE, KERNEL_STACK_SIZE, MAX_CPUS, PAGE_SIZE, SLAB_DEFAULT_SIZE, USER_CODE_BASE,
     USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
 };
-use crate::kernel::framework::config::{ConfigValidateHook, register_config_validate_hook};
+use crate::framework::config::{ConfigValidateHook, register_config_validate_hook};
 use crate::slog_err;
 
 /// 校验 CPU 配置.
@@ -24,7 +24,7 @@ use crate::slog_err;
 /// # Errors
 /// 当实际 CPU 数量超过 `MAX_CPUS` 时返回 `Err(ConfigError::CpuCountExceedsMax { actual, max })`.
 pub fn validate_cpu_config() -> Result<(), ConfigError> {
-    let cpu_count = crate::kernel::framework::smp::get_cpu_count();
+    let cpu_count = crate::framework::smp::get_cpu_count();
 
     if cpu_count as usize > MAX_CPUS {
         return Err(ConfigError::CpuCountExceedsMax {
@@ -84,8 +84,8 @@ pub fn validate_memory_config() -> Result<(), ConfigError> {
 pub fn validate_interrupt_config() -> Result<(), ConfigError> {
     #[cfg(target_arch = "x86_64")]
     {
-        let apic_ok = crate::kernel::framework::arch::apic::is_initialized();
-        let ioapic_ok = crate::kernel::framework::arch::ioapic::is_initialized();
+        let apic_ok = crate::framework::arch::apic::is_initialized();
+        let ioapic_ok = crate::framework::arch::ioapic::is_initialized();
         if !apic_ok && !ioapic_ok {
             return Err(ConfigError::IrqControllerUnavailable);
         }
@@ -116,7 +116,7 @@ pub fn validate_cross_module_consistency() -> Result<(), ConfigError> {
 /// # Errors
 /// 当 PCI 子系统未初始化时返回 `Err(ConfigError::DriverConfigInvalid("pci"))`.
 pub fn validate_pci_subsystem() -> Result<(), ConfigError> {
-    if !crate::kernel::framework::pci::is_initialized() {
+    if !crate::framework::pci::is_initialized() {
         return Err(ConfigError::DriverConfigInvalid("pci"));
     }
     Ok(())
@@ -207,7 +207,7 @@ pub fn validate_system_config() -> u32 {
     }
 
     // KASLR 偏移自检
-    if let Err(msg) = crate::kernel::services::config::kaslr::validate_kaslr_offset() {
+    if let Err(msg) = crate::services::config::kaslr::validate_kaslr_offset() {
         errors += 1;
         slog_err!(Boot, "CONFIG: KASLR: {}", msg);
     }

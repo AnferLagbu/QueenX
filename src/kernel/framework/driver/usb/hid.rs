@@ -442,9 +442,9 @@ impl HidDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::driver::usb::usb_core::EndpointDescriptor;
-    use crate::kernel::framework::driver::usb::usb_core::InterfaceDescriptor;
-    use crate::kernel::framework::driver::usb::usb_core::UsbSpeed;
+    use crate::framework::driver::usb::usb_core::EndpointDescriptor;
+    use crate::framework::driver::usb::usb_core::InterfaceDescriptor;
+    use crate::framework::driver::usb::usb_core::UsbSpeed;
     use alloc::vec;
 
     // ----------------- HID 描述符解析器测试 -----------------
@@ -585,7 +585,7 @@ mod tests {
     // ----------------- HidDriver Tests -----------------
 
     fn make_test_hid_device() -> UsbDevice {
-        use crate::kernel::framework::driver::usb::enumerate::parse_device_descriptor;
+        use crate::framework::driver::usb::enumerate::parse_device_descriptor;
 
         let device_data = [
             18, 1, 0x10, 0x01, 0x00, 0x00, 0x00, 0x40, 0xAB, 0x12, 0xCD, 0x34, 0x00, 0x01, 1, 2, 0,
@@ -597,7 +597,7 @@ mod tests {
             id: 0,
             address: 5,
             speed: UsbSpeed::High,
-            state: crate::kernel::framework::driver::usb::usb_core::DeviceState::Configured,
+            state: crate::framework::driver::usb::usb_core::DeviceState::Configured,
             descriptor,
             configuration: Some(1),
             interfaces: vec![InterfaceDescriptor {
@@ -619,9 +619,9 @@ mod tests {
                 max_packet_size: 8,
                 interval: 10,
             }],
-            info: crate::kernel::framework::driver::framework::DeviceInfo::new(
+            info: crate::framework::driver::framework::DeviceInfo::new(
                 "test-hid",
-                crate::kernel::framework::driver::framework::DeviceType::Other,
+                crate::framework::driver::framework::DeviceType::Other,
             ),
         }
     }

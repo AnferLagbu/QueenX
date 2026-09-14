@@ -10,4 +10,4 @@
 //! (`framework::config::ConfigError`) 显式转发, 保持 services 侧 API 兼容
 //! (services→framework 合法方向)。
 
-pub use crate::kernel::framework::config::ConfigError;
+pub use crate::framework::config::ConfigError;

@@ -15,7 +15,7 @@
 //! sysfs 项值取自各 framework 层 API (`cpu_count`, `mem_total`, `acpi_status` 等).
 //! 不在 sysfs 中持久化数据, 全部为只读 + 按需 `read()` 时计算.
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // sysfs 节点类型

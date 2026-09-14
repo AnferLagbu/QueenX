@@ -12,8 +12,8 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::kernel::framework::mm;
-use crate::kernel::framework::proc::{process_get_current_pid, process_with};
+use crate::framework::mm;
+use crate::framework::proc::{process_get_current_pid, process_with};
 
 static ENTROPY_POOL: AtomicU64 = AtomicU64::new(0x1234_5678_DEAD_BEEFu64);
 static PER_PROC_SEED: AtomicU64 = AtomicU64::new(0x5A5A_5A5A_5A5A_5A5Au64);

@@ -21,8 +21,8 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::chitin;
-pub use crate::kernel::framework::chitin::{ChitinNode, NodeId, Property, PropertyValue};
+use crate::framework::chitin;
+pub use crate::framework::chitin::{ChitinNode, NodeId, Property, PropertyValue};
 
 // ============================================================================
 // 强类型 ID
@@ -56,7 +56,7 @@ pub enum DevTreeError {
     /// 父节点不存在
     ParentNotFound,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl DevTreeError {
@@ -70,7 +70,7 @@ impl DevTreeError {
     }
 
     pub fn from_i32(rc: i32) -> Self {
-        use crate::kernel::services::error::KernelError as K;
+        use crate::services::error::KernelError as K;
         match rc {
             -2 => Self::Kernel(K::FileNotFound),
             -22 => Self::Kernel(K::InvalidArgument),
@@ -82,7 +82,7 @@ impl DevTreeError {
 
 pub type DevTreeResult<T> = Result<T, DevTreeError>;
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 节点查询
@@ -225,7 +225,7 @@ pub fn bind_device(
     driver_data: *mut u8,
 ) -> DevTreeResult<u32> {
     chitin::devtree::devtree_bind_device(id.0, io_base, irq, driver_data).ok_or(
-        DevTreeError::Kernel(crate::kernel::services::error::KernelError::FileNotFound),
+        DevTreeError::Kernel(crate::services::error::KernelError::FileNotFound),
     )
 }
 

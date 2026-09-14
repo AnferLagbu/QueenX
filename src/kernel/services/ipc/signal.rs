@@ -17,7 +17,7 @@
 //! 功能等价于 POSIX signals
 
 use super::types::{IPC_MAX_SIGNALS, SignalHandlerFn};
-use crate::kernel::framework::proc::{
+use crate::framework::proc::{
     SignalDecision, SignalDefaultAction, process_get_by_pid, process_get_current_pwm,
     process_get_pwm_by_pid, register_signal_decision,
 };
@@ -47,7 +47,7 @@ pub fn signal_send_safe(sig: u8, target_pid: u32) -> Result<(), i32> {
 
     let sender_pwm = process_get_current_pwm();
     if sender_pwm != 0 {
-        let sender_level = crate::kernel::framework::credo::get_privilege_level(sender_pwm);
+        let sender_level = crate::framework::credo::get_privilege_level(sender_pwm);
         if sender_level != 0 {
             let target_pwm = process_get_pwm_by_pid(target_pid);
             if target_pwm != sender_pwm {

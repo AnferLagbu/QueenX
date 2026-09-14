@@ -8,15 +8,15 @@
 //! 机制直接调用、`IoUring` 实例由内核持有 — 属机制项, 迁回。依赖闭包全在
 //! framework 内 (sync::IrqSpinLock + errno::Errno)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::io::iouring::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::io::iouring::*` 保持 API 兼容。
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use alloc::vec::Vec;
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
-use crate::kernel::framework::errno::Errno;
+use crate::framework::errno::Errno;
 
 // ============================================================================
 // 常量
@@ -451,7 +451,7 @@ pub fn io_uring_reap(id: u32) -> Option<Cqe> {
 
 /// `sys_io_uring_setup` — 创建 `io_uring` 实例
 pub fn sys_io_uring_setup(entries: u64) -> i64 {
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
     match io_uring_setup(entries as u32, pid as u32) {
         Ok(id) => i64::from(id),
         Err(e) => -(e as i64),

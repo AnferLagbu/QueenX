@@ -1,8 +1,8 @@
-use crate::kernel::framework::lib::string::{
+use crate::framework::lib::string::{
     memchr, memcpy, memmove, memset, safe_memcmp, safe_memcpy, safe_memset, secure_zero, strcat,
     strchr, strcmp, strcpy, strlen, strncmp, strncpy, strrchr, strstr,
 };
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 
 fn strlen_basic() -> TestResult {

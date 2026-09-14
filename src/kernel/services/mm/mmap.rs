@@ -14,9 +14,9 @@
 //! - VFS 交互: fd → `inode_id` 解析 (属于 services 层职责)
 //! - 文件映射 Page Cache 引用释放
 
-use crate::kernel::framework::mm::{MmStruct, Vma, VmaType};
-use crate::kernel::framework::mm::{PAGE_SIZE, PageFlags as VmaFlags};
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::mm::{MmStruct, Vma, VmaType};
+use crate::framework::mm::{PAGE_SIZE, PageFlags as VmaFlags};
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // mmap 标志位
@@ -45,7 +45,7 @@ pub fn fd_to_inode_id(fd: i32) -> u32 {
     if fd < 0 {
         return 0;
     }
-    crate::kernel::framework::fs::VFS_MANAGER
+    crate::framework::fs::VFS_MANAGER
         .get_fd_info(fd as usize)
         .map_or(0, |(node_id, _, _)| node_id)
 }
@@ -55,7 +55,7 @@ pub fn fd_to_mount_idx(fd: i32) -> Option<usize> {
     if fd < 0 {
         return None;
     }
-    crate::kernel::framework::fs::VFS_MANAGER.get_fd_mount_idx(fd as usize)
+    crate::framework::fs::VFS_MANAGER.get_fd_mount_idx(fd as usize)
 }
 
 // ============================================================================
@@ -172,7 +172,7 @@ fn find_or_allocate_addr(
     addr_hint: u64,
     len_aligned: usize,
 ) -> Result<usize, Errno> {
-    use crate::kernel::framework::constants::limits::USER_ADDR_MAX;
+    use crate::framework::constants::limits::USER_ADDR_MAX;
     if addr_hint != 0 && addr_hint < USER_ADDR_MAX {
         Ok(addr_hint as usize)
     } else {
@@ -223,7 +223,7 @@ fn release_file_pages(mm: &MmStruct, start: usize, end: usize) {
         let mut addr = overlap_start;
         while addr < overlap_end {
             let page_index = ((addr - vma.start) as u64 + vma.offset) / PAGE_SIZE;
-            crate::kernel::framework::mm::pcache::pcache_put(vma.inode_id, page_index);
+            crate::framework::mm::pcache::pcache_put(vma.inode_id, page_index);
             addr += PAGE_SIZE as usize;
         }
     }
@@ -300,18 +300,18 @@ pub fn mmap_syscall_entry(
     if size == 0 {
         return Errno::EINVAL.as_ret();
     }
-    let pwm = crate::kernel::framework::credo::pwm_get_current();
-    if !crate::kernel::framework::credo::pwm_has_capability(pwm, 7, 0x01) {
+    let pwm = crate::framework::credo::pwm_get_current();
+    if !crate::framework::credo::pwm_has_capability(pwm, 7, 0x01) {
         return Errno::EACCES.as_ret();
     }
 
     // 无 mm 时走裸页分配路径
-    if let Some(ptr) = crate::kernel::framework::syscall::api::mmap_get_mm_or_alloc(size) {
+    if let Some(ptr) = crate::framework::syscall::api::mmap_get_mm_or_alloc(size) {
         return ptr as i64;
     }
 
     // 有 mm 时走 VMA 路径
-    let mm = match crate::kernel::framework::mm::vma_get_current_mm() {
+    let mm = match crate::framework::mm::vma_get_current_mm() {
         Some(m) => m,
         None => return Errno::ENOMEM.as_ret(),
     };
@@ -333,12 +333,12 @@ pub fn munmap_syscall_entry(addr: u64, size: u64) -> i64 {
     }
 
     // 无 mm 时走裸页释放路径
-    if crate::kernel::framework::mm::vma_get_current_mm().is_none() {
-        crate::kernel::framework::syscall::api::munmap_free_pages(addr, size);
+    if crate::framework::mm::vma_get_current_mm().is_none() {
+        crate::framework::syscall::api::munmap_free_pages(addr, size);
         return 0;
     }
 
-    let mm = match crate::kernel::framework::mm::vma_get_current_mm() {
+    let mm = match crate::framework::mm::vma_get_current_mm() {
         Some(m) => m,
         None => return Errno::ENOMEM.as_ret(),
     };

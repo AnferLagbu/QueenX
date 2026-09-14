@@ -13,10 +13,10 @@
 //! - [`close_syscall`] 关闭一个 fd
 //! - [`creat_syscall`] 等价于 open(path, `O_WRONLY|O_CREAT|O_TRUNC`, mode)
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::fs::api as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::credo;
+use crate::framework::fs::api as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // open flags
@@ -146,8 +146,8 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
         return Err(Errno::EBADF);
     }
     // pidfd 不经过 VFS fd_table, 由 pidfd 子系统自行关闭.
-    if crate::kernel::services::proc::pidfd::is_pidfd_fd(fd) {
-        if crate::kernel::services::proc::pidfd::free_entry(fd) {
+    if crate::services::proc::pidfd::is_pidfd_fd(fd) {
+        if crate::services::proc::pidfd::free_entry(fd) {
             return Ok(0);
         }
         return Err(Errno::EBADF);

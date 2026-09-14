@@ -7,8 +7,8 @@
 
 use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-use crate::kernel::framework::net::{ChitinNetDevice, NetworkStack};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::net::{ChitinNetDevice, NetworkStack};
+use crate::framework::sync::IrqSpinLock as Mutex;
 use smoltcp::iface::SocketHandle;
 use smoltcp::socket::udp;
 

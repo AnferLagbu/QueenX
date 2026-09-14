@@ -11,4 +11,4 @@
 
 // B09-12/DECISION-H13 P0-2: KernelError 定义已迁回 framework (framework::error),
 // 本处 re-export 保持调用方兼容 (services→framework 单向依赖).
-pub use crate::kernel::framework::error::KernelError;
+pub use crate::framework::error::KernelError;

@@ -25,7 +25,7 @@
 //! ```
 
 use super::{ChitinProto, DeviceState, chitin_register};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;

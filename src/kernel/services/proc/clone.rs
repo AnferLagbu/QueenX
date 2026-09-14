@@ -11,7 +11,7 @@
 //! - services 层验证标量参数和标志组合
 //! - 页表/进程操作委托给 framework 层 (TCB)
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 #[expect(
     clippy::unreadable_literal,
@@ -50,7 +50,7 @@ pub fn clone_syscall(
         return Err(Errno::EINVAL);
     }
 
-    let ret = crate::kernel::framework::syscall::clone::sys_clone(
+    let ret = crate::framework::syscall::clone::sys_clone(
         flags,
         child_stack,
         parent_tidptr,

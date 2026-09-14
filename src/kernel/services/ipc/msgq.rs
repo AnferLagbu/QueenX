@@ -4,8 +4,8 @@
 //! 纯策略逻辑: 参数校验、资源查找、状态管理、链表操作.
 //! 所有 unsafe 操作通过 `framework::ipc::msgq::raw` (`MessageRef`) 安全方法完成.
 
-use crate::kernel::framework::ipc::msgq::raw::{self, MessageRef};
-use crate::kernel::framework::ipc::types::{
+use crate::framework::ipc::msgq::raw::{self, MessageRef};
+use crate::framework::ipc::types::{
     IpcId, IpcNamespace, MSG_MAX_SIZE, MSG_QUEUE_MAX_MSGS, MsgQueue,
 };
 use core::ptr::NonNull;

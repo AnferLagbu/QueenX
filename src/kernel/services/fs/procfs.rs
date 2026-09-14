@@ -16,8 +16,8 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.2.3 任务: 进程文件系统迁移
 
-use crate::kernel::services::error::KernelError;
-use crate::kernel::services::fs::procfs_core::{PROCFS_MAX_NAME, ProcfsData};
+use crate::services::error::KernelError;
+use crate::services::fs::procfs_core::{PROCFS_MAX_NAME, ProcfsData};
 
 // ============================================================================
 // 条目类型
@@ -74,7 +74,7 @@ impl SafeProcFs {
     /// 创建全局 `ProcFS` 代理
     pub fn new() -> Self {
         Self {
-            inner: &crate::kernel::services::fs::procfs_core::PROCFS_DATA,
+            inner: &crate::services::fs::procfs_core::PROCFS_DATA,
         }
     }
 
@@ -165,7 +165,7 @@ impl Default for SafeProcFs {
 // ============================================================================
 
 // I-16: 替换 spin::Once → 项目自研 services::sync::once::OnceCell
-use crate::kernel::services::sync::once::OnceCell;
+use crate::services::sync::once::OnceCell;
 static GLOBAL_PROCFS: OnceCell<SafeProcFs> = OnceCell::new();
 
 /// 初始化全局 `ProcFS`

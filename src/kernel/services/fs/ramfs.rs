@@ -26,13 +26,13 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::kernel::framework::fs::ramfs::RamFsData;
+use crate::framework::fs::ramfs::RamFsData;
 
 // services 层透出的常量 (镜像 kernel/fs/ramfs/ramfs.rs 内部常量)
-pub const RAMFS_BLOCK_SIZE: usize = crate::kernel::framework::mm::PAGE_SIZE as usize;
+pub const RAMFS_BLOCK_SIZE: usize = crate::framework::mm::PAGE_SIZE as usize;
 pub const RAMFS_MAX_NODES: usize = 256;
 pub const RAMFS_MAX_BLOCKS: usize = 2048;
-pub use crate::kernel::framework::fs::{
+pub use crate::framework::fs::{
     VFS_MAX_NAME, VFS_MAX_PATH, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
 
@@ -57,18 +57,18 @@ pub enum FsError {
     /// 算术溢出 (偏移/大小)
     Overflow,
     /// 共享 `KernelError` 包装
-    Kernel(crate::kernel::services::error::KernelError),
+    Kernel(crate::services::error::KernelError),
 }
 
 impl FsError {
     /// 从内核原始 `i32` 错误码还原
     pub fn from_i32(code: i32) -> Self {
-        Self::Kernel(crate::kernel::services::error::KernelError::from_i32(code))
+        Self::Kernel(crate::services::error::KernelError::from_i32(code))
     }
 
     /// 映射为 POSIX errno
-    pub fn to_errno(self) -> crate::kernel::framework::syscall::Errno {
-        use crate::kernel::framework::syscall::Errno as E;
+    pub fn to_errno(self) -> crate::framework::syscall::Errno {
+        use crate::framework::syscall::Errno as E;
         match self {
             Self::NotInitialized => E::ENODEV,
             Self::IoError => E::EIO,
@@ -78,8 +78,8 @@ impl FsError {
     }
 }
 
-impl From<crate::kernel::services::error::KernelError> for FsError {
-    fn from(e: crate::kernel::services::error::KernelError) -> Self {
+impl From<crate::services::error::KernelError> for FsError {
+    fn from(e: crate::services::error::KernelError) -> Self {
         Self::Kernel(e)
     }
 }
@@ -148,14 +148,14 @@ impl FileDescriptor {
 /// 内部用 `IrqSpinLock<RamFsData>` 串行化所有访问,
 /// 提供 100% safe 的公共 API。
 pub struct SafeRamFs {
-    inner: crate::kernel::framework::sync::IrqSpinLock<RamFsData>,
+    inner: crate::framework::sync::IrqSpinLock<RamFsData>,
 }
 
 impl SafeRamFs {
     /// 创建未挂载的 `SafeRamFs`
     pub fn new() -> Self {
         Self {
-            inner: crate::kernel::framework::sync::IrqSpinLock::new(RamFsData::new()),
+            inner: crate::framework::sync::IrqSpinLock::new(RamFsData::new()),
         }
     }
 
@@ -188,7 +188,7 @@ impl SafeRamFs {
         match fs.open(path, raw_flags, pwm) {
             Some((node_id, _cap, _sens)) => Ok(FileDescriptor::new(node_id, raw_flags, pwm)),
             None => Err(FsError::Kernel(
-                crate::kernel::services::error::KernelError::FileNotFound,
+                crate::services::error::KernelError::FileNotFound,
             )),
         }
     }
@@ -275,7 +275,7 @@ impl SafeRamFs {
                 Ok(new_off)
             }
             None => Err(FsError::Kernel(
-                crate::kernel::services::error::KernelError::InvalidArgument,
+                crate::services::error::KernelError::InvalidArgument,
             )),
         }
     }
@@ -287,7 +287,7 @@ impl SafeRamFs {
     pub fn get_file_size(&self, fd: &FileDescriptor) -> FsResult<u32> {
         let fs = self.inner.lock();
         fs.get_file_size(fd.node_id).ok_or(FsError::Kernel(
-            crate::kernel::services::error::KernelError::FileNotFound,
+            crate::services::error::KernelError::FileNotFound,
         ))
     }
 
@@ -298,7 +298,7 @@ impl SafeRamFs {
     pub fn stat(&self, fd: &FileDescriptor) -> FsResult<VfsStat> {
         let fs = self.inner.lock();
         fs.stat(fd.node_id).ok_or(FsError::Kernel(
-            crate::kernel::services::error::KernelError::FileNotFound,
+            crate::services::error::KernelError::FileNotFound,
         ))
     }
 
@@ -400,7 +400,7 @@ impl SafeRamFs {
             Some(id) => id,
             None => {
                 return Err(FsError::Kernel(
-                    crate::kernel::services::error::KernelError::FileNotFound,
+                    crate::services::error::KernelError::FileNotFound,
                 ));
             }
         };
@@ -410,13 +410,13 @@ impl SafeRamFs {
             Some(s) => s,
             None => {
                 return Err(FsError::Kernel(
-                    crate::kernel::services::error::KernelError::FileNotFound,
+                    crate::services::error::KernelError::FileNotFound,
                 ));
             }
         };
         if VfsFileType::from_u8(st.file_type) != Some(VfsFileType::Dir) {
             return Err(FsError::Kernel(
-                crate::kernel::services::error::KernelError::NotADirectory,
+                crate::services::error::KernelError::NotADirectory,
             ));
         }
 
@@ -449,7 +449,7 @@ impl Default for SafeRamFs {
 // ============================================================================
 
 // I-16: 替换 spin::Once → 项目自研 services::sync::once::OnceCell
-use crate::kernel::services::sync::once::OnceCell;
+use crate::services::sync::once::OnceCell;
 
 static GLOBAL_RAMFS: OnceCell<SafeRamFs> = OnceCell::new();
 
@@ -544,18 +544,18 @@ pub fn split_path(path: &str) -> Option<(&str, &str)> {
 pub fn validate_path(path: &str) -> FsResult<String> {
     if path.is_empty() {
         return Err(FsError::Kernel(
-            crate::kernel::services::error::KernelError::InvalidArgument,
+            crate::services::error::KernelError::InvalidArgument,
         ));
     }
     if path.len() > VFS_MAX_PATH {
         return Err(FsError::Kernel(
-            crate::kernel::services::error::KernelError::NameTooLong,
+            crate::services::error::KernelError::NameTooLong,
         ));
     }
     // 简化校验: 不允许 NUL 字节
     if path.as_bytes().contains(&0) {
         return Err(FsError::Kernel(
-            crate::kernel::services::error::KernelError::InvalidArgument,
+            crate::services::error::KernelError::InvalidArgument,
         ));
     }
     Ok(String::from(path))

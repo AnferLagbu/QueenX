@@ -3,8 +3,8 @@
 //! exFAT FAT 表操作
 
 use super::super_block::ExfatSuperBlock;
-use crate::kernel::framework::driver::block::{read_sectors, with_device};
-use crate::kernel::framework::fs::KernelError;
+use crate::framework::driver::block::{read_sectors, with_device};
+use crate::framework::fs::KernelError;
 
 /// FAT 表条目常量
 pub const FAT_FREE: u32 = 0x00000000;
@@ -103,7 +103,7 @@ pub fn write_fat_entry(
     sector_data[fat_offset as usize + 3] = bytes[3];
 
     let result = with_device(device_idx as usize, |dev| {
-        crate::kernel::framework::driver::block::write_sectors(
+        crate::framework::driver::block::write_sectors(
             dev,
             u64::from(fat_sector),
             1,

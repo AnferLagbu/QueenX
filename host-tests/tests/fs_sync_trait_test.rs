@@ -28,7 +28,7 @@ fn trait_has_fs_sync_default() {
     let src = read_src("src/kernel/framework/fs/vfs/types.rs");
     let required = [
         "fn fs_sync(&self) -> KernelResult<()>",
-        "fn fs_sync(&self) -> crate::kernel::framework::fs::vfs::types::KernelResult<()>",
+        "fn fs_sync(&self) -> crate::framework::fs::vfs::types::KernelResult<()>",
     ];
     assert!(
         required.iter().any(|s| src.contains(s)),
@@ -50,7 +50,7 @@ fn nestfs_overrides_fs_sync() {
     // 拆分后 FileSystem impl 在 nestfs_inode.rs (原在 nestfs.rs)
     let src = read_src("src/kernel/services/fs/nestfs/nestfs_inode.rs");
     let impl_block = src
-        .rsplit_once("impl crate::kernel::framework::fs::FileSystem for NestfsData")
+        .rsplit_once("impl crate::framework::fs::FileSystem for NestfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     assert!(
@@ -178,7 +178,7 @@ fn trait_object_method_signature() {
         .map(|(_, b)| b)
         .unwrap_or("");
     let has_full_sig = trait_block.contains("fn fs_sync(&self) -> KernelResult<()>")
-        || trait_block.contains("fn fs_sync(&self) -> crate::kernel::framework::fs::vfs::types::KernelResult<()>");
+        || trait_block.contains("fn fs_sync(&self) -> crate::framework::fs::vfs::types::KernelResult<()>");
     assert!(
         has_full_sig,
         "P3-I-18: fs_sync 签名必须符合 (KernelResult<()>)"
@@ -190,7 +190,7 @@ fn nestfs_sync_returns_ioerror_on_nonzero() {
     // 拆分后 FileSystem impl 在 nestfs_inode.rs
     let src = read_src("src/kernel/services/fs/nestfs/nestfs_inode.rs");
     let impl_block = src
-        .rsplit_once("impl crate::kernel::framework::fs::FileSystem for NestfsData")
+        .rsplit_once("impl crate::framework::fs::FileSystem for NestfsData")
         .map(|(_, b)| b)
         .unwrap_or("");
     // r == 0 → Ok(()); != 0 → Err(Io)

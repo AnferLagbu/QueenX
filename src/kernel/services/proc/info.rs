@@ -13,7 +13,7 @@
 //! - uname: 系统信息
 //! - gettimeofday: 时钟
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 进程/线程 ID
@@ -21,19 +21,19 @@ use crate::kernel::framework::syscall::Errno;
 
 /// getpid — 返回当前进程 PID (恒成功)
 pub fn getpid_syscall() -> usize {
-    let ret = crate::kernel::framework::syscall::info::sys_getpid();
+    let ret = crate::framework::syscall::info::sys_getpid();
     if ret < 0 { 0 } else { ret as usize }
 }
 
 /// gettid — 返回当前线程 TID (恒成功)
 pub fn gettid_syscall() -> usize {
-    let ret = crate::kernel::framework::syscall::info::sys_gettid();
+    let ret = crate::framework::syscall::info::sys_gettid();
     if ret < 0 { 0 } else { ret as usize }
 }
 
 /// getppid — 返回父进程 PID
 pub fn getppid_syscall() -> usize {
-    let ret = crate::kernel::framework::syscall::info::sys_getppid();
+    let ret = crate::framework::syscall::info::sys_getppid();
     if ret < 0 { 0 } else { ret as usize }
 }
 
@@ -48,7 +48,7 @@ pub fn getpgid_syscall(pid: i32) -> Result<usize, Errno> {
     if pid < 0 {
         return Err(Errno::EINVAL);
     }
-    let ret = crate::kernel::framework::syscall::info::sys_getpgid(pid);
+    let ret = crate::framework::syscall::info::sys_getpgid(pid);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -71,7 +71,7 @@ pub fn uname_syscall(buf: u64) -> Result<usize, Errno> {
     if buf == 0 {
         return Err(Errno::EFAULT);
     }
-    let ret = crate::kernel::framework::syscall::info::sys_uname(buf);
+    let ret = crate::framework::syscall::info::sys_uname(buf);
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {

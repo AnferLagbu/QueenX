@@ -21,10 +21,10 @@
 //! - 进程表操作需要 `PROCESS_TABLE` 锁
 //! - 栈指针必须指向用户空间
 
-use crate::kernel::framework::proc::ProcessState;
-use crate::kernel::framework::proc::api;
-use crate::kernel::framework::proc::raw;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::proc::ProcessState;
+use crate::framework::proc::api;
+use crate::framework::proc::raw;
+use crate::framework::syscall::Errno;
 
 use core::sync::atomic::Ordering;
 
@@ -128,7 +128,7 @@ pub fn sys_clone(
                     // 子进程已通过 fork 继承了父进程的 namespace
                     // 现在根据 CLONE_NEW* 创建新实例
                     let current_ns = p.namespaces.lock();
-                    crate::kernel::framework::proc::NamespaceSet::clone_from(
+                    crate::framework::proc::NamespaceSet::clone_from(
                         &current_ns,
                         new_ns_flags,
                     )
@@ -163,7 +163,7 @@ pub fn sys_clone(
     let child_ptr = raw::alloc_process(
         child_pid,
         name_str.as_str(),
-        Some(crate::kernel::framework::proc::ProcessId(parent_pid)),
+        Some(crate::framework::proc::ProcessId(parent_pid)),
     );
     let child = raw::process_ref_mut(child_ptr);
 
@@ -192,7 +192,7 @@ pub fn sys_clone(
     api::process_with_mut(parent_pid, |p| {
         p.children
             .lock()
-            .push(crate::kernel::framework::proc::ProcessId(child_pid));
+            .push(crate::framework::proc::ProcessId(child_pid));
     });
 
     // 分配内核栈
@@ -208,7 +208,7 @@ pub fn sys_clone(
         let child_kstack = child.kernel_stack.load(Ordering::SeqCst);
         let stack_size: usize = 65536;
         raw::copy_kstack(child_kstack, parent_kstack, stack_size);
-        crate::kernel::framework::proc::kernel_stack_write_canary(child_kstack);
+        crate::framework::proc::kernel_stack_write_canary(child_kstack);
     }
 
     // 复制上下文, 修改 RAX=0 (子进程返回 0)
@@ -241,8 +241,8 @@ pub fn sys_clone(
 
     // 注册到进程表
     api::process_insert(
-        child as *const crate::kernel::framework::proc::Process
-            as *mut crate::kernel::framework::proc::Process,
+        child as *const crate::framework::proc::Process
+            as *mut crate::framework::proc::Process,
     );
 
     // CLONE_PARENT_SETTID

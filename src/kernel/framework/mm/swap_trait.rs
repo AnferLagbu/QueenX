@@ -132,8 +132,8 @@ impl SwapPolicy for FallbackSwapPolicy {
 static FALLBACK_SWAP_POLICY: FallbackSwapPolicy = FallbackSwapPolicy;
 
 /// 全局策略注册表 — services 通过 `register_swap_policy` 注册
-static SWAP_POLICY: crate::kernel::framework::sync::OnceLock<&'static dyn SwapPolicy> =
-    crate::kernel::framework::sync::OnceLock::new();
+static SWAP_POLICY: crate::framework::sync::OnceLock<&'static dyn SwapPolicy> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 Swap 策略 (由 `services::mm::init` 调用)
 ///

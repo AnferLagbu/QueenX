@@ -64,12 +64,12 @@ pub mod xattr;
 // T-05: VFS 后端决策策略
 // ============================================================================
 
-use crate::kernel::framework::fs::vfs::api as vfs_api;
-use crate::kernel::framework::fs::vfs::backend_trait::{
+use crate::framework::fs::vfs::api as vfs_api;
+use crate::framework::fs::vfs::backend_trait::{
     FsBackend, register_fs_backend, register_nestfs_fs,
 };
-use crate::kernel::framework::fs::vfs::inode::Inode;
-use crate::kernel::services::fs::vfs_types::KernelError;
+use crate::framework::fs::vfs::inode::Inode;
+use crate::services::fs::vfs_types::KernelError;
 
 /// services 层 VFS 后端决策策略
 ///
@@ -101,7 +101,7 @@ impl FsBackend for ServicesFsBackend {
     ) -> Result<alloc::sync::Arc<dyn Inode>, KernelError> {
         // 具象 RamFsInode 归 services (DECISION-K 项 5): framework RamFsData
         // 经此工厂钩子请求 services 构造 Inode trait object.
-        Ok(crate::kernel::services::fs::inode::new_ramfs_inode(
+        Ok(crate::services::fs::inode::new_ramfs_inode(
             inode_id, mount_idx,
         ))
     }
@@ -118,7 +118,7 @@ impl FsBackend for ServicesFsBackend {
 pub fn init() {
     static POLICY: ServicesFsBackend = ServicesFsBackend;
     let _ = register_fs_backend(&POLICY);
-    let _ = crate::kernel::services::fs::vfs_poll_policy::register_default_vfs_poll_policy();
-    let _ = register_nestfs_fs(crate::kernel::services::fs::nestfs::nestfs::get_nestfs());
-    crate::kernel::services::fs::nestfs::nestfs::nestfs_hotplug_register();
+    let _ = crate::services::fs::vfs_poll_policy::register_default_vfs_poll_policy();
+    let _ = register_nestfs_fs(crate::services::fs::nestfs::nestfs::get_nestfs());
+    crate::services::fs::nestfs::nestfs::nestfs_hotplug_register();
 }

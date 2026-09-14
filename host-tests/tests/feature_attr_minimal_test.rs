@@ -18,7 +18,7 @@ fn repo_root() -> std::path::PathBuf {
 
 #[test]
 fn test_queenx_lib_rs_no_feature_asm() {
-    let lib = repo_root().join("src/rust/src/lib.rs");
+    let lib = repo_root().join("src/kernel/lib.rs");
     let content = fs::read_to_string(&lib)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
 
@@ -41,7 +41,7 @@ fn test_queenx_lib_rs_no_feature_asm() {
 #[test]
 fn test_queenx_lib_rs_feature_count_minimal() {
     // queenx 内的 #![feature(...)] 数量应 ≤ 1 (仅 alloc_error_handler)
-    let lib = repo_root().join("src/rust/src/lib.rs");
+    let lib = repo_root().join("src/kernel/lib.rs");
     let content = fs::read_to_string(&lib)
         .unwrap_or_else(|e| panic!("无法读取 {}: {}", lib.display(), e));
 

@@ -14,7 +14,7 @@
 //! brk 的核心逻辑 (VMA 扩展/收缩, 页表更新) 在 framework TCB 中执行.
 //! services 层仅做参数验证和错误码封装.
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// 用户空间最大地址 (`x86_64`: `0x7FFF_FFFF_FFFF`)
 #[cfg(target_arch = "x86_64")]
@@ -34,7 +34,7 @@ const USER_ADDR_MAX: u64 = 0x0000_FFFF_FFFF_FFFF;
 pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
     // addr == 0 是合法查询, 直接委托 (§6.1 下沉 services/syscall/brk)
     if addr == 0 {
-        return Ok(crate::kernel::services::syscall::brk::sys_brk(0) as usize);
+        return Ok(crate::services::syscall::brk::sys_brk(0) as usize);
     }
 
     // 参数验证: 地址不能超过用户空间最大值
@@ -43,7 +43,7 @@ pub fn brk_syscall(addr: u64) -> Result<usize, Errno> {
     }
 
     // 委托 services 层 (纯策略)
-    let ret = crate::kernel::services::syscall::brk::sys_brk(addr);
+    let ret = crate::services::syscall::brk::sys_brk(addr);
     if ret < 0 {
         Err(Errno::ENOMEM)
     } else {

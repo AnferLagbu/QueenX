@@ -9,10 +9,10 @@ use super::{
     DmaPoolStats, DmaScatterEntry, DmaScatterList, DmaStats, KERNEL_BASE, PAGE_SIZE,
     alloc_mmio_virt, get_vmm, ptr,
 };
-use crate::kernel::framework::mm::{PageFlags, PhysAddr, VirtAddr};
-use crate::kernel::framework::mm::{pmm_alloc_pages_phys, pmm_free_pages_phys};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::mm::{PageFlags, PhysAddr, VirtAddr};
+use crate::framework::mm::{pmm_alloc_pages_phys, pmm_free_pages_phys};
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::OnceLock;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 pub struct DmaEngine {
@@ -218,7 +218,7 @@ impl DmaEngine {
                     get_vmm().unmap_page(unmap_virt);
                 }
                 // B04-13: 失败时回收 MMIO 区间, 避免泄漏.
-                crate::kernel::framework::dma::free_mmio_virt(virt);
+                crate::framework::dma::free_mmio_virt(virt);
                 return None;
             }
         }
@@ -242,7 +242,7 @@ impl DmaEngine {
         regions.retain(|(v, _, _)| *v != virt_addr);
 
         // B04-13: 同步回收 MMIO_ALLOC 区间, 保持两个索引一致.
-        crate::kernel::framework::dma::free_mmio_virt(virt_addr);
+        crate::framework::dma::free_mmio_virt(virt_addr);
     }
 
     // =============== 流式 DMA 映射 ===============
@@ -441,9 +441,9 @@ impl DmaEngine {
                 let start = addr.0 & !(cache_line - 1);
                 let end = addr.0 + size as u64;
                 let has_clflushopt =
-                    crate::kernel::framework::cpu::get_cpu_info().is_some_and(|info| {
+                    crate::framework::cpu::get_cpu_info().is_some_and(|info| {
                         info.features
-                            .contains(crate::kernel::framework::cpu::CpuFeatures::CLFLUSHOPT)
+                            .contains(crate::framework::cpu::CpuFeatures::CLFLUSHOPT)
                     });
                 let mut line = start;
                 while line < end {

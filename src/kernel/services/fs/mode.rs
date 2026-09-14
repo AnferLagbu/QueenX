@@ -6,10 +6,10 @@
 //! - 0 unsafe,纯类型安全
 //! - 委托 `framework/fs/vfs::api` 完成
 
-use crate::kernel::framework::credo;
-use crate::kernel::framework::fs::api as fw;
-use crate::kernel::framework::syscall::Errno;
-use crate::kernel::framework::syscall::raw;
+use crate::framework::credo;
+use crate::framework::fs::api as fw;
+use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 // ============================================================================
 // umask
@@ -26,7 +26,7 @@ pub fn umask_syscall(mask: u32) -> Result<usize, Errno> {
     if mask > 0o777 {
         return Err(Errno::EINVAL);
     }
-    Ok(crate::kernel::framework::credo::api::umask_set(mask) as usize)
+    Ok(crate::framework::credo::api::umask_set(mask) as usize)
 }
 
 // ============================================================================

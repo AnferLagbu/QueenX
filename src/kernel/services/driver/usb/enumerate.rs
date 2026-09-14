@@ -9,4 +9,4 @@
 //! 评估日期: 2026-07-22
 
 // 重导出 framework enumerate 全部公共函数/类型
-pub use crate::kernel::framework::driver::usb::enumerate::*;
+pub use crate::framework::driver::usb::enumerate::*;

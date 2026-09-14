@@ -60,7 +60,7 @@ pub mod strategy;
 // 全局状态
 // ============================================================================
 
-use crate::kernel::framework::racy_cell::RacyCell;
+use crate::framework::racy_cell::RacyCell;
 use types::{
     IPC_MAX_MSG_QUEUES, IPC_MAX_PIPES, IPC_MAX_SEMAPHORES, IPC_MAX_SHM_SEGS, IpcNamespace,
 };
@@ -150,7 +150,7 @@ mod stress_tests;
 mod tests {
     use super::*;
     // DECISION-J: sem/signal 壳已删, tests 经 services 公共 API 访问 (测试代码)
-    use crate::kernel::services::ipc::{sem, signal};
+    use crate::services::ipc::{sem, signal};
 
     #[test]
     fn test_pipe_create_and_close() {
@@ -165,17 +165,17 @@ mod tests {
         let pid: u32 = 100;
 
         // 测试创建管道 (T6-1: 委托 services 策略)
-        match crate::kernel::services::ipc::pipe::pipe_create_safe(&mut ns, &mut next_id, pid) {
+        match crate::services::ipc::pipe::pipe_create_safe(&mut ns, &mut next_id, pid) {
             Ok((rfd, wfd)) => {
                 assert!(rfd > 0);
                 assert!(wfd > 0);
                 assert_eq!(wfd, rfd + 1);
 
                 // 测试关闭读端
-                assert!(crate::kernel::services::ipc::pipe::pipe_close_safe(&mut ns, rfd).is_ok());
+                assert!(crate::services::ipc::pipe::pipe_close_safe(&mut ns, rfd).is_ok());
 
                 // 测试关闭写端
-                assert!(crate::kernel::services::ipc::pipe::pipe_close_safe(&mut ns, wfd).is_ok());
+                assert!(crate::services::ipc::pipe::pipe_close_safe(&mut ns, wfd).is_ok());
             }
             Err(e) => panic!("Failed to create pipe: {}", e),
         }
@@ -194,7 +194,7 @@ mod tests {
         let pid: u32 = 200;
 
         // 测试创建共享内存 (T6-1: 委托 services 策略)
-        let id = match crate::kernel::services::ipc::shm::shm_create_safe(
+        let id = match crate::services::ipc::shm::shm_create_safe(
             &mut ns,
             &mut next_id,
             4096,
@@ -206,17 +206,17 @@ mod tests {
         };
 
         // 测试附加
-        let addr = match crate::kernel::services::ipc::shm::shm_attach_safe(&mut ns, id, pid) {
+        let addr = match crate::services::ipc::shm::shm_attach_safe(&mut ns, id, pid) {
             Ok(addr) => addr,
             Err(e) => panic!("Failed to attach SHM: {}", e),
         };
         assert_ne!(addr, 0);
 
         // 测试分离
-        assert!(crate::kernel::services::ipc::shm::shm_detach_safe(&mut ns, id, pid).is_ok());
+        assert!(crate::services::ipc::shm::shm_detach_safe(&mut ns, id, pid).is_ok());
 
         // 测试销毁
-        assert!(crate::kernel::services::ipc::shm::shm_destroy_safe(&mut ns, id).is_ok());
+        assert!(crate::services::ipc::shm::shm_destroy_safe(&mut ns, id).is_ok());
     }
 
     #[test]
@@ -232,7 +232,7 @@ mod tests {
         let pid: u32 = 300;
 
         // 创建消息队列 (T6-1: 委托 services 策略)
-        let id = match crate::kernel::services::ipc::msgq::msgq_create_safe(
+        let id = match crate::services::ipc::msgq::msgq_create_safe(
             &mut ns,
             &mut next_id,
             0o666,
@@ -245,7 +245,7 @@ mod tests {
         // 发送消息
         let data = b"Hello, IPC!";
         assert!(
-            crate::kernel::services::ipc::msgq::msgq_send_safe(
+            crate::services::ipc::msgq::msgq_send_safe(
                 &mut ns,
                 id,
                 42,
@@ -261,7 +261,7 @@ mod tests {
         let mut buf = [0u8; MSG_MAX_SIZE];
         let mut size_out: u64 = 0;
 
-        let read_size = match crate::kernel::services::ipc::msgq::msgq_recv_safe(
+        let read_size = match crate::services::ipc::msgq::msgq_recv_safe(
             &mut ns,
             id,
             Some(&mut type_out),
@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(&buf[..data.len()], data);
 
         // 销毁队列
-        assert!(crate::kernel::services::ipc::msgq::msgq_destroy_safe(&mut ns, id).is_ok());
+        assert!(crate::services::ipc::msgq::msgq_destroy_safe(&mut ns, id).is_ok());
     }
 
     #[test]
@@ -327,5 +327,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_ipc_tests() {
-    crate::kernel::framework::tests::test_ipc::register_ipc_tests();
+    crate::framework::tests::test_ipc::register_ipc_tests();
 }

@@ -229,7 +229,7 @@ impl<T> UserRefMut<T> {
 // 用户指针验证 — 从 syscall::raw 提取到统一入口
 // ============================================================================
 
-use crate::kernel::framework::constants::limits::USER_ADDR_MAX;
+use crate::framework::constants::limits::USER_ADDR_MAX;
 
 /// 验证单个用户态指针是否在合法范围.
 #[inline]

@@ -70,7 +70,7 @@ unsafe fn smap_begin() {}
 #[inline(always)]
 unsafe fn smap_end() {}
 
-use crate::kernel::framework::constants::limits::USER_ADDR_MAX;
+use crate::framework::constants::limits::USER_ADDR_MAX;
 
 /// 异常表条目 —— 用于缺页恢复
 #[repr(C)]
@@ -92,15 +92,15 @@ static EXCEPTION_TABLE_START: ExceptionTableEntry = ExceptionTableEntry {
 
 /// 每 CPU 异常上下文存储
 /// 使用静态数组而非 `thread_local`!, 以兼容裸机环境
-static PER_CPU_EXCEPTION_CTX: [AtomicU64; crate::kernel::framework::config::MAX_CPUS] =
-    [const { AtomicU64::new(0) }; crate::kernel::framework::config::MAX_CPUS];
+static PER_CPU_EXCEPTION_CTX: [AtomicU64; crate::framework::config::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::framework::config::MAX_CPUS];
 
 /// 表示尚未设置异常上下文的标记值
 const NO_EXCEPTION_CTX: u64 = 0;
 
 /// 每 CPU 异常发生标志
-static PER_CPU_EXCEPTION_OCCURRED: [AtomicBool; crate::kernel::framework::config::MAX_CPUS] =
-    [const { AtomicBool::new(false) }; crate::kernel::framework::config::MAX_CPUS];
+static PER_CPU_EXCEPTION_OCCURRED: [AtomicBool; crate::framework::config::MAX_CPUS] =
+    [const { AtomicBool::new(false) }; crate::framework::config::MAX_CPUS];
 
 /// 获取当前 CPU ID (带边界校验)
 ///
@@ -112,8 +112,8 @@ static PER_CPU_EXCEPTION_OCCURRED: [AtomicBool; crate::kernel::framework::config
 /// 但这表明存在配置问题 (CPU 数量过多)
 #[inline]
 fn current_cpu_id() -> usize {
-    let cpu = crate::kernel::framework::cpu::arch::cpu_id() as usize;
-    let max_cpus = crate::kernel::framework::config::MAX_CPUS;
+    let cpu = crate::framework::cpu::arch::cpu_id() as usize;
+    let max_cpus = crate::framework::config::MAX_CPUS;
 
     #[cfg(debug_assertions)]
     {

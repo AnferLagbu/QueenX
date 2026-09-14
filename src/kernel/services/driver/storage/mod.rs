@@ -28,7 +28,7 @@ pub mod nvme;
 
 use alloc::vec::Vec;
 
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 // 日志仅用于 x86_64 门控代码 (storage_init / MSIX-03 自测)
 #[cfg(target_arch = "x86_64")]
 use crate::slog_info;
@@ -80,11 +80,11 @@ fn nvme_msix_dispatch() {
 /// `handle_interrupt` 端到端链路。结果仅记日志 (与 framework hook 一致)。
 #[cfg(target_arch = "x86_64")]
 fn nvme_msix03_selftest(ci: usize) {
-    use crate::kernel::framework::driver::storage::nvme as fw_nvme;
-    use crate::kernel::framework::driver::storage::{
+    use crate::framework::driver::storage::nvme as fw_nvme;
+    use crate::framework::driver::storage::{
         nvme_alloc_dma_buffer, nvme_free_dma_buffer, nvme_with_interrupts_enabled,
     };
-    use crate::kernel::framework::mm::PAGE_SIZE;
+    use crate::framework::mm::PAGE_SIZE;
 
     let has_irq = NVME_CONTROLLERS
         .lock()
@@ -130,7 +130,7 @@ fn nvme_msix03_selftest(ci: usize) {
             if timeout == 0 {
                 return false;
             }
-            crate::kernel::framework::cpu::arch::halt();
+            crate::framework::cpu::arch::halt();
         }
     });
 
@@ -160,10 +160,10 @@ fn nvme_msix03_selftest(ci: usize) {
     reason = "PCI 分支流程内联展开 (AHCI/NVMe 两分支); 拆分需传跨分支上下文增加间接层, 当前优先 expect 兜底"
 )]
 pub fn storage_init() {
-    use crate::kernel::framework::chitin::register_block_device;
-    use crate::kernel::framework::driver::BlockDevice;
-    use crate::kernel::framework::mm::PAGE_SIZE;
-    use crate::kernel::framework::pci;
+    use crate::framework::chitin::register_block_device;
+    use crate::framework::driver::BlockDevice;
+    use crate::framework::mm::PAGE_SIZE;
+    use crate::framework::pci;
 
     // Step 1: 确保 PCI 子系统已初始化 (幂等)
     let pci_count = pci::init();
@@ -174,7 +174,7 @@ pub fn storage_init() {
     // MSI-X 分发契约注册 (DECISION-K 模式): framework ISR handler 排空
     // framework 注册表后转发 services 注册表。先于任何 enable_msix 调用,
     // 保证中断投递时分发回调已就位 (OnceLock set-once, 重复注册 fail-quiet)。
-    let _ = crate::kernel::framework::driver::storage::nvme_register_services_msix_dispatch(
+    let _ = crate::framework::driver::storage::nvme_register_services_msix_dispatch(
         nvme_msix_dispatch,
     );
 
@@ -290,7 +290,7 @@ pub fn storage_init() {
                     // 任一失败保持轮询 (irq_vector = None)
                     if let Some(vector) = nvme::NvmeController::enable_msix(dev) {
                         match
-                            crate::kernel::framework::driver::storage::nvme_register_msix_isr(
+                            crate::framework::driver::storage::nvme_register_msix_isr(
                                 vector,
                             )
                         {

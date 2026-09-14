@@ -252,7 +252,7 @@ mod tests {
             bp: NestBlockPointer::null(),
             offset: 0,
             size: 4096,
-            io_type: crate::kernel::services::fs::nestfs::txg::NestIoType::Write,
+            io_type: crate::services::fs::nestfs::txg::NestIoType::Write,
             priority: 0,
             ready: false,
         };

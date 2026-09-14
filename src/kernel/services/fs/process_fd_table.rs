@@ -18,8 +18,8 @@
 //! close 通过 `Arc::drop` 减少引用计数.
 
 use super::vfs_types::OpenFile;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::syscall::Errno;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 

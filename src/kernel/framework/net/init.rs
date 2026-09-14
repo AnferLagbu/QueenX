@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use crate::kernel::framework::klog::{klog_init_msg, klog_net, klog_net_err};
-use crate::kernel::framework::net::{ChitinNetDevice, NetworkStack};
+use crate::framework::klog::{klog_init_msg, klog_net, klog_net_err};
+use crate::framework::net::{ChitinNetDevice, NetworkStack};
 use smoltcp::iface::{SocketHandle, SocketSet, SocketStorage};
 use smoltcp::socket::dhcpv4;
 use smoltcp::socket::{tcp, udp};
@@ -139,7 +139,7 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
     let sockets_ptr = unsafe { &mut *raw::socket_set() };
     let state = raw::dhcp_state_stub(sockets_ptr, raw::dhcp_handle());
     match state {
-        crate::kernel::framework::net::iface_trait::DhcpState::Idle => {
+        crate::framework::net::iface_trait::DhcpState::Idle => {
             if FIRST_DECONFIG.swap(false, Ordering::AcqRel) {
                 return;
             }
@@ -149,17 +149,17 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
                 });
                 let _ = stack.iface.routes_mut().remove_default_ipv4_route();
             }
-            crate::kernel::framework::net::NET_CONFIGURED.store(false, Ordering::Release);
+            crate::framework::net::NET_CONFIGURED.store(false, Ordering::Release);
             raw::klog_msg("DHCP deconfigured");
         }
-        crate::kernel::framework::net::iface_trait::DhcpState::Bound { ipv4, .. } => {
+        crate::framework::net::iface_trait::DhcpState::Bound { ipv4, .. } => {
             // W4.3 简化: 暂不重新配置 iface IP/路由/全局状态 (在 W4.3 之后
             // 由专门的 DHCP 状态机迁移阶段处理). 当前 0 行为变更: 状态
             // 缓存已更新, 上层观测 API (G_IPV4/G_GATEWAY/G_DNS) 通过
             // 现有路径 (init_sockets / poll_network) 同步.
             FIRST_DECONFIG.store(false, Ordering::Release);
             let _ = ipv4; // 占位: W4.3+ 阶段从 Bound 还原 iface 配置
-            crate::kernel::framework::net::NET_CONFIGURED.store(true, Ordering::Release);
+            crate::framework::net::NET_CONFIGURED.store(true, Ordering::Release);
             raw::klog_msg("DHCP configured (cached)");
         }
         // Discovering / Requesting / Renewing / Failed: 中间状态, 暂不处理
@@ -206,12 +206,12 @@ pub unsafe fn poll_network() {
             None => return,
         };
         let sockets = &mut *raw::socket_set();
-        crate::kernel::framework::net::poll_stack(nic, stack, sockets);
+        crate::framework::net::poll_stack(nic, stack, sockets);
         raw::process_dhcp_events(sockets);
 
         // P2-I-41: poll 完毕后通知所有 fd 的等待者, 让 sm_send/sm_recv
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).
-        use crate::kernel::framework::net::{SOCKET_WAIT_QUEUES, WakeReason};
+        use crate::framework::net::{SOCKET_WAIT_QUEUES, WakeReason};
         for fd in 0..MAX_SM_FD {
             if raw::fd_type(fd) == 0 {
                 continue;
@@ -264,7 +264,7 @@ pub unsafe fn poll_network() {
 /// SAFETY: 见上方 # Safety 章节, 调用方保证单线程 + 关中断; `NET_LOCK` 由本函数内部获取
 unsafe fn net_save() {
     unsafe {
-        use crate::kernel::framework::net::save as snap;
+        use crate::framework::net::save as snap;
         use core::sync::atomic::Ordering;
 
         let _guard = NET_STATE.lock();
@@ -299,9 +299,9 @@ unsafe fn net_save() {
             }
 
             // 状态
-            s.net_ready = crate::kernel::framework::net::NET_READY.load(Ordering::Acquire);
+            s.net_ready = crate::framework::net::NET_READY.load(Ordering::Acquire);
             s.net_configured =
-                crate::kernel::framework::net::NET_CONFIGURED.load(Ordering::Acquire);
+                crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire);
             s.sockets_initialized = SOCKETS_INITIALIZED.load(Ordering::Acquire);
             s.init_state = G_INIT_STATE.load(Ordering::Acquire);
         });
@@ -344,14 +344,14 @@ unsafe fn smol_handle_from_u32(raw: u32) -> smoltcp::iface::SocketHandle {
 /// SAFETY: 见上方 # Safety 章节, 调用方保证 socket fd 已无人持有 + 关中断; `NET_LOCK` 由本函数内部获取
 unsafe fn net_restore() {
     unsafe {
-        use crate::kernel::framework::net::save as snap;
+        use crate::framework::net::save as snap;
         use core::sync::atomic::Ordering;
 
         // 1. 复位状态机
         {
             let _guard = NET_STATE.lock();
-            crate::kernel::framework::net::NET_READY.store(false, Ordering::Release);
-            crate::kernel::framework::net::NET_CONFIGURED.store(false, Ordering::Release);
+            crate::framework::net::NET_READY.store(false, Ordering::Release);
+            crate::framework::net::NET_CONFIGURED.store(false, Ordering::Release);
             raw::clear_all();
             SOCKETS_INITIALIZED.store(false, Ordering::Release);
             G_INIT_STATE.store(InitState::Uninitialized as u8, Ordering::Release);
@@ -392,7 +392,7 @@ unsafe fn net_restore() {
                         );
                         let _ = stack.iface.routes_mut().add_default_ipv4_route(gw);
                     }
-                    crate::kernel::framework::net::NET_CONFIGURED.store(true, Ordering::Release);
+                    crate::framework::net::NET_CONFIGURED.store(true, Ordering::Release);
                 }
             }
             // FD 表恢复: 仅恢复 (type, handle) 元组; smoltcp socket 内部状态
@@ -426,8 +426,8 @@ unsafe fn net_restore() {
 unsafe fn net_reset() {
     let _guard = NET_STATE.lock();
 
-    crate::kernel::framework::net::NET_READY.store(false, Ordering::Release);
-    crate::kernel::framework::net::NET_CONFIGURED.store(false, Ordering::Release);
+    crate::framework::net::NET_READY.store(false, Ordering::Release);
+    crate::framework::net::NET_CONFIGURED.store(false, Ordering::Release);
 
     raw::clear_all();
     SOCKETS_INITIALIZED.store(false, Ordering::Release);
@@ -490,7 +490,7 @@ pub extern "C" fn qx_net_init() {
         raw::klog_msg("Step2: init device hardware");
 
         let mac = nic.mac;
-        let stack = crate::kernel::framework::net::init_stack(&mut nic, mac);
+        let stack = crate::framework::net::init_stack(&mut nic, mac);
 
         {
             let _guard = NET_STATE.lock();
@@ -515,7 +515,7 @@ pub extern "C" fn qx_net_init() {
             raw::set_dhcp_handle(Some(handle));
         }
 
-        crate::kernel::framework::net::NET_READY.store(true, Ordering::Release);
+        crate::framework::net::NET_READY.store(true, Ordering::Release);
 
         if transition_state(InitState::InterfaceReady, InitState::FullyInitialized).is_err() {
             set_failed();
@@ -529,15 +529,15 @@ pub extern "C" fn qx_net_init() {
             for _ in 0..50000 {
                 core::hint::spin_loop();
             }
-            if crate::kernel::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
+            if crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
                 raw::klog_msg("DHCP: lease acquired");
                 break;
             }
         }
 
-        if !crate::kernel::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
+        if !crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
             // I-46: 引用 net::types 中的集中常量, 不再硬编码 10.0.2.15/24/10.0.2.2.
-            use crate::kernel::framework::net::types::{
+            use crate::framework::net::types::{
                 FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX,
             };
             let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
@@ -561,7 +561,7 @@ pub extern "C" fn qx_net_init() {
                     let _ = addrs.push(cidr);
                 });
                 let _ = stack.iface.routes_mut().add_default_ipv4_route(gw);
-                crate::kernel::framework::net::NET_CONFIGURED.store(true, Ordering::Release);
+                crate::framework::net::NET_CONFIGURED.store(true, Ordering::Release);
 
                 // D1.2: 把 fallback IP/网关写进 G_IPV4/G_GATEWAY, 给 get_* 观测 API
                 G_IPV4.store(u32::from_be_bytes(FALLBACK_IPV4), Ordering::Release);
@@ -576,13 +576,13 @@ pub extern "C" fn qx_net_init() {
 
         // 演进 6: 网络 init 完成后做 driver 维度自检
         // DECISION-K: 经 ConfigValidateHook trait 注入 (Option 可空, 未注册跳过)
-        if let Some(hook) = crate::kernel::framework::config::current_config_validate_hook() {
+        if let Some(hook) = crate::framework::config::current_config_validate_hook() {
             if let Err(e) = hook.validate_network_subsystem() {
                 crate::klog_drv_warn!("Network validation: {}", e);
             }
         }
 
-        crate::kernel::framework::barrier::recovery::recovery_domain_register(
+        crate::framework::barrier::recovery::recovery_domain_register(
             "net",
             5,
             &[],
@@ -592,12 +592,12 @@ pub extern "C" fn qx_net_init() {
         );
 
         // 注册网络 softirq 处理程序
-        crate::kernel::framework::irq::open_softirq(
-            crate::kernel::framework::irq::SoftirqVec::NetRx,
+        crate::framework::irq::open_softirq(
+            crate::framework::irq::SoftirqVec::NetRx,
             net_rx_softirq_handler,
         );
-        crate::kernel::framework::irq::open_softirq(
-            crate::kernel::framework::irq::SoftirqVec::NetTx,
+        crate::framework::irq::open_softirq(
+            crate::framework::irq::SoftirqVec::NetTx,
             net_tx_softirq_handler,
         );
     }
@@ -624,7 +624,7 @@ fn net_tx_softirq_handler() {
 
 // I-47: FD 表容量, 与 MAX_SOCKETS 对齐 (每个 FD 对应一个 smoltcp socket).
 // TD-02: 基址与容量改由 `framework::proc::FdPlan::SMOLTCP` 单一来源; 容量现从 FdRange.capacity 派生.
-const MAX_SM_FD: usize = crate::kernel::framework::proc::FdPlan::SMOLTCP.capacity as usize;
+const MAX_SM_FD: usize = crate::framework::proc::FdPlan::SMOLTCP.capacity as usize;
 const TCP_BUF_SIZE: usize = 4096;
 const UDP_BUF_SIZE: usize = 2048;
 const UDP_META_COUNT: usize = 4;
@@ -669,7 +669,7 @@ const TOTAL_SLOTS: usize = MAX_SM_FD + MAX_SOCKETS;
 /// - `Some(u32)`: smoltcp handle (用于 `smol_socket_get`)
 /// - `None`: 创建失败 (`k_malloc` 失败 / 槽位已占用 / `slot_idx` 越界)
 pub fn smoltcp_net_stack_socket_open(
-    kind: crate::kernel::framework::net::iface_trait::SocketKind,
+    kind: crate::framework::net::iface_trait::SocketKind,
     slot_idx: usize,
 ) -> Option<u32> {
     // SAFETY: 调用方持有 NET_LOCK, socket_set() 返回的指针由 init_sockets
@@ -694,7 +694,7 @@ pub fn smoltcp_net_stack_slot_base() -> usize {
 ///
 /// 委托给 `raw::smoltcp_net_stack_poll`, 内部持有 `NET_LOCK` 并调用
 /// smoltcp `Interface::poll` + `process_dhcp_events`.
-pub fn smoltcp_net_stack_poll() -> crate::kernel::framework::net::iface_trait::PollOutcome {
+pub fn smoltcp_net_stack_poll() -> crate::framework::net::iface_trait::PollOutcome {
     raw::smoltcp_net_stack_poll()
 }
 
@@ -719,7 +719,7 @@ pub(crate) mod raw;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::net::iface_trait::{
+    use crate::framework::net::iface_trait::{
         Ipv4Addr as TraitIpv4Addr, NetEndpoint as TraitEndpoint,
     };
     use smoltcp::wire::IpAddress;

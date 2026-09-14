@@ -3,72 +3,72 @@
 //! 测试 Barrier Base/Soft/Hard Recovery 功能
 use crate::register_tests_inner;
 
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 
 fn config_recovery_result() -> TestResult {
-    use crate::kernel::framework::barrier::reset::config::tests;
+    use crate::framework::barrier::reset::config::tests;
     check!(tests::test_recovery_result(), "recovery result");
     check!(tests::test_recovery_layer(), "recovery layer");
     TestResult::Pass
 }
 
 fn config_default() -> TestResult {
-    use crate::kernel::framework::barrier::reset::config::tests;
+    use crate::framework::barrier::reset::config::tests;
     check!(tests::test_config_default(), "config default");
     TestResult::Pass
 }
 
 fn config_stats() -> TestResult {
-    use crate::kernel::framework::barrier::reset::config::tests;
+    use crate::framework::barrier::reset::config::tests;
     check!(tests::test_stats(), "recovery stats");
     TestResult::Pass
 }
 
 fn audit_log_basic() -> TestResult {
-    use crate::kernel::framework::barrier::reset::audit::tests;
+    use crate::framework::barrier::reset::audit::tests;
     check!(tests::test_audit_log(), "audit log");
     TestResult::Pass
 }
 
 fn audit_log_count() -> TestResult {
-    use crate::kernel::framework::barrier::reset::audit::tests;
+    use crate::framework::barrier::reset::audit::tests;
     check!(tests::test_audit_count_by_layer(), "audit count by layer");
     TestResult::Pass
 }
 
 fn bbr_fingerprint() -> TestResult {
-    use crate::kernel::framework::barrier::reset::bbr::tests;
+    use crate::framework::barrier::reset::bbr::tests;
     check!(tests::test_compute_fingerprint(), "compute fingerprint");
     TestResult::Pass
 }
 
 fn bbr_should_attempt() -> TestResult {
-    use crate::kernel::framework::barrier::reset::bbr::tests;
+    use crate::framework::barrier::reset::bbr::tests;
     check!(tests::test_should_attempt(), "should attempt");
     TestResult::Pass
 }
 
 fn bsr_freeze_unfreeze() -> TestResult {
-    use crate::kernel::framework::barrier::reset::bsr::tests;
+    use crate::framework::barrier::reset::bsr::tests;
     check!(tests::test_freeze_unfreeze(), "bsr freeze/unfreeze");
     TestResult::Pass
 }
 
 fn parallel_dependency_layer() -> TestResult {
-    use crate::kernel::framework::barrier::reset::parallel::tests;
+    use crate::framework::barrier::reset::parallel::tests;
     check!(tests::test_dependency_layer(), "dependency layer");
     check!(tests::test_dependency_layers(), "dependency layers");
     TestResult::Pass
 }
 
 fn parallel_compute_layers() -> TestResult {
-    use crate::kernel::framework::barrier::reset::parallel::tests;
+    use crate::framework::barrier::reset::parallel::tests;
     check!(tests::test_compute_layers(), "compute layers");
     TestResult::Pass
 }
 
 fn device_type_enum() -> TestResult {
-    use crate::kernel::framework::barrier::DeviceType;
+    use crate::framework::barrier::DeviceType;
 
     assert_eq_test!(DeviceType::Keyboard as u32, 1, "keyboard type");
     assert_eq_test!(DeviceType::Serial as u32, 2, "serial type");
@@ -91,7 +91,7 @@ fn device_type_enum() -> TestResult {
 }
 
 fn recovery_layer_order() -> TestResult {
-    use crate::kernel::framework::barrier::RecoveryLayer;
+    use crate::framework::barrier::RecoveryLayer;
 
     assert_eq_test!(RecoveryLayer::Layer1 as u32, 1, "layer1 value");
     assert_eq_test!(RecoveryLayer::Layer2 as u32, 2, "layer2 value");
@@ -101,7 +101,7 @@ fn recovery_layer_order() -> TestResult {
 }
 
 fn recovery_result_checks() -> TestResult {
-    use crate::kernel::framework::barrier::RecoveryResult;
+    use crate::framework::barrier::RecoveryResult;
 
     let success = RecoveryResult::Success;
     let failed = RecoveryResult::Failed;
@@ -120,7 +120,7 @@ fn recovery_result_checks() -> TestResult {
 }
 
 fn rollback_mode_enum() -> TestResult {
-    use crate::kernel::framework::barrier::RollbackMode;
+    use crate::framework::barrier::RollbackMode;
 
     assert_eq_test!(RollbackMode::Serial as u32, 0, "serial mode");
     assert_eq_test!(RollbackMode::Parallel as u32, 1, "parallel mode");
@@ -129,7 +129,7 @@ fn rollback_mode_enum() -> TestResult {
 }
 
 fn snapshot_register_api() -> TestResult {
-    use crate::kernel::framework::barrier::{
+    use crate::framework::barrier::{
         DeviceType, snapshot_register_device, snapshot_unregister_device,
     };
 
@@ -143,7 +143,7 @@ fn snapshot_register_api() -> TestResult {
 }
 
 fn recovery_stats_api() -> TestResult {
-    use crate::kernel::framework::barrier::{get_stats, reset_stats};
+    use crate::framework::barrier::{get_stats, reset_stats};
 
     reset_stats();
     let (bsr, bhr, tick) = get_stats();
@@ -155,7 +155,7 @@ fn recovery_stats_api() -> TestResult {
 }
 
 fn recovery_status_api() -> TestResult {
-    use crate::kernel::framework::barrier::{get_recovery_status, reset_stats};
+    use crate::framework::barrier::{get_recovery_status, reset_stats};
 
     reset_stats();
     let status = get_recovery_status();

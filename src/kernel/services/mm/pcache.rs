@@ -10,7 +10,7 @@
 //! - 参数验证 (`inode_id` 非零, `page_index` 合法)
 //! - 委托 framework 层执行底层操作
 
-use crate::kernel::framework::mm::pcache as fw_pcache;
+use crate::framework::mm::pcache as fw_pcache;
 
 // ============================================================================
 // Page Cache 安全 API

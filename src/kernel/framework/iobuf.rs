@@ -23,9 +23,9 @@
 //!
 //! 纯 framework TCB, 仅暴露 safe API; services 不可调 raw.
 
-use crate::kernel::framework::config::PAGE_SIZE;
-use crate::kernel::framework::mm::phys_to_virt;
-use crate::kernel::framework::mm::{pmm_alloc_pages, pmm_free_pages};
+use crate::framework::config::PAGE_SIZE;
+use crate::framework::mm::phys_to_virt;
+use crate::framework::mm::{pmm_alloc_pages, pmm_free_pages};
 
 /// 内核态 I/O 临时区域 (RAII).
 ///

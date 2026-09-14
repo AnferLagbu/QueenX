@@ -9,8 +9,8 @@
 
 #![deny(unsafe_code)]
 
-use crate::kernel::framework::proc::PROCESS_TABLE;
-use crate::kernel::framework::proc::SCHEDULER;
+use crate::framework::proc::PROCESS_TABLE;
+use crate::framework::proc::SCHEDULER;
 
 /// C2: 设置进程的 CPU 亲和性掩码
 ///

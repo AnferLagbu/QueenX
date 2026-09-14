@@ -9,7 +9,7 @@
 //! 导出 + services 消费 — 策略主体迁回, 与本文件 syscall 入口 (unsafe
 //! 用户指针操作) 合并。依赖闭包仅 framework (errno/proc/userptr)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::rlimit::*`
+//! services 侧改 `pub use crate::framework::proc::rlimit::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //!
 //! ## 设计
@@ -27,10 +27,10 @@
 //! - `RLIMIT_NPROC` 默认 `MAX_PROCESSES` (256)
 //! - `RLIMIT_STACK` 默认 8MB
 
-use crate::kernel::framework::config::{MAX_OPEN_FILES, MAX_PROCESSES};
-use crate::kernel::framework::proc::PROCESS_TABLE;
-use crate::kernel::framework::proc::process_get_current_pid;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::config::{MAX_OPEN_FILES, MAX_PROCESSES};
+use crate::framework::proc::PROCESS_TABLE;
+use crate::framework::proc::process_get_current_pid;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // POSIX 资源类型常量
@@ -283,8 +283,8 @@ pub fn sys_getrlimit(resource: i32, rlim_ptr: u64) -> i64 {
         return Errno::EINVAL.as_ret();
     }
 
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
-    let rlim = match crate::kernel::framework::proc::process_with(pid, |proc| {
+    let pid = crate::framework::proc::process_get_current_pid();
+    let rlim = match crate::framework::proc::process_with(pid, |proc| {
         let rlimit_table = proc.rlimit_table.lock();
         rlimit_table.get(resource as usize)
     }) {
@@ -293,7 +293,7 @@ pub fn sys_getrlimit(resource: i32, rlim_ptr: u64) -> i64 {
         None => return Errno::ESRCH.as_ret(),
     };
 
-    if !crate::kernel::framework::userptr::validate_user_buf(rlim_ptr, 16) {
+    if !crate::framework::userptr::validate_user_buf(rlim_ptr, 16) {
         return Errno::EFAULT.as_ret();
     }
     // SAFETY: rlim_ptr 已验证 16 字节可写
@@ -321,7 +321,7 @@ pub fn sys_setrlimit(resource: i32, rlim_ptr: u64) -> i64 {
     }
 
     // 从用户空间读取 rlim_cur 和 rlim_max
-    if !crate::kernel::framework::userptr::validate_user_buf(rlim_ptr, 16) {
+    if !crate::framework::userptr::validate_user_buf(rlim_ptr, 16) {
         return Errno::EFAULT.as_ret();
     }
     // SAFETY: rlim_ptr 已验证可读, 16 字节
@@ -331,10 +331,10 @@ pub fn sys_setrlimit(resource: i32, rlim_ptr: u64) -> i64 {
     let max = u64::from_ne_bytes(bytes[8..16].try_into().expect("rlimit: 长度不为 8"));
 
     // 判断特权: pid=1 (init) 视为特权进程
-    let pid = crate::kernel::framework::proc::process_get_current_pid();
+    let pid = crate::framework::proc::process_get_current_pid();
     let is_privileged = pid == 1;
 
-    match crate::kernel::framework::proc::process_with(pid, |proc| {
+    match crate::framework::proc::process_with(pid, |proc| {
         let mut rlimit_table = proc.rlimit_table.lock();
         rlimit_table.set(resource as usize, cur, max, is_privileged)
     }) {

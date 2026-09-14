@@ -6,4 +6,4 @@
 //! re-export 其全部符号 (MADV_*/MCL_* 常量 + sys_* 入口) 保持 framework/syscall
 //! 侧调用方兼容. 消除旧的 `services::mm::madvise_mlock` 反向依赖。
 
-pub use crate::kernel::framework::proc::madvise_mlock::*;
+pub use crate::framework::proc::madvise_mlock::*;

@@ -45,8 +45,8 @@ const E_NOPROTOOPT: i32 = 92;
 /// framework `sm_setsockopt` (机制 FFI) 识别 `SO_PASSCRED` 路由需求后,
 /// 经由此钩子委托 `services::net::unix::uds_setsockopt` (策略实现),
 /// framework 不反向依赖 services 具象 UDS 模块 (第二十六批反转).
-static UDS_SETOPT_HOOK: crate::kernel::framework::sync::OnceLock<fn(i32, bool) -> i32> =
-    crate::kernel::framework::sync::OnceLock::new();
+static UDS_SETOPT_HOOK: crate::framework::sync::OnceLock<fn(i32, bool) -> i32> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 UDS setsockopt 策略钩子 (由 `services::net::unix::uds_init` 调用)
 ///
@@ -74,13 +74,13 @@ pub fn register_uds_setsockopt_hook(hook: fn(i32, bool) -> i32) -> Result<(), fn
 
 /// 把 trait 抽象的 `IpAddr` 翻译成 smoltcp 的 `IpAddress` (双栈, DECISION-032).
 #[inline(always)]
-pub(crate) fn wire_to_smol(a: crate::kernel::framework::net::iface_trait::IpAddr) -> IpAddress {
+pub(crate) fn wire_to_smol(a: crate::framework::net::iface_trait::IpAddr) -> IpAddress {
     match a {
-        crate::kernel::framework::net::iface_trait::IpAddr::V4(v4) => {
+        crate::framework::net::iface_trait::IpAddr::V4(v4) => {
             let o = v4.octets();
             IpAddress::Ipv4(Ipv4Address::new(o[0], o[1], o[2], o[3]))
         }
-        crate::kernel::framework::net::iface_trait::IpAddr::V6(v6) => {
+        crate::framework::net::iface_trait::IpAddr::V6(v6) => {
             IpAddress::Ipv6(Ipv6Address::from_octets(v6.octets()))
         }
     }
@@ -89,7 +89,7 @@ pub(crate) fn wire_to_smol(a: crate::kernel::framework::net::iface_trait::IpAddr
 /// 把 trait 抽象的 `NetEndpoint` 翻译成 smoltcp 的 `IpEndpoint`.
 #[inline]
 pub(crate) fn endpoint_to_smol(
-    e: crate::kernel::framework::net::iface_trait::NetEndpoint,
+    e: crate::framework::net::iface_trait::NetEndpoint,
 ) -> IpEndpoint {
     IpEndpoint {
         addr: wire_to_smol(e.addr),
@@ -104,17 +104,17 @@ pub(crate) fn endpoint_to_smol(
 /// 把 smoltcp 的 `IpEndpoint` 翻译回 trait 抽象的 `NetEndpoint`.
 pub(crate) fn endpoint_from_smol(
     ep: IpEndpoint,
-) -> Option<crate::kernel::framework::net::iface_trait::NetEndpoint> {
+) -> Option<crate::framework::net::iface_trait::NetEndpoint> {
     match ep.addr {
         IpAddress::Ipv4(v4) => Some(
-            crate::kernel::framework::net::iface_trait::NetEndpoint::new_v4(
-                crate::kernel::framework::net::iface_trait::Ipv4Addr::from_octets(v4.octets()),
+            crate::framework::net::iface_trait::NetEndpoint::new_v4(
+                crate::framework::net::iface_trait::Ipv4Addr::from_octets(v4.octets()),
                 ep.port,
             ),
         ),
         IpAddress::Ipv6(v6) => Some(
-            crate::kernel::framework::net::iface_trait::NetEndpoint::new_v6(
-                crate::kernel::framework::net::iface_trait::Ipv6Addr::from_octets(v6.octets()),
+            crate::framework::net::iface_trait::NetEndpoint::new_v6(
+                crate::framework::net::iface_trait::Ipv6Addr::from_octets(v6.octets()),
                 ep.port,
             ),
         ),
@@ -144,14 +144,14 @@ pub(crate) fn endpoint_from_smol(
 pub(crate) unsafe fn write_sockaddr(
     addr: *mut u8,
     addrlen: *mut u32,
-    ep: &crate::kernel::framework::net::iface_trait::NetEndpoint,
+    ep: &crate::framework::net::iface_trait::NetEndpoint,
 ) {
     unsafe {
         if addr.is_null() {
             return;
         }
         match ep.addr {
-            crate::kernel::framework::net::iface_trait::IpAddr::V4(v4) => {
+            crate::framework::net::iface_trait::IpAddr::V4(v4) => {
                 let sin = SockaddrIn {
                     sin_family: 2, // AF_INET
                     sin_port: ep.port.to_be(),
@@ -163,7 +163,7 @@ pub(crate) unsafe fn write_sockaddr(
                     core::ptr::write(addrlen, core::mem::size_of::<SockaddrIn>() as u32);
                 }
             }
-            crate::kernel::framework::net::iface_trait::IpAddr::V6(v6) => {
+            crate::framework::net::iface_trait::IpAddr::V6(v6) => {
                 let sin6 = SockaddrIn6 {
                     sin6_family: 10, // AF_INET6
                     sin6_port: ep.port.to_be(),
@@ -219,7 +219,7 @@ struct SockaddrIn6 {
 /// `addr` 必须指向有效的 sockaddr 结构体, 至少含对应族所需的已初始化字节。
 pub(crate) unsafe fn parse_endpoint_trait(
     addr: *const u8,
-) -> Option<crate::kernel::framework::net::iface_trait::NetEndpoint> {
+) -> Option<crate::framework::net::iface_trait::NetEndpoint> {
     unsafe {
         if addr.is_null() {
             return None;
@@ -232,8 +232,8 @@ pub(crate) unsafe fn parse_endpoint_trait(
                 let octets = sin.sin_addr;
                 let port = u16::from_be(sin.sin_port);
                 Some(
-                    crate::kernel::framework::net::iface_trait::NetEndpoint::new_v4(
-                        crate::kernel::framework::net::iface_trait::Ipv4Addr::from_octets(octets),
+                    crate::framework::net::iface_trait::NetEndpoint::new_v4(
+                        crate::framework::net::iface_trait::Ipv4Addr::from_octets(octets),
                         port,
                     ),
                 )
@@ -243,8 +243,8 @@ pub(crate) unsafe fn parse_endpoint_trait(
                 let octets = sin6.sin6_addr;
                 let port = u16::from_be(sin6.sin6_port);
                 Some(
-                    crate::kernel::framework::net::iface_trait::NetEndpoint::new_v6(
-                        crate::kernel::framework::net::iface_trait::Ipv6Addr::from_octets(octets),
+                    crate::framework::net::iface_trait::NetEndpoint::new_v6(
+                        crate::framework::net::iface_trait::Ipv6Addr::from_octets(octets),
                         port,
                     ),
                 )
@@ -297,8 +297,8 @@ pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) 
         }
 
         // V2: 使用集中分配器获取 FD
-        let fd = match crate::kernel::framework::proc::fd_alloc::alloc_fd(
-            crate::kernel::framework::proc::fd_alloc::FdSubsystem::Smoltcp,
+        let fd = match crate::framework::proc::fd_alloc::alloc_fd(
+            crate::framework::proc::fd_alloc::FdSubsystem::Smoltcp,
         ) {
             Some(f) => f,
             None => return -E_NFILE,
@@ -314,7 +314,7 @@ pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) 
         if is_af && sock_type == 1 {
             // TCP — 委托 raw::socket_open_stub
             let sockets = &mut *socket_set();
-            let kind = crate::kernel::framework::net::iface_trait::SocketKind::Tcp;
+            let kind = crate::framework::net::iface_trait::SocketKind::Tcp;
             if raw::socket_open_stub(sockets, kind, fd_idx).is_none() {
                 return -E_NOMEM;
             }
@@ -322,7 +322,7 @@ pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) 
         } else if is_af && sock_type == 2 {
             // UDP — 委托 raw::socket_open_stub
             let sockets = &mut *socket_set();
-            let kind = crate::kernel::framework::net::iface_trait::SocketKind::Udp;
+            let kind = crate::framework::net::iface_trait::SocketKind::Udp;
             if raw::socket_open_stub(sockets, kind, fd_idx).is_none() {
                 return -E_NOMEM;
             }
@@ -472,7 +472,7 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, _addrlen: u32) -> 
             None => return -E_BADF,
         };
 
-        if !crate::kernel::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
+        if !crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
             return -E_NODEV;
         }
 
@@ -779,7 +779,7 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         if total == 0 {
             return 0;
         }
-        let region = match crate::kernel::framework::iobuf::IobRegion::alloc(total) {
+        let region = match crate::framework::iobuf::IobRegion::alloc(total) {
             Some(r) => r,
             None => return -E_NOMEM,
         };
@@ -856,7 +856,7 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
         if cap == 0 {
             return 0;
         }
-        let region = match crate::kernel::framework::iobuf::IobRegion::alloc(cap) {
+        let region = match crate::framework::iobuf::IobRegion::alloc(cap) {
             Some(r) => r,
             None => return -E_NOMEM,
         };
@@ -923,19 +923,19 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
         sockets.remove(handle);
         // TD-07: smoltcp socket 已 drop, buf 借用结束, 此时 k_free 安全.
         if !raw::tcp_rx_buf(fd as usize).is_null() {
-            crate::kernel::framework::mm::k_free(raw::tcp_rx_buf(fd as usize));
+            crate::framework::mm::k_free(raw::tcp_rx_buf(fd as usize));
             raw::set_tcp_rx_buf(fd as usize, core::ptr::null_mut());
         }
         if !raw::tcp_tx_buf(fd as usize).is_null() {
-            crate::kernel::framework::mm::k_free(raw::tcp_tx_buf(fd as usize));
+            crate::framework::mm::k_free(raw::tcp_tx_buf(fd as usize));
             raw::set_tcp_tx_buf(fd as usize, core::ptr::null_mut());
         }
         if !raw::udp_rx_buf(fd as usize).is_null() {
-            crate::kernel::framework::mm::k_free(raw::udp_rx_buf(fd as usize));
+            crate::framework::mm::k_free(raw::udp_rx_buf(fd as usize));
             raw::set_udp_rx_buf(fd as usize, core::ptr::null_mut());
         }
         if !raw::udp_tx_buf(fd as usize).is_null() {
-            crate::kernel::framework::mm::k_free(raw::udp_tx_buf(fd as usize));
+            crate::framework::mm::k_free(raw::udp_tx_buf(fd as usize));
             raw::set_udp_tx_buf(fd as usize, core::ptr::null_mut());
         }
         raw::set_socket_handle(fd as usize, None);

@@ -1,9 +1,9 @@
-use crate::kernel::framework::sync::{
+use crate::framework::sync::{
     AtomicBool, CondVar, IrqSaveFlags, Mutex, MutexInner, RwLock, RwLockInner, SeqLock, SpinLock,
     SpinLockInner, TryLockResult, atomic_add, atomic_cmpxchg, atomic_dec, atomic_inc, atomic_read,
     atomic_set, atomic_sub,
 };
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 use core::sync::atomic::Ordering;
 

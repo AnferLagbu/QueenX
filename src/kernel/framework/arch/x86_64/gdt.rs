@@ -409,14 +409,14 @@ fn per_cpu_gdt_mut(cpu: u32) -> &'static mut PerCpuGdt {
 /// 获取当前 CPU 的 GDT 不可变引用
 #[inline]
 fn current_per_cpu_gdt() -> &'static PerCpuGdt {
-    let cpu = crate::kernel::framework::smp::get_current_cpu();
+    let cpu = crate::framework::smp::get_current_cpu();
     per_cpu_gdt(cpu)
 }
 
 /// 获取当前 CPU 的 GDT 可变引用
 #[inline]
 fn current_per_cpu_gdt_mut() -> &'static mut PerCpuGdt {
-    let cpu = crate::kernel::framework::smp::get_current_cpu();
+    let cpu = crate::framework::smp::get_current_cpu();
     per_cpu_gdt_mut(cpu)
 }
 
@@ -483,7 +483,7 @@ unsafe fn init_gdt_entries(entries: &mut [GdtEntry; GDT_MAX_ENTRIES]) {
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
 pub fn gdt_init() -> i32 {
-    use crate::kernel::framework::klog::{LogCategory, LogLevel, klog_write};
+    use crate::framework::klog::{LogCategory, LogLevel, klog_write};
 
     static INIT_MSG: &[u8] = b"Initializing GDT and TSS (BSP)...\0";
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -535,7 +535,7 @@ pub fn gdt_init() -> i32 {
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
         // gdt_set_kpti_pml4 正确设置 (含 PCID 编码), 不应覆盖.
         // 仅在 KPTI 未激活时用当前 CR3 初始化.
-        if !crate::kernel::framework::mm::kpti::kpti_is_active() {
+        if !crate::framework::mm::kpti::kpti_is_active() {
             let current_cr3: u64;
             core::arch::asm!("mov {}, cr3", out(reg) current_cr3, options(nomem, nostack));
             gdt.syscall.kernel_pml4 = current_cr3;
@@ -562,16 +562,16 @@ pub fn gdt_init() -> i32 {
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
         const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
-        crate::kernel::framework::cpu::msr::write_msr(
+        crate::framework::cpu::msr::write_msr(
             IA32_GS_BASE,
             &gdt.syscall as *const _ as u64,
         );
-        crate::kernel::framework::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
+        crate::framework::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
 
         // 诊断: 验证 write_msr 后 IA32_GS_BASE 的实际值
-        let gs_base_readback = crate::kernel::framework::cpu::msr::read_msr(IA32_GS_BASE);
+        let gs_base_readback = crate::framework::cpu::msr::read_msr(IA32_GS_BASE);
         let kernel_gs_base_readback =
-            crate::kernel::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
+            crate::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
         crate::klog_boot_info!(
             "[GDT] GS MSR verify: IA32_GS_BASE={:#x} (expect {:#x}), IA32_KERNEL_GS_BASE={:#x} (expect 0)",
             gs_base_readback,
@@ -660,7 +660,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
         // gdt_set_kpti_pml4 正确设置 (含 PCID 编码), 不应覆盖.
         // 仅在 KPTI 未激活时用当前 CR3 初始化.
-        if !crate::kernel::framework::mm::kpti::kpti_is_active() {
+        if !crate::framework::mm::kpti::kpti_is_active() {
             let current_cr3: u64;
             core::arch::asm!("mov {}, cr3", out(reg) current_cr3, options(nomem, nostack));
             ap.syscall.kernel_pml4 = current_cr3;
@@ -672,7 +672,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
         const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
-        crate::kernel::framework::cpu::msr::write_msr(
+        crate::framework::cpu::msr::write_msr(
             IA32_KERNEL_GS_BASE,
             &ap.syscall as *const _ as u64,
         );
@@ -855,5 +855,5 @@ mod tests {
 }
 #[cfg(feature = "kernel_test")]
 pub fn register_gdt_tests() {
-    crate::kernel::framework::tests::arch::register_gdt_tests();
+    crate::framework::tests::arch::register_gdt_tests();
 }

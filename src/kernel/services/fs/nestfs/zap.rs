@@ -1,4 +1,4 @@
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
 

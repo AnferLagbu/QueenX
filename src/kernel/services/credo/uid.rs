@@ -16,8 +16,8 @@
 //!
 //! root 拥有特权,可任意设置;非 root 仅可设置为自己/euid,否则 EPERM。
 
-use crate::kernel::framework::credo::session as fw;
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::credo::session as fw;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // 读类

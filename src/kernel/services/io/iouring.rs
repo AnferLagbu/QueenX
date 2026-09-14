@@ -10,4 +10,4 @@
 //! 子模块 (`pub mod iouring`), 可直接 glob re-export, 保持 services 侧 API
 //! 兼容 (services→framework 合法方向)。
 
-pub use crate::kernel::framework::io::iouring::*;
+pub use crate::framework::io::iouring::*;

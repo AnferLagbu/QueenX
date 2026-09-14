@@ -8,4 +8,4 @@
 //! `framework/proc/cgroup.rs` — cgroup 层级管理器是进程资源控制机制状态。
 //! glob re-export 保持 services 侧 API 兼容。
 
-pub use crate::kernel::framework::proc::cgroup::*;
+pub use crate::framework::proc::cgroup::*;

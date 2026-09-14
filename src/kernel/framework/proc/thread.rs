@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use super::types::{SCHED_LEVEL_2_QUANTUM, ThreadPriority, ThreadState};
 
-pub use crate::kernel::framework::config::{MAX_THREADS, MAX_THREADS_PER_PROCESS};
+pub use crate::framework::config::{MAX_THREADS, MAX_THREADS_PER_PROCESS};
 
 /// ✅ 统一线程结构体 — 合并了 Thread 和 `ThreadNode`, 消除类型强转 UB
 ///
@@ -120,7 +120,7 @@ impl Thread {
 
         if new_state == ThreadState::Frozen {
             self.frozen_since.store(
-                crate::kernel::framework::timer::get_ticks(),
+                crate::framework::timer::get_ticks(),
                 Ordering::Relaxed,
             );
         }
@@ -150,7 +150,7 @@ pub struct ThreadTable {
     next_tid: AtomicU32,
 }
 
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 // SAFETY: ThreadTable 始终通过静态 THREAD_TABLE 访问.
 // 所有变更都走 Mutex, NonNull 指针指向的 Thread 对象
 // 字段均为 Atomic* 或普通整数.

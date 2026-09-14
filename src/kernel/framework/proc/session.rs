@@ -10,7 +10,7 @@
 //! syscall dispatch 直接消费 + proc 顶层导出 — 属机制项, 迁回。依赖闭包
 //! 仅 framework。
 //!
-//! services 侧改 `pub use crate::kernel::framework::proc::session::*`
+//! services 侧改 `pub use crate::framework::proc::session::*`
 //! 保持 API 兼容 (services→framework 合法方向)。
 //! 日志使用 `framework::klog::serial_write_bytes` (safe API).
 //! 进程表访问使用 framework 的安全 API (`PROCESS_TABLE`, `process_get_current_pid`).
@@ -21,11 +21,11 @@
 //! - **进程组 (process group)**: 一组进程的集合, 用于信号广播
 //! - **控制终端 (controlling terminal)**: 每个会话最多一个, 前台进程组接收终端信号
 
-use crate::kernel::framework::config::MAX_SESSIONS;
-use crate::kernel::framework::klog::serial_write_bytes;
-use crate::kernel::framework::proc::PROCESS_TABLE;
-use crate::kernel::framework::proc::process_get_current_pid;
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::config::MAX_SESSIONS;
+use crate::framework::klog::serial_write_bytes;
+use crate::framework::proc::PROCESS_TABLE;
+use crate::framework::proc::process_get_current_pid;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::Ordering;
 
 fn log(s: &str) {
@@ -556,7 +556,7 @@ pub fn signal_foreground_pgid(sig: u8) {
     if pgid == 0 {
         return;
     }
-    crate::kernel::framework::proc::do_signal_send_extended(-(pgid as i32), sig).ok();
+    crate::framework::proc::do_signal_send_extended(-(pgid as i32), sig).ok();
 }
 
 /// 会话 leader 退出时释放控制终端
@@ -571,8 +571,8 @@ pub fn session_leader_exit(pid: u32) {
 
     let fg_pgid = SESSION_MANAGER.get_foreground_pgid(sid);
     if fg_pgid != 0 {
-        crate::kernel::framework::proc::do_signal_send_extended(-(fg_pgid as i32), 1).ok();
-        crate::kernel::framework::proc::do_signal_send_extended(-(fg_pgid as i32), 18).ok();
+        crate::framework::proc::do_signal_send_extended(-(fg_pgid as i32), 1).ok();
+        crate::framework::proc::do_signal_send_extended(-(fg_pgid as i32), 18).ok();
     }
 
     SESSION_MANAGER.release_controlling_terminal(sid);

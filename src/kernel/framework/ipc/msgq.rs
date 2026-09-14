@@ -10,10 +10,10 @@
 //! - FFI 函数通过 `UserReadPtr/WritePtr/RefMut` 安全访问用户空间内存.
 
 use super::types::{IpcId, MSG_MAX_SIZE, Message};
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::ipc::strategy::current_ipc_strategy;
-use crate::kernel::framework::proc::process_get_current_pid;
-use crate::kernel::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
+use crate::framework::errno::Errno;
+use crate::framework::ipc::strategy::current_ipc_strategy;
+use crate::framework::proc::process_get_current_pid;
+use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
 
 /// === 消息原始指针特权封装 (Framekernel 模式) ===
 ///

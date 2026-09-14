@@ -41,8 +41,8 @@ fn test_max_sockets_is_256() {
 fn test_max_sm_fd_derives_from_fdplan() {
     let src = read(NET_INIT);
     // MAX_SM_FD 必须仍从 FdPlan::SMOLTCP.capacity 派生 (TD-02 V3)
-    assert!(src.contains("const MAX_SM_FD: usize = crate::kernel::framework::proc::fd_alloc::FdPlan::SMOLTCP.capacity as usize")
-            || src.contains("const MAX_SM_FD: usize = crate::kernel::framework::proc::FdPlan::SMOLTCP.capacity as usize")
-            || src.contains("const MAX_SM_FD: usize = crate::kernel::services::proc::FdPlan::SMOLTCP.capacity as usize"),
+    assert!(src.contains("const MAX_SM_FD: usize = crate::framework::proc::fd_alloc::FdPlan::SMOLTCP.capacity as usize")
+            || src.contains("const MAX_SM_FD: usize = crate::framework::proc::FdPlan::SMOLTCP.capacity as usize")
+            || src.contains("const MAX_SM_FD: usize = crate::services::proc::FdPlan::SMOLTCP.capacity as usize"),
         "TD-06: MAX_SM_FD 必须仍从 FdPlan::SMOLTCP.capacity 派生 (TD-02 V3 一致性)");
 }

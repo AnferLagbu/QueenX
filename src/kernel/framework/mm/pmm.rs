@@ -21,13 +21,13 @@ macro_rules! klog_pmm {
 }
 
 use super::{KERNEL_BASE, MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr};
-use crate::kernel::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
+use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 use core::cell::{Cell, UnsafeCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 const MAX_EARLY_ALLOCS: usize = 256;
 
 /// 最大 buddy 阶数: 2^9 × 4 KB = 2 MB
@@ -1840,8 +1840,8 @@ fn pmm_barrier_rollback_cb() -> bool {
 }
 
 pub fn pmm_register_barrier_domain() {
-    crate::kernel::framework::barrier::recovery_domain_register(3);
-    if let Some(dom) = crate::kernel::framework::barrier::RECOVERY_MANAGER
+    crate::framework::barrier::recovery_domain_register(3);
+    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER
         .lock()
         .find(3)
     {

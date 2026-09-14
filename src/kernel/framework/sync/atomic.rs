@@ -277,5 +277,5 @@ mod tests {
 
 #[cfg(feature = "kernel_test")]
 pub fn register_atomic_tests() {
-    crate::kernel::framework::tests::sync::register_atomic_tests();
+    crate::framework::tests::sync::register_atomic_tests();
 }

@@ -73,11 +73,11 @@ const XHCI_DEFAULT_MMIO_SIZE: usize = 0x10000; // 64 KiB
     reason = "保留 Option/Result<()> 包装便于 API 兼容性 (调用方可能 match 或 .unwrap); 移除包装需同步修改调用点, 风险大"
 )]
 pub fn discover_xhci_controllers() -> framework::Result<Vec<XhciController>> {
-    use crate::kernel::framework::iomem::IoMem;
-    use crate::kernel::framework::mm::PhysAddr;
+    use crate::framework::iomem::IoMem;
+    use crate::framework::mm::PhysAddr;
 
     // 1. 扫描所有 Serial Bus 设备
-    let serial_bus_devs = crate::kernel::framework::pci::find_by_class(PCI_CLASS_SERIAL_BUS);
+    let serial_bus_devs = crate::framework::pci::find_by_class(PCI_CLASS_SERIAL_BUS);
     let mut controllers = Vec::new();
 
     for dev in &serial_bus_devs {
@@ -88,7 +88,7 @@ pub fn discover_xhci_controllers() -> framework::Result<Vec<XhciController>> {
 
         // 3. 读取 BAR0 (MMIO 基地址 + size)
         let (bar_base, bar_size) = match dev.bars.first() {
-            Some(bar) if bar.bar_type != crate::kernel::framework::pci::BarType::None => (
+            Some(bar) if bar.bar_type != crate::framework::pci::BarType::None => (
                 bar.base_addr,
                 if bar.size > 0 {
                     bar.size
@@ -117,7 +117,7 @@ pub fn discover_xhci_controllers() -> framework::Result<Vec<XhciController>> {
 }
 
 /// 判断 `PciDevice` 是否为 xHCI 控制器.
-fn is_xhci_device(dev: &crate::kernel::framework::pci::PciDevice) -> bool {
+fn is_xhci_device(dev: &crate::framework::pci::PciDevice) -> bool {
     dev.class_code == PCI_CLASS_SERIAL_BUS
         && dev.subclass_code == PCI_SUBCLASS_USB
         && dev.prog_if == PCI_PROGIF_XHCI

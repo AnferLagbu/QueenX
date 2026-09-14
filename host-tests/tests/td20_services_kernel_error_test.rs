@@ -35,9 +35,9 @@ fn read(path: &str) -> String {
 fn assert_has_kernel_wrapper(src: &str, enum_name: &str) {
     // 接受两种形式:
     //   - `EnumName::Kernel(` (变体引用点, 用于 match/from_i32)
-    //   - `Kernel(crate::kernel::services::error::KernelError)` (枚举字段定义)
+    //   - `Kernel(crate::services::error::KernelError)` (枚举字段定义)
     let has_variant_use = src.contains(&format!("{enum_name}::Kernel("));
-    let has_field_def = src.contains("Kernel(crate::kernel::services::error::KernelError)");
+    let has_field_def = src.contains("Kernel(crate::services::error::KernelError)");
     assert!(
         has_variant_use || has_field_def,
         "{enum_name} 必须含 `Kernel(KernelError)` 共享包装字段 (变体引用或字段定义)"

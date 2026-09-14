@@ -48,7 +48,7 @@ pub struct FallbackPageFaultPolicy;
 
 impl PageFaultPolicy for FallbackPageFaultPolicy {
     fn stack_top(&self) -> u64 {
-        crate::kernel::framework::constants::limits::USER_ADDR_MAX
+        crate::framework::constants::limits::USER_ADDR_MAX
     }
 
     fn stack_default_size(&self) -> u64 {
@@ -63,8 +63,8 @@ impl PageFaultPolicy for FallbackPageFaultPolicy {
 static FALLBACK_PAGE_FAULT_POLICY: FallbackPageFaultPolicy = FallbackPageFaultPolicy;
 
 /// 全局策略注册表 — services 通过 `register_page_fault_policy` 注册
-static PAGE_FAULT_POLICY: crate::kernel::framework::sync::OnceLock<&'static dyn PageFaultPolicy> =
-    crate::kernel::framework::sync::OnceLock::new();
+static PAGE_FAULT_POLICY: crate::framework::sync::OnceLock<&'static dyn PageFaultPolicy> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册缺页策略 (由 `services::mm::init` 调用)
 ///
@@ -99,7 +99,7 @@ mod tests {
         let p = FallbackPageFaultPolicy;
         assert_eq!(p.stack_guard_pages(), 1);
         assert_eq!(p.stack_default_size(), 0x0080_0000);
-        assert_eq!(p.stack_top(), crate::kernel::framework::constants::limits::USER_ADDR_MAX);
+        assert_eq!(p.stack_top(), crate::framework::constants::limits::USER_ADDR_MAX);
     }
 
     #[test]

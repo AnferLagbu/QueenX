@@ -31,11 +31,11 @@ use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kernel::framework::sync::{
+use crate::framework::sync::{
     IrqSaveFlags, SpinLock, disable_interrupts, restore_interrupts,
 };
 #[cfg(debug_assertions)]
-use crate::kernel::framework::sync::{LockClassDesc, LockClassId, LockKind};
+use crate::framework::sync::{LockClassDesc, LockClassId, LockKind};
 
 /// 中断安全自旋锁 (TCB)。
 ///
@@ -94,7 +94,7 @@ impl<T> IrqSpinLock<T> {
     // J-01 (2026-09-08): 删除 unfulfilled doc_markdown expect — 文档已用反引号包裹
     // 标识符, doc_markdown 从不触发, expect 为多余防御 (host-test debug 编译暴露)
     pub fn named(name: &'static str, data: T) -> Self {
-        let class_id = crate::kernel::framework::sync::register_class(LockClassDesc {
+        let class_id = crate::framework::sync::register_class(LockClassDesc {
             name,
             kind: LockKind::IrqSpinLock,
         });
@@ -125,7 +125,7 @@ impl<T> IrqSpinLock<T> {
 
         // Lockdep: 通知锁获取 (IrqSpinLock 始终在中断上下文安全)
         #[cfg(debug_assertions)]
-        crate::kernel::framework::sync::acquire(self.lockdep_class, true);
+        crate::framework::sync::acquire(self.lockdep_class, true);
 
         IrqSpinLockGuard {
             data: data_ref,
@@ -169,7 +169,7 @@ impl<T> IrqSpinLock<T> {
     /// 注意: 与 `lock()` 不同, `try_lock()` 在等待期间**不**屏蔽中断,
     /// 因此不应在中断上下文使用。
     pub fn try_lock(&self) -> Option<IrqSpinLockGuard<'_, T>> {
-        use crate::kernel::framework::sync::TryLockResult;
+        use crate::framework::sync::TryLockResult;
         let inner_ptr = self.lock.get();
         // SAFETY: 持 &self 借用, 通过 UnsafeCell 获取 &mut 底层 SpinLock; 自旋锁本身
         // 通过原子操作保证即使两个 &mut 并发也不冲突 (compare_exchange 原子性)。
@@ -246,7 +246,7 @@ impl<T> Drop for IrqSpinLockGuard<'_, T> {
     fn drop(&mut self) {
         // Lockdep: 通知锁释放
         #[cfg(debug_assertions)]
-        crate::kernel::framework::sync::release(self.lockdep_class);
+        crate::framework::sync::release(self.lockdep_class);
 
         // SAFETY: 持有 lock_ptr 上的锁, 任何其他访问者都被锁在外; cli 屏蔽中断。
         unsafe { &*self.lock_ptr }.raw_unlock();

@@ -11,7 +11,7 @@
 //! - 通过 framework::proc 和 framework::syscall::api 公开 API 访问
 //! - 无 unsafe, 无裸指针
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 /// 进程列表条目 (与 framework 定义一致)
 #[repr(C)]
@@ -28,14 +28,14 @@ struct ProcListEntry {
 
 /// `proc_list(buf`, `max_entries`) 策略
 pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
-    if buf_ptr == 0 || !crate::kernel::framework::syscall::api::validate_user_ptr(buf_ptr) {
+    if buf_ptr == 0 || !crate::framework::syscall::api::validate_user_ptr(buf_ptr) {
         return Errno::EFAULT.as_ret();
     }
 
     let entry_size = core::mem::size_of::<ProcListEntry>() as u32;
     let mut count: i32 = 0;
 
-    crate::kernel::framework::proc::process_for_each(|proc| {
+    crate::framework::proc::process_for_each(|proc| {
         if (count as u32) < max_entries {
             let entry = ProcListEntry {
                 pid: proc.pid.0,
@@ -56,7 +56,7 @@ pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
             };
 
             let offset = count as u64 * u64::from(entry_size);
-            if !crate::kernel::framework::syscall::api::write_struct_to_user(
+            if !crate::framework::syscall::api::write_struct_to_user(
                 buf_ptr + offset,
                 &entry,
             ) {
@@ -72,7 +72,7 @@ pub fn proc_list_syscall(buf_ptr: u64, max_entries: u32) -> i64 {
 
 /// `proc_setpri(pid`, priority) 策略
 pub fn proc_setpri_syscall(pid: u32, priority: u32) -> i64 {
-    i64::from(crate::kernel::framework::proc::proc_set_priority(
+    i64::from(crate::framework::proc::proc_set_priority(
         pid, priority,
     ))
 }
@@ -80,15 +80,15 @@ pub fn proc_setpri_syscall(pid: u32, priority: u32) -> i64 {
 /// `credo_proc_cputime(pid)` 策略
 pub fn credo_proc_cputime_syscall(pid: u32) -> i64 {
     let target_pid = if pid == 0 {
-        crate::kernel::framework::proc::process_get_current_pid()
+        crate::framework::proc::process_get_current_pid()
     } else {
         pid
     };
 
-    if !crate::kernel::framework::proc::process_exists(target_pid) {
+    if !crate::framework::proc::process_exists(target_pid) {
         return Errno::ESRCH.as_ret();
     }
 
-    let cputime = crate::kernel::framework::proc::scheduler_current_cputime();
+    let cputime = crate::framework::proc::scheduler_current_cputime();
     cputime as i64
 }

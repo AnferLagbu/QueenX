@@ -16,7 +16,7 @@
 //! `Vma` 中的物理页映射感知与 PMM 协作。
 
 use super::{PAGE_SIZE, PageFlags, VirtAddr};
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
@@ -425,7 +425,7 @@ impl MmStruct {
 
         // TASK_SIZE: 64 位用户地址空间上限 (集中于 constants::limits::USER_ADDR_MAX, B05-45)
         // SIMPLIFIED: usize 转换在 64 位系统下无损; 32 位系统需额外 assert (无 32 位目标, 当前可省略)
-        let task_size: usize = crate::kernel::framework::constants::limits::USER_ADDR_MAX as usize;
+        let task_size: usize = crate::framework::constants::limits::USER_ADDR_MAX as usize;
 
         if cursor + size <= task_size {
             Some(cursor)
@@ -450,8 +450,8 @@ impl MmStruct {
         start: usize,
         len: usize,
         new_flags: PageFlags,
-    ) -> Result<(), crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
+    ) -> Result<(), crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
 
         if len == 0 {
             return Err(Errno::EINVAL);
@@ -554,7 +554,7 @@ impl MmStruct {
         // 修改页表权限
         #[cfg(target_arch = "x86_64")]
         {
-            let vmm = crate::kernel::framework::mm::vmm::get_vmm();
+            let vmm = crate::framework::mm::vmm::get_vmm();
             let page_start = start & !(PAGE_SIZE as usize - 1);
             let mut addr = page_start;
             while addr < end {
@@ -564,7 +564,7 @@ impl MmStruct {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            let vmm = crate::kernel::framework::mm::vmm::get_vmm();
+            let vmm = crate::framework::mm::vmm::get_vmm();
             let page_start = start & !(PAGE_SIZE as usize - 1);
             let mut addr = page_start;
             while addr < end {
@@ -610,8 +610,8 @@ impl MmStruct {
         old_size: usize,
         new_size: usize,
         flags: i32,
-    ) -> Result<usize, crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
+    ) -> Result<usize, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
 
         // Linux mremap flags (仅 MAYMOVE = 1; MREMAP_FIXED = 2 由 glibc 模拟, 不支持)
         const MREMAP_MAYMOVE: i32 = 1;
@@ -749,8 +749,8 @@ impl MmStruct {
         start: usize,
         len: usize,
         advice: u32,
-    ) -> Result<usize, crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
+    ) -> Result<usize, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
 
         if len == 0 {
             return Err(Errno::EINVAL);
@@ -897,9 +897,9 @@ impl MmStruct {
         start: usize,
         end: usize,
         _dontneed: bool,
-    ) -> Result<(), crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
-        use crate::kernel::framework::mm::swap;
+    ) -> Result<(), crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
+        use crate::framework::mm::swap;
 
         // 检查 VMA 是否锁定
         {
@@ -931,9 +931,9 @@ impl MmStruct {
         &self,
         start: usize,
         len: usize,
-    ) -> Result<usize, crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
-        use crate::kernel::framework::rlimit_query;
+    ) -> Result<usize, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
+        use crate::framework::rlimit_query;
 
         if len == 0 {
             return Err(Errno::EINVAL);
@@ -981,7 +981,7 @@ impl MmStruct {
         let page_size = PAGE_SIZE as usize;
         let mut addr = start;
         while addr < end_addr {
-            crate::kernel::framework::mm::set_page_locked(addr as u64, true);
+            crate::framework::mm::set_page_locked(addr as u64, true);
             addr += page_size;
         }
 
@@ -998,8 +998,8 @@ impl MmStruct {
         &self,
         start: usize,
         len: usize,
-    ) -> Result<usize, crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
+    ) -> Result<usize, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
 
         if len == 0 {
             return Err(Errno::EINVAL);
@@ -1029,7 +1029,7 @@ impl MmStruct {
         let page_size = PAGE_SIZE as usize;
         let mut addr = start;
         while addr < end_addr {
-            crate::kernel::framework::mm::set_page_locked(addr as u64, false);
+            crate::framework::mm::set_page_locked(addr as u64, false);
             addr += page_size;
         }
 
@@ -1043,8 +1043,8 @@ impl MmStruct {
     ///
     /// # Errors
     /// 当 `flags` 包含未实现的位 (除 `MCL_CURRENT | MCL_FUTURE | MCL_ONFAULT` 之外的位) 时返回 `EINVAL`.
-    pub fn mlock_all(&self, flags: u32) -> Result<u32, crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
+    pub fn mlock_all(&self, flags: u32) -> Result<u32, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
 
         const MCL_CURRENT: u32 = 1;
         const MCL_FUTURE: u32 = 2;
@@ -1098,7 +1098,7 @@ impl MmStruct {
     ///
     /// # Errors
     /// 当前实现总是返回 `Ok(())`, 不会返回错误.
-    pub fn munlock_all(&self) -> Result<(), crate::kernel::framework::syscall::Errno> {
+    pub fn munlock_all(&self) -> Result<(), crate::framework::syscall::Errno> {
         let mut vmas = self.vmas.lock();
         for v in vmas.iter_mut() {
             v.vm_flags = v
@@ -1131,10 +1131,10 @@ impl MmStruct {
         start: usize,
         len: usize,
         out_vec: &mut [u8],
-    ) -> Result<usize, crate::kernel::framework::syscall::Errno> {
-        use crate::kernel::framework::errno::Errno;
-        use crate::kernel::framework::mm::VirtAddr;
-        use crate::kernel::framework::mm::vmm;
+    ) -> Result<usize, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
+        use crate::framework::mm::VirtAddr;
+        use crate::framework::mm::vmm;
 
         if len == 0 {
             return Err(Errno::EINVAL);

@@ -18,7 +18,7 @@
 //! - EAGAIN: WAIT 时 *uaddr != expected
 //! - ETIMEDOUT: WAIT 超时
 
-use crate::kernel::framework::syscall::Errno;
+use crate::framework::syscall::Errno;
 
 // ============================================================================
 // futex op 常量 (与 Linux 兼容)
@@ -145,7 +145,7 @@ pub fn futex_syscall(
     futex_validate_op(op)?;
 
     // 2. 委托 framework
-    let ret = crate::kernel::framework::syscall::futex::sys_futex(
+    let ret = crate::framework::syscall::futex::sys_futex(
         uaddr,
         op,
         val,

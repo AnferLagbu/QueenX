@@ -11,7 +11,7 @@
 //! - enum KernelError (原 services/error.rs, 26 变体)
 //! - impl Display / 向后兼容别名 / from_i32 / as_errno / as_vfs_ret / From
 
-use crate::kernel::framework::errno::Errno;
+use crate::framework::errno::Errno;
 
 /// 全内核统一错误 (POSIX errno → 强类型).
 ///

@@ -174,7 +174,7 @@ pub struct WasiIoVec {
 /// - 解释器未配置线性内存 → `WasiErrno::Inval`
 /// - 读取越界 → `WasiErrno::Fault`
 pub fn read_iovec_from_memory(
-    interp: &crate::kernel::services::wasm::interpreter::Interpreter,
+    interp: &crate::services::wasm::interpreter::Interpreter,
     iovs_ptr: u32,
     iovs_len: u32,
 ) -> Result<Vec<WasiIoVec>, WasiErrno> {
@@ -194,7 +194,7 @@ pub fn read_iovec_from_memory(
 
 /// 向 WASM 线性内存写入 u32
 pub fn write_u32_to_memory(
-    interp: &mut crate::kernel::services::wasm::interpreter::Interpreter,
+    interp: &mut crate::services::wasm::interpreter::Interpreter,
     ptr: u32,
     val: u32,
 ) {
@@ -205,7 +205,7 @@ pub fn write_u32_to_memory(
 
 /// 向 WASM 线性内存写入 i64
 pub fn write_i64_to_memory(
-    interp: &mut crate::kernel::services::wasm::interpreter::Interpreter,
+    interp: &mut crate::services::wasm::interpreter::Interpreter,
     ptr: u32,
     val: i64,
 ) {
@@ -216,7 +216,7 @@ pub fn write_i64_to_memory(
 
 /// 向 WASM 线性内存写入 i32
 pub fn write_i32_to_memory(
-    interp: &mut crate::kernel::services::wasm::interpreter::Interpreter,
+    interp: &mut crate::services::wasm::interpreter::Interpreter,
     ptr: u32,
     val: i32,
 ) {
@@ -225,7 +225,7 @@ pub fn write_i32_to_memory(
 
 /// 向 WASM 线性内存写入字节序列
 pub fn write_bytes_to_memory(
-    interp: &mut crate::kernel::services::wasm::interpreter::Interpreter,
+    interp: &mut crate::services::wasm::interpreter::Interpreter,
     ptr: u32,
     data: &[u8],
 ) {
@@ -243,7 +243,7 @@ pub fn write_bytes_to_memory(
 /// - 解释器未配置线性内存 → `WasiErrno::Inval`
 /// - 读取越界 → `WasiErrno::Fault`
 pub fn read_bytes_from_memory(
-    interp: &crate::kernel::services::wasm::interpreter::Interpreter,
+    interp: &crate::services::wasm::interpreter::Interpreter,
     ptr: u32,
     len: u32,
 ) -> Result<alloc::vec::Vec<u8>, WasiErrno> {

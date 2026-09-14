@@ -4,12 +4,12 @@
 //! 封装 `framework::driver::kexec` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::driver::{
+pub use crate::framework::driver::{
     KEXEC_DEFAULT_INITRD_ADDR, KEXEC_DEFAULT_LOAD_ADDR, KEXEC_MAX_CMDLINE, KEXEC_MAX_INITRD_SIZE,
     KEXEC_MAX_KERNEL_SIZE, KexecSegType, KexecSegment, KexecState, KexecSubsystem,
 };
 
-use crate::kernel::framework::driver::{
+use crate::framework::driver::{
     kexec_init, kexec_is_initialized, kexec_subsystem, sys_kexec,
 };
 

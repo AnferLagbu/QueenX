@@ -1,14 +1,14 @@
-use crate::kernel::framework::credo::constant_time_eq;
-use crate::kernel::framework::credo::secure_boot::{sha256_extend, sha256_hash};
-use crate::kernel::framework::credo::sha256::sha256;
-use crate::kernel::framework::errno::{errno_from_i64, Errno};
-use crate::kernel::framework::mm::slab::{
+use crate::framework::credo::constant_time_eq;
+use crate::framework::credo::secure_boot::{sha256_extend, sha256_hash};
+use crate::framework::credo::sha256::sha256;
+use crate::framework::errno::{errno_from_i64, Errno};
+use crate::framework::mm::slab::{
     GENERAL_CACHE_SIZES, KmemCache, SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE,
     find_general_cache_index,
 };
-use crate::kernel::framework::proc::elf::{Elf64Header, Elf64Phdr};
-use crate::kernel::framework::tests::{TestResult, assert_eq_test, check, runner};
-use crate::kernel::framework::timer::pit::{
+use crate::framework::proc::elf::{Elf64Header, Elf64Phdr};
+use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::framework::timer::pit::{
     DEFAULT_INTERRUPT_FREQ_HZ, PIT_BASE_FREQUENCY, PIT_MAX_COUNT, PIT_MIN_COUNT,
 };
 use crate::register_tests_inner;

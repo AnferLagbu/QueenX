@@ -53,7 +53,7 @@ fn test_kernel_error_module_exists() {
     // services/error.rs 必须是 re-export 壳 (单向依赖)
     let svc = read(SERVICES_ERROR);
     assert!(
-        svc.contains("pub use crate::kernel::framework::error::KernelError"),
+        svc.contains("pub use crate::framework::error::KernelError"),
         "services/error.rs 必须 re-export framework KernelError"
     );
     assert!(!svc.contains("pub enum KernelError"), "services/error.rs 不应再定义 KernelError");
@@ -64,8 +64,8 @@ fn test_socket_error_is_kernel_error_alias() {
     let src = read(NET_SOCKET);
     // SocketError 现为 type alias to KernelError, 字段数应为 0
     assert!(
-        src.contains("pub use crate::kernel::services::error::KernelError as SocketError")
-            || src.contains("pub use crate::kernel::services::error::KernelError as SocketError;"),
+        src.contains("pub use crate::services::error::KernelError as SocketError")
+            || src.contains("pub use crate::services::error::KernelError as SocketError;"),
         "SocketError 必须是 KernelError 的 type alias"
     );
     // 不再含独立 enum 定义

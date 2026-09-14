@@ -7,19 +7,19 @@
 //! - 委托 framework/chitin/firmware 实际完成 firmware 附着/读取
 //! - 提供 driver probe 使用的查询 API
 
-use crate::kernel::framework::chitin::NodeId;
-use crate::kernel::framework::chitin::firmware as fw;
+use crate::framework::chitin::NodeId;
+use crate::framework::chitin::firmware as fw;
 
 /// 固件信息 (re-export)
-pub use crate::kernel::framework::chitin::FirmwareInfo;
+pub use crate::framework::chitin::FirmwareInfo;
 
 /// 固件加载错误码
-pub use crate::kernel::framework::chitin::{
+pub use crate::framework::chitin::{
     FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_OOM, FW_ERR_TOO_LARGE,
 };
 
 /// 固件大小上限
-pub use crate::kernel::framework::chitin::MAX_FIRMWARE_SIZE;
+pub use crate::framework::chitin::MAX_FIRMWARE_SIZE;
 
 /// 驱动 probe 时获取节点的固件
 ///

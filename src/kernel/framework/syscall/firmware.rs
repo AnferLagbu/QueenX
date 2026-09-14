@@ -12,12 +12,12 @@
 //! - 路径最长 4096 字节, 超过返回 -EINVAL
 //! - 读取走 `services/fs::open` + `framework/io::vfs_read`
 
-use crate::kernel::framework::chitin::{
+use crate::framework::chitin::{
     FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_TOO_LARGE, FirmwareInfo, MAX_FIRMWARE_SIZE,
     devtree_attach_firmware, devtree_detach_firmware, devtree_get_firmware, fnv1a_32,
 };
-use crate::kernel::framework::fs::{vfs_open, vfs_read};
-use crate::kernel::framework::syscall::raw as raw_sync;
+use crate::framework::fs::{vfs_open, vfs_read};
+use crate::framework::syscall::raw as raw_sync;
 use alloc::vec::Vec;
 use core::ptr;
 

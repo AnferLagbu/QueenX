@@ -56,7 +56,7 @@ pub mod uefi;
 // T-04: 中断处理决策策略
 // ============================================================================
 
-use crate::kernel::framework::idt::irq_trait::{
+use crate::framework::idt::irq_trait::{
     IrqContext, IrqDecision, SoftirqContext, register_irq_decision,
 };
 

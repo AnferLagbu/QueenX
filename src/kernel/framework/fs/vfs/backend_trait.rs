@@ -23,8 +23,8 @@
 //! - 挂载权限检查
 //! - 文件系统注册表管理
 
-use crate::kernel::framework::fs::vfs::inode::Inode;
-use crate::kernel::framework::fs::vfs::types::{FileSystem, KernelError};
+use crate::framework::fs::vfs::inode::Inode;
+use crate::framework::fs::vfs::types::{FileSystem, KernelError};
 
 /// 文件系统后端决策接口 — services 实现, framework 调用
 ///
@@ -90,8 +90,8 @@ impl FsBackend for FallbackFsBackend {
 static FALLBACK_BACKEND: FallbackFsBackend = FallbackFsBackend;
 
 /// 全局策略注册表 — services 通过 `register_fs_backend` 注册
-static FS_BACKEND: crate::kernel::framework::sync::OnceLock<&'static dyn FsBackend> =
-    crate::kernel::framework::sync::OnceLock::new();
+static FS_BACKEND: crate::framework::sync::OnceLock<&'static dyn FsBackend> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 VFS 后端决策策略 (由 `services::fs::init` 调用)
 ///
@@ -119,8 +119,8 @@ pub fn current_fs_backend() -> &'static dyn FsBackend {
 // ============================================================================
 
 /// 全局 NestFS FileSystem 注册表 — `services::fs::init` 注册 `NestfsData` 实例
-static NESTFS_FS: crate::kernel::framework::sync::OnceLock<&'static dyn FileSystem> =
-    crate::kernel::framework::sync::OnceLock::new();
+static NESTFS_FS: crate::framework::sync::OnceLock<&'static dyn FileSystem> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 NestFS FileSystem 实例 (由 `services::fs::init` 调用)
 ///

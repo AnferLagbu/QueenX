@@ -2,7 +2,7 @@
 //!
 //! services 层禁止 `unsafe`, 全部通过 framework 提供的 safe API 包装.
 
-use crate::kernel::framework::proc::canary;
+use crate::framework::proc::canary;
 
 /// 触发 `QueenX` 原生 `getrandom` syscall
 ///

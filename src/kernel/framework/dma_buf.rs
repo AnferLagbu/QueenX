@@ -20,11 +20,11 @@
 use core::fmt;
 use core::ptr::NonNull;
 
-use crate::kernel::framework::mm::PhysAddr;
+use crate::framework::mm::PhysAddr;
 
 #[cfg(target_arch = "aarch64")]
-use crate::kernel::framework::mm::CACHE_LINE_SIZE;
-use crate::kernel::framework::mm::PAGE_SIZE;
+use crate::framework::mm::CACHE_LINE_SIZE;
+use crate::framework::mm::PAGE_SIZE;
 
 use super::frame::Frame;
 

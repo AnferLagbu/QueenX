@@ -157,8 +157,8 @@ pub trait IpcStrategy: Send + Sync {
 // ============================================================================
 
 /// 全局 IPC 策略注册表 — services 通过 `register_ipc_strategy` 注册
-static IPC_STRATEGY: crate::kernel::framework::sync::OnceLock<&'static dyn IpcStrategy> =
-    crate::kernel::framework::sync::OnceLock::new();
+static IPC_STRATEGY: crate::framework::sync::OnceLock<&'static dyn IpcStrategy> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册 IPC 策略 (由 `services::ipc::strategy` 调用)
 ///

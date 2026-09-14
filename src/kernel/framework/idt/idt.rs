@@ -32,9 +32,9 @@ use super::types::{
     GDT_KERNEL_CODE, IDT_DPL_USER, IDT_ENTRIES, IDT_TYPE_INTERRUPT, IDT_TYPE_TRAP, IRQ_BASE,
     IRQ_FLAG_SHARED, IdtEntry, InterruptFrame, InterruptStatistics, IrqDescriptor,
 };
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::sync::IrqSpinLock;
 
-use crate::kernel::framework::sync::OnceLock;
+use crate::framework::sync::OnceLock;
 use crate::klog_info;
 // 内联硬件操作函数 (避免跨模块导入问题)
 /// 从端口读字节
@@ -258,7 +258,7 @@ impl IdtManager {
         #[cfg(target_arch = "x86_64")]
         {
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            let tss = unsafe { crate::kernel::framework::arch::gdt::get_tss_mut() };
+            let tss = unsafe { crate::framework::arch::gdt::get_tss_mut() };
             if !tss.ist_validated() {
                 return Err("IDT init: TSS IST[0..3] not initialized (call set_ist first)");
             }
@@ -534,8 +534,8 @@ impl IdtManager {
         // 使用 GSI 路由, 不再限制 irq < 16
         #[cfg(target_arch = "x86_64")]
         {
-            if crate::kernel::framework::arch::ioapic::is_initialized() {
-                crate::kernel::framework::arch::ioapic::unmask_irq(irq);
+            if crate::framework::arch::ioapic::is_initialized() {
+                crate::framework::arch::ioapic::unmask_irq(irq);
                 return;
             }
         }
@@ -567,8 +567,8 @@ impl IdtManager {
         // 使用 GSI 路由, 不再限制 irq < 16
         #[cfg(target_arch = "x86_64")]
         {
-            if crate::kernel::framework::arch::ioapic::is_initialized() {
-                crate::kernel::framework::arch::ioapic::mask_irq(irq);
+            if crate::framework::arch::ioapic::is_initialized() {
+                crate::framework::arch::ioapic::mask_irq(irq);
                 return;
             }
         }
@@ -750,14 +750,14 @@ impl IdtManager {
             // MSI EOI: LAPIC 路径 (send_eoi 内已检查 APIC init)
             self.send_eoi(irq);
 
-            crate::kernel::framework::irq::do_softirq();
+            crate::framework::irq::do_softirq();
 
             // 信号投递 (同传统 IRQ 路径)
             // SAFETY: frame 有效
             unsafe {
                 let f = &*frame;
                 if f.cs & 0x3 == 0x3 {
-                    crate::kernel::framework::proc::do_signal_deliver(frame);
+                    crate::framework::proc::do_signal_deliver(frame);
                 }
             }
             return;
@@ -809,7 +809,7 @@ impl IdtManager {
 
             self.send_eoi(irq);
 
-            crate::kernel::framework::irq::do_softirq();
+            crate::framework::irq::do_softirq();
 
             // 返回用户态前检查待投递信号
             // SAFETY: frame 有效, IRQ 处理完成, 即将 iretq
@@ -817,12 +817,12 @@ impl IdtManager {
                 let f = &*frame;
                 // 仅在返回用户态时检查 (CS 低2位=3 表示用户态)
                 if f.cs & 0x3 == 0x3 {
-                    crate::kernel::framework::proc::do_signal_deliver(frame);
+                    crate::framework::proc::do_signal_deliver(frame);
                 }
             }
         } else {
             // MSI 向量 (0x40-0x7F → irq 0x10-0x3F): 通过 ISR_TABLE 分发
-            crate::kernel::framework::irqline::dispatch_irq(vector);
+            crate::framework::irqline::dispatch_irq(vector);
             self.send_eoi(irq);
         }
     }
@@ -837,8 +837,8 @@ impl IdtManager {
         let apic_handled = {
             #[cfg(target_arch = "x86_64")]
             {
-                if crate::kernel::framework::arch::apic::is_initialized() {
-                    crate::kernel::framework::arch::apic::eoi();
+                if crate::framework::arch::apic::is_initialized() {
+                    crate::framework::arch::apic::eoi();
                     true
                 } else {
                     false

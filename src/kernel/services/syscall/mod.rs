@@ -26,9 +26,9 @@ pub mod dispatch;
 pub mod posix_timer;
 pub mod types;
 
-use crate::kernel::framework::syscall;
-use crate::kernel::framework::userctx::UserContext;
-use crate::kernel::framework::usermode;
+use crate::framework::syscall;
+use crate::framework::userctx::UserContext;
+use crate::framework::usermode;
 
 // ============================================================================
 // 强类型 re-export
@@ -153,7 +153,7 @@ pub type SyscallResult<T> = Result<T, Errno>;
 
 // B09-12/DECISION-H13 P0-1: Errno::try_from_i32 与 errno_from_i64 已迁回
 // framework::errno (原 Errno 定义随迁), 此处 re-export 保持调用方兼容.
-pub use crate::kernel::framework::errno::errno_from_i64;
+pub use crate::framework::errno::errno_from_i64;
 
 /// `i64` 返回码 → `SyscallResult<u64>` (POSIX 约定)
 ///
@@ -231,8 +231,8 @@ pub fn init() {
     // 注册失败说明策略已注册或状态异常, 启动期必须显式处理, 不能静默吞掉.
     let r = dispatch::register_services_dispatch();
     if r.is_err() {
-        crate::kernel::framework::klog::log_err(
-            crate::kernel::framework::klog::LogCategory::Boot,
+        crate::framework::klog::log_err(
+            crate::framework::klog::LogCategory::Boot,
             format_args!("[SYSCALL] register_services_dispatch FAILED (重复注册?)"),
         );
     }

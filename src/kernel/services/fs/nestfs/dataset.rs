@@ -1,7 +1,7 @@
-use crate::kernel::services::fs::nestfs::bp::NestBlockPointer;
-use crate::kernel::services::fs::nestfs::dmu::{NestObjSet, NestObjType};
-use crate::kernel::services::fs::nestfs::zap::NestZap;
-use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex;
+use crate::services::fs::nestfs::bp::NestBlockPointer;
+use crate::services::fs::nestfs::dmu::{NestObjSet, NestObjType};
+use crate::services::fs::nestfs::zap::NestZap;
+use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};

@@ -2,17 +2,17 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::driver::DriverError;
-use crate::kernel::framework::driver::{DeviceType, Driver, DriverResult};
+use crate::framework::driver::DriverError;
+use crate::framework::driver::{DeviceType, Driver, DriverResult};
 #[cfg(test)]
-use crate::kernel::framework::mm::KERNEL_BASE;
+use crate::framework::mm::KERNEL_BASE;
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::mm::PhysAddr;
-use crate::kernel::framework::mm::virt_to_phys;
+use crate::framework::mm::PhysAddr;
+use crate::framework::mm::virt_to_phys;
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::sync::IrqSpinLock as Mutex;
+use crate::framework::sync::IrqSpinLock as Mutex;
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::userptr::{UserReadPtr, UserWritePtr};
+use crate::framework::userptr::{UserReadPtr, UserWritePtr};
 #[cfg(not(feature = "kernel_test"))]
 use crate::klog_debug;
 #[cfg(not(feature = "kernel_test"))]
@@ -33,7 +33,7 @@ static POLL_COUNT: AtomicU32 = AtomicU32::new(0);
 // 反向依赖解除 (框架不再 use services).
 // ============================================================================
 
-pub use crate::kernel::framework::driver::net::dma_ring::{
+pub use crate::framework::driver::net::dma_ring::{
     E1000_RX_BUFFER_SIZE, E1000_RX_RING_SIZE, E1000_RXD_ERR_CE, E1000_RXD_ERR_RXE,
     E1000_RXD_ERR_SE, E1000_RXD_ERR_SEQ, E1000_RXD_STAT_DD, E1000_TX_RING_SIZE,
     E1000_TXD_CMD_EOP, E1000_TXD_CMD_IFCS, E1000_TXD_CMD_RS, E1000_TXD_STAT_DD, E1000RxDesc,
@@ -45,12 +45,12 @@ pub use crate::kernel::framework::driver::net::dma_ring::{
 // services 仅保留描述符状态/命令常量 + re-export shim (services/driver/net/e1000.rs).
 // 严格 framekernel 单向数据流: framework 不依赖 services.
 // E1000Driver 在 kernel_test 构建下仍被使用 (E1000Device.driver 字段/访问器).
-use crate::kernel::framework::driver::net::e1000_io::E1000Driver;
+use crate::framework::driver::net::e1000_io::E1000Driver;
 // kernel_test 构建下 E1000Io / E1000_ICR_* / E1000_RDT 仅被
 // #[cfg(not(feature = "kernel_test"))] 门控的 probe/handle_interrupt 使用,
 // 与使用点对齐, 避免 kernel_test 构建产生 unused_imports warning.
 #[cfg(not(feature = "kernel_test"))]
-use crate::kernel::framework::driver::net::e1000_io::{
+use crate::framework::driver::net::e1000_io::{
     E1000_ICR_LSC, E1000_ICR_RXDMT0, E1000_ICR_RXO, E1000_ICR_RXT0, E1000_RDT, E1000Io,
 };
 
@@ -328,7 +328,7 @@ pub struct E1000Device {
     rx_count: u64,
     isr_count: u64,
     link_change_count: u64,
-    info: crate::kernel::framework::driver::DeviceInfo,
+    info: crate::framework::driver::DeviceInfo,
 }
 
 impl Default for E1000Device {
@@ -348,7 +348,7 @@ impl Default for E1000Device {
             rx_count: 0,
             isr_count: 0,
             link_change_count: 0,
-            info: crate::kernel::framework::driver::DeviceInfo::new(
+            info: crate::framework::driver::DeviceInfo::new(
                 "Intel E1000",
                 DeviceType::Network,
             ),
@@ -744,7 +744,7 @@ impl E1000Device {
         )
     }
 
-    pub fn get_info(&self) -> &crate::kernel::framework::driver::DeviceInfo {
+    pub fn get_info(&self) -> &crate::framework::driver::DeviceInfo {
         &self.info
     }
 }
@@ -879,20 +879,20 @@ pub extern "C" fn e1000_probe() -> i32 {
                         clippy::items_after_statements,
                         reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
                     )]
-                    static E1000_NET_OPS: crate::kernel::framework::chitin::NetOps =
-                        crate::kernel::framework::chitin::NetOps {
+                    static E1000_NET_OPS: crate::framework::chitin::NetOps =
+                        crate::framework::chitin::NetOps {
                             send: e1000_net_send,
                             try_receive: e1000_net_recv,
                             get_mac: e1000_net_get_mac,
                             handle_irq: Some(e1000_net_irq),
                         };
-                    let _id = crate::kernel::framework::chitin::chitin_register_with_ops(
+                    let _id = crate::framework::chitin::chitin_register_with_ops(
                         "e1000",
-                        crate::kernel::framework::chitin::ChitinProto::Net,
+                        crate::framework::chitin::ChitinProto::Net,
                         Some(dev.mmio_phys),
                         Some(dev.driver_ref().irq),
                         raw_ptr as *mut u8,
-                        crate::kernel::framework::chitin::ChitinOps::Net(&E1000_NET_OPS),
+                        crate::framework::chitin::ChitinOps::Net(&E1000_NET_OPS),
                     );
                     *E1000_DEVICE.lock() = Some(dev);
                     return 0;
@@ -1013,8 +1013,8 @@ struct AlignedKallocBuf {
 }
 
 #[cfg(not(feature = "kernel_test"))]
-static KALLOC_BUF: crate::kernel::framework::sync::IrqSpinLock<AlignedKallocBuf> =
-    crate::kernel::framework::sync::IrqSpinLock::new(AlignedKallocBuf { data: [0; 1048576] });
+static KALLOC_BUF: crate::framework::sync::IrqSpinLock<AlignedKallocBuf> =
+    crate::framework::sync::IrqSpinLock::new(AlignedKallocBuf { data: [0; 1048576] });
 #[cfg(not(feature = "kernel_test"))]
 static KALLOC_OFF: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 

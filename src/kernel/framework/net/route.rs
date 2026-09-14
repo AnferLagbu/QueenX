@@ -8,17 +8,17 @@
 //! `sys_route_*` 被 framework syscall dispatch 直接调用 — 属机制项, 迁回。
 //! 依赖闭包全在 framework 内 (net::iface_trait + sync::IrqSpinLock + syscall::Errno)。
 //!
-//! services 侧改 `pub use crate::kernel::framework::net::route::*` 保持 API 兼容。
+//! services 侧改 `pub use crate::framework::net::route::*` 保持 API 兼容。
 //! 本文件 0 unsafe (策略逻辑) + framework smoltcp 同步 (依赖 raw::stack_mut)。
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
-use crate::kernel::framework::errno::Errno;
-use crate::kernel::framework::net::NET_CONFIGURED;
-use crate::kernel::framework::net::iface_trait::{IpAddr, Ipv4Addr, Ipv6Addr};
-use crate::kernel::framework::sync::IrqSpinLock;
+use crate::framework::errno::Errno;
+use crate::framework::net::NET_CONFIGURED;
+use crate::framework::net::iface_trait::{IpAddr, Ipv4Addr, Ipv6Addr};
+use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
 // 常量
@@ -280,8 +280,8 @@ pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
 
     #[cfg(not(feature = "kernel_test"))]
     {
-        use crate::kernel::framework::net::iface_trait::IpAddr;
-        use crate::kernel::framework::net::raw;
+        use crate::framework::net::iface_trait::IpAddr;
+        use crate::framework::net::raw;
         use smoltcp::wire::{IpAddress, IpCidr, Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr};
 
         let stack = match raw::stack_mut() {
@@ -350,8 +350,8 @@ pub fn sync_route_to_smoltcp(entry: &RouteEntry) -> Result<(), Errno> {
 pub fn rebuild_smoltcp_routes(table: &[RouteEntry]) {
     #[cfg(not(feature = "kernel_test"))]
     {
-        use crate::kernel::framework::net::iface_trait::IpAddr;
-        use crate::kernel::framework::net::raw;
+        use crate::framework::net::iface_trait::IpAddr;
+        use crate::framework::net::raw;
         use smoltcp::wire::{IpAddress, IpCidr, Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr};
 
         if !NET_CONFIGURED.load(Ordering::Acquire) {

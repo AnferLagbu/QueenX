@@ -4,11 +4,11 @@
 //! 封装 `framework::timer::tickless` 的安全 API.
 
 // 重导出强类型
-pub use crate::kernel::framework::timer::{
+pub use crate::framework::timer::{
     DEFAULT_HZ, MAX_HZ, MIN_HZ, TicklessCpuState, TicklessMode, TicklessSubsystem,
 };
 
-use crate::kernel::framework::timer::{
+use crate::framework::timer::{
     sys_tickless, tickless_init, tickless_is_initialized, tickless_subsystem,
 };
 

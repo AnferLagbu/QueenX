@@ -20,8 +20,8 @@
 //! - T2-3: Slab 策略提取 (2026-06-19)
 //! - 互补: pmm_trait::PmmPolicy (物理页分配策略)
 
-use crate::kernel::framework::config::{SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE};
-use crate::kernel::framework::mm::slab_trait::{SlabAllocSource, SlabPolicy, SlabPolicyContext};
+use crate::framework::config::{SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE};
+use crate::framework::mm::slab_trait::{SlabAllocSource, SlabPolicy, SlabPolicyContext};
 
 // ============================================================================
 // 默认 Slab 策略 — 标准 slab 分配器行为
@@ -96,7 +96,7 @@ impl SlabPolicy for DefaultSlabPolicy {
 /// 当 Slab 策略已被注册时返回 `Err(())`.
 pub fn register_default_slab_policy() -> Result<(), ()> {
     static POLICY: DefaultSlabPolicy = DefaultSlabPolicy;
-    crate::kernel::framework::mm::register_slab_policy(&POLICY).map_err(|_| ())
+    crate::framework::mm::register_slab_policy(&POLICY).map_err(|_| ())
 }
 
 // ============================================================================
@@ -112,7 +112,7 @@ pub fn register_default_slab_policy() -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::framework::mm::slab_trait::{SlabAllocSource, SlabPolicyContext};
+    use crate::framework::mm::slab_trait::{SlabAllocSource, SlabPolicyContext};
 
     /// 1. find_cache_index: 命中首个 >= size 的 cache
     #[test]

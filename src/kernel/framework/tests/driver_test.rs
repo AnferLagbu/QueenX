@@ -164,8 +164,8 @@ fn test_keyboard() {
 // framework/driver/char/{serial,vga}.rs 已删除, 此处改为 services VgaConsole/SerialPort.
 
 use core::sync::OnceLock;
-use crate::kernel::services::driver::char::serial::{ComPort, SerialConfig, SerialPort};
-use crate::kernel::services::driver::char::vga::{CursorPos, TextAttribute, VgaConsole};
+use crate::services::driver::char::serial::{ComPort, SerialConfig, SerialPort};
+use crate::services::driver::char::vga::{CursorPos, TextAttribute, VgaConsole};
 
 static SERIAL: OnceLock<Option<SerialPort>> = OnceLock::new();
 static VGA: OnceLock<Option<VgaConsole>> = OnceLock::new();
