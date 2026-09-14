@@ -27,7 +27,11 @@ use queenx::kernel::framework::credo::identity;
 use queenx::kernel::framework::error::KernelError;
 use queenx::kernel::services::fs::nestfs::dataset::NestDataset;
 use queenx::kernel::services::fs::nestfs::nestfs_data::get_nestfs;
-use std::sync::{Once, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
+
+// 5 个 #[test] 并行共享 get_nestfs() 全局单例 (fd 表/文件状态), 需串行化
+// 消除并行竞争 (偶发 seek/fd EINVAL flaky)。文件内锁, 不影响其他测试文件。
+static NESTFS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 static NESTFS_TEST_INIT: Once = Once::new();
 
@@ -67,6 +71,7 @@ macro_rules! assert_eq_nestfs {
 
 #[test]
 fn nestfs_comprehensive() {
+    let _guard = NESTFS_TEST_LOCK.lock().unwrap();
     println!("\n=== NestFS Standalone Test Suite ===\n");
 
     let nestfs = get_nestfs();
@@ -231,6 +236,7 @@ fn nestfs_comprehensive() {
 
 #[test]
 fn nestfs_error_paths() {
+    let _guard = NESTFS_TEST_LOCK.lock().unwrap();
     println!("\n=== NestFS Error Path Tests ===\n");
 
     let nestfs = get_nestfs();
@@ -361,6 +367,7 @@ fn nestfs_error_paths() {
 
 #[test]
 fn nestfs_advanced_features() {
+    let _guard = NESTFS_TEST_LOCK.lock().unwrap();
     println!("\n=== NestFS Advanced Feature Tests ===\n");
 
     let nestfs = get_nestfs();
@@ -496,6 +503,7 @@ fn nestfs_advanced_features() {
 
 #[test]
 fn nestfs_snapshot_clone() {
+    let _guard = NESTFS_TEST_LOCK.lock().unwrap();
     println!("\n=== NestFS Snapshot & Clone Tests ===\n");
 
     let nestfs = get_nestfs();
@@ -590,6 +598,7 @@ fn nestfs_snapshot_clone() {
 
 #[test]
 fn nestfs_fd_management() {
+    let _guard = NESTFS_TEST_LOCK.lock().unwrap();
     println!("\n=== NestFS FD Management Tests ===\n");
 
     let nestfs = get_nestfs();
