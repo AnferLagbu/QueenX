@@ -3,25 +3,26 @@
 //!
 //! `VirtIO` 块设备驱动 — services 层 (Phase 2.1.3)
 //!
-//! 通过 `VirtioDevice` (transport.rs) 提供 100% safe 的块设备初始化与配置路径。
+//! 通过 [`crate::kernel::framework::driver::virtio::VirtioMmioDevice`] (framework
+//! transport 机制) 提供 100% safe 的块设备初始化与配置路径。
 //! `VirtQueue` 操作通过 framework 层安全 API 完成。
 //!
 //! ## 设计原则
 //!
-//! - **零 unsafe**: 所有 MMIO 读/写通过 `VirtioDevice` 安全代理
+//! - **零 unsafe**: 所有 MMIO 读/写通过 framework `VirtioMmioDevice` 安全代理
 //! - **请求格式**: 定义 `BlkRequest` / 状态码 / 配置偏移, 供 framework I/O 路径使用
 //! - **初始化序列**: Reset → Ack → Driver → Feature Negotiate → `Features_OK` → Queue Setup → `Driver_OK`
 //!
 //! ## 与 framework 的分工
 //!
 //! - **services (本文件)**: 初始化序列, 特性协商, 配置空间读取, 请求格式定义
-//! - **framework**: `VirtQueue` 分配与 DMA 缓冲区管理 (需要 unsafe 指针操作)
+//! - **framework**: `VirtioMmioDevice` (MMIO transport 机制) + `VirtQueue` 分配与 DMA 缓冲区管理
 //!
 //! 评估日期: 2026-06-04
 //! Phase 2.1.3 任务: VirtIO-blk 块设备迁移
 
-use super::transport::{DEVICE_ID_BLOCK, VIRTIO_F_VERSION_1, VirtioDevice};
 use crate::kernel::framework::driver::virtio::queue::{DmaBuffer, VirtQueue};
+use crate::kernel::framework::driver::virtio::{VIRTIO_F_VERSION_1, VIRTIO_ID_BLOCK, VirtioMmioDevice};
 use crate::slog_info;
 use crate::slog_warn;
 
@@ -141,8 +142,8 @@ impl BlkRequest {
 
 /// `VirtIO` 块设备安全驱动 (services 层, 0 unsafe)。
 ///
-/// 封装 `VirtIO` 块设备的初始化序列与配置读取, 通过 `VirtioDevice` 安全代理访问 MMIO。
-/// DMA 缓冲区管理与 `VirtQueue` 操作保留在 framework 层。
+/// 封装 `VirtIO` 块设备的初始化序列与配置读取, 通过 framework `VirtioMmioDevice`
+/// 安全代理访问 MMIO。DMA 缓冲区管理与 `VirtQueue` 操作保留在 framework 层。
 ///
 /// ## 初始化流程
 ///
@@ -151,8 +152,8 @@ impl BlkRequest {
 /// 3. framework: 分配 `VirtQueue` 并配置
 /// 4. `set_driver_ok()` — 设备进入 live 状态
 pub struct VirtioBlkDriver {
-    /// MMIO 设备传输代理
-    device: VirtioDevice,
+    /// MMIO 设备传输代理 (framework transport 机制)
+    device: VirtioMmioDevice,
     /// 以 512 字节扇区为单位的总容量
     capacity_sectors: u64,
     /// 设备支持的特性位
@@ -168,13 +169,13 @@ impl VirtioBlkDriver {
     /// 返回 `Some(VirtioBlkDriver)` 表示设备就绪, 可继续配置 `VirtQueue`。
     ///
     /// # 参数
-    /// - `device`: 已探测到的 `VirtIO` 设备 (`device_id` 必须为 `DEVICE_ID_BLOCK`)
-    pub fn new(device: VirtioDevice) -> Option<Self> {
-        if device.device_id() != DEVICE_ID_BLOCK {
+    /// - `device`: 已探测到的 `VirtIO` 设备 (`device_id` 必须为 `VIRTIO_ID_BLOCK`)
+    pub fn new(device: VirtioMmioDevice) -> Option<Self> {
+        if device.device_id() != VIRTIO_ID_BLOCK {
             slog_warn!(
                 Driver,
                 "virtio-blk: 期望 device_id={}, 实际={}",
-                DEVICE_ID_BLOCK,
+                VIRTIO_ID_BLOCK,
                 device.device_id()
             );
             return None;
@@ -269,7 +270,7 @@ impl VirtioBlkDriver {
     }
 
     /// 获取 MMIO 设备引用 (用于 `VirtQueue` 配置).
-    pub fn device(&self) -> &VirtioDevice {
+    pub fn device(&self) -> &VirtioMmioDevice {
         &self.device
     }
 
@@ -288,7 +289,7 @@ impl VirtioBlkDriver {
         self.negotiated_features & feature != 0
     }
 
-    // ── 配置空间读取 (安全, 通过 VirtioDevice) ──
+    // ── 配置空间读取 (安全, 通过 VirtioMmioDevice) ──
 
     /// 读取块大小 (仅当 `VIRTIO_BLK_F_BLK_SIZE` 被协商时有效).
     pub fn block_size(&self) -> u32 {
@@ -328,12 +329,12 @@ impl VirtioBlkDriver {
     pub fn ack_interrupt(&self) -> u32 {
         let status = self.device.interrupt_status();
         if status != 0 {
-            self.device.ack_interrupt(status);
+            self.device.ack_interrupt_mask(status);
         }
         status
     }
 
-    // ── 队列配置辅助 (通过 VirtioDevice MMIO) ──
+    // ── 队列配置辅助 (通过 VirtioMmioDevice MMIO) ──
 
     #[expect(
         clippy::unnecessary_wraps,

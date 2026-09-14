@@ -366,6 +366,15 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **复验结果**（pc ich9-ahci + q35 双机型，64MB SATA 盘）：带盘端口检测 `sig=00000101`（SATA）→ `ahci0-p0` 注册 **131072 扇区**（精确 64MB）→ Chitin `blk=3` → Ring 3，全程秒级；q35 同时验证双 AHCI 控制器共存（显式 ich9-ahci + 内建 00:1F.2）。
 - **验证**：见 §9 验证链 4.6 复跑记录（修复后全量）。
 
+### 委托批次 Z ③ 执行记录（transport 去重，实施：AI）
+
+- **目标**：消除 services/framework 平行 virtio transport。services `VirtioDevice`（transport.rs，~500 行复刻实现）删除，framework `VirtioMmioDevice` 保留并补齐能力成为唯一 transport 实现。
+- **framework 补齐**（`driver/virtio/mod.rs`）：`VirtioMmioDevice` 增 `vendor_id`/`version` 字段（probe 填充）+ 查询（`device_id/version/is_legacy/mmio_base/status/set_status`）+ 状态机（`reset/ack/set_driver/features_ok`）+ 特性协商（`device_features/set_driver_features`）+ virtqueue 细粒度配置（`select_queue/queue_num_max/set_queue_ready/notify_queue/setup_queue_addrs/setup_queue_legacy`）+ 中断（`interrupt_status/ack_interrupt_mask`）。全部 safe 方法，复用既有私有 `read32/write32/read64/write64`。
+- **services 删除**：`transport.rs` 整体删除——`VirtioDevice`（平行实现）+ `VirtioDeviceKind`（blk/net 全未使用，死代码，F9 违规）+ 重复寄存器常量（`DEVICE_ID_*`/`MAGIC_VALUE` 等，framework 已有 `VIRTIO_ID_*`）。
+- **services 改造**：blk.rs/net.rs/mod.rs 直接持有并使用 framework `VirtioMmioDevice`（0 unsafe 合法依赖）；`DEVICE_ID_BLOCK/NET` → framework `VIRTIO_ID_BLOCK/NET`；`device.ack_interrupt(mask)` → `ack_interrupt_mask(mask)`（framework 无参 `ack_interrupt()` 保留供旧调用）。blk/net 业务逻辑零变化（仅类型与 import）。
+- **去重收益**：平行 transport 实现单源化（机制归 framework，符合 Asterinas 判据 + DECISION-H/HDMI 方向）；消灭 `VirtioDeviceKind` 死代码；重复常量收敛。
+- **验证**：双架构 0w0e ✅ / clippy 双架构 0 ✅ / 核心审计全绿 ✅（services_boundary/safety/deadlock/coupling/comment/once_cell/invariants/reverse_deps 等）/ host-tests ✅ / **aarch64 QEMU virt 挂盘冒烟**：`virtio-blk: registered device #1` + Chitin blk=1 + Entering EL0 ✅ / x86_64 boot 回归 1/1 ✅。TCB 66.9→67.1%（transport 机制入 framework 的预期推高，软门槛既有超标非本批引入）。
+
 ## 9. 验证门槛
 
 描述：每阶段提交必须满足（§2.3 + 本工程专项）。
@@ -391,6 +400,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 代价：Cargo.toml workspace 成员 + 全部 `crate::kernel::` 路径引用改写（大量），独立工程。
   - 状态：**待后续单独立项**（非本工程范围；当前 RA 误报无害，cargo/CI 不受影响）。
   - 关联：与分册 9 B09-19 孤儿测试治理无冲突；与 F/S 分层无冲突（纯工程结构改造）。
+- **预存审计积压登记（登记，2026-09-13）：六项审计积压处置分类**
+  - 来源：委托人报告（§12.5 报告），按"登记待处置"处理，与方案 D 同类，**不阻塞批次 Z 开工**。
+  - 项目与处置：
+    1. **audit_unwired_pub_fn（CRITICAL=157）**：非违规，属治理进度跟踪（公共 API 未被接线引用）。已有分册 9 B09-05/B09-17 计划覆盖，作为进度工具不豁免、不本工程处理。
+    2. **audit_public_api_docs（缺中文文档 2204 处）**：量大 + 低风险（F8 文档性软规范）。**待用户裁决**：A 豁免软规范（推荐）/ B 单独立项补全 / C 保持硬门槛。
+    3. **audit_implicit_deps（services 直访 framework 全局 122 处）**：与反向依赖同源（framework 全局被 services 直接引用），并入本工程 §7 trait 化改造覆盖，作为 §7 基线指标（批次 Z 开工前置 3 分钟对齐基线）。
+    4. **audit_smoltcp_purity**：随 smoltcp 0.14 升级刚验证通过，无需处理。
+    5. **audit_edition2024 / audit_feature_semantics**：数据待确认，归零或单列待定。
+  - 状态：登记待处置；仅 implicit_deps 需批次 Z 开工前基线对齐（3 分钟），其余不阻塞。
+  - 关联：157 → 分册 9 B09-05/B09-17；122 → 本工程 §7；2204 → 待用户裁决（A/B/C）。
 
 ## 11. 中途问题与决策记录
 

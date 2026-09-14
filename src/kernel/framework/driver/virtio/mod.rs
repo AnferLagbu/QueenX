@@ -112,6 +112,10 @@ pub struct VirtioMmioDevice {
     /// 设备支持的 virtqueue 数量.
     /// 块设备通常为 1.
     pub queue_count: u32,
+    /// 厂商 ID (`VendorID` 寄存器).
+    pub vendor_id: u32,
+    /// VirtIO 版本 (1=过渡/旧版, 2=现代).
+    pub version: u32,
 }
 
 impl VirtioMmioDevice {
@@ -188,7 +192,137 @@ impl VirtioMmioDevice {
             iomem,
             device_id,
             queue_count,
+            vendor_id,
+            version,
         })
+    }
+
+    // ── 设备查询 ──
+
+    /// 设备 ID (1=net, 2=blk, ...).
+    pub fn device_id(&self) -> u32 {
+        self.device_id
+    }
+
+    /// VirtIO 版本 (1=过渡/旧版, 2=现代).
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// 是否为传统模式 (version == 1).
+    pub fn is_legacy(&self) -> bool {
+        self.version == 1
+    }
+
+    /// MMIO 基地址.
+    pub fn mmio_base(&self) -> u64 {
+        self.iomem.phys().as_u64()
+    }
+
+    // ── 设备状态机 (Status 寄存器) ──
+
+    /// 读 Status 寄存器.
+    pub fn status(&self) -> u32 {
+        self.read32(STATUS)
+    }
+
+    /// 写 Status 寄存器.
+    pub fn set_status(&self, val: u32) {
+        self.write32(STATUS, val);
+    }
+
+    /// 重置设备 (status=0).
+    pub fn reset(&self) {
+        self.write32(STATUS, 0);
+        // 内存屏障: 确保设备观察到 reset
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// 进入 ACKNOWLEDGE 状态.
+    pub fn ack(&self) {
+        self.write32(STATUS, STATUS_ACKNOWLEDGE);
+    }
+
+    /// 进入 DRIVER 状态.
+    pub fn set_driver(&self) {
+        self.write32(STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
+    }
+
+    /// 进入 FEATURES_OK 状态, 返回设备是否接受特性协商.
+    pub fn features_ok(&self) -> bool {
+        self.write32(
+            STATUS,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK,
+        );
+        self.read32(STATUS) & STATUS_FEATURES_OK != 0
+    }
+
+    // ── 特性协商 ──
+
+    /// 读设备特性 (全 64 位: sel=0 低 32 位 + sel=1 高 32 位).
+    pub fn device_features(&self) -> u64 {
+        self.write32(DEVICE_FEATURES_SEL, 0);
+        let lo = u64::from(self.read32(DEVICE_FEATURES));
+        self.write32(DEVICE_FEATURES_SEL, 1);
+        let hi = u64::from(self.read32(DEVICE_FEATURES));
+        lo | (hi << 32)
+    }
+
+    /// 写驱动特性 (全 64 位).
+    pub fn set_driver_features(&self, features: u64) {
+        self.write32(DRIVER_FEATURES_SEL, 1);
+        self.write32(DRIVER_FEATURES, (features >> 32) as u32);
+        self.write32(DRIVER_FEATURES_SEL, 0);
+        self.write32(DRIVER_FEATURES, features as u32);
+    }
+
+    // ── Virtqueue 细粒度配置 ──
+
+    /// 选择 virtqueue 索引 (后续 `QUEUE_NUM_MAX` 等作用于该队列).
+    pub fn select_queue(&self, vq_index: u16) {
+        self.write32(QUEUE_SEL, u32::from(vq_index));
+    }
+
+    /// 读选中队列的最大尺寸.
+    pub fn queue_num_max(&self) -> u32 {
+        self.read32(QUEUE_NUM_MAX)
+    }
+
+    /// 标记选中队列为 ready.
+    pub fn set_queue_ready(&self) {
+        self.write32(QUEUE_READY, 1);
+    }
+
+    /// 通知设备: 选中队列有新描述符.
+    pub fn notify_queue(&self, vq_index: u16) {
+        self.write32(QUEUE_NOTIFY, u32::from(vq_index));
+    }
+
+    /// 设置选中队列的描述符/avail/used 物理地址 (modern 模式).
+    pub fn setup_queue_addrs(&self, desc_paddr: u64, avail_paddr: u64, used_paddr: u64) {
+        self.write64(QUEUE_DESC_LOW, QUEUE_DESC_HIGH, desc_paddr);
+        self.write64(QUEUE_DRIVER_LOW, QUEUE_DRIVER_HIGH, avail_paddr);
+        self.write64(QUEUE_DEVICE_LOW, QUEUE_DEVICE_HIGH, used_paddr);
+    }
+
+    /// 设置选中队列的 PFN (legacy 模式).
+    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn setup_queue_legacy(&self, paddr: u64) {
+        let pfn = (paddr >> 12) as u32;
+        self.write32(QUEUE_PFN, pfn);
+    }
+
+    // ── 中断 ──
+
+    /// 读中断状态寄存器.
+    pub fn interrupt_status(&self) -> u32 {
+        self.read32(INTERRUPT_STATUS)
+    }
+
+    /// 按掩码应答中断 (写 1 清除对应位).
+    pub fn ack_interrupt_mask(&self, mask: u32) {
+        self.write32(INTERRUPT_ACK, mask);
     }
 
     /// 初始化设备:

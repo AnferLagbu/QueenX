@@ -3,18 +3,17 @@
 //!
 //! `VirtIO` 设备驱动 — services 层 (Phase 2.1.2 + 2.1.3)
 //!
-//! 包含 `VirtIO` MMIO Transport 的 services 层安全 API,
-//! 为 virtio-blk (Phase 2.1.3) 和 virtio-net (Phase 2.1.2) 提供 100% safe 的设备驱动。
+//! 提供 virtio-blk (Phase 2.1.3) 和 virtio-net (Phase 2.1.2) 的 100% safe 设备驱动。
+//! MMIO transport 机制由 framework [`crate::kernel::framework::driver::virtio::VirtioMmioDevice`]
+//! 提供 (单一实现, 批次 Z ③ transport 去重), services 层仅承载设备业务。
 //!
 //! ## 模块结构
 //!
-//! - [transport] — `VirtIO` MMIO Transport 安全代理, 0 unsafe
 //! - [blk] — `VirtIO` 块设备安全驱动, 0 unsafe
 //! - [net] — `VirtIO` 网络设备安全驱动, 0 unsafe
 //!
 //! ## 迁移状态
 //!
-//! - [`transport::VirtioDevice`] — MMIO 读写 + 状态机 + 中断 + 队列配置全 100% safe
 //! - [`blk::VirtioBlkDriver`] — 块设备初始化 + 特性协商 + 配置读取全 100% safe
 //! - [`net::VirtioNetDriver`] — 网卡初始化 + 特性协商 + MAC/链路读取全 100% safe
 //!
@@ -23,7 +22,6 @@
 
 pub mod blk;
 pub mod net;
-pub mod transport;
 
 /// 初始化 VirtIO 块设备并注册到 Chitin (§6.4 直接方案 B: services 权威)
 ///
@@ -36,18 +34,18 @@ pub mod transport;
 pub fn blk_init() {
     use crate::kernel::framework::chitin::proto_block::register_block_device;
     use crate::kernel::framework::driver::virtio::{
-        VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE,
+        VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE, VIRTIO_ID_BLOCK,
+        VirtioMmioDevice,
     };
     use blk::VirtioBlkDriver;
-    use transport::{DEVICE_ID_BLOCK, VirtioDevice};
 
     let mut blk_count = 0u32;
     for i in 0..VIRTIO_MMIO_MAX_DEVICES {
         let base = VIRTIO_MMIO_BASE + u64::from(i) * VIRTIO_MMIO_STRIDE;
-        let Some(dev) = VirtioDevice::probe(base) else {
+        let Some(dev) = VirtioMmioDevice::probe(base) else {
             continue;
         };
-        if dev.device_id() != DEVICE_ID_BLOCK {
+        if dev.device_id() != VIRTIO_ID_BLOCK {
             continue;
         }
         let Some(mut blk) = VirtioBlkDriver::new(dev) else {
