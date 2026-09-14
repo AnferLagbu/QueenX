@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::fs::nestfs::bp::NestBlockPointer;
 use crate::services::fs::nestfs::dmu::{NestObjSet, NestObjType};
 use crate::services::fs::nestfs::zap::NestZap;

@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! HDMI (High-Definition Multimedia Interface) 驱动 — services 层安全实现
 //!
 //! 提供 HDMI 控制器的 safe 业务逻辑:

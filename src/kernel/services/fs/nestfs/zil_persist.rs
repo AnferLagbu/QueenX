@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! `NestFS` ZIL Persistence Layer (WAL 磁盘持久化)
 //!
 //! 增强现有内存 ZIL:

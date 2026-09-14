@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! /proc/sys/config 接口: 用户态可读取内核编译期/启动期配置
 //!
 //! ## 迁移记录

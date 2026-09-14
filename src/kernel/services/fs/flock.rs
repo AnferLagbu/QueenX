@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! 文件锁 (flock + POSIX record locks) — services re-export 兼容壳
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-13)

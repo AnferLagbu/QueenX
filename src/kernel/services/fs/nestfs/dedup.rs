@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! Content-Addressable Storage (CAS) — 内容寻址块去重
 //!
 //! 块索引按内容哈希 (SHA256) 寻址。相同内容的块自动去重。

@@ -75,7 +75,6 @@ pub const SYS_select: u64 = 23;
 pub const SYS_sched_yield: u64 = 24;
 
 // 内存重映射
-// TODO(TRACK-90BFB0): Phase N — implement mremap
 pub const SYS_mremap: u64 = 25;
 
 // 文件描述符
@@ -89,10 +88,8 @@ pub const SYS_nice: u64 = 34;
 pub const SYS_nanosleep: u64 = 35;
 
 // ITIMER
-// TODO(TRACK-8B3C91): Phase N — implement getitimer
 pub const SYS_getitimer: u64 = 36;
 pub const SYS_alarm: u64 = 37;
-// TODO(TRACK-6564B9): Phase N — implement setitimer
 pub const SYS_setitimer: u64 = 38;
 
 // 进程基础
@@ -115,7 +112,6 @@ pub const SYS_setsockopt: u64 = 54;
 pub const SYS_getsockopt: u64 = 55;
 
 // 进程
-// TODO(TRACK-0FF0F0): Phase N — implement clone for thread creation
 pub const SYS_clone: u64 = 56;
 pub const SYS_fork: u64 = 57;
 pub const SYS_execve: u64 = 59;
@@ -151,10 +147,8 @@ pub const SYS_rmdir: u64 = 84;
 pub const SYS_creat: u64 = 85;
 
 // 文件链接
-// TODO(TRACK-B62489): Phase N — implement hard links
 pub const SYS_link: u64 = 86;
 pub const SYS_unlink: u64 = 87;
-// TODO(TRACK-CFB870): Phase N — implement symlinks
 pub const SYS_symlink: u64 = 88;
 pub const SYS_readlink: u64 = 89;
 
@@ -162,7 +156,6 @@ pub const SYS_readlink: u64 = 89;
 pub const SYS_chmod: u64 = 90;
 pub const SYS_fchmod: u64 = 91;
 pub const SYS_chown: u64 = 92;
-// TODO(TRACK-C3720B): Phase N — implement fchown as chown(fd→path) alias
 pub const SYS_fchown: u64 = 93;
 
 // 文件属性
@@ -175,7 +168,6 @@ pub const SYS_getrusage: u64 = 98;
 pub const SYS_sysinfo: u64 = 99;
 
 // 系统
-// TODO(TRACK-1475D8): Phase N — implement times(2)
 pub const SYS_times: u64 = 100;
 
 // 用户/组

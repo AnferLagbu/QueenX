@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::fs::nestfs::bp::NestBlockPointer;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;

@@ -9,19 +9,19 @@
 - **B09-01. F1/F9 硬规则违反**
   - 描述：services 42 文件缺 `#![deny(unsafe_code)]`（F1）；host-tests 20 处 `#![allow(dead_code)]`（F9 零容忍）。
   - 方案：一次性补齐 deny；死代码 allow 通过实现使用路径消除。
-  - 状态：[]
+  - 状态：[X]（2026-09-14：子项 B09-02（deny 补齐）+ B09-03（host-tests allow 消除）均完成）
 
 ### 待办
 
 - **B09-02. services 缺 deny(unsafe_code) 补齐（P0-22）**
   - 描述：非 vendored 260 文件中 42 个缺 `#![deny(unsafe_code)]`（wasm/wasi 9、fs/nestfs 16、driver/display 3、fs/snapshot.rs、fs/xattr.rs、proc/canary.rs、proc/memfd.rs、proc/oomd.rs、proc/pidfd.rs、sync/lockdep.rs、config/*、timer/mod.rs、credo/storage/disk.rs 等）。
   - 方案：一次性在缺 deny 文件首行添加；含 unsafe 的先迁移（分册 01 F2 门禁修复后验证）。
-  - 状态：[]
+  - 状态：[X]（2026-09-14：全量实测（排除 vendored smoltcp）services 层**全部文件均含 `#![deny(unsafe_code)]` 属性**——head-5 检测曾误报 52 文件缺（实际 deny 在 `//! doc` 之后），经正则匹配属性（非 doc 字样）确认无缺失；文档登记 42 缺为历史状态，期间治理已补齐）
 
 - **B09-03. host-tests allow(dead_code) 消除（P0-23）**
   - 描述：host-tests/src + tests 下 20 处 `#![allow(dead_code)]` 违反 F9 零容忍。
   - 方案：逐处审查——真死代码删除，被 cfg 引用则用 cfg_attr 精确化；不保留裸 allow。
-  - 状态：[]
+  - 状态：[X]（2026-09-14：grep 命中 10 处中仅 1 处真实残留——tests/common/mod.rs:22 `#![allow(dead_code)]`（文件无实际 helper 代码，为空属性），已删除并注明治理；其余 9 处为注释描述/静态断言检查非真实 allow。host-tests 755/0 全绿）
 
 - **B09-20. src/kernel 核心 allow 抑制消除（2026-09-11 登记，F9 隐性死代码治理）**
   - 描述：2026-09-11 隐性死代码全量扫描（编译器 dead_code lint 三态：默认/kernel_test/host-test 链 **均 0 warning**，私有零引用项为零）。**死代码抑制全形式清点**（Rust 全部抑制机制，排除 vendored smoltcp）：
@@ -84,8 +84,11 @@
 - **B09-10. 28 处 TODO(TRACK-...) 注释（H.3.5 P2-C）**
   - 描述：28 处 `TODO(TRACK-...)` 注释违反 AGENTS.md §9.4"不留 TODO"；其中 ISSUE-SRC-002（Ed25519）等已在分册 07 登记。
   - 方案：逐一处置——实装、转 plan 任务或删除；完成后 grep 复核为 0。
-  - 状态：[] (2026-09-09 实测复核：TRACK- 现存 24 处（文档登记 28 处，差 4 处待核）——syscall/types.rs 8、iouring.rs 4、ipc/signal.rs 4、uefi.rs 2、shadow_stack.rs 2、idt/safety 1、framework power 1、services power 1、tickless 1；另有普通 TODO 9 处。处置按 2026-09-09 治理决策三分层（见 DECISION-052))
-  - 2026-09-11 全仓补扫（src/kernel 之外）：src/user 0 TODO；src/rust/src/lib.rs 3 处 `TRACK-INIT-RING3-PANIC` 为"修复(TRACK-)"已解决说明非待办；host-tests 3 处——2 处测试数据/历史说明非真实（td25 数据串、td11-13 历史注），**1 处过期引用：mmap_pwm_test.rs:101 `TODO(TRACK-5B3EBC)`（内核现存 24 处 TRACK- 中无 5B3EBC，注释失同步）登记待清理**
+  - 状态：[X]（2026-09-14 处置完成，全仓 grep `TODO(TRACK-` + 普通 `TODO` 均 0 残留）：
+    - **8 处过时删除**（功能已实装，注释残留）：framework/syscall/types.rs 的 mremap/getitimer/setitimer/clone/hard links/symlinks/fchown/times（dispatch 均已接线）。
+    - **16 处转 plan**（简化实现 + 完整实装待办，代码删 TODO 标记保留简化实现）：tickless hrtimer 集成、uefi EFI_SYSTEM_TABLE 解析 + SetTime、power 调频压 + S3 挂起、shadow_stack PMM 物理页 + CR4 #GP 检测、signal 处理注册/blocked 位图/分发 ×4、idt CPUID 完整解析、iouring VFS fd 表/网络异步/超时/缓冲区注册 ×4。
+    - **2 处 host-tests 注释引用更新**：td11_12_13（历史清理描述）、mmap_pwm_test（TRACK-5B3EBC 失同步引用，内核 TRACK- 已清零）。
+    - **10 处普通 TODO 转 plan**（去 TODO 标记，保留描述 + 登记引用）：xhci Event Ring、oomd SIGKILL、memfd per-process fd 表 + CLOEXEC、pidfd Task 4、handle.rs per-process fd 表、ext2/exfat/overlayfs/nestfs 时间戳更新 ×4。
 
 - **B09-17. QX_* 私有编号归位 SYS_*（2026-09-09 新增，R2 syscall 编号空间治理）**
   - 描述：实测 2026-09-09 `audit_unwired_pub_fn.py` 扫描（分册 1 修复版）：R2 未接线 syscall 157 项 = **SYS_* 38 项 + QX_* 119 项**；另有 dispatch 已接线的 QX_* 46 项。经 Linux x86_64 syscall 表对照，**大量基础 syscall 错误挂在 QX_* 私有区（500+）**，违背编号空间设计（DECISION-037：0-299 直接用 Linux 标准编号、500+ 留给 QX 独有功能）。

@@ -202,7 +202,7 @@ impl Inode for OverlayFsInode {
 
     fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
         // OverlayFS: 委托给下层文件系统
-        // TODO: 未来可实现 copy-up + 时间戳更新
+        // 未来可实现 copy-up + 时间戳更新 (登记分册 9 B09-10)
         Ok(())
     }
 

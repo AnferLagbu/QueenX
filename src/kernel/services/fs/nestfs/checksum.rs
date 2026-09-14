@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::fs::nestfs::bp::NestCksumType;
 
 pub const HV_CKSUM_FLETCHER2: usize = 1;

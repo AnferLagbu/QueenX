@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! 用户态 Stack Canary 服务层安全封装 (P1 #14)
 //!
 //! services 层禁止 `unsafe`, 全部通过 framework 提供的 safe API 包装.

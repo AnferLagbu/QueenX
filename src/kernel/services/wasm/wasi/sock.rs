@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI Socket: `sock_accept`, `sock_connect`, `sock_recv`, `sock_send`
 //!
 //! Socket 函数桥接到 `services::net` 层。WASI fd 通过 `WasiFdTable` 映射到

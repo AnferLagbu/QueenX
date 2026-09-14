@@ -98,7 +98,7 @@ fn anon_vma_has_zero_pwm() {
 
 /// 模拟 mmap_syscall 桥接: 接收用户 pwm, 写入 Vma.file_pwm
 fn mock_mmap_file(addr: usize, len: usize, fd: i32, pwm: u64) -> Vma {
-    // 简化: fd + 1 → inode_id (与 queenx TODO(TRACK-5B3EBC) 一致)
+    // 简化: fd + 1 → inode_id (与内核 fd→inode 简化映射一致)
     let inode_id = (fd as u32).wrapping_add(1);
     Vma::file_backed(addr, addr + len, 0, inode_id, pwm, true)
 }

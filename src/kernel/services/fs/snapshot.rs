@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! 快照 (snapshot) 系统调用处理器
 //!
 //! 提供 snapshot_create/snapshot_destroy/snapshot_rollback/snapshot_clone 系统调用的实现。

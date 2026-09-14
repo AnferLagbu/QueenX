@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! `NestFS` (Hypervisor File System) — services 层完整实现
 //!
 //! 从 framework 层迁移而来 (E6-6 阶段 2).

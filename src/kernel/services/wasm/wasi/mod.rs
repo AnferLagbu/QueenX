@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI snapshot_preview1 适配层
 //!
 //! 实现 WASI preview1 标准接口，使 QueenX 可运行 WASI 编译的 WASM 模块。

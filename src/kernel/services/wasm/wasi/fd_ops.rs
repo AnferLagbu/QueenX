@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI FD 管理与 I/O: `fd_close`, `fd_seek`, `fd_tell`, `fd_sync`,
 //! `fd_prestat_get`, `fd_prestat_dir_name`, `fd_stat_get`,
 //! `fd_read`, `fd_write`, `fd_pread`, `fd_pwrite`, `fd_allocate`, `fd_advise`,

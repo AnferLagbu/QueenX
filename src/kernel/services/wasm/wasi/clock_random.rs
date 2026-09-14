@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI 时钟/随机: `clock_time_get`, `random_get`
 
 use super::fd_table::write_i64_to_memory;

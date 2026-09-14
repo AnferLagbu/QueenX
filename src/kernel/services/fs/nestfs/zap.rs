@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;

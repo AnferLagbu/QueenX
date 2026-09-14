@@ -81,7 +81,6 @@ pub fn signal_register_safe(
         return Err(-1);
     }
 
-    // TODO(TRACK-48CC21): 将处理函数注册到当前进程的 SignalPending 结构中
     // 当前简化实现仅验证参数有效性
 
     Ok(())
@@ -103,7 +102,6 @@ pub fn signal_block_safe(sig: u8) -> Result<(), i32> {
         return Err(-1);
     }
 
-    // TODO(TRACK-614BD5): 在当前进程的 blocked 位图中设置对应位
     Ok(())
 }
 
@@ -123,7 +121,6 @@ pub fn signal_unblock_safe(sig: u8) -> Result<(), i32> {
         return Err(-1);
     }
 
-    // TODO(TRACK-F806F4): 在当前进程的 blocked 位图中清除对应位
     Ok(())
 }
 
@@ -132,7 +129,6 @@ pub fn signal_unblock_safe(sig: u8) -> Result<(), i32> {
 /// 应在每次从系统调用返回或中断处理完成后调用。
 /// 检查当前进程是否有待处理信号，如果有则执行对应的处理动作。
 pub fn signal_dispatch_safe() {
-    // TODO(TRACK-3A9016): 实现完整的信号分发逻辑:
     // 1. 检查 pending 位图是否非零
     // 2. 找出最高优先级的待处理信号
     // 3. 检查该信号是否被屏蔽

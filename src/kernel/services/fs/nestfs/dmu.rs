@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::fs::nestfs::bp::NestBlockPointer;
 use crate::services::fs::nestfs::spa::HV_POOL_BLOCK_SIZE;
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;

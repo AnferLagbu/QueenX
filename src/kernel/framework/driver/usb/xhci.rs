@@ -667,7 +667,7 @@ impl XhciController {
     /// # Errors
     /// 命令完成等待超时时返回 Err。
     pub fn wait_command_completion(&mut self) -> Result<()> {
-        // TODO: 实现 Event Ring 处理
+        // Event Ring 处理待实现 (登记分册 9 B09-10)
         // 当前简化实现: 短暂等待后返回
         for _ in 0..1000 {
             core::hint::spin_loop();

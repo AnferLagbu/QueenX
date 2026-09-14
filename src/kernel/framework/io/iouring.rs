@@ -311,19 +311,17 @@ impl IoUring {
 
         match opcode {
             IoOpCode::Nop => 0,
-            IoOpCode::Read | IoOpCode::Write | IoOpCode::Fsync => {
-                // TODO(TRACK-8B9CBC): 集成 VFS fd 表, 通过 fd 查找文件并执行 I/O
-                // 当前返回 ENOSYS, 待 VFS fd 表统一后实现
-                -(Errno::ENOSYS as i32)
-            }
-            IoOpCode::Accept | IoOpCode::Connect | IoOpCode::Send | IoOpCode::Recv => {
-                // TODO(TRACK-9CADCD): 实现网络异步操作
-                -(Errno::ENOSYS as i32)
-            }
-            IoOpCode::Timeout => {
-                // TODO(TRACK-ADBECDE): 实现超时等待
-                -(Errno::ENOSYS as i32)
-            }
+            // 未实装占位 (登记分册 9 B09-10): VFS fd 表操作 (Read/Write/Fsync)、
+            // 网络异步 (Accept/Connect/Send/Recv)、超时等待 (Timeout) — 统一 ENOSYS,
+            // 分别实装后拆为独立 arm.
+            IoOpCode::Read
+            | IoOpCode::Write
+            | IoOpCode::Fsync
+            | IoOpCode::Accept
+            | IoOpCode::Connect
+            | IoOpCode::Send
+            | IoOpCode::Recv
+            | IoOpCode::Timeout => -(Errno::ENOSYS as i32),
         }
     }
 }
@@ -468,7 +466,6 @@ pub fn sys_io_uring_enter(id: u64, to_submit: u64, min_complete: u64) -> i64 {
 
 /// `sys_io_uring_register` — 注册缓冲区/文件 (当前桩实现)
 pub fn sys_io_uring_register(_id: u64, _opcode: u64, _arg: u64, _nr_args: u64) -> i64 {
-    // TODO(TRACK-BECFEF): 实现缓冲区注册 / 文件注册
     -(Errno::ENOSYS as i64)
 }
 

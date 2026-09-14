@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // TD-11/12/13: 把 idt/handlers.rs、idt/idt.rs、timer/mod.rs 里的 5 处
-// "TODO(TRACK-…): 使用 klog 替代/输出" 占位全部接上 klog 宏.
+// "未接 klog 宏的占位" 全部接上 klog 宏.
 //
 // 验收:
 //   - handlers.rs::print_detailed_gpf_info 不再有 let _ = 占位, 改用 klog_warn!

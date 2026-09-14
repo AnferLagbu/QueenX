@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::framework::driver::block;
 use crate::framework::fs::KernelError;
 use crate::services::fs::nestfs::arc::NestArc;

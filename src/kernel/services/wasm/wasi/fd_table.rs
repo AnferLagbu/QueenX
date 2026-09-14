@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI 文件描述符表 (独立于 POSIX fd 表)
 
 use super::errno::WasiErrno;

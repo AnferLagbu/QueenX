@@ -18,8 +18,9 @@
 //! ## 注意事项
 //! 本文件整体在 `lib.rs` 的 release 编译中**不会**被编译, cargo 自动
 //! 跳过 `tests/common/mod.rs` (不视作独立测试目标), 因此无需 `#[cfg(test)]`.
-
-#![allow(dead_code)] // helper 库, 仅在集成测试中按需引用
+//!
+//! B09-03 (2026-09-14): `#![allow(dead_code)]` (F9 违规) 已删除 — 本文件当前
+//! 无共享 helper 代码, allow 为空属性; 未来加入 helper 时按 F9 走实现使用路径.
 
 // 当前无共享 helper. 后续可加入:
 // pub mod mock_iomem;    // 模拟 IoMem MMIO 读写

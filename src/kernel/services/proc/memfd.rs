@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! memfd_create 系统调用实现
 //!
 //! 创建匿名内存文件，可用于 mmap 共享内存。
@@ -57,7 +58,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
     let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::ENOMEM)?;
 
     // 在当前进程 fd 表中分配 fd
-    // TODO: 使用 per-process fd 表
+    // per-process fd 表待实现 (登记分册 9 B09-10)
     let fd = crate::framework::fs::api::vfs_open(
         b"/dev/null\0".as_ptr() as *const u8,
         0x0003, // O_RDWR
@@ -74,7 +75,7 @@ pub fn memfd_create_syscall(_name_ptr: u64, flags: u32) -> Result<usize, Errno> 
 
     // 如果设置了 CLOEXEC, 标记 fd
     let _ = flags & MFD_CLOEXEC;
-    // TODO: 设置 fd 的 CLOEXEC 标记
+    // fd CLOEXEC 标记待实现 (登记分册 9 B09-10)
 
     Ok(fd as usize)
 }

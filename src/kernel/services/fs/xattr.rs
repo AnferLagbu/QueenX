@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! 扩展属性 (xattr) 系统调用处理器
 //!
 //! 提供 setxattr/getxattr/listxattr/removexattr 系统调用的实现。

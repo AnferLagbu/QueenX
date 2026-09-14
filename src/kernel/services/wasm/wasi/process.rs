@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI 进程控制: `proc_exit`, `sched_yield`
 
 use super::{WasiContext, wasi_success};

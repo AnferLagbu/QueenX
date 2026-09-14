@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::fs::nestfs::bp::NestCompType;
 use alloc::vec::Vec;
 

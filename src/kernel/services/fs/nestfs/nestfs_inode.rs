@@ -108,7 +108,7 @@ impl Inode for NestfsInode {
 
     fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
         // NestFS: ZFS-like 文件系统, 时间戳由内部管理
-        // TODO: 未来可接入 NestFS 时间戳更新
+        // 未来可接入 NestFS 时间戳更新 (登记分册 9 B09-10)
         Ok(())
     }
 

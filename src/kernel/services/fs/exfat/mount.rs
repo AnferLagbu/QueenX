@@ -76,7 +76,7 @@ impl Inode for ExfatInode {
 
     fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
         // exFAT: 时间戳更新需修改目录项
-        // TODO: 未来可接入 exFAT 目录项时间戳更新
+        // 未来可接入 exFAT 目录项时间戳更新 (登记分册 9 B09-10)
         Ok(())
     }
 

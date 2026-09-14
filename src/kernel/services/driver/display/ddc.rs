@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! DDC (Display Data Channel) I2C bitbang 协议 — services 层安全实现
 //!
 //! 通过 IoMem 安全代理访问 HDMI 控制器 MMIO 寄存器, 实现 I2C bitbang 协议.

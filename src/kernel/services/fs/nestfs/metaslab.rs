@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::fs::nestfs::spa::HV_POOL_BLOCK_SIZE;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};

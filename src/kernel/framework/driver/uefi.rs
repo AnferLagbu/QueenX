@@ -261,7 +261,6 @@ impl UefiSubsystem {
     )]
     /// 解析系统表 (简化)
     fn parse_system_table(&self, _addr: u64) {
-        // TODO(TRACK-4D5E78): 实际解析 EFI_SYSTEM_TABLE
         // 1. 验证签名 (0x5453595320494249)
         // 2. 提取 RuntimeServices 指针
         // 3. 提取 BootServices (ExitBootServices 前可用)
@@ -432,7 +431,6 @@ impl UefiSubsystem {
     )]
     /// 设置时间 (软件模拟)
     pub fn set_time(&self, _time: &EfiTime) -> bool {
-        // TODO(TRACK-5E6F89): 调用 EFI_RUNTIME_SERVICES.SetTime
         // 在软件模拟中, 这需要调整内核时钟
         true
     }

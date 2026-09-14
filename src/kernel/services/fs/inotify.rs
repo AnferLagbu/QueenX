@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! inotify — 文件系统事件通知 — services re-export 兼容壳
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-13)

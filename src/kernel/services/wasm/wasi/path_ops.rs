@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! WASI 路径操作: `path_open`, `path_create_directory`, `path_remove_directory`,
 //! `path_unlink_file`, `path_relative_path`, `path_symlink`, `path_readlink`,
 //! `path_filestat_get`, `path_filestat_set_times`, `path_link`

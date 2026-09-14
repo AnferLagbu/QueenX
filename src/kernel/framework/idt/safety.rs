@@ -22,7 +22,6 @@ impl CpuFeatures {
     /// 检测当前 CPU 的特性
     pub fn detect() -> Self {
         // 简化版 CPU 特性检测 (Phase 1)
-        // TODO(TRACK-2B3C56): 完整实现 CPUID 解析
         Self {
             has_apic: true,    // 假设现代 CPU 都有 APIC
             has_x2apic: false, // Phase 3 再检测

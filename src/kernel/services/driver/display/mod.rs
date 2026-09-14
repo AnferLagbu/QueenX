@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! 显示子系统 — services 层安全实现
 //!
 //! 提供 HDMI/DisplayPort 驱动的 safe 业务逻辑:

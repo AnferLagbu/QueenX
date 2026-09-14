@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 use crate::services::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;

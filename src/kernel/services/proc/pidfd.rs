@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! pidfd 系统调用实现
 //!
 //! pidfd_open: 为进程打开一个 pidfd (分配真实 fd, 维护 fd→pid 映射)
@@ -169,6 +170,6 @@ pub fn pidfd_send_signal(pidfd: u32, sig: i32, _siginfo: u64, _flags: u32) -> Re
 ///
 /// 该接口尚未实现, 始终返回 `ENOSYS`.
 pub fn pidfd_getfd(_pidfd: u32, _targetfd: u32, _flags: u32) -> Result<usize, Errno> {
-    // TODO: 需要 Task 4 (OpenFile 系统) 完成后实现
+    // 依赖 Task 4 (OpenFile 系统) 完成后实现 (登记分册 9 B09-10)
     Err(Errno::ENOSYS)
 }

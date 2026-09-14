@@ -52,7 +52,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                     None => return -1,
                 };
 
-                // 在进程 fd 表中分配 fd (TODO: 使用 per-process fd 表)
+                // 在进程 fd 表中分配 fd (per-process fd 表待实现, 登记分册 9 B09-10)
                 // 当前简化: 使用全局 fd 索引
                 let fd_idx = if let Some(i) = VFS_MANAGER.alloc_fd() {
                     i
