@@ -12,13 +12,18 @@ NC='\033[0m'
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# 构建模式显式化 (方案 B): 裸机构建显式注入 build-std (src/rust/.cargo/config.toml
+# 已删全局 [unstable] build-std). 避免 cwd 隐式加载 — src/rust 目录内 host-target
+# 构建会触发 E0152 双 alloc 冲突 (DECISION-021 同族). 详见主计划文档 §10.
+BUILD_STD_CFG=(--config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]')
+
 build_arch() {
     local arch=$1
     local target=$2
     echo -e "${YELLOW}[CI] Building ARCH=${arch} (target: ${target})...${NC}"
 
     pushd src/rust > /dev/null
-    if cargo build --release --target "${target}" 2>&1 | tail -5; then
+    if cargo build --release --target "${target}" "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
         echo -e "${GREEN}[CI] ARCH=${arch}: build passed${NC}"
         popd > /dev/null
         return 0

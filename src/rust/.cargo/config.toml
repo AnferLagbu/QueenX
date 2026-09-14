@@ -10,9 +10,11 @@ rustflags = [
     "-C", "link-arg=-nostdlib",
 ]
 
-[unstable]
-build-std = ["core", "compiler_builtins", "alloc"]
-build-std-features = ["compiler-builtins-mem"]
+# 方案 B (构建模式显式化, 2026-09-14): 全局 build-std 已移除 — 裸机构建
+# 入口 (build.sh / Makefile / audit.sh / CI yml) 显式注入
+# `--config 'unstable.build-std=["core","compiler_builtins","alloc"]'`, 避免
+# cwd 隐式加载 (src/rust 内 host-target 构建触发 E0152 双 alloc 冲突).
+# 详见 docs/plan/framekernel-paradigm-enforcement.md §10「构建模式显式化工程」.
 
 # G-01/G-05 (2026-09-06 用户决策委托修复): 固化 curve25519-dalek 后端为 serial.
 # 背景: LLVM 22 (滚动 nightly, 2026-06-15 起) 对 curve25519-dalek 5.0.0 的

@@ -38,7 +38,8 @@ jobs:
       - name: cargo check
         working-directory: src/rust
         run: |
-          cargo check --target aarch64-unknown-none 2>&1 | tee build/log/cargo_check_aarch64.txt
+          # 方案 B: 裸机构建显式注入 build-std (config.toml 已删全局, E0152 同族根治)
+          cargo check --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none 2>&1 | tee build/log/cargo_check_aarch64.txt
           if grep -q "error\[" build/log/cargo_check_aarch64.txt; then
             echo "::error::cargo check 失败"
             exit 1

@@ -425,10 +425,10 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 参照：Asterinas osdk 命令层注入（`-Zbuild-std=core,alloc,compiler_builtins` + 显式裸机 target，无全局 config）——成熟实践。per-target build-std 实测语法不存在（cargo 拒绝：`expected a table`）。
   - 方案：config.toml 删全局 build-std；所有裸机构建入口显式注入 `--config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]'`（已实测可行，25s 裸机 release check 通过）。
   - 前置① RA（已完成）：RA 默认 host target 检查，不依赖全局 build-std；现状（有 config）RA 无 E0152 异常 → 移除后不可能退化，无静默退化点。
-  - 前置② 入口盘点（已完成，~17 处直接 + 1 间接，全部 cwd=src/rust 依赖 config）：build.sh `build_arch` 1 处 + Makefile 7 处（L142/186/194/201/208/212/217）+ audit.sh 2 处（clippy L153/lockbud L220）+ ci-x86.yml 4 处（L41/91/176/193）+ ci-aarch64.yml 1 处（L41）+ ci-bench.yml 1 处（L106）+ ci-lint.yml 2 处（L243/248）+ qemu_boot_test.sh 间接。host 维入口（wd=repo 根，ci-x86 L207/226）不注入、不动。
+  - 前置② 入口盘点（已完成，~17 处直接 + 1 间接，全部 cwd=src/rust 依赖 config）：build.sh `build_arch` 1 处 + Makefile 7 处（L142/186/194/201/208/212/217）+ audit.sh 2 处（clippy L153/lockbud L220）+ ci-x86.yml 4 处（L41/91/176/193）+ ci-aarch64.yml 1 处（L41）+ ci-bench.yml 1 处（L106）+ ci-lint.yml 2 处（L243/248）+ qemu_boot_test.sh 间接。host 维入口（wd=repo 根，ci-x86 L207/226）不注入、不动。**实施期修正**：Makefile L142/186（user 程序，cwd=src/user 用 src/user/.cargo + rustup 预装 core）实测不需要 build-std，不注入；audit.sh 第 1 步双架构 check（L133）补注入。
   - 实施步骤：① config.toml 删 `[unstable] build-std` ② build.sh / Makefile 顶部定义统一注入变量、CI yml 各裸机步内联同参（示例：`BUILD_STD_CFG="--config 'unstable.build-std=[\"core\",\"compiler_builtins\",\"alloc\"]' --config 'unstable.build-std-features=[\"compiler-builtins-mem\"]'"`，`cargo build $BUILD_STD_CFG --target ...`）③ 全量验证（§2.3 全门槛 + src/rust 内 host clippy 确认 E0152 消失 + repo 根裸机构建确认注入生效）。
-  - 风险：漏注入显式失败（fail-loud 非静默）；`--config` 双引号嵌套在 yml/Makefile 转义易错。
-  - 状态：**可立即开工**（2026-09-13 用户定级"立刻可做的工程"；前置①②已完成、注入实测可行、验证门槛明确；不阻塞 Z④，可并行推进）。
+  - 风险（实测修正）：**漏注入非显式失败**——实测无 `--config` 裸机构建时 cargo 回退 rustup 预装 core **静默成功**（非 fail-loud），产物可能与 build-std 不一致；故全入口注入为必要保障，最终正确性靠 QEMU boot 实证兜底。`--config` 双引号嵌套在 yml/Makefile 转义易错（已用 bash 数组 / make 变量封装）。
+  - 状态：**实施完成（2026-09-14）**。验证：双架构 `build all` 0w0e ✅ / clippy `--release -D warnings` 双架构 0 ✅ / `audit.sh quick` 全绿（REAL_EXIT=0，含 check/clippy pedantic/lockbud 注入 + kernel_test/host-test 维）✅ / QEMU x86_64 Ring 3 + aarch64 virt 挂网卡冒烟 1/1（实证注入产物正确，含 Makefile 注入链）✅ / src/rust 内 `--features host-test` clippy E0152 消失 ✅（根治目标达成，cwd 不再影响构建模式）。
   - 关联：DECISION-021/022、eliminate-parallel-implementations.md 工程计划 A/B、audit-fix-08 G-01、本工程 L386/L1072 登记。
 
 ## 11. 中途问题与决策记录

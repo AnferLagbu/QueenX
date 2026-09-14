@@ -19,6 +19,11 @@ cd "$PROJECT_ROOT"
 
 MODE="${1:-quick}"
 
+# 构建模式显式化 (方案 B): 裸机构建显式注入 build-std (src/rust/.cargo/config.toml
+# 已删全局 [unstable] build-std). 避免 cwd 隐式加载 — src/rust 目录内 host-target
+# 构建会触发 E0152 双 alloc 冲突 (DECISION-021 同族). 详见主计划文档 §10.
+BUILD_STD_CFG=(--config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]')
+
 step() { echo -e "\n${YELLOW}━━━ $1 ━━━${NC}"; }
 ok()   { echo -e "${GREEN}✓ $1${NC}"; }
 err()  { echo -e "${RED}✗ $1${NC}"; exit 1; }
@@ -130,7 +135,8 @@ pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 for target in x86_64-unknown-none aarch64-unknown-none; do
     echo -e "${BLUE}[audit] target=${target}${NC}"
-    if cargo +nightly check --target "${target}" 2>&1 | tail -3; then
+    # 方案 B: 裸机构建显式注入 build-std (config.toml 已删全局, 与 build/clippy 一致)
+    if cargo +nightly check --target "${target}" "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then
         ok "${target}: check passed"
     else
         err "${target}: check FAILED"
@@ -151,6 +157,7 @@ unset RUSTC_WRAPPER
 # 原代码 `if cmd | tail; then ok; else warn; fi` 中 `tail` 退出 0 总是成功,
 # 即使 cargo clippy 失败也被掩盖 (P0-05 类问题).
 if cargo +nightly clippy --release --lib --bins --examples --target x86_64-unknown-none \
+    "${BUILD_STD_CFG[@]}" \
     -- -D warnings -D clippy::pedantic \
     -A clippy::cast_possible_truncation \
     -A clippy::cast_sign_loss \
@@ -217,7 +224,7 @@ step "4/6 Lockbud 死锁/数据竞争扫描"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 LOCKBUD_RESULT=0
-cargo +nightly lockbud --target x86_64-unknown-none 2>&1 | tail -25 || LOCKBUD_RESULT=$?
+cargo +nightly lockbud --target x86_64-unknown-none "${BUILD_STD_CFG[@]}" 2>&1 | tail -25 || LOCKBUD_RESULT=$?
 if [ $LOCKBUD_RESULT -eq 0 ]; then
     ok "lockbud: passed"
 else

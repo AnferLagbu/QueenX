@@ -34,6 +34,11 @@ CFLAGS = $(CFLAGS_BASE) \
          -Isrc/kernel/framework/lib \
          -Isrc/kernel/framework/net -Isrc/kernel/framework/net/arch -Isrc/kernel/framework/net/driver
 
+# 构建模式显式化 (方案 B): 裸机构建显式注入 build-std (src/rust/.cargo/config.toml
+# 已删全局 [unstable] build-std). 避免 cwd 隐式加载 — src/rust 目录内 host-target
+# 构建会触发 E0152 双 alloc 冲突 (DECISION-021 同族). 详见主计划文档 §10.
+BUILD_STD_CFG := --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]'
+
 # ============================================================================
 # 网络子系统已迁移至 smoltcp (纯 Rust)
 # Network stack: smoltcp (Rust)
@@ -191,30 +196,30 @@ build/user/init.bin: $(USER_INIT_ELF)
 
 $(RUST_LIB): build/user/init.bin
 	@echo "Building Rust kernel module..."
-	@cd src/rust && cargo build --release --target $(RUST_TARGET)
+	@cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG)
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
 $(RUST_LIB): $(STAGE1_BIN) build/user/init.bin $(shell find src/rust/src -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
-	@cd src/rust && cargo build --release --target $(RUST_TARGET)
+	@cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG)
 endif
 
 # RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):
 # 否则 .a 已存在时 make 跳过 cargo 重建, kernel_test.bin 长期使用陈旧二进制 (E-06 验证踩坑, 2026-09-07)
 $(RUST_LIB_TEST): $(shell find src/rust/src src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust test kernel..."
-	cd src/rust && cargo build --release --target $(RUST_TARGET) --features kernel_test --target-dir target/test-release
+	cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir target/test-release
 
 $(RUST_LIB_CHAOS):
 	@echo "Building Rust chaos kernel (fault_injection enabled)..."
-	cd src/rust && cargo build --release --target $(RUST_TARGET) --features "kernel_test fault_injection" --target-dir target/chaos-release
+	cd src/rust && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir target/chaos-release
 
 # 2026-06-29 新增: 调试构建 (LTO=false + debug info + opt-level=0), 用于排查 OnceLock 静态初始化 hang
 $(RUST_LIB_TEST_DEBUG):
 	@echo "Building Rust test kernel (debug profile)..."
-	cd src/rust && cargo build --profile test-debug --target $(RUST_TARGET) --features kernel_test --target-dir target/test-debug
+	cd src/rust && cargo build --profile test-debug --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir target/test-debug
 
 build/%.o: src/kernel/framework/%.asm
 	@mkdir -p $(dir $@)
