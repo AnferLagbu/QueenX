@@ -148,7 +148,7 @@
 - **条目**: code-review-2026-08-01 #028
 - **现状**:
   - services/net/mod.rs:4-9 — 头注释 "v2.7, 2026-06-04" 已替换为 "封装 smoltcp 协议栈 safe 入口, IPv4/IPv6 双栈已实装 (DECISION-032), 进度见 progress-active-tasks.md"
-  - services/fs/mod.rs:4-9 — 头注释 "v2.5, 2026-06-04" 已替换为 "VFS + 7 个原生 FS + HvFS 列表, 0 unsafe"
+  - services/fs/mod.rs:4-9 — 头注释 "v2.5, 2026-06-04" 已替换为 "VFS + 7 个原生 FS + NestFS 列表, 0 unsafe"
   - services/proc/mod.rs:4-9 — 头注释 "v2.11, 2026-06-04" 已替换为 "18+ 子模块列表, 0 unsafe"
   - 全部三文件头注释均已更新为当前真实状态, 含模块清单 + 引用 progress-active-tasks.md
 - **方案**:

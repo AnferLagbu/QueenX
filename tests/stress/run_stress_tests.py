@@ -67,7 +67,7 @@ def count_subsystem_inits(output: str) -> dict:
         "Scheduler": bool(re.search(r'[Ss]cheduler.*init', output, re.IGNORECASE)),
         "VFS": bool(re.search(r'VFS.*init', output, re.IGNORECASE)),
         "RamFS": bool(re.search(r'RamFS.*init', output, re.IGNORECASE)),
-        "HvFS": bool(re.search(r'HvFS.*init', output, re.IGNORECASE)),
+        "NestFS": bool(re.search(r'NestFS.*init', output, re.IGNORECASE)),
         "PWID": bool(re.search(r'PWID.*init', output, re.IGNORECASE)),
         "Network": bool(re.search(r'net|E1000|lwIP', output, re.IGNORECASE)),
     }

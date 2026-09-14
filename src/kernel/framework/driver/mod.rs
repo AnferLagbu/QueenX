@@ -200,8 +200,8 @@ pub fn init_all() {
 
     hotplug::hotplug_init();
 
-    // HvFS 热插拔监听器注册已反转至 services::fs::init (DECISION-K 项 6:
-    // 注册点前置, framework driver 不再反向调用 services hvfs)
+    // NestFS 热插拔监听器注册已反转至 services::fs::init (DECISION-K 项 6:
+    // 注册点前置, framework driver 不再反向调用 services nestfs)
 
     let _ = crate::kernel::framework::chitin::devtree_probe_composites();
 
@@ -214,7 +214,7 @@ pub fn init_all() {
 
 /// Block softirq 处理程序 — 块设备 IO 完成延迟处理
 fn block_softirq_handler() {
-    // 当前块设备路径走同步 VFS → HvFS → chitin 直接完成.
+    // 当前块设备路径走同步 VFS → NestFS → chitin 直接完成.
     // 此 handler 为异步 IO (io_uring) + DMA 完成中断模式预留.
 }
 

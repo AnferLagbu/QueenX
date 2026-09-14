@@ -1,7 +1,7 @@
 //! 快照 (snapshot) 系统调用处理器
 //!
 //! 提供 snapshot_create/snapshot_destroy/snapshot_rollback/snapshot_clone 系统调用的实现。
-//! 调用 HvFS 层的快照方法。
+//! 调用 NestFS 层的快照方法。
 
 use crate::kernel::services::syscall::types::Errno;
 
@@ -16,7 +16,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
 
     // 通过 framework 层获取快照名称
     let name = crate::kernel::framework::fs::vfs::api::snapshot_get_name(name_ptr);
-    let result = crate::kernel::services::fs::hvfs::hvfs::get_hvfs().snapshot_create(&name);
+    let result = crate::kernel::services::fs::nestfs::nestfs::get_nestfs().snapshot_create(&name);
 
     if result >= 0 {
         Ok(result as usize)
@@ -30,7 +30,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
 /// # Errors
 /// 当快照不存在或底层销毁失败时以对应的 `Errno` 返回.
 pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
-    let result = crate::kernel::services::fs::hvfs::hvfs::get_hvfs().snapshot_destroy(snap_id);
+    let result = crate::kernel::services::fs::nestfs::nestfs::get_nestfs().snapshot_destroy(snap_id);
 
     if result >= 0 {
         Ok(result as usize)
@@ -44,7 +44,7 @@ pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
 /// # Errors
 /// 当快照不存在或底层回滚失败时以对应的 `Errno` 返回.
 pub fn snapshot_rollback_syscall(snap_id: u64) -> Result<usize, Errno> {
-    let result = crate::kernel::services::fs::hvfs::hvfs::get_hvfs().snapshot_rollback(snap_id);
+    let result = crate::kernel::services::fs::nestfs::nestfs::get_nestfs().snapshot_rollback(snap_id);
 
     if result >= 0 {
         Ok(result as usize)
@@ -64,7 +64,7 @@ pub fn snapshot_clone_syscall(snap_id: u64, name_ptr: u64) -> Result<usize, Errn
 
     // 通过 framework 层获取克隆名称
     let name = crate::kernel::framework::fs::vfs::api::snapshot_get_name(name_ptr);
-    let result = crate::kernel::services::fs::hvfs::hvfs::get_hvfs().clone_create(snap_id, &name);
+    let result = crate::kernel::services::fs::nestfs::nestfs::get_nestfs().clone_create(snap_id, &name);
 
     if result >= 0 {
         Ok(result as usize)

@@ -51,9 +51,9 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
 }
 
 // ============================================================================
-// link / symlink / readlink — 见 services/fs/link.rs, 在 ramfs/hvfs
+// link / symlink / readlink — 见 services/fs/link.rs, 在 ramfs/nestfs
 // 真正实现 link/symlink 前, 暂时由 dispatch 直接返回 ENOSYS.
-// 保留 framework API 的需求: 一旦 ramfs/hvfs 支持, services 不变, 仅
+// 保留 framework API 的需求: 一旦 ramfs/nestfs 支持, services 不变, 仅
 // 调整 framework 实现即可. 当前未保留 stub, 避免假实现.
 // ============================================================================
 

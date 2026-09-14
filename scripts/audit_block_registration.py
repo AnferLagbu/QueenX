@@ -3,12 +3,12 @@
 I-43 块设备抽象统一性 audit
 
 目标: 防止新驱动绕过 `proto_block::register_block_device` (BlockDevice trait 桥接),
-     直接调用低层 `chitin_register_block` 导致 HvFS 看不到该驱动.
+     直接调用低层 `chitin_register_block` 导致 NestFS 看不到该驱动.
 
 设计契约:
   - 驱动实现 `BlockDevice` trait (driver interface, Rust OO)
   - 驱动通过 `proto_block::register_block_device` 注册 (单一桥接入口)
-  - HvFS 通过 `chitin_blk_read/write` I/O (统一 Chitin 路径)
+  - NestFS 通过 `chitin_blk_read/write` I/O (统一 Chitin 路径)
   - 低层 `chitin_register_block` 仅由 `proto_block` 桥接函数调用
 
 规则:

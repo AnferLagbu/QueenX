@@ -149,10 +149,10 @@ fn tmpfs_has_native_inode() {
 }
 
 #[test]
-fn hvfs_has_native_inode() {
-    let src = read_file("services/fs/hvfs/hvfs_inode.rs");
-    assert!(src.contains("pub struct HvfsInode"), "HvFS 必须有原生 HvfsInode");
-    assert!(src.contains("impl Inode for HvfsInode"), "HvfsInode 必须 impl Inode");
+fn nestfs_has_native_inode() {
+    let src = read_file("services/fs/nestfs/nestfs_inode.rs");
+    assert!(src.contains("pub struct NestfsInode"), "NestFS 必须有原生 NestfsInode");
+    assert!(src.contains("impl Inode for NestfsInode"), "NestfsInode 必须 impl Inode");
 }
 
 #[test]

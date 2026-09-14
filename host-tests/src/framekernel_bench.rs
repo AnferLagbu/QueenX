@@ -2575,28 +2575,28 @@ pub fn run_all() -> BenchReport {
     results.push(measure("vfs_poll_dispatch", "epoll", 100_000, ||
         vfs_poll_dispatch_bench(100_000)));
     // LEGACY-5.1: ZAP trait dispatch bench
-    results.push(measure("zap_dispatch", "hvfs", 100_000, ||
+    results.push(measure("zap_dispatch", "nestfs", 100_000, ||
         zap_dispatch_bench(100_000)));
     // LEGACY-5.2: TXG trait dispatch bench
-    results.push(measure("txg_dispatch", "hvfs", 100_000, ||
+    results.push(measure("txg_dispatch", "nestfs", 100_000, ||
         txg_dispatch_bench(100_000)));
     // LEGACY-5.4: DMU trait dispatch bench
-    results.push(measure("dmu_dispatch", "hvfs", 100_000, ||
+    results.push(measure("dmu_dispatch", "nestfs", 100_000, ||
         dmu_dispatch_bench(100_000)));
     // LEGACY-5.5: SPA trait dispatch bench
-    results.push(measure("spa_dispatch", "hvfs", 100_000, ||
+    results.push(measure("spa_dispatch", "nestfs", 100_000, ||
         spa_dispatch_bench(100_000)));
     // LEGACY-5.7: RAID-Z trait dispatch bench
-    results.push(measure("raidz_dispatch", "hvfs", 100_000, ||
+    results.push(measure("raidz_dispatch", "nestfs", 100_000, ||
         raidz_dispatch_bench(100_000)));
     // LEGACY-5.8: ARC trait dispatch bench
-    results.push(measure("arc_dispatch", "hvfs", 100_000, ||
+    results.push(measure("arc_dispatch", "nestfs", 100_000, ||
         arc_dispatch_bench(100_000)));
     // LEGACY-5.10: ZIL log trait dispatch bench
-    results.push(measure("zil_log_dispatch", "hvfs", 100_000, ||
+    results.push(measure("zil_log_dispatch", "nestfs", 100_000, ||
         zil_log_dispatch_bench(100_000)));
     // LEGACY-5.11: ZIL persist trait dispatch bench
-    results.push(measure("zil_persist_dispatch", "hvfs", 1_000, ||
+    results.push(measure("zil_persist_dispatch", "nestfs", 1_000, ||
         zil_persist_dispatch_bench(1_000)));
 
     // ====================================================================

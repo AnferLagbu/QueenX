@@ -52,7 +52,7 @@ const PANIC_DOMAIN_MAP: [PanicDomainMapping; 6] = [
         domain_id: 2,
     },
     PanicDomainMapping {
-        prefix: b"HvFS",
+        prefix: b"NestFS",
         domain_id: 2,
     },
     PanicDomainMapping {

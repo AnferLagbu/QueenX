@@ -5,7 +5,7 @@
 //! ## Chitin 统一架构
 //!
 //! Chitin 是唯一的设备驱动框架. 块设备通过 `proto_block::register_block_device`
-//! 注册到 Chitin, HvFS 通过 `chitin_blk_read/write` 直接 I/O.
+//! 注册到 Chitin, NestFS 通过 `chitin_blk_read/write` 直接 I/O.
 //!
 //! `BlockDevice` trait 定义在 chitin (设备框架) 中, 本模块 re-export.
 //! `hdd_*` 函数提供向后兼容的 Chitin 代理.
@@ -201,10 +201,10 @@ pub fn write_sectors(
     Ok(())
 }
 
-// ── HvFS bridge (Chitin 代理) ──
+// ── NestFS bridge (Chitin 代理) ──
 //
 // 所有 hdd_* 函数现在委托给 Chitin 统一 I/O 路径。
-// 这确保 HvFS 的所有块设备访问都经过 Chitin。
+// 这确保 NestFS 的所有块设备访问都经过 Chitin。
 
 pub fn hdd_read_sector(drive: u8, sector: u64, buf: &mut [u8]) -> i32 {
     crate::kernel::framework::chitin::chitin_blk_read(drive, sector, buf)

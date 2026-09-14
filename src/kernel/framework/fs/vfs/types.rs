@@ -10,7 +10,7 @@
 //! ## 说明
 //!
 //! - Inode trait 定义于 `super::inode` (framework), 本文件引用之.
-//! - 各文件系统 (ramfs/hvfs/ext2/exfat/...) 在 services 实现本 trait
+//! - 各文件系统 (ramfs/nestfs/ext2/exfat/...) 在 services 实现本 trait
 //!   (services→framework 合法方向).
 
 pub const VFS_MAX_PATH: usize = 128;
@@ -121,7 +121,7 @@ impl VfsSeekWhence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsType {
     RamFs,
-    HvFs,
+    NestFs,
     DevFs,
     Ext2,
     ExFat,
@@ -134,7 +134,7 @@ impl FsType {
     pub fn from_name(name: &str) -> Self {
         match name {
             "ramfs" => Self::RamFs,
-            "hvfs" => Self::HvFs,
+            "nestfs" => Self::NestFs,
             "devfs" => Self::DevFs,
             "ext2" => Self::Ext2,
             "exfat" => Self::ExFat,
@@ -147,7 +147,7 @@ impl FsType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RamFs => "ramfs",
-            Self::HvFs => "hvfs",
+            Self::NestFs => "nestfs",
             Self::DevFs => "devfs",
             Self::Ext2 => "ext2",
             Self::ExFat => "exfat",
@@ -248,10 +248,10 @@ impl VfsDirEntry {
 // 新增文件系统只需实现本 trait, 无需修改 framework.
 //
 // 设计原则:
-// - 统一 RamFS (node_id) / HvFS (fd) 的差异: open 返回 FsOpenResult,
+// - 统一 RamFS (node_id) / NestFS (fd) 的差异: open 返回 FsOpenResult,
 //   内部不透明 handle 由各 FS 自行解释
 // - 所有方法接收 `&self` (非 `&mut self`), 内部可变性由各 FS 自行管理
-//   (RamFS 用内部 Mutex, HvFS 用内部原子操作)
+//   (RamFS 用内部 Mutex, NestFS 用内部原子操作)
 // - pwm 参数由 VFS 层传入, FS 实现负责权限检查
 //
 // L4 重构: 核心方法必须实现, 扩展方法提供默认实现 (返回 NotSupported)
@@ -261,7 +261,7 @@ impl VfsDirEntry {
 /// `fs_open` 返回结果
 #[derive(Debug, Clone, Copy)]
 pub struct FsOpenResult {
-    /// FS 内部不透明 handle (`RamFS` 填 `node_id`, `HvFS` 填 fd)
+    /// FS 内部不透明 handle (`RamFS` 填 `node_id`, `NestFS` 填 fd)
     pub handle: u32,
     /// 文件初始偏移
     pub offset: u64,
@@ -277,7 +277,7 @@ pub struct FsOpenResult {
 /// L4 重构: 核心方法必须实现, 扩展方法提供默认实现 (返回 `NotSupported`).
 /// 实现者可以选择性地 override 扩展方法, 减少实现负担.
 pub trait FileSystem: Send + Sync {
-    /// 文件系统名称 (如 "ramfs", "hvfs")
+    /// 文件系统名称 (如 "ramfs", "nestfs")
     fn name(&self) -> &'static str;
 
     // ---- 生命周期 ----
@@ -506,9 +506,9 @@ pub trait FileSystem: Send + Sync {
     fn fs_removexattr(&self, _rel_path: &str, _name: &str, _pwm: u64) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
-    /// 格式化底层介质 (HvFS 磁盘模式使用).
+    /// 格式化底层介质 (NestFS 磁盘模式使用).
     ///
-    /// 封装原 framework fsformat 路径对 HvFS 内部字段 (drives_discovered/
+    /// 封装原 framework fsformat 路径对 NestFS 内部字段 (drives_discovered/
     /// disk_drive/partition_start) 的直接访问, 归位 services 策略
     /// (DECISION-K 项 6: 注入归零).
     ///

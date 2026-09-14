@@ -8,7 +8,7 @@
 ### 背景
 
 - **X86IP-01. 现象与证据（QEMU 实测）**
-  - 描述：`./scripts/qemu_boot_test.sh x86_64`（`-nic none`，25s timeout）日志停在 `[DISPLAY] OK: 1024x768x32 @ 0xFD000000`（第 85 行）后无后续输出。`init_all()`（[driver/mod.rs:197](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/mod.rs#L197-L226)）在 `display_init()` 之后依次调用 `usb::usb_init()` / `hotplug_init()` / `hvfs_hotplug_register()` / `devtree_probe_composites()` / `open_softirq()`。
+  - 描述：`./scripts/qemu_boot_test.sh x86_64`（`-nic none`，25s timeout）日志停在 `[DISPLAY] OK: 1024x768x32 @ 0xFD000000`（第 85 行）后无后续输出。`init_all()`（[driver/mod.rs:197](file:///home/anfer/Code/QueenX/src/kernel/framework/driver/mod.rs#L197-L226)）在 `display_init()` 之后依次调用 `usb::usb_init()` / `hotplug_init()` / `nestfs_hotplug_register()` / `devtree_probe_composites()` / `open_softirq()`。
   - 方案：精确定位卡点并修复，使 x86_64 到达 Ring 3。
   - 状态：[]
 

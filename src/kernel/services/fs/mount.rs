@@ -25,7 +25,7 @@ use crate::kernel::framework::syscall::raw;
 /// mount(source, target, fstype) — 挂载文件系统
 ///
 /// 需 `CAP_SYS_ADMIN` (capability 0x01) 才能挂载.
-/// Framekernel 简化: 仅支持 5 种内置 FS (ramfs/hvfs/tmpfs/procfs/devfs),
+/// Framekernel 简化: 仅支持 5 种内置 FS (ramfs/nestfs/tmpfs/procfs/devfs),
 /// 校验先于 framework 调用, 失败一律 ENODEV.
 ///
 /// # Errors
@@ -53,7 +53,7 @@ pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Resul
         return Err(Errno::EACCES);
     }
 
-    // 框架端会解析 fstype; 校验则委托 framework 内置白名单 (ramfs/hvfs/...)
+    // 框架端会解析 fstype; 校验则委托 framework 内置白名单 (ramfs/nestfs/...)
     let r = fw::vfs_mount(target_ptr as *const u8, fstype_ptr as *const u8);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))

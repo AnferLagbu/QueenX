@@ -121,7 +121,7 @@ queenx = Asterinas 的 Rust 内核哲学 + 直接 Linux ABI + 中性命名保留
 
 ### D 任务优先序
 
-Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成）/ D2 HiveFS e2e 测试（已完成）/ D3.5 eash 增强（已完成）/ D6 eash 测试（已完成）/ 实现 240+ Linux syscall（核心任务）/ 提供 glibc 运行时（关键）。
+Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成）/ D2 NestFS e2e 测试（已完成）/ D3.5 eash 增强（已完成）/ D6 eash 测试（已完成）/ 实现 240+ Linux syscall（核心任务）/ 提供 glibc 运行时（关键）。
 
 核心路径：实现 Linux syscall → 提供 glibc → Linux 二进制直接运行。
 

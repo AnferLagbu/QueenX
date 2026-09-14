@@ -14,7 +14,7 @@
 ### 待办
 
 - **B09-02. services 缺 deny(unsafe_code) 补齐（P0-22）**
-  - 描述：非 vendored 260 文件中 42 个缺 `#![deny(unsafe_code)]`（wasm/wasi 9、fs/hvfs 16、driver/display 3、fs/snapshot.rs、fs/xattr.rs、proc/canary.rs、proc/memfd.rs、proc/oomd.rs、proc/pidfd.rs、sync/lockdep.rs、config/*、timer/mod.rs、credo/storage/disk.rs 等）。
+  - 描述：非 vendored 260 文件中 42 个缺 `#![deny(unsafe_code)]`（wasm/wasi 9、fs/nestfs 16、driver/display 3、fs/snapshot.rs、fs/xattr.rs、proc/canary.rs、proc/memfd.rs、proc/oomd.rs、proc/pidfd.rs、sync/lockdep.rs、config/*、timer/mod.rs、credo/storage/disk.rs 等）。
   - 方案：一次性在缺 deny 文件首行添加；含 unsafe 的先迁移（分册 01 F2 门禁修复后验证）。
   - 状态：[]
 
@@ -37,10 +37,10 @@
       - **有使用者保留 3 处**（加注释说明）：ebpf_verifier.rs:28 unused_imports（x86_64 下 BpfInsn 未用）；dma/engine.rs:510 cfg_attr(x86_64) unused_variables（x86_64 下 cache_invalidate 的 addr/size 未用）；idt/safety.rs:7 unused_imports（**aarch64 下 KERNEL_BASE 未用**——x86_64 不报、aarch64 报，实测揭示跨架构差异）
       - 连同 mmu.rs:182（allow(clippy::identity_op)，见下）**合计净移除 3 处冗余抑制**；最终 x86_64 + aarch64 `clippy -D warnings` 均 0 warning
     - **allow(clippy) 冗余核实（2026-09-11，实测闭环）**：22 处 allow(clippy) 逐处实测——
-      - **5 处 upper_case_acronyms（errno/syscall·types/hvfs·bp/cgroup/klog·mod）实测移除后 clippy 报 87 处触发（全大写 enum 变体 EPERM 等）——有使用者，保留**（静态曾误判，实测纠正）
+      - **5 处 upper_case_acronyms（errno/syscall·types/nestfs·bp/cgroup/klog·mod）实测移除后 clippy 报 87 处触发（全大写 enum 变体 EPERM 等）——有使用者，保留**（静态曾误判，实测纠正）
       - **17 处静态确认项二轮实测（2026-09-11）**：
         - **9 处冗余移除**：aarch64 模块级 7 处（exception/gic/psci/uart/mod/kpti/vmm 的 cast_possible_truncation/sign_loss + vmm wildcard——实测双架构 0 触发，静态"必然触发"判断被推翻，多为扩展/同宽 cast 不触发 lint）；user_proc:647 too_many_arguments（双架构 0 触发）；klog:110 cast（双架构 0 触发）
-        - **8 处有使用者保留**：mmu:134 identity_op（0b00<<14 触发）；virtio/net:570 absurd_extreme_comparisons（**仅 aarch64 恒真比较触发**）；test_proc:99 eq_op；userptr:178 should_implement_trait；hvfs/arc:79 slow_vector；hvfs/dataset:39 should_implement_trait；boot_image:62 explicit_auto_deref
+        - **8 处有使用者保留**：mmu:134 identity_op（0b00<<14 触发）；virtio/net:570 absurd_extreme_comparisons（**仅 aarch64 恒真比较触发**）；test_proc:99 eq_op；userptr:178 should_implement_trait；nestfs/arc:79 slow_vector；nestfs/dataset:39 should_implement_trait；boot_image:62 explicit_auto_deref
       - **合计本轮移除 12 处冗余 allow**（含此前 mmu.rs:182 identity_op）；x86_64 + aarch64 `clippy -D warnings` 均 0 warning
   - 方案：逐处核实——真死代码删除或接入使用路径；cfg 门控引用则 cfg_attr 精确化；不保留裸 allow（对齐 B09-03 治理模式）。
   - 状态：[X]（2026-09-11 核实与消除已完成：死代码类 5 处 + allow(clippy) 22 处全部实测定性，**移除 12 处冗余**（limits.rs 模块级 dead_code、dma/engine.rs:422 unused_variables、mmu.rs:182/134 见上、aarch64 模块级 cast×6 + wildcard、user_proc too_many_arguments、klog cast），14 处确认有使用者保留并加注释；x86_64 + aarch64 clippy -D warnings 0；剩余 F9 死代码类治理（如未来新增代码规范）并入 B09-03 统一把关）
@@ -77,7 +77,7 @@
   - 状态：[]
 
 - **B09-09. framework 78 处 pub use re-export 反向依赖（H.3.5 P2-B，2026-09-11 定性修正）**
-  - 描述：原登记"services 策略上移违反 OSTD Minimalism"——**2026-09-11 依据 Asterinas framekernel 定义（APSys'24）定性为错误分类**：策略放 services（Service OS）是 framekernel 标准设计（Asterinas aster-kernel 承担 all OS policy），OSTD Minimalism 约束的是 Framework 层最小化而非 Services 策略量——**"策略上移 vs Minimalism"冲突不存在**。P2-B 实际内容 = framework 约 78 处 `pub use crate::kernel::services::*` re-export 壳（config/credo/driver/hvfs 等），属 **F2 反向依赖**（framework 引用 services 类型）。
+  - 描述：原登记"services 策略上移违反 OSTD Minimalism"——**2026-09-11 依据 Asterinas framekernel 定义（APSys'24）定性为错误分类**：策略放 services（Service OS）是 framekernel 标准设计（Asterinas aster-kernel 承担 all OS policy），OSTD Minimalism 约束的是 Framework 层最小化而非 Services 策略量——**"策略上移 vs Minimalism"冲突不存在**。P2-B 实际内容 = framework 约 78 处 `pub use crate::kernel::services::*` re-export 壳（config/credo/driver/nestfs 等），属 **F2 反向依赖**（framework 引用 services 类型）。
   - 方案：**合并入 B09-13**（全量反向依赖治理）——撤销 framework re-export 壳，services 类型只经顶层 API 暴露。不构成独立架构策略决策点。
   - 状态：[X]（2026-09-11 定性修正完成，处置并入 B09-13）
 
@@ -102,12 +102,12 @@
     - R1 pub fn 实际 **445 项**（文档 362，**多 83**——脚本修复后计数更全，需更新清单）
     - R3 pub mod 实际 **7 项**（文档 36，少 29——多数已治理或误报排除）
     - R4 struct 实际 **1 项**（DomainFlags，与文档一致）
-  - 方案：按 2026-09-09 治理决策三分层（DECISION-052）重排 B09-05/06/07 处置——垃圾删除 / 已实装接线 / 未来预留迁移文档。R1 445 项高密度文件 Top：apic.rs 19、xhci.rs 14、display/controller.rs 11、hvfs/dedup.rs 10、aarch64/mmu.rs 9、credo/identity.rs 9、cgroup.rs 8。
+  - 方案：按 2026-09-09 治理决策三分层（DECISION-052）重排 B09-05/06/07 处置——垃圾删除 / 已实装接线 / 未来预留迁移文档。R1 445 项高密度文件 Top：apic.rs 19、xhci.rs 14、display/controller.rs 11、nestfs/dedup.rs 10、aarch64/mmu.rs 9、credo/identity.rs 9、cgroup.rs 8。
   - 状态：[]
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
-  - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/hvfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
-  - **调研盲区（2026-09-11 复核识别）**：首批调研清单（80 处，首次 grep 被 head_limit=80 截断）未覆盖 **~32 处**——framework driver/storage（nvme/ata/ahci）、display（framebuffer/controller/hdmi×2）、usb 深层（mass_storage/hid/ring/enumerate）、e1000×2、net/save、timer（sleep/hrtimer/pit/mod）、services fs/hvfs traits×9、vfs_poll_policy、net/wait_queue、smoltcp_impl、services driver/storage×3。处置判定待委托人核实（同三层判据：已覆盖删/未覆盖迁/私有 API 公共改写）。
+  - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
+  - **调研盲区（2026-09-11 复核识别）**：首批调研清单（80 处，首次 grep 被 head_limit=80 截断）未覆盖 **~32 处**——framework driver/storage（nvme/ata/ahci）、display（framebuffer/controller/hdmi×2）、usb 深层（mass_storage/hid/ring/enumerate）、e1000×2、net/save、timer（sleep/hrtimer/pit/mod）、services fs/nestfs traits×9、vfs_poll_policy、net/wait_queue、smoltcp_impl、services driver/storage×3。处置判定待委托人核实（同三层判据：已覆盖删/未覆盖迁/私有 API 公共改写）。
   - 方案（2026-09-11 用户选：**全量迁移 + 断言审计**）：逐处甄别 80 处——
     - **已覆盖 → 删除残留副本**：断言已被 framework/tests/*.rs 或 host-tests/tests/*.rs 等价覆盖的，直接删源文件 cfg(test) 模块（0 断言丢失）；
     - **独特断言 → 迁移**：改写为 `fn() -> TestResult` + `check!`/`assert_eq_test!` + 注册进对应载体；纯逻辑 → `#[cfg(any(kernel_test, host-test))]` 载体（host 可跑）；依赖裸机硬件 → `#[cfg(feature = "kernel_test")]` 载体。
@@ -250,7 +250,7 @@
 ### D-3. R3 零引用 pub mod（7 项，架构预留接口待核实）
 
 - **dmu_trait/raidz_trait/spa_trait/txg_trait/zap_trait/zil_persist_trait/zil_trait**
-  - 描述：hvfs 各子系统 trait 抽象模块（[hvfs/mod.rs](../../src/kernel/services/fs/hvfs/mod.rs)）。
+  - 描述：nestfs 各子系统 trait 抽象模块（[nestfs/mod.rs](../../src/kernel/services/fs/nestfs/mod.rs)）。
   - 处置：**核实后二选一**——架构预留接口（非误报）→ 转正式保留（实现治理）；误报/无用 → 直接删。
   - 状态：[]
 
@@ -284,7 +284,7 @@
 - tickless.rs（1 项）：3C4D67(hrtimer 集成)
 
 **普通 TODO（9 项，内核需要的功能缺口）**：
-- oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:607（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义）/ ext2·exfat·hvfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
+- oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:607（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义）/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
 
 > 已确认无价值/随手的 TODO 不入清单，直接删除。
 
@@ -306,4 +306,4 @@
 | **R1 筛出的无用函数**（D-4 核实为无价值的）| 内核不需要 → 删（如部分 apic/xhci 只读操作）| [] |
 | **F9 豁免残留**（已激活代码上的 allow）| 对应代码已接线 → 删豁免（limits.rs 等）| [] |
 
-> 2026-09-09 判据更新注记：**ext2/exfat/hvfs 时间戳 TODO 3 处经"内核需不需要"判据确认 = 内核需要**（POSIX stat mtime 语义完善项）→ **转 D-5 转正式**（实现治理，低优先级），不再列入直接删待核实。DomainFlags/R3/R1 待核实项按"内核需不需要"判据核实后回填本表。
+> 2026-09-09 判据更新注记：**ext2/exfat/nestfs 时间戳 TODO 3 处经"内核需不需要"判据确认 = 内核需要**（POSIX stat mtime 语义完善项）→ **转 D-5 转正式**（实现治理，低优先级），不再列入直接删待核实。DomainFlags/R3/R1 待核实项按"内核需不需要"判据核实后回填本表。

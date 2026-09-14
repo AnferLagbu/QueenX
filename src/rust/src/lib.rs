@@ -44,7 +44,7 @@
 #![allow(clippy::result_unit_err)]
 // rustfmt 整改后函数体行数普遍增长 10-20%, 原 100 行阈值过紧; 放宽至 200
 #![allow(clippy::too_many_lines)]
-// 11. Clippy: module_inception — 内核模块命名（如 fs/hvfs/hvfs.rs）是架构惯例
+// 11. Clippy: module_inception — 内核模块命名（如 fs/nestfs/nestfs.rs）是架构惯例
 #![allow(clippy::module_inception)]
 // 12. Clippy: new_without_default — 内核对象通常不应有无参默认构造
 #![allow(clippy::new_without_default)]
@@ -172,7 +172,7 @@ mod memory_allocator;
 /// └── services/     # 去特权业务层 (100% safe Rust, #![deny(unsafe_code)])
 ///     ├── syscall/  # 系统调用分发策略 (完整 syscall→handler 映射)
 ///     ├── proc/     # 进程管理策略 (CFS 调度/进程表安全代理)
-///     ├── fs/       # VFS + ramfs + HvFS + devfs + procfs
+///     ├── fs/       # VFS + ramfs + NestFS + devfs + procfs
 ///     ├── net/      # 网络栈 (smoltcp) + socket 层
 ///     ├── ipc/      # 管道/共享内存/消息队列/信号
 ///     ├── mm/       # Page Cache/Swap/mmap 安全代理
@@ -761,7 +761,7 @@ pub extern "C" fn kernel_init() {
         crate::kernel::services::debug::ebpf::init();
 
         // 9. VFS
-        // services::fs::init() — FsBackend 策略 + VFS poll 策略 + HvFS
+        // services::fs::init() — FsBackend 策略 + VFS poll 策略 + NestFS
         // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
         // 此前 services::fs::init() 无调用者, make_ramfs_inode 钩子 (第二十三批)
         // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
@@ -825,37 +825,37 @@ pub extern "C" fn kernel_init() {
             );
         }
 
-        // HvFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
+        // NestFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
         #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
         {
-            let hvfs = crate::kernel::services::fs::hvfs::hvfs::get_hvfs();
+            let nestfs = crate::kernel::services::fs::nestfs::nestfs::get_nestfs();
             // init() 会自动扫描所有块设备, 发现 QueenX 签名的磁盘并挂载
-            hvfs.init();
+            nestfs.init();
 
-            if hvfs.is_disk_mode() {
-                crate::kernel::services::fs::hvfs::hvfs::get_hvfs()
+            if nestfs.is_disk_mode() {
+                crate::kernel::services::fs::nestfs::nestfs::get_nestfs()
                     .spa
                     .disk_present
                     .store(true, core::sync::atomic::Ordering::Release);
                 let r = crate::kernel::framework::fs::vfs::api::vfs_mount_internal(
                     b"/".as_ptr(),
-                    b"hvfs".as_ptr(),
+                    b"nestfs".as_ptr(),
                 );
                 if r == 0 {
-                    let n_drives = crate::kernel::services::fs::hvfs::hvfs::get_hvfs()
+                    let n_drives = crate::kernel::services::fs::nestfs::nestfs::get_nestfs()
                         .drives_discovered
                         .lock()
                         .len() as u64;
                     if n_drives > 1 {
-                        crate::klog_boot_info!("Root filesystem: HvFS ({} drives)", n_drives);
+                        crate::klog_boot_info!("Root filesystem: NestFS ({} drives)", n_drives);
                     } else {
-                        crate::klog_boot_info!("Root filesystem: HvFS (disk)");
+                        crate::klog_boot_info!("Root filesystem: NestFS (disk)");
                     }
                 } else {
-                    crate::klog_boot_info!("HvFS mount failed");
+                    crate::klog_boot_info!("NestFS mount failed");
                 }
             } else {
-                crate::klog_boot_info!("HvFS: running in memory mode (no disk)");
+                crate::klog_boot_info!("NestFS: running in memory mode (no disk)");
             }
         }
 

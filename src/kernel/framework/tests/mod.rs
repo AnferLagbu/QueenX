@@ -38,9 +38,9 @@ pub mod test_config;
 pub mod test_credo;
 pub mod test_devfs;
 #[cfg(target_arch = "x86_64")]
-pub mod test_hvfs;
+pub mod test_nestfs;
 #[cfg(target_arch = "x86_64")]
-pub mod test_hvfs_ext;
+pub mod test_nestfs_ext;
 pub mod test_ipc;
 pub mod test_mm;
 pub mod test_new_features;
@@ -461,8 +461,8 @@ pub fn register_all_tests() {
     test_config::register_config_tests();
     #[cfg(target_arch = "x86_64")]
     {
-        test_hvfs::register_hvfs_tests();
-        test_hvfs_ext::register_hvfs_ext_tests();
+        test_nestfs::register_nestfs_tests();
+        test_nestfs_ext::register_nestfs_ext_tests();
     }
     test_pwm::register_pwm_tests();
     test_credo::register_credo_tests();

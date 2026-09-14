@@ -239,7 +239,7 @@
 
 | # | 文件:行 | 描述 |
 |---|---|---|
-| ISSUE-SRC-039 | `services/fs/hvfs/hvfs_inode.rs:92` | TODO: 未来可接入 HvFS 时间戳更新 |
+| ISSUE-SRC-039 | `services/fs/nestfs/nestfs_inode.rs:92` | TODO: 未来可接入 NestFS 时间戳更新 |
 | ISSUE-SRC-040 | `services/fs/ext2/mount.rs:102` | TODO: 未来可接入 ext2 inode 时间戳更新 |
 | ISSUE-SRC-041 | `services/fs/exfat/mount.rs:79` | TODO: 未来可接入 exFAT 目录项时间戳更新 |
 | ISSUE-SRC-042 | `services/fs/overlayfs.rs:205` | TODO: 未来可实现 copy-up + 时间戳更新 |

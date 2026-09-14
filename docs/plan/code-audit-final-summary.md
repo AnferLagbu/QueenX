@@ -269,7 +269,7 @@ P0 为最高优先级问题，必须立即修复。本章汇总全项目深度�
 
 - **严重度**：�� P0（违反 F1 硬规则）
 - **位置**：services/ 42 个 .rs 文件（实测 2026-08-15：非 smoltcp 共 260 文件，缺 deny 42 个；详见既有审计 §2.1）
-- **问题描述**：services/mod.rs:1 声明 deny，但子模块未独立声明；包含 `wasm/wasi/*` (9)、`fs/hvfs/*` (约 16)、`driver/display/*` (3)、`fs/snapshot.rs`、`fs/xattr.rs`、`proc/canary.rs`、`proc/memfd.rs`、`proc/oomd.rs`、`proc/pidfd.rs`、`sync/lockdep.rs`、`config/*`、`timer/mod.rs`、`credo/storage/disk.rs` 等。
+- **问题描述**：services/mod.rs:1 声明 deny，但子模块未独立声明；包含 `wasm/wasi/*` (9)、`fs/nestfs/*` (约 16)、`driver/display/*` (3)、`fs/snapshot.rs`、`fs/xattr.rs`、`proc/canary.rs`、`proc/memfd.rs`、`proc/oomd.rs`、`proc/pidfd.rs`、`sync/lockdep.rs`、`config/*`、`timer/mod.rs`、`credo/storage/disk.rs` 等。
 - **修复建议**：一次性在所有缺 deny 文件第 1 行添加 `#![deny(unsafe_code)]`；若文件含 unsafe 需先迁移。
 
 ### P0-23. host-tests 18 处 `#![allow(dead_code)]` 违反 F9
@@ -478,7 +478,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 3. **决策类**：
    - services vs framework 同名 type 冲突治理（~20 项已识别）
-   - hvfs trait stub 整套删除决策（附录 B §4.6）
+   - nestfs trait stub 整套删除决策（附录 B §4.6）
    - inode.rs / sched_policy.rs 等已审计的 `[D:删除]` 候选
 
 > **本审计已完成逐项结构化标注**，具体清单见 `scripts/audit_unwired_pub_fn.py --json` 输出与 `target/audit/pub-unwired-fn.json`。362 项中已识别高置信删除候选 ~38 项（5 个文件），剩余 ~324 项需专项工作。
@@ -496,13 +496,13 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 | `mod test_vfs` | framework/tests/mod.rs | `[?]` 测试模块 |
 | `mod audit_export` | services/barrier/mod.rs | `[D:删除]` |
 | `mod health_monitor` | services/barrier/mod.rs | `[D:删除]` |
-| `mod dmu_trait` | services/fs/hvfs/mod.rs | `[?]` ZFS 克隆未启用 |
-| `mod raidz_trait` | services/fs/hvfs/mod.rs | `[?]` 同上 |
-| `mod spa_trait` | services/fs/hvfs/mod.rs | `[?]` 同上 |
-| `mod txg_trait` | services/fs/hvfs/mod.rs | `[?]` 同上 |
-| `mod zap_trait` | services/fs/hvfs/mod.rs | `[?]` 同上 |
-| `mod zil_persist_trait` | services/fs/hvfs/mod.rs | `[?]` 同上 |
-| `mod zil_trait` | services/fs/hvfs/mod.rs | `[?]` 同上 |
+| `mod dmu_trait` | services/fs/nestfs/mod.rs | `[?]` ZFS 克隆未启用 |
+| `mod raidz_trait` | services/fs/nestfs/mod.rs | `[?]` 同上 |
+| `mod spa_trait` | services/fs/nestfs/mod.rs | `[?]` 同上 |
+| `mod txg_trait` | services/fs/nestfs/mod.rs | `[?]` 同上 |
+| `mod zap_trait` | services/fs/nestfs/mod.rs | `[?]` 同上 |
+| `mod zil_persist_trait` | services/fs/nestfs/mod.rs | `[?]` 同上 |
+| `mod zil_trait` | services/fs/nestfs/mod.rs | `[?]` 同上 |
 | `mod ramfs_data` | services/fs/ramfs_core/mod.rs | `[?]` ramfs 实现 |
 | `mod pmm_policy` | services/mm/mod.rs | `[D:删除]` |
 | `mod slab_policy` | services/mm/mod.rs | `[D:删除]` |
@@ -514,7 +514,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 > **建议处置**：
 > - `[D:删除]` 类（audit_export, health_monitor, pmm_policy 等）— 直接删除（5 项）
 > - `[?]` 测试模块（test_*）— 保留（`#[cfg(test)]` 门控）
-> - `[?]` ZFS trait 整套 — 与 §G.4 中"overlayfs 是核心 stub"同理，是 hvfs stub 阶段产物
+> - `[?]` ZFS trait 整套 — 与 §G.4 中"overlayfs 是核心 stub"同理，是 nestfs stub 阶段产物
 > - `[T:模板]` WASI 模块 — 设计如此，预留 API
 
 ## R4: 核心 pub struct/enum 零引用（1 项）
@@ -776,7 +776,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 
 > **2026-08-15 附录 H 增量更新**（DECISION-H05/H06/H07/H08）
 
-0. **修复 host-tests 与内核解耦**（P0-26/P0-27）→ 删 host-tests/src/hvfs/ mock + 启用 `[lib] test = true`（**整个测试可信度的根**，比原优先级 1-4 全部更优先）
+0. **修复 host-tests 与内核解耦**（P0-26/P0-27）→ 删 host-tests/src/nestfs/ mock + 启用 `[lib] test = true`（**整个测试可信度的根**，比原优先级 1-4 全部更优先）
 0. **修复 cred 加密原语缺失**（P0-24）→ fail-closed（整个 TCB 虚假）
 0. 修复 **kmalloc 编译错误**（P0-14，阻塞 CI）
 
@@ -803,7 +803,7 @@ P3 为低优先级问题，远期修复。详细问题列表请参见附录 C �
 1. **建立持续审计流程**：每次 PR 自动跑 14 个审计脚本
 2. **配置 vs 代码同源**：硬编码常量应通过 build.rs 注入
 3. **services 单向数据流审查**：78+ 处反向依赖需 6-8 周专项重构（与 DECISION-H13/H19 合并执行）
-4. **测试基础设施重构（附录 H H.3.6）**：host-tests 应仅保留 (a) host-only micro-benchmarks；(b) cross-architecture integration tests；(c) 不含任何内核代码的 mock 重实装。**禁止** host-tests/src/{hvfs,fs,...} 平行实装
+4. **测试基础设施重构（附录 H H.3.6）**：host-tests 应仅保留 (a) host-only micro-benchmarks；(b) cross-architecture integration tests；(c) 不含任何内核代码的 mock 重实装。**禁止** host-tests/src/{nestfs,fs,...} 平行实装
 5. **DECISION-H25 codegen sysno**：把 sysno 单一来源生成纳入 build.rs（与 P0-31 同步执行）
 
 ---
@@ -3013,7 +3013,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 > **审计员**：Trae IDE Sub-Agent（6 路并行）
 > **审计日期**：2026-08-15
-> **作用**：填补既有审计未覆盖的关键领域，包括 4 个 services 关键大文件、6 个 framework 超大文件、28 份 archive 子系统报告交叉验证、6 个文件系统（hvfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）、chitin/wasm/wasi 三大子系统、13 个 Python 测试脚本
+> **作用**：填补既有审计未覆盖的关键领域，包括 4 个 services 关键大文件、6 个 framework 超大文件、28 份 archive 子系统报告交叉验证、6 个文件系统（nestfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）、chitin/wasm/wasi 三大子系统、13 个 Python 测试脚本
 
 ## G.1 服务层关键大文件深度审计 v2.2（sub-agent #1）
 
@@ -3118,7 +3118,7 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 ## G.4 6 个文件系统深度审计（sub-agent #4）
 
 **审计范围**：6 个文件系统，约 10000+ 行
-- `hvfs/`（ZFS 克隆，18 文件，约 8200 行）
+- `nestfs/`（ZFS 克隆，18 文件，约 8200 行）
 - `ext2/`（8 文件，约 2125 行）
 - `exfat/`（7 文件，约 1015 行）
 - `overlayfs/`（1 文件，406 行）
@@ -3130,10 +3130,10 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 
 | # | 文件 | 问题 |
 |---|---|---|
-| 1 | `hvfs/checksum.rs:42-45` | XORP 校验和"静默成功"——Fletcher4 仅检 4 字节，bit rot 100% 漏检 |
-| 2 | `hvfs/spa.rs:34-47` | HvUberblock 无签名 → 篡改 root_bp 可挂载伪造池并执行任意块写入 |
-| 3 | `hvfs_data.rs:414-487` | `mount_drive` 失败时仍标记 mounted/initialized=true |
-| 4 | `hvfs_data.rs:649-657` | 读路径完全不校验 checksum 字段 |
+| 1 | `nestfs/checksum.rs:42-45` | XORP 校验和"静默成功"——Fletcher4 仅检 4 字节，bit rot 100% 漏检 |
+| 2 | `nestfs/spa.rs:34-47` | NestUberblock 无签名 → 篡改 root_bp 可挂载伪造池并执行任意块写入 |
+| 3 | `nestfs_data.rs:414-487` | `mount_drive` 失败时仍标记 mounted/initialized=true |
+| 4 | `nestfs_data.rs:649-657` | 读路径完全不校验 checksum 字段 |
 | 5 | `ext2/read.rs:571-578` | `i_size = new_size as u32` —— 4GB 边界截断 + i_blocks 公式除零 panic |
 | 6 | `ext2/super_block.rs:67-79` | 超级块损坏时不报错而是继续 |
 | 7 | `exfat/fat.rs:34-71` | FAT 簇链读取无循环检测 → 自指环无限循环 OOM |
@@ -3149,10 +3149,10 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 **统计**：P0=25 / P1=33 / P2=24 / P3=11 = 93 项
 
 **关键全局问题**：
-1. 权限漏洞集中爆发（procfs 3 处 + ext2 + hvfs + ramfs 全部存在越权隐患）
-2. 完整性校验缺失（hvfs 仅 Fletcher4 + EdonR stub，ext2 完全无 metadata checksum，exFAT 无 FAT 校验）
+1. 权限漏洞集中爆发（procfs 3 处 + ext2 + nestfs + ramfs 全部存在越权隐患）
+2. 完整性校验缺失（nestfs 仅 Fletcher4 + EdonR stub，ext2 完全无 metadata checksum，exFAT 无 FAT 校验）
 3. 裸 `expect` panic 路径（ramfs 把"数据损坏"路径 panic 成 kernel panic）
-4. 死循环/OOM 风险（hvfs LZ4 + exFAT FAT + ARC eviction 三处可被恶意输入触发 DoS）
+4. 死循环/OOM 风险（nestfs LZ4 + exFAT FAT + ARC eviction 三处可被恶意输入触发 DoS）
 5. overlayfs 是核心 stub（lowerdir 不读、copy_up NotSupported、whiteout 误判）
 6. tmpfs 全局 ramfs 共享 inner → 配额失效
 
@@ -3261,8 +3261,8 @@ isr.asm 36 次 IRQ 出口 → 0x3F8 UART 写 'Z'
 28. `fs_rights` 忽略
 
 **FS 完整性**：
-29. `hvfs` checksum 静默成功
-30. `hvfs` 无签名
+29. `nestfs` checksum 静默成功
+30. `nestfs` 无签名
 31. `ext2` i_size 截断
 32. `exfat` FAT 循环无检测
 33. `overlayfs` lowerdir 不读
@@ -3304,7 +3304,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
 - ✅ 4 个 services 关键大文件 100% 通读
 - ✅ 6 个 framework 超大文件 100% 通读
 - ✅ 20 个 Python 测试脚本 100% 通读
-- ✅ 6 个文件系统（hvfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）100% 通读
+- ✅ 6 个文件系统（nestfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）100% 通读
 - ✅ chitin/wasm/wasi 三大子系统 100% 通读
 - ✅ 28 份 archive 子系统报告交叉验证
 
@@ -3426,7 +3426,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
 
 #### P2-B: services "策略上移"模式违反 OSTD Minimalism（独立 P2-B）
 
-- **描述**：实测 framework→services 反向依赖中，**约 78 处 `pub use` re-export** 集中在 `framework/config/`、`framework/credo/`、`framework/driver/`、`framework/fs/hvfs/` 等——这是"services 类型定义 → framework re-export → services 实现"的**循环迁移模式**
+- **描述**：实测 framework→services 反向依赖中，**约 78 处 `pub use` re-export** 集中在 `framework/config/`、`framework/credo/`、`framework/driver/`、`framework/fs/nestfs/` 等——这是"services 类型定义 → framework re-export → services 实现"的**循环迁移模式**
 - **方案**：撤销 re-export，让 services 类型只通过顶层 API 暴露
 - **状态**：[]
 - **详情**：违反 `explain-framekernel.md` §"机制与策略分离"原则，应将 services 类型反向依赖全部迁移到 framework 或通过 trait 注入
@@ -3450,35 +3450,35 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
 - **描述**：实测 host-tests 与内核 src 完全不链接，**整个 host-tests 是 mock 平行实装**
   - `src/rust/Cargo.toml` 第 21-23 行 `[lib] crate-type = ["staticlib"] test = false` — 内核 lib 显式 `test = false`，禁止 `cargo test`
   - `host-tests/Cargo.toml` 第 1 行 `name = "queenx-host-tests"` 是独立 package，**未声明** 内核 `queenx` 作为依赖
-  - `host-tests/src/hvfs/` 20 个 .rs 文件 / 5460 LoC，与 `src/kernel/services/fs/hvfs/` 29 个 .rs 文件 / 9481 LoC 是**两套独立实装**
+  - `host-tests/src/nestfs/` 20 个 .rs 文件 / 5460 LoC，与 `src/kernel/services/fs/nestfs/` 29 个 .rs 文件 / 9481 LoC 是**两套独立实装**
   - 测试代码用 `std::sync::*` + `std::collections::*`，内核用 `alloc::*` + `core::*`，**完全不兼容的 std 运行时**
-  - `host-tests/src/hvfs/arc.rs` 第 1 行 `use crate::kernel::sync::mutex::Mutex` 与 内核 `src/kernel/services/fs/hvfs/arc.rs` 第 1 行 `use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex` — **同一类型但不同 crate 路径**
+  - `host-tests/src/nestfs/arc.rs` 第 1 行 `use crate::kernel::sync::mutex::Mutex` 与 内核 `src/kernel/services/fs/nestfs/arc.rs` 第 1 行 `use crate::kernel::services::sync::irq_lock::IrqSpinLock as Mutex` — **同一类型但不同 crate 路径**
 - **方案**：3 步迁移
-  1. 短期：保留 host-tests/Cargo.toml 独立 package 但显式标注 `[lints] workspace = false` 与"仅 host-side benchmarks"语义；删除 host-tests/src/hvfs/ 整套 mock 平行实装
-  2. 中期：启用 `src/rust/Cargo.toml [lib] test = true`，把 hvfs/checksum/arc/bp 等可测单元的测试迁入内核 `#[cfg(test)] mod tests`，与内核代码同 crate 编译
+  1. 短期：保留 host-tests/Cargo.toml 独立 package 但显式标注 `[lints] workspace = false` 与"仅 host-side benchmarks"语义；删除 host-tests/src/nestfs/ 整套 mock 平行实装
+  2. 中期：启用 `src/rust/Cargo.toml [lib] test = true`，把 nestfs/checksum/arc/bp 等可测单元的测试迁入内核 `#[cfg(test)] mod tests`，与内核代码同 crate 编译
   3. 长期：host-tests 仅保留 (a) host-only micro-benchmarks（[host-tests/Cargo.toml L19-20](file:///home/anfer/Code/QueenX/host-tests/Cargo.toml#L19-L20) 的 `framekernel_bench`）；(b) cross-architecture integration tests（验证内核 ELF 装载、syscall ABI 兼容性）；(c) 不含任何内核代码的 mock 重实装
 - **状态**：[]
 - **详情**：报告多处"修复后 host-tests 加 XX 测试"建议（如附录 A F-01/F-03/F-09/F-10/F-13 等 6 处提及 host-tests 添加测试）**不可执行**——因为 host-tests 不链接内核。即使测试代码逻辑正确，编译时也只能测 mock 实装而非真实内核代码。**整个报告的"测试覆盖建议"可信度归零**。
 - **风险**：P0 级 — 测试基础设施与内核完全解耦 → 测试通过无法证明内核正确 → TCB 验证可信度虚高
 - **工作日**：3-5 天（短期删除 mock）+ 5-7 天（中期迁入 `#[cfg(test)]`）
 
-### H.3.7 新发现 P0：host-tests/src/hvfs/ 平行实装使 G.4 P0-29/30/31 隐性双倍严重（独立 P0-27）
+### H.3.7 新发现 P0：host-tests/src/nestfs/ 平行实装使 G.4 P0-29/30/31 隐性双倍严重（独立 P0-27）
 
-- **描述**：报告 G.4 第 1 项 P0 `hvfs/checksum.rs:42-45 XORP 校验和"静默成功"——Fletcher4 仅检 4 字节，bit rot 100% 漏检` 已知内核 stub 问题。但实测 `host-tests/src/hvfs/checksum.rs` 145 LoC 是**独立实装**的 Fletcher4 stub：
-  - 内核 `src/kernel/services/fs/hvfs/checksum.rs` 是 stub（漏检）
-  - 测试 `host-tests/src/hvfs/checksum.rs` 也是 stub（漏检）
-  - 即使 host-tests 跑通所有 hvfs checksum 测试，**也无法捕获内核的真实 bug**——因为两套实现彼此独立
-  - 同理影响 G.4 全部 15 项 hvfs P0（XORP/签名/checksum/mount_drive/读路径不校验 等）以及 G.8 优先级 29-30（hvfs checksum 静默成功 + hvfs 无签名）
-- **方案**：先执行 H.3.6 删除 host-tests/src/hvfs/ mock；再迁入内核 `#[cfg(test)] mod tests`，确保测试代码编译时就是内核代码本身
+- **描述**：报告 G.4 第 1 项 P0 `nestfs/checksum.rs:42-45 XORP 校验和"静默成功"——Fletcher4 仅检 4 字节，bit rot 100% 漏检` 已知内核 stub 问题。但实测 `host-tests/src/nestfs/checksum.rs` 145 LoC 是**独立实装**的 Fletcher4 stub：
+  - 内核 `src/kernel/services/fs/nestfs/checksum.rs` 是 stub（漏检）
+  - 测试 `host-tests/src/nestfs/checksum.rs` 也是 stub（漏检）
+  - 即使 host-tests 跑通所有 nestfs checksum 测试，**也无法捕获内核的真实 bug**——因为两套实现彼此独立
+  - 同理影响 G.4 全部 15 项 nestfs P0（XORP/签名/checksum/mount_drive/读路径不校验 等）以及 G.8 优先级 29-30（nestfs checksum 静默成功 + nestfs 无签名）
+- **方案**：先执行 H.3.6 删除 host-tests/src/nestfs/ mock；再迁入内核 `#[cfg(test)] mod tests`，确保测试代码编译时就是内核代码本身
 - **状态**：[]
-- **详情**：这是 H.3.6 的衍生 P0——单一 root cause（host-tests 不链接内核）产生多个表面症状（hvfs/exfat/overlayfs/tmpfs/procfs/ramfs 6 个 FS的 mock 平行实装各自漏检）
+- **详情**：这是 H.3.6 的衍生 P0——单一 root cause（host-tests 不链接内核）产生多个表面症状（nestfs/exfat/overlayfs/tmpfs/procfs/ramfs 6 个 FS的 mock 平行实装各自漏检）
 - **风险**：P0 级 — 即使 G.4 全部修复，host-tests 仍无法验证修复效果
 - **工作日**：与 H.3.6 共用工作量（不重复计算）
 
 ### H.3.8 新发现 P2：报告 G.4 完整性审计未交叉验证 host-tests 平行实装（独立 P2-E）
 
-- **描述**：报告 G.4 审计 6 个 FS（hvfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）**仅审计内核源码**，未交叉验证 host-tests/src/{hvfs,ext2,exfat,...} 是否平行实装
-  - 实测 host-tests/src/hvfs/ 含 20 个 mock 文件；host-tests/src/{buddy,capability,checksum,sha256,dma_stream} 共 6 个 .rs
+- **描述**：报告 G.4 审计 6 个 FS（nestfs/ext2/exfat/overlayfs/tmpfs/procfs/ramfs）**仅审计内核源码**，未交叉验证 host-tests/src/{nestfs,ext2,exfat,...} 是否平行实装
+  - 实测 host-tests/src/nestfs/ 含 20 个 mock 文件；host-tests/src/{buddy,capability,checksum,sha256,dma_stream} 共 6 个 .rs
   - host-tests/src/buddy.rs 含 `mock_memory: Vec<u8>` 等显式 mock 字段
   - 报告 G.4 的"修复建议"未提及 host-tests 平行实装的存在
 - **方案**：单独 PR 重新审计 host-tests/src/ 与 src/kernel/ 的等价性，按模块逐一列出平行实装清单
@@ -3560,7 +3560,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
   - 状态：[X]
 
 - **DECISION-H05（增量 P0-A 采纳）**：将 H.3.6 host-tests 与内核完全解耦纳入独立 P0-26
-  - 描述：`src/rust/Cargo.toml [lib] test = false` + `host-tests/Cargo.toml` 无 queenx 依赖 → host-tests/src/hvfs/ 20 文件/5460 LoC 是 mock 平行实装
+  - 描述：`src/rust/Cargo.toml [lib] test = false` + `host-tests/Cargo.toml` 无 queenx 依赖 → host-tests/src/nestfs/ 20 文件/5460 LoC 是 mock 平行实装
   - 方案：H.3.6 三步迁移（短期删 mock + 中期 `test = true` + 长期 host-tests 仅保留 benchmark/integration）
   - 状态：[X]
 
@@ -3611,7 +3611,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
 0. **P0-33 src/rust/build.rs 全 0 占位符**（DECISION-H15）→ build.rs 改 panic_missing 强制要求真实产物 + Makefile 加 build-deps
 
 **测试基础设施（P0-26/P0-27 优先于其他修复）**：
-1. **P0-26 host-tests 与内核解耦** → 删 host-tests/src/hvfs/ mock + 启用 `[lib] test = true`（**整个测试可信度的根**）
+1. **P0-26 host-tests 与内核解耦** → 删 host-tests/src/nestfs/ mock + 启用 `[lib] test = true`（**整个测试可信度的根**）
 2. **P0-27 host-tests 平行实装使 G.4 双倍严重** → 与 P0-26 共用工作量
 
 **TCB 虚假（需立即 fail-closed）**：
@@ -3774,7 +3774,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
 - **详情**：原报告 P0-15 给出"调 pmm.reserve_range"修复建议但 API 不存在——按用户 2026-08-15 指示，改为实现该 API 而非改变调用模式。这是工程实用性优先于"最小 API 表面"原则的取舍（依据 AGENTS.md §12.3 简单优先：reserve_range 是 alloc_page/free_page 的批量形式，复杂度增量极低）
 - **风险**：P0 — 16MB 内存泄漏修复方案不可行的问题获得解决路径
 - **工作日**：1 天（含新增 audit 脚本 0.5 天）
-- **关联**：本项也覆盖 H.3.6 host-tests 平行实装触发的 G.4 P0-29（hvfs checksum stub）—— 实现 reserve_range API 后，可写 `#[cfg(test)] mod tests` 验证 `pmm.reserve_range + alloc_page` 互斥
+- **关联**：本项也覆盖 H.3.6 host-tests 平行实装触发的 G.4 P0-29（nestfs checksum stub）—— 实现 reserve_range API 后，可写 `#[cfg(test)] mod tests` 验证 `pmm.reserve_range + alloc_page` 互斥
 
 ### 八.3 H.4.3 P0-30：framework/mm/cow.rs COW 物理页泄漏
 
@@ -4454,7 +4454,7 @@ dec/run_driver_integration_tests.py / run_driver1_usb_xhci_test.py / chitin/user
 ## 三、新发现 P1 — 检测不准（12 项摘要）
 
 1. **audit_coupling.py**：循环依赖 `total > 20` 才阻断（[L416](file:///home/anfer/Code/QueenX/scripts/audit_coupling.py#L416)）；**services 层循环依赖完全不检测**；白名单 `('timer','idt')` 字典序 bug 永不匹配；`use super::super::frame` 跨相对路径漏检；**未接入 CI**。
-2. **audit_invariants.py:56**：I2 正则把 safe 解引用 `(*v).field` 误报为裸指针——已实际发生（[raidz_trait.rs:304](file:///home/anfer/Code/QueenX/src/kernel/services/fs/hvfs/raidz_trait.rs#L304) 注释证实开发者被迫改写代码规避误报）。
+2. **audit_invariants.py:56**：I2 正则把 safe 解引用 `(*v).field` 误报为裸指针——已实际发生（[raidz_trait.rs:304](file:///home/anfer/Code/QueenX/src/kernel/services/fs/nestfs/raidz_trait.rs#L304) 注释证实开发者被迫改写代码规避误报）。
 3. **tools/audit_unsafe.py:79,81**：8 行窗口过窄（属性堆叠推出 SAFETY → 误报，52 MISSING 中混入误报）；反之窗口内任意行含 "SAFETY" 子串即判 OK（漏报）。
 4. **ci/audit.sh:62-69**：audit_unsafe 输出为空时 if/elif 均不执行 → 静默通过；**clippy 未加 `-D warnings`** 且 else 仅警告不退出（L135-141）；qemu 联动 `FAIL_OK` 默认 1 → 0/2 也报"通过"。
 5. **audit_static_mut.py:94**：正则要求行首 `static`，`pub static mut`/`pub(crate) static mut` 漏检；SAFE_PATTERNS 子串豁免过宽（`T1`/`T2` 子串匹配）。

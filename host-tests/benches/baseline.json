@@ -118,56 +118,56 @@
     },
     {
       "name": "zap_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.009,
       "ps_per_op": 9
     },
     {
       "name": "txg_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.0,
       "ps_per_op": 0
     },
     {
       "name": "dmu_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.511,
       "ps_per_op": 511
     },
     {
       "name": "spa_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.0,
       "ps_per_op": 0
     },
     {
       "name": "raidz_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.0,
       "ps_per_op": 0
     },
     {
       "name": "arc_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.003,
       "ps_per_op": 3
     },
     {
       "name": "zil_log_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.001,
       "ps_per_op": 1
     },
     {
       "name": "zil_persist_dispatch",
-      "category": "hvfs",
+      "category": "nestfs",
       "iterations": 10000000,
       "ns_per_op_frac": 0.0,
       "ps_per_op": 0

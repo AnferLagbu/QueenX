@@ -10,7 +10,7 @@
 //! ## 使用
 //!
 //! ```text
-//! HvFS init:  recovery_domain_register("hvfs", 2, &[SPA_DOMAIN]);
+//! NestFS init:  recovery_domain_register("nestfs", 2, &[SPA_DOMAIN]);
 //! Net init:   recovery_domain_register("net",  5, &[]);
 //! ```
 //!
@@ -25,7 +25,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::kernel::framework::sync::IrqSpinLock;
 pub type DomainId = u64;
 
-pub const DOMAIN_ID_HVFS: DomainId = 2;
+pub const DOMAIN_ID_NESTFS: DomainId = 2;
 pub const DOMAIN_ID_NET: DomainId = 5;
 
 pub trait RecoverableDomain: Send + Sync {

@@ -50,7 +50,7 @@ pub mod klog;
 /// 进程管理 — 调度 / 进程表 / ELF 加载
 pub mod proc;
 
-/// 文件系统 — VFS + ramfs + HvFS + devfs + procfs
+/// 文件系统 — VFS + ramfs + NestFS + devfs + procfs
 pub mod fs;
 
 /// 网络栈 — smoltcp + 驱动适配
@@ -123,7 +123,7 @@ pub mod userctx;
 // framework::klog::log_info 等 safe 函数, 不含任何 unsafe 块。
 //
 // 示例:
-//   slog_info!(FS, "HvFS 已初始化: pool={}", name);
+//   slog_info!(FS, "NestFS 已初始化: pool={}", name);
 //   slog_warn!(Kernel, "内存不足: 剩余 {} 页", free);
 //   slog_err!(Driver, "未找到磁盘 {}", id);
 // ============================================================================

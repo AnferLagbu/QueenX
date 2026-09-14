@@ -1,7 +1,7 @@
-// TD-03: 验证 VFS/HvFS 关闭路径已升级为原子 claim-and-clear
+// TD-03: 验证 VFS/NestFS 关闭路径已升级为原子 claim-and-clear
 // 验收:
 //   1. vfs_close_internal 在单一锁内同时检查 used 并清零, 不再分两段 (get_fd_info → free_fd)
-//   2. hvfs close 在单一锁内同时检查 used 并清零
+//   2. nestfs close 在单一锁内同时检查 used 并清零
 //   3. 两次连续 close 同一 fd, 第二次不应触发 pcache/inotify 二次回调
 //
 // 注: 静态契约扫描, 不进内核态.
@@ -11,7 +11,7 @@ use std::path::Path;
 
 // vfs_close_internal 已在 B 方案拆分第二步从 api.rs 物理迁至 handle.rs
 const VFS_HANDLE: &str = "src/kernel/framework/fs/vfs/handle.rs";
-const HVFS: &str = "src/kernel/services/fs/hvfs/hvfs_data.rs";
+const NESTFS: &str = "src/kernel/services/fs/nestfs/nestfs_data.rs";
 
 fn read(path: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -48,20 +48,20 @@ fn test_vfs_close_uses_atomic_claim_and_clear() {
 }
 
 #[test]
-fn test_hvfs_close_uses_atomic_claim_and_clear() {
-    // TD-03: hvfs HvDmu::close 必须在单一锁内同时检查 used 并清零
-    let src = read(HVFS);
+fn test_nestfs_close_uses_atomic_claim_and_clear() {
+    // TD-03: nestfs NestDmu::close 必须在单一锁内同时检查 used 并清零
+    let src = read(NESTFS);
     let body_start = src.find("pub fn close(&self, fd: u32) -> i32")
-        .expect("HvDmu::close 必须存在");
+        .expect("NestDmu::close 必须存在");
     let body = &src[body_start..body_start + 600];
     // 锁内同时含 used 检查与清零
     assert!(body.contains("let mut fds = self.fds.lock();"),
-        "hvfs close 必须拿写锁 (TD-03 原子化)");
+        "nestfs close 必须拿写锁 (TD-03 原子化)");
     assert!(body.contains("fds[idx].used = false"),
-        "hvfs close 必须在锁内清零 used (TD-03 原子回收)");
+        "nestfs close 必须在锁内清零 used (TD-03 原子回收)");
     // 不再调用 self.free_fd (V2 bug: 释放与检查分离, TOCTOU 窗口)
     assert!(!body.contains("self.free_fd("),
-        "hvfs close 不应再调用 self.free_fd (TD-03 内联原子回收)");
+        "nestfs close 不应再调用 self.free_fd (TD-03 内联原子回收)");
 }
 
 #[test]

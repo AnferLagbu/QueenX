@@ -2,7 +2,7 @@
 //! 文件系统 — services 层策略主体
 //!
 //! VFS Manager + Inode trait 抽象. 7 个原生 FS (ramfs/devfs/procfs/ext2/
-//! exfat/tmpfs/overlayfs) + HvFS 在 services::fs::inode 实现 Plan B 契约.
+//! exfat/tmpfs/overlayfs) + NestFS 在 services::fs::inode 实现 Plan B 契约.
 //! 0 unsafe, 全部块设备/页缓存底层走 framework.
 //!
 //! 历史: 2026-06 之前 v2.5 状态评估已过时, 当前已远超当时范围. 详细
@@ -26,7 +26,7 @@ pub mod file_handle;
 /// 文件操作策略 — ioctl / clock_gettime / poll / chown / truncate / flock
 pub mod file_ops;
 pub mod flock;
-pub mod hvfs;
+pub mod nestfs;
 /// Plan B: Inode trait — 文件级操作抽象
 pub mod inode;
 pub mod inotify;
@@ -66,7 +66,7 @@ pub mod xattr;
 
 use crate::kernel::framework::fs::vfs::api as vfs_api;
 use crate::kernel::framework::fs::vfs::backend_trait::{
-    FsBackend, register_fs_backend, register_hvfs_fs,
+    FsBackend, register_fs_backend, register_nestfs_fs,
 };
 use crate::kernel::framework::fs::vfs::inode::Inode;
 use crate::kernel::services::fs::vfs_types::KernelError;
@@ -112,13 +112,13 @@ impl FsBackend for ServicesFsBackend {
 /// 注册内容 (DECISION-K 项 6 注册点前置):
 /// - FsBackend 挂载决策策略 (`register_fs_backend`)
 /// - VFS poll 策略 (`register_default_vfs_poll_policy`)
-/// - HvFS FileSystem 实例 (`register_hvfs_fs`) + 热插拔监听器
-///   (`hvfs_hotplug_register`, HOTPLUG_MANAGER 为自足 static, 时序仅要求
+/// - NestFS FileSystem 实例 (`register_nestfs_fs`) + 热插拔监听器
+///   (`nestfs_hotplug_register`, HOTPLUG_MANAGER 为自足 static, 时序仅要求
 ///   早于首个热插拔中断事件 — kernel_init 早期注册满足)
 pub fn init() {
     static POLICY: ServicesFsBackend = ServicesFsBackend;
     let _ = register_fs_backend(&POLICY);
     let _ = crate::kernel::services::fs::vfs_poll_policy::register_default_vfs_poll_policy();
-    let _ = register_hvfs_fs(crate::kernel::services::fs::hvfs::hvfs::get_hvfs());
-    crate::kernel::services::fs::hvfs::hvfs::hvfs_hotplug_register();
+    let _ = register_nestfs_fs(crate::kernel::services::fs::nestfs::nestfs::get_nestfs());
+    crate::kernel::services::fs::nestfs::nestfs::nestfs_hotplug_register();
 }

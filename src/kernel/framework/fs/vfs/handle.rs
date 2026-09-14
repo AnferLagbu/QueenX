@@ -293,7 +293,7 @@ pub fn vfs_pread_inode(
     let mut user_buf = unsafe { UserWritePtr::new(dst.as_mut_ptr(), dst.len()) };
 
     // P3-I-19: 走 FileSystem trait 分发. 旧实现直接访问 RAMFS_DATA,
-    // 非 RamFS (HvFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
+    // 非 RamFS (NestFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
     // 派发, 无挂载则返回 -1 (EIO). mmap prewarm 由 page_fault 传入
     // vma.mount_idx (mmap 时已解析).
     let mount_idx = match mount_idx {

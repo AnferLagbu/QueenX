@@ -10,7 +10,7 @@
 //! - insert_vma: 合并判断含 file_pwm (不同 pwm 不合并)
 //!
 //! ## 与单元测试的分工
-//! - host-tests/src/hvfs/* 验证 hvfs 数据结构
+//! - host-tests/src/nestfs/* 验证 nestfs 数据结构
 //! - 本文件验证 mmap/pwm 桥接的模型语义
 
 /// 简化的 VmaType (对应 queenx VmaType::FileBacked/Anonymous)

@@ -1,7 +1,7 @@
 //! ATA `BlockDevice` 适配层
 //!
 //! 将 ATA C FFI (`ata_read_sector`/`ata_write_sector`/`ata_disk_present`)
-//! 包装为 `BlockDevice` trait 实现，使 `HvFS` 可以通过统一的 `BlockDevice`
+//! 包装为 `BlockDevice` trait 实现，使 `NestFS` 可以通过统一的 `BlockDevice`
 //! 注册表访问 ATA 磁盘，与 virtio-blk/AHCI/NVMe 统一接口。
 //!
 //! 仅用于 `x86_64`; aarch64 上此模块会被编译排除。
@@ -38,7 +38,7 @@ impl AtaBlockDevice {
             return None;
         }
 
-        // 二分查找总扇区数 (与 HvFS probe_disk_size 同样的方法)
+        // 二分查找总扇区数 (与 NestFS probe_disk_size 同样的方法)
         let mut lo: u32 = 0;
         let mut hi: u32 = 0xFFFF;
         let mut buf = [0u8; 512];

@@ -1169,9 +1169,9 @@ fn sys_boot_install(disk_id: u32) -> i64 {
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
     let total_sectors = crate::kernel::framework::driver::hdd_total_sectors(disk_id as u8);
-    let hvfs_start = BOOT_PART_SECTORS;
-    let hvfs_sectors = if total_sectors > u64::from(hvfs_start) + 1 {
-        total_sectors - u64::from(hvfs_start)
+    let nestfs_start = BOOT_PART_SECTORS;
+    let nestfs_sectors = if total_sectors > u64::from(nestfs_start) + 1 {
+        total_sectors - u64::from(nestfs_start)
     } else {
         0xFFFFFFFFu64
     };
@@ -1179,15 +1179,15 @@ fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut mbr, 450, 0x06FEFFFF);
     write_le32(&mut mbr, 454, 64u32);
     write_le32(&mut mbr, 458, BOOT_PART_SECTORS - 64);
-    write_le32(&mut mbr, 462, hvfs_start);
+    write_le32(&mut mbr, 462, nestfs_start);
     write_le32(&mut mbr, 466, 0x83FEFFFF);
-    write_le32(&mut mbr, 470, hvfs_start);
-    let hvfs_len = if hvfs_sectors > 0xFFFFFFFF {
+    write_le32(&mut mbr, 470, nestfs_start);
+    let nestfs_len = if nestfs_sectors > 0xFFFFFFFF {
         0xFFFFFFFFu32
     } else {
-        hvfs_sectors as u32
+        nestfs_sectors as u32
     };
-    write_le32(&mut mbr, 474, hvfs_len);
+    write_le32(&mut mbr, 474, nestfs_len);
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
     if crate::kernel::framework::driver::hdd_write_sector(disk_id as u8, 0, &mbr) < 0 {

@@ -20,7 +20,7 @@
 |---|---|---|---|---|---|
 | A1 | mount / umount2 | `services/fs/mount.rs:52,86` | SYSTEM 域 `0x01` | CAP_SYS_ADMIN（同义） | 保持复用 ✅ |
 | A2 | setns | `services/proc/namespace.rs:812` | SYSTEM 域 `0x01` | CAP_SYS_ADMIN（同义） | 保持复用 ✅ |
-| A3 | ramfs/hvfs 文件权限 | `services/fs/ramfs_core/ramfs_data.rs:345`、`services/fs/hvfs/hvfs_data.rs:530` | `FS_CAP_*`/`PROC_CAP_*` 命名常量 | 能力制 | 保持复用 ✅（命名规范） |
+| A3 | ramfs/nestfs 文件权限 | `services/fs/ramfs_core/ramfs_data.rs:345`、`services/fs/nestfs/nestfs_data.rs:530` | `FS_CAP_*`/`PROC_CAP_*` 命名常量 | 能力制 | 保持复用 ✅（命名规范） |
 
 ### B 类：语义不精确 / 魔法数 / 缺命名 → 需治理（5 项）
 
@@ -37,7 +37,7 @@
 | # | 先例 | 位置 | 现状问题 | 治理决策 | 状态 |
 |---|---|---|---|---|---|
 | C1 | **credo disk storage 域冲突** | `services/credo/storage/disk.rs:23-24` | `PWM_DOMAIN_STORAGE = 4` 与 `CAP_DOMAIN_DEVICE = 4`（capability.rs:17）**编号冲突**——storage"域"实际就是 DEVICE 域；且用 `required=1`（= DEVICE_CAP_MMIO bit0）保护磁盘格式化，**语义错位**（格式化是存储操作，非 MMIO 访问） | **澄清 + 命名**：要么归属 DEVICE 域并新增 DEVICE_CAP_STORAGE 位，要么独立域；消除本地重复常量，改用公共命名 | [] 待澄清+实施 |
-| C2 | **裸数字域号**（非语义 bug，规范问题） | `mount.rs:52/86`（0）、`namespace.rs:812`（0）、`file_handle.rs:150`（0）、`mmap.rs:304`（7）、`ramfs_data.rs:345`（1）、`hvfs_data.rs:530`（3）、`dispatch.rs:1188`（4）、`sysinfo.rs:136/155`（0） | 域号本身正确（0=SYSTEM,7=MEM,1=FS,3=PROC,4=DEVICE），但用**裸数字**而非 `CAP_DOMAIN_*` 命名常量，可读性差、易写错 | **统一改用 `CAP_DOMAIN_*` 命名常量**（纯规范，低风险） | [] 待实施 |
+| C2 | **裸数字域号**（非语义 bug，规范问题） | `mount.rs:52/86`（0）、`namespace.rs:812`（0）、`file_handle.rs:150`（0）、`mmap.rs:304`（7）、`ramfs_data.rs:345`（1）、`nestfs_data.rs:530`（3）、`dispatch.rs:1188`（4）、`sysinfo.rs:136/155`（0） | 域号本身正确（0=SYSTEM,7=MEM,1=FS,3=PROC,4=DEVICE），但用**裸数字**而非 `CAP_DOMAIN_*` 命名常量，可读性差、易写错 | **统一改用 `CAP_DOMAIN_*` 命名常量**（纯规范，低风险） | [] 待实施 |
 
 > 注：C1 与 B5 同处 dispatch.rs:1188 的 `4` 域，合并排查。A/B/C 类合计，除已治理的 A 类 3 项外，待办共 B 类 5 项 + C 类 2 项。
 
@@ -63,8 +63,8 @@
 
 ### 调研结论（两模型现状）
 
-- **privilege_level**：已属 credo 权威——定义于 [credo/types.rs:240](file:///home/anfer/Code/QueenX/src/kernel/services/credo/types.rs#L240)（PwmEntry 身份字段），API 由 credo 提供（[engine.rs:54](file:///home/anfer/Code/QueenX/src/kernel/framework/credo/engine.rs#L54)），ramfs/hvfs/signal 均为消费者（经 `pwm_get_privilege_level` 读取），**无副本**。现状已统一，无需处置。
-- **sensitivity**：真正独立模型——定义分散于各 FS 节点结构（[ramfs_node.rs:11](file:///home/anfer/Code/QueenX/src/kernel/services/fs/ramfs_core/ramfs_node.rs#L11)、hvfs dmu.rs:59、dataset.rs:30），**不在 credo 类型**；仅 ramfs/hvfs 实际使用（check_permission 的 clearance 比较），其余 FS（tmpfs/devfs/overlayfs/ext2/exfat）字段恒 0；cred 无敏感性概念。属类 Bell-LaPadula/MLS 多级安全模型，当前为半成品。
+- **privilege_level**：已属 credo 权威——定义于 [credo/types.rs:240](file:///home/anfer/Code/QueenX/src/kernel/services/credo/types.rs#L240)（PwmEntry 身份字段），API 由 credo 提供（[engine.rs:54](file:///home/anfer/Code/QueenX/src/kernel/framework/credo/engine.rs#L54)），ramfs/nestfs/signal 均为消费者（经 `pwm_get_privilege_level` 读取），**无副本**。现状已统一，无需处置。
+- **sensitivity**：真正独立模型——定义分散于各 FS 节点结构（[ramfs_node.rs:11](file:///home/anfer/Code/QueenX/src/kernel/services/fs/ramfs_core/ramfs_node.rs#L11)、nestfs dmu.rs:59、dataset.rs:30），**不在 credo 类型**；仅 ramfs/nestfs 实际使用（check_permission 的 clearance 比较），其余 FS（tmpfs/devfs/overlayfs/ext2/exfat）字段恒 0；cred 无敏感性概念。属类 Bell-LaPadula/MLS 多级安全模型，当前为半成品。
 
 ### 方案评估（长期视角）
 

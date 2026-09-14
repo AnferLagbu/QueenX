@@ -9,7 +9,7 @@
 //! - `driver::virtio::blk` —— `VirtIO` 队列的 DMA 映射
 //!   (批次 Z ④: virtio-net 权威已迁 services, 其 DMA 路径经 framework
 //!   `DmaBuffer` 机制, 见 services/driver/virtio/net.rs)
-//! - `fs::hvfs` —— `HvFS` 页缓存直接 I/O (通过 DMA 绕过 CPU)
+//! - `fs::nestfs` —— `NestFS` 页缓存直接 I/O (通过 DMA 绕过 CPU)
 //!
 //! ## 内部接口
 //! - `mod.rs` —— 公开类型: `DmaMapping`, `DmaTransfer`, `DmaScatterList`

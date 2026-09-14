@@ -5,7 +5,7 @@
 //!
 //! ## 调用方契约
 //! - `driver::framework::Driver` —— 驱动实现者
-//! - `fs::hvfs` —— 通过 `proto_block` 读块设备
+//! - `fs::nestfs` —— 通过 `proto_block` 读块设备
 //! - `fs::ramfs/devfs` —— 通过 `chitin_register_driver` 暴露设备节点
 //! - `net::e1000/virtio` —— 通过 `proto_net` 注册网卡
 //! - `proc::session` —— 通过 `user_driver` 暴露用户态驱动接口
@@ -41,7 +41,7 @@
 //!
 //! chitin_register_block_dev("ata0", None, None, &mut block_dev)
 //!   ├── 创建 ChitinDevice + block_dev trait 引用
-//!   ├── HvFS 通过 chitin_blk_read/write → BlockDevice::blk_read/write
+//!   ├── NestFS 通过 chitin_blk_read/write → BlockDevice::blk_read/write
 //!   └── 0 unsafe
 //!
 //! chitin_blk_read(drive_idx, sector, buf)

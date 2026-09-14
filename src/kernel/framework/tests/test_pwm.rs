@@ -213,11 +213,11 @@ fn test_viable_floor() -> TestResult {
 
 #[cfg(target_arch = "x86_64")]
 fn test_pwmentry_cow_bp() -> TestResult {
-    use crate::kernel::services::fs::hvfs::bp::HvBlockPointer;
-    use crate::kernel::services::fs::hvfs::dmu::HvDmuObject;
+    use crate::kernel::services::fs::nestfs::bp::NestBlockPointer;
+    use crate::kernel::services::fs::nestfs::dmu::NestDmuObject;
 
-    let mut obj = HvDmuObject::new_file(1, 0);
-    let bp = HvBlockPointer::null();
+    let mut obj = NestDmuObject::new_file(1, 0);
+    let bp = NestBlockPointer::null();
     obj.cow_bp(bp, 5);
     check!(obj.birth_txg == 5, "birth txg should be 5 after cow_bp");
     TestResult::Pass

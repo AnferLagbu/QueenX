@@ -475,8 +475,8 @@ impl ProcfsData {
             return pos as i32;
         }
 
-        // /proc/fs/hvfs
-        if name == "fs/hvfs" {
+        // /proc/fs/nestfs
+        if name == "fs/nestfs" {
             let mut pos = 0usize;
             let write_str = |buf: &mut [u8], pos: &mut usize, s: &str| {
                 let b = s.as_bytes();
@@ -486,9 +486,9 @@ impl ProcfsData {
                 *pos += len;
             };
 
-            // 获取 HvFS 池统计
-            let hvfs = crate::kernel::services::fs::hvfs::hvfs::get_hvfs();
-            let (allocs, frees, reads, writes) = hvfs.get_stats();
+            // 获取 NestFS 池统计
+            let nestfs = crate::kernel::services::fs::nestfs::nestfs::get_nestfs();
+            let (allocs, frees, reads, writes) = nestfs.get_stats();
 
             write_str(buf, &mut pos, "allocs: ");
             write_str(buf, &mut pos, &alloc::format!("{allocs}\n"));

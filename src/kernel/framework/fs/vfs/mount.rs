@@ -6,7 +6,7 @@
 //! (`#[no_mangle]` 全局符号不受模块位置影响).
 
 use super::api::ptr_to_str;
-use super::backend_trait::hvfs_fs;
+use super::backend_trait::nestfs_fs;
 use super::types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
 use super::vfs::VFS_MANAGER;
 use crate::kernel::framework::fs::devfs::{DEVFS_DATA, DevfsData};
@@ -56,10 +56,10 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
                 crate::klog_boot_info!("[VFS] vfs_mount_internal: RAMFS_DATA.lock() #1 released");
             }
         }
-        FsType::HvFs => {
-            // HvFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
-            // 未注册 (services::fs::init 之前) 时静默跳过, 挂载在下方 hvfs_fs() 处 fail-closed
-            if let Some(fs) = hvfs_fs() {
+        FsType::NestFs => {
+            // NestFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
+            // 未注册 (services::fs::init 之前) 时静默跳过, 挂载在下方 nestfs_fs() 处 fail-closed
+            if let Some(fs) = nestfs_fs() {
                 let _ = fs.fs_init();
             }
         }
@@ -83,7 +83,7 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
     }
 
     // E6-4: 带 trait object 挂载
-    // SAFETY: RAMFS_DATA 和 HVFS_DATA 都是全局静态变量, 其内部数据的实际
+    // SAFETY: RAMFS_DATA 和 NESTFS_DATA 都是全局静态变量, 其内部数据的实际
     // 生命周期为 'static. Mutex::lock() 返回的 MutexGuard 借用了 &'static Mutex,
     // 因此通过 &*guard 获得的 &RamFsData 实际生命周期为 'static.
     // 这里我们利用这一点将引用提升为 &'static 以存入 VfsMount.
@@ -98,9 +98,9 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
             crate::klog_boot_info!("[VFS] vfs_mount_internal: RamFsData ref created");
             fs_ref
         }
-        FsType::HvFs => match hvfs_fs() {
+        FsType::NestFs => match nestfs_fs() {
             Some(fs) => fs,
-            // fail-closed: services::fs::init 注册前 HvFS 不可挂载
+            // fail-closed: services::fs::init 注册前 NestFS 不可挂载
             None => return KernelError::NotInitialized.as_i32(),
         },
         FsType::DevFs => {
@@ -121,7 +121,7 @@ pub extern "C" fn vfs_unmount_internal(path: *const u8) -> i32 {
     VFS_MANAGER.unmount(path).as_i32()
 }
 
-// I-22: 15 个 `hvfs_*_internal` 函数无调用方, 已随 P3-I-18 迁移至 `vfs_sync` (FileSystem
+// I-22: 15 个 `nestfs_*_internal` 函数无调用方, 已随 P3-I-18 迁移至 `vfs_sync` (FileSystem
 // trait fs_sync 分发) 后彻底废弃. 旧路径仅 C-FFI 兼容, 无 FFI 调用方, 移除以减小 TCB
 // 面积 (约 150 行, 含 unsafe).
 
@@ -198,7 +198,7 @@ pub extern "C" fn vfs_umount(path: *const u8, flags: i32) -> i32 {
 #[expect(clippy::no_mangle_with_rust_abi)]
 pub fn vfs_sync() -> i32 {
     // P3-I-18: 遍历所有挂载点, 通过 FileSystem trait 的 fs_sync 分发.
-    // 替换原 hvfs_sync_internal() 单 FS 写死的实现.
+    // 替换原 nestfs_sync_internal() 单 FS 写死的实现.
     let mounts = VFS_MANAGER.mounts.lock();
     let mut last_err: i32 = 0;
     let mut synced: u32 = 0;
@@ -209,7 +209,7 @@ pub fn vfs_sync() -> i32 {
         }
         if let Some(fs) = m.get_fs() {
             // SAFETY: 见本函数旧实现, fs_sync 不引用 raw pointer, 是
-            // 内部纯粹计算 (HvFS 走 txg commit). 互斥由 VFS_MANAGER 维护.
+            // 内部纯粹计算 (NestFS 走 txg commit). 互斥由 VFS_MANAGER 维护.
             match fs.fs_sync() {
                 Ok(()) => {
                     synced += 1;
@@ -239,10 +239,10 @@ pub extern "C" fn vfs_format_internal(path: *const u8, fs_type: *const u8) -> i3
     }
 
     // Parse filesystem type
-    if fs_type_str == "hvfs" || fs_type_str == "HvFS" {
+    if fs_type_str == "nestfs" || fs_type_str == "NestFS" {
         // DECISION-K 项 6: 格式化策略经 FileSystem::fs_format 分发 (services 实装),
-        // framework 不再直接访问 HvFS 内部字段
-        match hvfs_fs() {
+        // framework 不再直接访问 NestFS 内部字段
+        match nestfs_fs() {
             Some(fs) => {
                 if fs.fs_format().is_ok() {
                     return 0;

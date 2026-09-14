@@ -1,7 +1,7 @@
 //! 故障恢复 API (Recovery Barrier 对外接口)
 //!
 //! ## 调用方契约
-//! - 各可恢复子系统注册: `hvfs`、`fs`、`net`、`proc` 等
+//! - 各可恢复子系统注册: `nestfs`、`fs`、`net`、`proc` 等
 //! - `proc::scheduler::tick` —— 周期 tick 推进恢复
 //! - `idt::on_panic` —— panic 路径触发 IDT 级别恢复
 //! - 启动流程: `boot` 阶段调用 `recovery_barrier_maintenance` 启动后台 tick

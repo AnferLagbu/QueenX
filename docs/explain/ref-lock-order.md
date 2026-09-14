@@ -42,7 +42,7 @@
   TIMER_MANAGER 锁
 
 层级 11: VFS / FS（文件系统）
-  VFS 全局锁, 文件系统特定锁（HvFS, ramfs, devfs）
+  VFS 全局锁, 文件系统特定锁（NestFS, ramfs, devfs）
 
 层级 12: Network（网络）
   NET_LOCK, socket 锁, NET_SNAPSHOT_LOCK

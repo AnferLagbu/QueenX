@@ -8,8 +8,8 @@ fn test_fstype_from_name() -> TestResult {
     let ramfs = FsType::from_name("ramfs");
     check!(ramfs == FsType::RamFs, "ramfs should be RamFs");
 
-    let hvfs = FsType::from_name("hvfs");
-    check!(hvfs == FsType::HvFs, "hvfs should be HvFs");
+    let nestfs = FsType::from_name("nestfs");
+    check!(nestfs == FsType::NestFs, "nestfs should be NestFs");
 
     let unknown = FsType::from_name("ext4");
     check!(unknown == FsType::Unknown, "ext4 should be Unknown");
@@ -18,7 +18,7 @@ fn test_fstype_from_name() -> TestResult {
 
 fn test_fstype_as_str() -> TestResult {
     check!(FsType::RamFs.as_str() == "ramfs", "RamFs as_str mismatch");
-    check!(FsType::HvFs.as_str() == "hvfs", "HvFs as_str mismatch");
+    check!(FsType::NestFs.as_str() == "nestfs", "NestFs as_str mismatch");
     check!(
         FsType::Unknown.as_str() == "unknown",
         "Unknown as_str mismatch"
@@ -94,7 +94,7 @@ fn test_vfs_mount_unmount() -> TestResult {
 fn test_vfs_resolve_mount() -> TestResult {
     let mgr = VfsManager::new();
     let _ = mgr.mount("/", "ramfs");
-    let _ = mgr.mount("/home", "hvfs");
+    let _ = mgr.mount("/home", "nestfs");
 
     let root = mgr.resolve_mount("/");
     check!(root.is_some(), "should resolve /");
@@ -104,7 +104,7 @@ fn test_vfs_resolve_mount() -> TestResult {
     let home = mgr.resolve_mount("/home/user/file.txt");
     check!(home.is_some(), "should resolve /home/user/file.txt");
     let (_, home_fs) = home.unwrap();
-    check!(home_fs == FsType::HvFs, "/home should be HvFs");
+    check!(home_fs == FsType::NestFs, "/home should be NestFs");
 
     let rel = mgr.get_relative_path("/home/user/file.txt", home.unwrap().0);
     check!(rel == "user/file.txt", "relative path mismatch");
@@ -222,12 +222,12 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
     TestResult::Pass
 }
 
-fn test_hvfs_fs_registered() -> TestResult {
+fn test_nestfs_fs_registered() -> TestResult {
     crate::kernel::services::fs::init();
-    let Some(fs) = crate::kernel::framework::fs::vfs::backend_trait::hvfs_fs() else {
-        return TestResult::Fail("hvfs_fs() 未注册 — services::fs::init 未生效");
+    let Some(fs) = crate::kernel::framework::fs::vfs::backend_trait::nestfs_fs() else {
+        return TestResult::Fail("nestfs_fs() 未注册 — services::fs::init 未生效");
     };
-    check!(fs.name() == "hvfs", "hvfs name mismatch");
+    check!(fs.name() == "nestfs", "nestfs name mismatch");
     // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),
     // 语义等价性由 fsformat 路径代码搬移保证, QEMU boot 覆盖挂载分发链路
     TestResult::Pass
@@ -253,7 +253,7 @@ pub fn register_vfs_tests() {
         "vfs::backend": {
             "fs_backend_registered_make_inode": test_fs_backend_registered_make_inode,
             "ramfs_fs_open_via_backend_hook": test_ramfs_fs_open_via_backend_hook,
-            "hvfs_fs_registered": test_hvfs_fs_registered,
+            "nestfs_fs_registered": test_nestfs_fs_registered,
         },
     }
 }

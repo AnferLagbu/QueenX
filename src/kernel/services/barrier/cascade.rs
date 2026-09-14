@@ -45,7 +45,7 @@ pub struct DomainNode {
 ///
 /// ```text
 /// Domain { id: 1, name: "pmm",  parent: None, children_count: 0 }
-/// Domain { id: 2, name: "hvfs", parent: Some(1), children_count: 2 }
+/// Domain { id: 2, name: "nestfs", parent: Some(1), children_count: 2 }
 /// Domain { id: 3, name: "net",  parent: Some(1), children_count: 0 }
 /// ```
 pub struct DomainTopology {
@@ -246,7 +246,7 @@ mod tests {
     fn build_topology() -> DomainTopology {
         let mut topo = DomainTopology::new();
         topo.add(1, "pmm", None);
-        topo.add(2, "hvfs", Some(1));
+        topo.add(2, "nestfs", Some(1));
         topo.add(3, "net", Some(1));
         topo.add(4, "vfs", Some(2));
         topo
@@ -256,7 +256,7 @@ mod tests {
     fn topology_add_basic() {
         let mut topo = DomainTopology::new();
         assert!(topo.add(1, "pmm", None));
-        assert!(topo.add(2, "hvfs", Some(1)));
+        assert!(topo.add(2, "nestfs", Some(1)));
         assert!(topo.add(3, "net", Some(1)));
         assert_eq!(topo.count, 3);
     }
@@ -281,7 +281,7 @@ mod tests {
     fn topology_parent_children_count() {
         let topo = build_topology();
         let pmm = topo.find(1).unwrap();
-        assert_eq!(pmm.children_count, 2); // hvfs + net
+        assert_eq!(pmm.children_count, 2); // nestfs + net
     }
 
     #[test]

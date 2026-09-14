@@ -202,7 +202,7 @@ pub fn proc_list(buf: &mut [u8], max_entries: u32) -> i32  { unsafe { sys2(SYS_C
 
 pub fn disk_list(disks: &mut [u64]) -> i32                 { unsafe { sys2(SYS_CREDO_DISK_LIST, disks.as_mut_ptr() as u64, disks.len() as u64) as i32 } }
 pub fn disk_info(id: u32, info: &mut UserDiskInfo) -> i32  { unsafe { sys2(SYS_CREDO_DISK_INFO, id as u64, info as *mut UserDiskInfo as u64) as i32 } }
-pub fn disk_format(id: u32) -> i32                         { unsafe { sys2(SYS_CREDO_DISK_FORMAT, id as u64, c"hvfs".as_ptr() as u64) as i32 } }
+pub fn disk_format(id: u32) -> i32                         { unsafe { sys2(SYS_CREDO_DISK_FORMAT, id as u64, c"nestfs".as_ptr() as u64) as i32 } }
 pub fn disk_partition(id: u32, sectors: u64) -> i64        { unsafe { sys2(SYS_CREDO_DISK_PARTITION, id as u64, sectors) } }
 pub fn boot_install(id: u32) -> i64                        { unsafe { sys1(SYS_CREDO_DISK_INSTALL, id as u64) } }
 pub fn fat_format(id: u32) -> i64                          { unsafe { sys1(SYS_CREDO_FAT_FORMAT, id as u64) } }

@@ -179,7 +179,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 |---|---|
 | proc（9）| cfs / cgroup / fd_alloc / madvise_mlock / namespace / oomd / seccomp / session / types |
 | syscall（4）| madvise_mlock / mmap / mprotect / types |
-| fs（10）| mod / vfs/mod / devfs/mod / devfs / procfs/mod / procfs / ramfs/mod / ramfs / hvfs/mod / flock |
+| fs（10）| mod / vfs/mod / devfs/mod / devfs / procfs/mod / procfs / ramfs/mod / ramfs / nestfs/mod / flock |
 | net（5）| mod / types / wait_queue / netfilter / driver/mod（+route/inotify 为"壳+薄层"）|
 | ipc（5）| async_ipc / scheduler_integration / sem / signal / types |
 | io（2）| mod / iouring |
@@ -213,7 +213,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 ### 6.7 services 侧现状（260+ 文件确认）
 
-- **权威实现 ~89 文件**：T1-T9/E6 系列已完成（config 全、credo 类型层、ipc 策略/类型、mm 策略、net 策略、proc 策略、wasm、fs 伪文件系统 devfs/procfs_core/hvfs/flock/inotify/ramfs_core/iouring）。
+- **权威实现 ~89 文件**：T1-T9/E6 系列已完成（config 全、credo 类型层、ipc 策略/类型、mm 策略、net 策略、proc 策略、wasm、fs 伪文件系统 devfs/procfs_core/nestfs/flock/inotify/ramfs_core/iouring）。
 - **策略实现 ~90 文件**：exfat/ext2（独立 FS）、cgroupfs/configfs/devpts/sysfs/systree/virtiofs/overlayfs/tmpfs、wasi（9）、sync barrier/once/scoped、proc memfd/pidfd、driver display dp/ddc。
 - **壳/代理 ~63 文件**：framework 权威，services 薄层（chitin/credo 运行时/debug/ipc 命名空间/mm 物理层/net syscall/proc 进程表/sync/syscall/timer/klog 等）。
 - **影子双份**：driver char/storage/usb/virtio + display/hdmi——即 §6.4 合并对象。
@@ -321,7 +321,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **已完成批次**（反向依赖 79 文件/137 行 → **50 文件/约 110 行**）：
   - J-1 ipc 类型反转（3519410e）→ J-2 config 常量（dfaa4918）→ J-3 config 8 壳（eed99468）→ J-4 ipc 4 纯壳删（98f9c2d6）→ **I-首战 IpcStrategy trait 注入**（f30febcb，**DECISION-K 修订已落地**：注册点前置 interrupt_late_init 前 + Option 降级 + 门禁测试，见 DECISION-K 修订执行记录）→ J-5 sync/types（dcdcb893）→ J-6 机制常量 4 壳（c7231ca5）→ J-7 wasm 5 壳删（e0e66351+3815390f）→ J-8 net 3 壳（75cafcae，route 合并解双向引用）
 - **剩余批次计划**（按序，部分需专项/裁决）：
-  - **fs 系列**：ramfs/devfs/hvfs/flock/inotify 被 framework VFS 机制消费 → 反转归位。**依赖闭包发现（第八批后调研）**：devfs/flock 依赖 `services::sync::irq_lock::IrqSpinLock`（= `framework::sync::IrqSpinLock` 类型别名，可替换）+ devfs 依赖 `services::fs::inode::Inode`（services 实现，**闭包不闭合** → 按 DECISION-K 项 5：inode 走 backend_trait 注入，不连带迁回）；ramfs_core 为目录模块（ramfs_data/ramfs_node，深度耦合 dcache/inode）——**建议专项评估依赖闭包后施工**；hvfs 为大型 ZFS 风格实现（反转工作量大的单批）；**procfs 壳已删（第九批 bc013bcb）**
+  - **fs 系列**：ramfs/devfs/nestfs/flock/inotify 被 framework VFS 机制消费 → 反转归位。**依赖闭包发现（第八批后调研）**：devfs/flock 依赖 `services::sync::irq_lock::IrqSpinLock`（= `framework::sync::IrqSpinLock` 类型别名，可替换）+ devfs 依赖 `services::fs::inode::Inode`（services 实现，**闭包不闭合** → 按 DECISION-K 项 5：inode 走 backend_trait 注入，不连带迁回）；ramfs_core 为目录模块（ramfs_data/ramfs_node，深度耦合 dcache/inode）——**建议专项评估依赖闭包后施工**；nestfs 为大型 ZFS 风格实现（反转工作量大的单批）；**procfs 壳已删（第九批 bc013bcb）**
   - **net 剩余 2**：syscall.rs（framework TCB 引用 `services::net::socket::{Domain,SockType,SockAddrIn}` + `services::net::unix::SockAddrUn`——协议 wire 类型，机制属性强，**建议迁回 framework（DECISION-J 模式），但涉及从大文件 socket.rs/unix.rs 抽取类型 + 大量引用改造，专项施工**）、init/sm_fi.rs（启动编排调 services uds/fd_alloc——功能编排，逐项判定）
   - **credо 专项**：安全敏感 + 框架/services 双份实现（audit/identity/capability/sha256/secure_boot/types 双份），3 壳（capability/types/sha256）被 framework re-export 消费 + identity.rs 引用 PwmEntry —— **需专项调研后裁决**，不贸然施工
   - **driver 2 壳（power/hdmi）**：`driver/power.rs` 为"framework 机制持有 `PM_SUBSYSTEM: PmSubsystem` 全局实例 + syscall 入口调 `services sys_pm_dispatch`"（同 IpcStrategy 模式：类型迁回 + 分发 trait 注入）；`driver/display/hdmi` 为 framework 机制文件 + 壳 re-export services hdmi——专项
@@ -565,7 +565,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
    - fs 机制持有的具体类型（framework 全局表/句柄）→ 迁回（DECISION-J 模式）；策略留 services；
    - credo：framework 留 C ABI + 安全原语（csprng/audit/identity/secure_boot），策略（auth/policy/grants/sessions）留 services，持有类型迁回；
    - proc：framework 留进程表/调度器机制，策略（sched_policy/seccomp/session）留 services，跨层策略经 ProcStrategy trait 注入。
-6. **hvfs 注入归零（2026-09-13 委托人选定方案 B）**：hvfs 29 文件 ZFS 风格实现整体留 services（不进 framework，TCB 最小化）；framework 挂载/格式化消费点改经 `register_hvfs_fs` 注册表 + `FileSystem::fs_format` trait 分发（未注册 fail-closed）；`services::fs::init()` 注册契约统一承载 FsBackend/VFS poll/HvFS/热插拔四项注册。
+6. **nestfs 注入归零（2026-09-13 委托人选定方案 B）**：nestfs 29 文件 ZFS 风格实现整体留 services（不进 framework，TCB 最小化）；framework 挂载/格式化消费点改经 `register_nestfs_fs` 注册表 + `FileSystem::fs_format` trait 分发（未注册 fail-closed）；`services::fs::init()` 注册契约统一承载 FsBackend/VFS poll/NestFS/热插拔四项注册。
 
 **状态**: [X]（评审完成）
 
@@ -681,7 +681,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **测试上下文判定规则**（fail-closed：判定不了的按生产违规计）：① `framework/tests/` 目录整体（feature 门控测试载体）；② `#[cfg(test)] mod X;` 引入的外部文件；③ `#[cfg(test)] mod X { ... }` 内联块（花括号深度跟踪）。抽查确认 ipc/mod.rs tests 正确归类 + user_proc.rs L329/L339、clone.rs L131 生产引用不误判。
 - **ipc 专项结论**：生产反向依赖 0（DECISION-I trait 注入 + DECISION-J 类型反转完成），剩余测试项按 §7.3 合理保留。ipc 目录后续不再单列批次。
 - **工具定位**：audit_reverse_deps.py 为本工程验收计数工具（非 CI 门槛——生产未归零前纳入 audit.sh 会直接打破 CI，待生产归零后再议纳入）。
-- **剩余生产 30 文件分布**（下一批对象）：壳 re-export 类（credo 4/hvfs 18 行/devfs/ramfs/flock/inotify/cgroup/namespace/oomd/fd_table/rlimit/seccomp/session/types/mmap/mprotect/syscall types 等约 24 文件）+ 真实调用点（dispatch.rs 4、dispatch_trait.rs 1、clone.rs 1、sched_ops.rs 1、identity.rs 2、inotify.rs 1、sendfile.rs 1、user_proc.rs 2）。
+- **剩余生产 30 文件分布**（下一批对象）：壳 re-export 类（credo 4/nestfs 18 行/devfs/ramfs/flock/inotify/cgroup/namespace/oomd/fd_table/rlimit/seccomp/session/types/mmap/mprotect/syscall types 等约 24 文件）+ 真实调用点（dispatch.rs 4、dispatch_trait.rs 1、clone.rs 1、sched_ops.rs 1、identity.rs 2、inotify.rs 1、sendfile.rs 1、user_proc.rs 2）。
 - **验证**：脚本自身行为验证（归类单测 + 全量对账）✅；不触内核编译，无重跑验证链必要（audit quick 最近一轮全绿后无内核代码变更）。
 
 ### DECISION-J 第十七批执行记录：syscall 编号表迁回（types）
@@ -730,18 +730,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **引用计数**：生产反向依赖 20→16 文件、39→35 行。**proc 目录壳清零**（仅剩 dispatch.rs QX_EXECVE 1 处真实调用，留 execve 分发迁移专项）。
 - **验证**：双架构 0w0e ✅ / audit quick 全 0 ✅ / boundary 通过 ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动 ✅。
 
-### DECISION-J 第二十一批执行记录：fs 系壳批 A（flock/devfs/inotify 反转 + ramfs/hvfs 专项判定）
+### DECISION-J 第二十一批执行记录：fs 系壳批 A（flock/devfs/inotify 反转 + ramfs/nestfs 专项判定）
 
-> fs 系 5 壳逐项闭包调研后分治：flock/devfs/inotify 闭包闭合 → 反转归位；ramfs 闭包不闭合、hvfs 体量大 → 各归专项批（与 §"fs 系列" 依赖闭包调研结论一致）。
+> fs 系 5 壳逐项闭包调研后分治：flock/devfs/inotify 闭包闭合 → 反转归位；ramfs 闭包不闭合、nestfs 体量大 → 各归专项批（与 §"fs 系列" 依赖闭包调研结论一致）。
 
 **本批（3 文件 2187 行）**：
 - **flock.rs**（728 行，自 services/fs/flock.rs）：flock/POSIX 锁表被 framework VFS 机制内联消费（vfs/path.rs inode 释放路径调用 `posix_lock_release_inode`），锁表属 VFS 机制状态 — 反转。依赖闭包仅 IrqSpinLock 别名（framework::sync 直引）+ core 原子，0 unsafe。services 改 glob 壳。
 - **devfs.rs → framework/fs/devfs/mod.rs**（863 行）：DevFS 设备表被 framework VFS 挂载机制直接消费（vfs/mount.rs 引用 `DEVFS_DATA`/`DevfsData`）— 反转。闭包闭合关键：Inode trait 已于 B09-12 迁回 `framework::fs::vfs::inode`（services::fs::inode 仅 re-export）+ `services::sync::once::OnceCell` 实为 `framework::sync::OnceLock` 别名 — 三处 services 引用全部可 framework 本地化，0 unsafe。删除 `framework/fs/devfs/devfs.rs` 旧壳层，mount.rs/test_devfs.rs 改直路径；services 改 glob 壳。
 - **inotify.rs**（596 行，自 services/fs/inotify.rs）：inotify 实例表/事件队列被 framework VFS 机制内联消费（vfs/path.rs 与 vfs/handle.rs 文件操作路径直接调用 `inotify_notify`）— 反转，`sys_inotify_read`（用户缓冲区 unsafe 写入，SAFETY 逐块标注）一并归位。闭包闭合：Errno（framework::errno）、fd_alloc（framework::proc::fd_alloc，第十九批已迁回）均 framework 项。services 改 glob 壳。
 - **ramfs 专项判定**：ramfs_core 闭包**不闭合**——`impl FileSystem for RamFsData` 构造 services 具象 `RamFsInode`（3 处）+ 依赖 `services::fs::dcache`（inode 缓存）+ `services::fs::vfs_types`，迁移将连带拖入 inode 具象层与 dcache 子系统 → 按 §"fs 系列"调研结论归专项批（backend_trait 注入方向，同 DECISION-K 项 5）。
-- **hvfs 专项判定**：29 文件 ZFS 风格大型实现 + framework 仅消费 `hvfs::hvfs::{get_hvfs, hvfs_hotplug_register}` 挂载集成点 → 单列专项批（本批不动，18 行壳保留）。
+- **nestfs 专项判定**：29 文件 ZFS 风格大型实现 + framework 仅消费 `nestfs::nestfs::{get_nestfs, nestfs_hotplug_register}` 挂载集成点 → 单列专项批（本批不动，18 行壳保留）。
 - **host-test 同步**：fd_allocator_unified_test.rs（INOTIFY_FD_BASE/fd_at 断言改读 framework/fs/vfs/inotify.rs）+ fs_sync_trait_test.rs + test_runner_init_test.rs + plan_b_inode_test.rs（devfs 源码断言改读 framework/fs/devfs/mod.rs）。
-- **引用计数**：生产反向依赖 16→13 文件、35→31 行（ramfs 1 行 + hvfs 18 行留专项）。
+- **引用计数**：生产反向依赖 16→13 文件、35→31 行（ramfs 1 行 + nestfs 18 行留专项）。
 - **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy 双架构 0 warning（pedantic lib + kernel_test + host-test 三维）✅ / audit quick 全过 ✅ / boundary + coupling + safety_coverage 100% + static_mut + repr_c + feature_semantics 全过 ✅ / host-tests 98 套件 749 通过 0 失败（debug+release 双档）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready）✅。预存问题登记：audit_volatile_access 报 pmm.rs:1212 `bitmap_size.get()` 非 volatile 访问（本批未触碰 mm 子树，待专项处置）。
 
 ### DECISION-O ② 执行记录：第二十二批 proc 批收尾（MemoryPressure 类型归位 + cfs 收敛单向）
@@ -754,7 +754,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **framework/proc/oomd.rs**：引用源改 `framework::mm::pressure::{MemoryPressure, update_pressure}`，framework→services 引用清零。
 - **CFS 收敛单向**：`CFS_*` 7 常量权威自 services/config/sched.rs 迁回 framework/config/sched.rs（T6-9 迁出前提"仅被 services 消费"经 DECISION-J cfs 机制反转后失效——framework/proc/cfs.rs:338 + scheduler.rs + process.rs 均消费，按 DECISION-J 判据归机制常量）。framework/proc/cfs.rs 别名源改 framework::config；services/config/sched.rs 改纯 re-export；framework/config/mod.rs 顶层 re-export 扩 CFS_*。
 - **host-test 同步**：memory_pressure_extraction_test.rs 契约反转改写（P1-I-01 D9 验收项 → DECISION-O ② 契约：机制在 framework/分类器注册在 services/oomd 零 services 引用，4 级状态机与双阈值契约保持）；framework/tests/test_config.rs 过时注释同步。
-- **引用计数**：生产反向依赖 13→11 文件、31→29 行（oomd 1 行 + cfs 1 行清零；剩余为 hvfs 18 行/ramfs/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
+- **引用计数**：生产反向依赖 13→11 文件、31→29 行（oomd 1 行 + cfs 1 行清零；剩余为 nestfs 18 行/ramfs/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
 - **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy 双架构 0 warning ✅ / 核心审计 8/8（boundary/safety_coverage/deadlock_matrix/coupling/comment_language/once_cell/c_naming/invariants）+ audit_reverse_deps ✅ / host-tests 全通过 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅。预存 flaky 登记（§12.5，与本批无关）：host-tests/fsx_integration_test 的 test_fsx_stress 在系统高负载（并行跑多任务）下偶发 30 errors 阈值 panic，独占串行跑稳定通过（errors: 0）——host 侧 std 压力模拟器时序敏感，不触及本批内核改动，待单开处置。**交集确认依据（审核要求补充）**：fsx 依赖面为 `std::{collections, fs, path, sync::atomic}` 自包含模拟器（host-tests/src/fsx.rs，进程内 FsxFs 模拟 + 临时目录，零 `src/kernel` 源码引用、不编译内核）；对照本批 12 文件改动清单（framework mm/config/proc + services mm/config + plan + host-test 契约）——两清单无重叠，零交集坐实（对第二十一批 fs 系改动同理成立）。**处置方向（审核确认，待单开）**：定性 = flaky test（时序敏感，高负载下模拟时序偏移致 errors 超阈值），非内核 bug；单开方案选项：① 阈值容差放宽（30 errors 阈值 vs 负载灵敏度）② CI 标注 serial + 重试机制 ③ 模拟器时序隔离（固定 tick）；优先级 = 建议优先单开（flaky 污染 §2.3 host-tests 门槛，影响后续批次验收稳定性）。
 
 
@@ -781,23 +781,23 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **FsBackend trait 扩展（DECISION-K 项 5 落地）**：新增 `make_ramfs_inode(inode_id, mount_idx) -> Result<Arc<dyn Inode>, KernelError>` 工厂钩子；`FallbackFsBackend` 实现 fail-closed（未注册返回 `NotInitialized`，早期启动窗口安全）；3 个 RamFsInode 构造点改经 `current_fs_backend().make_ramfs_inode`（fs_open/fs_create 先 drop 锁再调钩子，锁序不变）。具象 `RamFsInode` 留 services（TCB 最小化：约 130 行 Inode 适配器不进 framework）。
 - **services 侧收尾**：`ServicesFsBackend` 实现钩子委托 `new_ramfs_inode`（该工厂由此获得首个生产使用路径）；删除 services/fs/ramfs_core 三文件 + 模块声明；消费者（tmpfs/overlayfs/anonymous/ramfs 薄包装）全部改 framework 直引（services→framework 合法方向）；ramfs_data.rs 内 dcache/vfs_types 别名引用还原为 framework 本地路径。
 - **host-test 同步**：fs_sync_trait_test.rs（ramfs_inherits_default 源码断言改读 framework/fs/ramfs/mod.rs）+ plan_b_inode_test.rs（ramfs_implements_fs_resolve_inode 同步）。
-- **引用计数**：生产反向依赖 **11→10 文件、29→28 行**（ramfs 壳清零；剩余 hvfs 18 行/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
+- **引用计数**：生产反向依赖 **11→10 文件、29→28 行**（ramfs 壳清零；剩余 nestfs 18 行/sm_fi/ebpf verifier/execve 分发等已登记专项项）。
 - **验证**：双架构 build.sh all Passed 5/0（含 host-tests）✅ / clippy pedantic 三维（lib + kernel_test + host-test）0 warning ✅ / audit quick 全过 ✅ / 独立审计 boundary + coupling + deadlock_matrix + safety_coverage + volatile_access + repr_c + static_mut + audit_reverse_deps 全过 ✅ / host-tests 98 套件全过（含 fsx，串行 0 失败）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready，钩子注册时序实测无恙）✅。
 
-### DECISION-K 项 6 执行记录：第二十四批 hvfs 专项批（注入归零方案 B + services::fs::init 注册契约）
+### DECISION-K 项 6 执行记录：第二十四批 nestfs 专项批（注入归零方案 B + services::fs::init 注册契约）
 
-> 落实第二十一批 hvfs 专项判定（29 文件 ZFS 风格实现 + framework 仅消费挂载集成点）。方案对比后委托人选定**方案 B：注入归零**——hvfs 业务实现整体留 services（不拖 29 文件进 framework，TCB 最小化），framework 消费点改经注册表/trait 分发。同批修复回归：`services::fs::init()` 此前未接入内核初始化序列，`ServicesFsBackend` 注册（含 ramfs 钩子）在生产路径未生效。
+> 落实第二十一批 nestfs 专项判定（29 文件 ZFS 风格实现 + framework 仅消费挂载集成点）。方案对比后委托人选定**方案 B：注入归零**——nestfs 业务实现整体留 services（不拖 29 文件进 framework，TCB 最小化），framework 消费点改经注册表/trait 分发。同批修复回归：`services::fs::init()` 此前未接入内核初始化序列，`ServicesFsBackend` 注册（含 ramfs 钩子）在生产路径未生效。
 
 **本批（注入归零 + 注册契约 + 回归修复）**：
-- **backend_trait 注册表**：新增 `HVFS_FS: OnceLock<&'static dyn FileSystem>` + `register_hvfs_fs()`（幂等）/ `hvfs_fs() -> Option<&'static dyn FileSystem>`；未注册语义 Option 可空（对齐 DECISION-K 项 2 降级先例，mount/format 路径未注册返回 `NotInitialized`，fail-closed）。
-- **FileSystem trait 扩展**：新增 `fs_format()` 默认方法（默认 `NotSupported`）；services `hvfs_inode.rs` 实装格式化逻辑（驱动发现 + format_drive，代码自 mount.rs 原位搬移）。
-- **mount.rs 消费点反转**：HvFS 挂载分支 `get_hvfs()` → `hvfs_fs()`（未注册 fail-closed）；format 路径改 `fs.fs_format()` trait 分发——framework 对 `services::fs::hvfs` 直接依赖清零。
-- **driver 直调反转**：`framework/driver/mod.rs` 删除 `hvfs_hotplug_register()` 直调，hotplug 监听随注册契约统一由 services 侧发起。
-- **删壳**：`framework/fs/hvfs/mod.rs` 18 行 re-export 壳删除，缩为 10 行模块仅保留 `arc_safe`（unsafe 封装机制留 framework，业务全在 services）；framework 测试（test_hvfs/test_hvfs_ext）改经 `services::fs::hvfs` 路径（§7.3 允许）。
-- **注册契约（回归修复核心）**：新增 `services::fs::init()`（幂等）——注册 `ServicesFsBackend`/VFS poll 策略/`register_hvfs_fs(get_hvfs())`/`hvfs_hotplug_register()` 四项；`lib.rs` VFS init 之前插入调用（`// FsBackend/HvFS 注册契约点`）。依据：与 IpcStrategy/ConfigValidateHook 同一"机制 init 后立即注册策略"启动契约；注册零依赖（OnceLock 存指针），策略方法惰性调用。
-- **回归测试**：test_vfs.rs 新增 3 用例——`fs_backend_registered_make_inode`（锁 make_ramfs_inode 命中 services 钩子，Fallback 即回归）/ `ramfs_fs_open_via_backend_hook`（fs_open 全链路经钩子返回 RamFsInode）/ `hvfs_fs_registered`（注册表 + name 断言；fs_format 有底层 IO 副作用不入单测，由 QEMU boot 覆盖挂载分发）。
+- **backend_trait 注册表**：新增 `NESTFS_FS: OnceLock<&'static dyn FileSystem>` + `register_nestfs_fs()`（幂等）/ `nestfs_fs() -> Option<&'static dyn FileSystem>`；未注册语义 Option 可空（对齐 DECISION-K 项 2 降级先例，mount/format 路径未注册返回 `NotInitialized`，fail-closed）。
+- **FileSystem trait 扩展**：新增 `fs_format()` 默认方法（默认 `NotSupported`）；services `nestfs_inode.rs` 实装格式化逻辑（驱动发现 + format_drive，代码自 mount.rs 原位搬移）。
+- **mount.rs 消费点反转**：NestFS 挂载分支 `get_nestfs()` → `nestfs_fs()`（未注册 fail-closed）；format 路径改 `fs.fs_format()` trait 分发——framework 对 `services::fs::nestfs` 直接依赖清零。
+- **driver 直调反转**：`framework/driver/mod.rs` 删除 `nestfs_hotplug_register()` 直调，hotplug 监听随注册契约统一由 services 侧发起。
+- **删壳**：`framework/fs/nestfs/mod.rs` 18 行 re-export 壳删除，缩为 10 行模块仅保留 `arc_safe`（unsafe 封装机制留 framework，业务全在 services）；framework 测试（test_nestfs/test_nestfs_ext）改经 `services::fs::nestfs` 路径（§7.3 允许）。
+- **注册契约（回归修复核心）**：新增 `services::fs::init()`（幂等）——注册 `ServicesFsBackend`/VFS poll 策略/`register_nestfs_fs(get_nestfs())`/`nestfs_hotplug_register()` 四项；`lib.rs` VFS init 之前插入调用（`// FsBackend/NestFS 注册契约点`）。依据：与 IpcStrategy/ConfigValidateHook 同一"机制 init 后立即注册策略"启动契约；注册零依赖（OnceLock 存指针），策略方法惰性调用。
+- **回归测试**：test_vfs.rs 新增 3 用例——`fs_backend_registered_make_inode`（锁 make_ramfs_inode 命中 services 钩子，Fallback 即回归）/ `ramfs_fs_open_via_backend_hook`（fs_open 全链路经钩子返回 RamFsInode）/ `nestfs_fs_registered`（注册表 + name 断言；fs_format 有底层 IO 副作用不入单测，由 QEMU boot 覆盖挂载分发）。
 - **host-test 修复**：`ramfs_fs_open_via_backend_hook` 首跑 FAIL（create_file 返回 None）——根因 `RAMFS_DATA` 初始为空、根目录未建，测试内补 `framework::fs::ramfs::init()`（幂等 mount("/")）修复；e04 共享测试集恢复 0 failed。
-- **引用计数**：生产反向依赖 **10→9 文件、28→10 行**（hvfs 18 行壳清零，为单文件最大降幅项；剩余 credo sha256/types 壳、hdmi 壳、sm_fi、ebpf verifier、execve 分发等已登记专项项）。
+- **引用计数**：生产反向依赖 **10→9 文件、28→10 行**（nestfs 18 行壳清零，为单文件最大降幅项；剩余 credo sha256/types 壳、hdmi 壳、sm_fi、ebpf verifier、execve 分发等已登记专项项）。
 - **验证**：双架构 build.sh all Passed 5/0 ✅ / clippy -D warnings 双架构 0 ✅ / 核心审计 11 项全过（boundary + safety_coverage + deadlock_matrix + coupling + comment_language + once_cell + c_naming + invariants + repr_c + volatile_access + static_mut）✅ / audit_reverse_deps 9 文件/10 行与登记一致 ✅ / host-tests 98 套件全过（e04 共享测试集 336 passed/7 skipped/0 failed）✅ / QEMU x86_64 完整启动至 Ring 3（VFS ready，注册时序实测无恙）✅。
 
 ### DECISION-K 项 5 执行记录：第二十五批 credo 三壳反转 + ebpf verifier 注册契约 + ExecveResult 迁回
@@ -824,12 +824,12 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 > 落实 §7 net 剩余的 sm_fi 项：`framework/net/init/sm_fi.rs` 对 `services::net::unix` 的最后一处生产反向依赖（`sm_setsockopt` 的 `SO_PASSCRED` 路由直调 `uds_svc::uds_setsockopt`，1 import + 1 调用点）。**生产反向依赖 2→1 文件、2→1 行**（仅剩 HDMI 壳，归 HDMI 专项批）。
 
 **本批（钩子注册契约）**：
-- **framework 侧**：sm_fi.rs 新增 `UDS_SETOPT_HOOK: OnceLock<fn(i32, bool) -> i32>` + `register_uds_setsockopt_hook()`（DECISION-K 统一模式，同 `register_hvfs_fs`/`register_pressure_classifier` idiom）；`sm_setsockopt` 的 `SO_PASSCRED` 路由改经钩子委托，未注册时 fail-closed 返回 `E_NOPROTOOPT`（-92，命名常量，与文件内 errno 常量族一致）——未注册窗口仅存在于启动早期（Ring 3 前），无用户态进程可触达，窗口安全。
+- **framework 侧**：sm_fi.rs 新增 `UDS_SETOPT_HOOK: OnceLock<fn(i32, bool) -> i32>` + `register_uds_setsockopt_hook()`（DECISION-K 统一模式，同 `register_nestfs_fs`/`register_pressure_classifier` idiom）；`sm_setsockopt` 的 `SO_PASSCRED` 路由改经钩子委托，未注册时 fail-closed 返回 `E_NOPROTOOPT`（-92，命名常量，与文件内 errno 常量族一致）——未注册窗口仅存在于启动早期（Ring 3 前），无用户态进程可触达，窗口安全。
 - **services 侧**：`services::net::unix::uds_init()` 注册钩子（`uds_setsockopt` fn pointer，重复注册 Err 忽略幂等）；注册调用以 `#[cfg(not(feature = "kernel_test"))]` 门控——与 `framework::net::init` 模块门控对齐（kernel_test 下 init FFI 层整体不存在，sm_setsockopt 消费点同样不存在，两侧一致）。
 - **接线无新增**：`lib.rs` 步骤 9-1 已有 `uds_init()` 调用（UDS subsystem initialized），注册契约无需改动启动序列。
-- **预存问题修复（本批阻塞项）**：`services/fs/hvfs/dedup.rs` `CasIndex::ref_dec` 清零分支先持 `ref_counts` 再取 `hash_to_dva`，与 `insert` 的持锁顺序（`hash_to_dva → ref_counts`）相反，并发交错即 ABBA 死锁——host-tests `hvfs_stress_test` 双测试线程互等挂起复现，阻塞本批 host-tests 门槛。修复：锁序统一为 `hash_to_dva → ref_counts`（与 insert/invalidate 一致）；新增回归测试 `stress_cas_concurrent_insert_refdec_no_abba`（双线程各 200 轮高频交错两条持锁路径，独立 hash 保证断言确定性）。
+- **预存问题修复（本批阻塞项）**：`services/fs/nestfs/dedup.rs` `CasIndex::ref_dec` 清零分支先持 `ref_counts` 再取 `hash_to_dva`，与 `insert` 的持锁顺序（`hash_to_dva → ref_counts`）相反，并发交错即 ABBA 死锁——host-tests `nestfs_stress_test` 双测试线程互等挂起复现，阻塞本批 host-tests 门槛。修复：锁序统一为 `hash_to_dva → ref_counts`（与 insert/invalidate 一致）；新增回归测试 `stress_cas_concurrent_insert_refdec_no_abba`（双线程各 200 轮高频交错两条持锁路径，独立 hash 保证断言确定性）。
 - **引用计数**：生产反向依赖 **2→1 文件、2→1 行**（sm_fi 项清零；剩余 hdmi 壳 1 行，属 HDMI 平行实现统一专项批，方案 A services 收敛已授权）。
-- **验证**：双架构 build.sh all Passed ✅ / quick 审计链全过（clippy pedantic lib + kernel_test/host-test 两 feature 维 0 warning + 6 不变式 + TCB 边界）✅ / audit_reverse_deps 1 文件/1 行与登记一致 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅ / host-tests 98 套件全过（含 hvfs_stress_test 专项单套 10 轮压测稳定）✅。
+- **验证**：双架构 build.sh all Passed ✅ / quick 审计链全过（clippy pedantic lib + kernel_test/host-test 两 feature 维 0 warning + 6 不变式 + TCB 边界）✅ / audit_reverse_deps 1 文件/1 行与登记一致 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅ / host-tests 98 套件全过（含 nestfs_stress_test 专项单套 10 轮压测稳定）✅。
 
 ### DECISION-K 项 5 执行记录：第二十七批 HDMI 专项批（孤儿目录删除，反向依赖归零）
 
@@ -843,7 +843,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 **本批施工**：删除 `framework/driver/display/hdmi/` 整目录（8 文件：1 re-export 壳 + 7 未挂载孤儿，-1537 行）。
 
 - **验证**：audit_reverse_deps **0 文件/0 行**（测试上下文 15 文件/52 行按 §7.3 豁免不计数）✅ / 双架构 build.sh all ✅ / quick 审计链 ✅ / host-tests 98 套件 ✅ / QEMU x86_64 完整启动至 Ring 3 ✅（孤儿不参与编译，编译产物零变化，全链为门槛形式性复核）。
-- **审计盲区扩展（用户裁决通过）**：`audit_deadlock_matrix.py` 扫描范围由仅 framework 扩展为 **framework + services 双子树**（368→718 文件）——扩展背景：第二十六批 hvfs ABBA 死锁位于 services 子树，原单根扫描不可见（fail-closed：不可检查 = 漏检）。同步增强：`services::sync::irq_lock::IrqSpinLock`（framework IrqSpinLock 的 services 层类型别名）纳入安全锁识别，覆盖全路径字段声明与 `as Mutex` 别名导入两种形态。扩展后**零新增发现**（唯一 HIGH 为 framework smp_init.rs `AP_STARTUP_LOCK` 预存人工审查项，扩展前已存在）。注：脚本 AB-BA 环检测仍为其文档声明的未实现项（需 lockdep-style 锁序声明机制），本次扩展不改变该边界。
+- **审计盲区扩展（用户裁决通过）**：`audit_deadlock_matrix.py` 扫描范围由仅 framework 扩展为 **framework + services 双子树**（368→718 文件）——扩展背景：第二十六批 nestfs ABBA 死锁位于 services 子树，原单根扫描不可见（fail-closed：不可检查 = 漏检）。同步增强：`services::sync::irq_lock::IrqSpinLock`（framework IrqSpinLock 的 services 层类型别名）纳入安全锁识别，覆盖全路径字段声明与 `as Mutex` 别名导入两种形态。扩展后**零新增发现**（唯一 HIGH 为 framework smp_init.rs `AP_STARTUP_LOCK` 预存人工审查项，扩展前已存在）。注：脚本 AB-BA 环检测仍为其文档声明的未实现项（需 lockdep-style 锁序声明机制），本次扩展不改变该边界。
 
 ### DECISION-L 终局验证：栏栈不下沉（2026-09-12 审核员，基于 barrier-stack-design.md）
 
@@ -953,7 +953,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 ### DECISION-J 第九批执行记录：fs 系列第一小批 — procfs 壳删除
 
-> fs 系列按 DECISION-K 项 5 方向推进（机制类型迁回 + inode trait 注入不连带迁回）。本批先处理最简单的 procfs 壳：调研确认 framework 生产代码对 `framework::fs::procfs` **零消费**（仅 framework/tests 经 services 路径），属"framework 无生产消费的纯转发壳" → 删壳（同 wasm/config error 模式）。ramfs/devfs/hvfs/flock/inotify 因依赖闭包复杂（services dcache/inode 深度耦合），按 DECISION-K 归后续专项。
+> fs 系列按 DECISION-K 项 5 方向推进（机制类型迁回 + inode trait 注入不连带迁回）。本批先处理最简单的 procfs 壳：调研确认 framework 生产代码对 `framework::fs::procfs` **零消费**（仅 framework/tests 经 services 路径），属"framework 无生产消费的纯转发壳" → 删壳（同 wasm/config error 模式）。ramfs/devfs/nestfs/flock/inotify 因依赖闭包复杂（services dcache/inode 深度耦合），按 DECISION-K 归后续专项。
 
 - **删除壳**：framework/fs/procfs/{mod.rs,procfs.rs} 全删（mod.rs 仅 `pub mod procfs; pub use procfs::*;` 转发）；framework/fs/mod.rs 移除 `pub mod procfs;`；audit_coupling.py fs 内部白名单移除 `framework::fs::procfs` 条目。
 - **services 侧不变**：`services::fs::procfs`（含 framework/tests 用的 `init_global`）保持 services 权威，路径引用本就直连 services 无需改。
@@ -1043,7 +1043,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **前置核实**：services `virtio/blk.rs` 自足（0 unsafe，经 `transport::VirtioDevice` 安全代理 + framework `queue::{DmaBuffer,VirtQueue}` DMA 机制；完整 I/O 路径）→ **直接接线**。
 - **services 侧（新增权威）**：`services/driver/virtio/blk.rs` 新增 `finalize()`（vq0 MMIO 配置 + DRIVER_OK，等价 framework `VirtioBlk::new` 收尾）+ `impl BlockDevice`（blk_read/write/is_present/total_sectors，IoMem/VirtQueue 均为 framework unsafe Send+Sync → 0 unsafe 可实现）；`services/driver/virtio/mod.rs` 新增 `blk_init()`（探测 virtio-mmio 区域，为块设备建 `VirtioBlkDriver`，finalize 后经 `proto_block::register_block_device` 注册）。
 - **framework 退位**：删除 `framework/driver/virtio/blk.rs`；`virtio/mod.rs` 移除 `pub mod blk`（保留 `VirtioMmioDevice` 传输机制 + `queue` DMA 环机制）；**aarch64 `storage_init` 变空操作**（原 virtio-blk 探测注册迁 services；x86_64 storage_init 走 PCI AHCI/NVMe 不受影响；klog imports + 旧 #[expect] 随之 cfg 门控/清理）。
-- **接线**：`lib.rs` init_all 后新增 `services::driver::virtio::blk_init()`（双架构；HvFS 块扫描之前，x86_64 无 virtio-mmio 即跳过）。
+- **接线**：`lib.rs` init_all 后新增 `services::driver::virtio::blk_init()`（双架构；NestFS 块扫描之前，x86_64 无 virtio-mmio 即跳过）。
 - **SIMPLIFIED（已登记）**：services blk 走 spin-loop 轮询（framework 版有 I-42 IRQ 事件驱动路径），功能等价、效率略低；IRQ 驱动为后续优化项。
 - **待登记**：services `transport::VirtioDevice` 与 framework `VirtioMmioDevice` 存在**传输层双份**（各自 IoMem 探测）——按服务对象准则 transport 属机制应保留 framework，services 版是否删除/改为薄代理留待 §7 反向依赖治理阶段裁决。
 
