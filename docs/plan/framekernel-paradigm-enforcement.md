@@ -383,7 +383,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **services 接线**：`VirtioNetDriver` impl `NetDeviceOps`（`try_receive` 显式全路径 `VirtioNetDriver::try_receive(self, buf)` 防同名递归，P1-1）+ `finalize`（vq0/vq1 MMIO 配置 + DRIVER_OK + RX 预填）+ `net_init` 填充探测回调（crate root 在 `qx_net_init` 前编排）。`virtio_net_registration` 扫描 virtio-mmio 发现 `VIRTIO_ID_NET` 即 `VirtioNetDriver::new` + `finalize` + `register_net_device`。
 - **验证**：双架构 `build all` 0w0e ✅ / clippy `--release -D warnings` 双架构 0 ✅ / clippy pedantic (lib x86_64) 0 ✅ / clippy kernel_test 维 0 ✅ / 核心审计 + 8 项补充全绿 ✅ / host-tests 755/0（99 套件，含新增 `net_device_ops_bridge_test` 3 测试）✅ / **QEMU aarch64 virt 挂网卡冒烟**：`virtio-net: probed successfully (services bridge)` + Network Subsystem Ready ✅（`qemu_boot_test.sh` aarch64 段已加 `-device virtio-net-device` + 桥探测断言，P2-5）/ x86_64 boot 回归 1/1（Ring 3）✅。
 - **遗留修复**（实施期发现，批次 Y `4994cbba` 引入）：AHCI `identify` clippy pedantic 违规（similar-names + manual-let-else）→ 按审核裁决修复（let-else 根治 manual-let-else + `#[expect(clippy::similar_names, reason=...)]` 兑底，与同文件 read/write_dma 双 expect 模式一致；read/write_dma 预存不动，§12.2）。
-- **预存登记**：`--features host-test --lib` clippy 报 E0152 duplicate lang item `owned_box`——main/Z③ 状态即存在，非本批引入；CI clippy-pedantic job 仅跑裸机 target 不受影响，host-tests 经 path 依赖引用亦不受影响；audit.sh 第 2b 步 host-test 维会失败，属 audit.sh 本地工具门禁与 feature 组合的既有缺陷，待单独立项。
+- **预存登记（实测修正）**：`--features host-test --lib` clippy 报 E0152 duplicate lang item `owned_box`——**环境条件触发**（cwd=src/rust 目录内时 rustup 加载 rust-toolchain.toml 的 rust-src 组件 → build-std 生效，与 host std 的 alloc 冲突；DECISION-021 同族工具链限制），与代码改动无关。**实测**：CI 等价命令（repo 根 + `--manifest-path`）与 audit.sh 2b 等价命令（repo 根 + `+nightly`）强制重编译均 0 error 通过；host-tests 从根构建不受影响——**验证链无碍，无代码/脚本缺陷**；根治走 §10「构建模式显式化工程」（可立即开工）。
 
 ## 9. 验证门槛
 
@@ -420,6 +420,16 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
     5. **audit_edition2024 / audit_feature_semantics**：数据待确认，归零或单列待定。
   - 状态：登记待处置；仅 implicit_deps 需批次 Z 开工前基线对齐（3 分钟），其余不阻塞。
   - 关联：157 → 分册 9 B09-05/B09-17；122 → 本工程 §7；2204 → 待用户裁决（A/B/C）。
+- **构建模式显式化工程（登记，2026-09-13）：E0152 整族根治（对齐 Asterinas osdk 命令层注入）**
+  - 背景：`src/rust/.cargo/config.toml [unstable] build-std` 全局生效，src/rust 目录内 host-target 构建触发 E0152（build-std 与 host std 双 alloc）；项目以"cwd 隐式约定"规避（裸机在 src/rust 内、host 从根），4+ 处登记（DECISION-021 同族）。
+  - 参照：Asterinas osdk 命令层注入（`-Zbuild-std=core,alloc,compiler_builtins` + 显式裸机 target，无全局 config）——成熟实践。per-target build-std 实测语法不存在（cargo 拒绝：`expected a table`）。
+  - 方案：config.toml 删全局 build-std；所有裸机构建入口显式注入 `--config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]'`（已实测可行，25s 裸机 release check 通过）。
+  - 前置① RA（已完成）：RA 默认 host target 检查，不依赖全局 build-std；现状（有 config）RA 无 E0152 异常 → 移除后不可能退化，无静默退化点。
+  - 前置② 入口盘点（已完成，~17 处直接 + 1 间接，全部 cwd=src/rust 依赖 config）：build.sh `build_arch` 1 处 + Makefile 7 处（L142/186/194/201/208/212/217）+ audit.sh 2 处（clippy L153/lockbud L220）+ ci-x86.yml 4 处（L41/91/176/193）+ ci-aarch64.yml 1 处（L41）+ ci-bench.yml 1 处（L106）+ ci-lint.yml 2 处（L243/248）+ qemu_boot_test.sh 间接。host 维入口（wd=repo 根，ci-x86 L207/226）不注入、不动。
+  - 实施步骤：① config.toml 删 `[unstable] build-std` ② build.sh / Makefile 顶部定义统一注入变量、CI yml 各裸机步内联同参（示例：`BUILD_STD_CFG="--config 'unstable.build-std=[\"core\",\"compiler_builtins\",\"alloc\"]' --config 'unstable.build-std-features=[\"compiler-builtins-mem\"]'"`，`cargo build $BUILD_STD_CFG --target ...`）③ 全量验证（§2.3 全门槛 + src/rust 内 host clippy 确认 E0152 消失 + repo 根裸机构建确认注入生效）。
+  - 风险：漏注入显式失败（fail-loud 非静默）；`--config` 双引号嵌套在 yml/Makefile 转义易错。
+  - 状态：**可立即开工**（2026-09-13 用户定级"立刻可做的工程"；前置①②已完成、注入实测可行、验证门槛明确；不阻塞 Z④，可并行推进）。
+  - 关联：DECISION-021/022、eliminate-parallel-implementations.md 工程计划 A/B、audit-fix-08 G-01、本工程 L386/L1072 登记。
 
 ## 11. 中途问题与决策记录
 

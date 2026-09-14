@@ -17,7 +17,7 @@
 > - host-tests 755/0（99 套件，含新增 `net_device_ops_bridge_test` 3 测试）。
 > - QEMU aarch64 virt 挂网卡冒烟 1/1（`virtio-net: probed successfully (services bridge)` + Network Subsystem Ready）；x86_64 boot 回归 1/1（Ring 3）。
 > - 实施期遗留修复：AHCI `identify`（批次 Y `4994cbba` 引入）clippy pedantic 违规（similar-names + manual-let-else）本轮按审核裁决修复（let-else + expect，带 reason）。
-> - 预存登记：`--features host-test --lib` clippy 报 E0152 duplicate lang item `owned_box`（main/Z③ 状态即存在，非本批引入，CI clippy-pedantic job 仅跑裸机 target 不受影响；host-tests 经 path 依赖引用不受影响）。
+> - 预存登记（实测修正）：`--features host-test --lib` clippy 报 E0152 `owned_box` 仅在 src/rust 目录内触发（rust-src + build-std 与 host std 冲突，DECISION-021 同族工具链限制）；CI 与 audit.sh 2b 从 repo 根跑均实测 0 error 通过，验证链无碍；根治走 framekernel-paradigm-enforcement.md §10「构建模式显式化工程」（可立即开工）。
 
 ## 1. 背景与目标
 
