@@ -104,7 +104,7 @@ T7 (预存登记)
 
 - [X] T3：半成品清除 + 用户态调用 audit（2026-09-15 完成，见下方 T3 实施记录）
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
-- [ ] T1：R2 未实装 SYS_* 实装（先重扫核实清单，与 T2 并行）
+- [ ] T1：R2 未实装 SYS_* 实装（G1 完成，见下方 T1 实施记录；G2-G7 待做）
 - [ ] T4-T7：登记排后（R3 pub mod / R1 445 项 / TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
@@ -213,6 +213,26 @@ T7 (预存登记)
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
 
 **T2 收官结论**：21 保留项全部迁移（批 1-5）；framework 回退层收敛为机制独有 + ENOSYS 哨兵，与分层契约一致（B2 契约允许面）。
+
+### T1 实施记录（G1 文件 I/O 核心）
+
+**重扫核实**（2026-09-15）：D-2 清单中 sendfile 已实装过时（T3 已核实）；除 inotify_init1 外，G1 全部 9 项在 services/framework dispatch 均无分支，确认未实装。
+
+**实装项**（9 项，services 0 unsafe）：
+
+| 项 | services 落点 | 机制/要点 |
+|---|---|---|
+| readv/writev | `services/fs/io.rs`（`readv_syscall`/`writev_syscall`） | 逐 iovec 段委托 `read_syscall`/`write_syscall`（复用 fd 路由 + 校验）；iovec 数组经 `api::read_struct_from_user` safe 逐条解析（IOV_MAX=1024） |
+| preadv/pwritev | 同上（`preadv_syscall`/`pwritev_syscall`） | **framework 新增 `vfs_pread`/`vfs_pwrite`**（显式 offset 读/写，不更新 fd 当前偏移，SIMPLIFIED 不走 pcache 快路径）；services 逐段委托 + pos<0 → EINVAL |
+| statx | `services/fs/stat.rs`（`statx_syscall` + `Statx` 结构） | 组装 Linux `struct statx`（256 字节）；SIMPLIFIED 仅填基础字段（mode/uid/gid/size/nlink/ino/时间戳），dev/btime 置 0 |
+| close_range | `services/fs/io.rs`（`close_range_syscall`） | 遍历 VFS 全局 fd 表 `[first,last]` 占用条目，逐个 `vfs_close`（先收集再关，避免表锁重入死锁）；SIMPLIFIED 仅 flags=0（UNSHARE/CLOEXEC → ENOSYS） |
+| fchownat | `services/fs/file_ops.rs`（`fchownat_syscall`） | SIMPLIFIED 仅 `dirfd==AT_FDCWD`（复用 `chown_syscall` UID/GID→PWM 查表 + `vfs_chown_ext`）；非 AT_FDCWD → ENOTSUP |
+| utimensat | `services/fs/stat.rs`（`utimensat_syscall`） | NULL times → 当前时间（tick/frequency 换算秒）；非 NULL 读用户 `timespec[2]`，sec==-1 表示不修改（u64::MAX）；委托 `vfs_utimensat_safe`（顶层 re-export 补 vfs_utimensat_safe） |
+| fallocate | `services/fs/file_ops.rs`（`fallocate_syscall`） | SIMPLIFIED 仅 mode=0（扩展文件大小到 offset+len，仅扩展不缩小）；基于 `vfs_fstat_safe` + `vfs_truncate_internal` 近似 |
+
+**framework 机制扩展**：`vfs_pread`/`vfs_pwrite`（handle.rs，显式 offset 不更新 fd 偏移）+ 顶层 re-export（vfs/mod.rs 补 vfs_pread/vfs_pwrite/vfs_utimensat_safe）。
+
+**验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
 
 ## 详情
 

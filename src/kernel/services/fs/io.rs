@@ -345,3 +345,221 @@ pub fn copy_file_range_syscall(
 
     Ok(total_copied)
 }
+
+// ============================================================================
+// readv / writev / close_range (T1 G1, syscall-followup 功能实装)
+// ============================================================================
+
+/// Linux `IOV_MAX` — 单次向量 I/O 的最大 iovec 数
+const IOV_MAX: u64 = 1024;
+
+/// 从用户空间读取 iovec 数组 (每项 `{iov_base: u64, iov_len: u64}` 共 16 字节)
+///
+/// 经 `framework::syscall::api::read_struct_from_user` (异常表兜底的 safe 读)
+/// 逐条读取, services 0 unsafe.
+///
+/// # Errors
+/// - `iovcnt` 超 `IOV_MAX` → `EINVAL` (Linux 语义)
+/// - `iov_ptr` 无效或读取失败 → `EFAULT`
+fn read_iovecs(iov_ptr: u64, iovcnt: u64) -> Result<alloc::vec::Vec<(u64, u64)>, Errno> {
+    if iovcnt > IOV_MAX {
+        return Err(Errno::EINVAL);
+    }
+    if iovcnt == 0 {
+        return Ok(alloc::vec::Vec::new());
+    }
+    if iov_ptr == 0 {
+        return Err(Errno::EFAULT);
+    }
+    let mut iovs = alloc::vec::Vec::with_capacity(iovcnt as usize);
+    for i in 0..iovcnt {
+        let mut entry = [0u64; 2];
+        if !crate::framework::syscall::api::read_struct_from_user(
+            iov_ptr + i * 16,
+            &mut entry,
+        ) {
+            return Err(Errno::EFAULT);
+        }
+        iovs.push((entry[0], entry[1]));
+    }
+    Ok(iovs)
+}
+
+/// readv(fd, iov, iovcnt) — 向量读 (T1 G1 实装)
+///
+/// 逐 iovec 段委托 `read_syscall` (复用 fd 路由: stdin/eventfd/signalfd/
+/// timerfd/inotify/VFS 与用户缓冲区校验). 段读得少于请求字节视为 EOF 提前返回.
+///
+/// # Errors
+/// - `iovcnt` 超 `IOV_MAX` → `EINVAL`
+/// - iovec 数组读取失败 → `EFAULT`
+/// - 单段错误由 `read_syscall` 以对应 `Errno` 传播 (fd 1/2 → `EBADF` 等).
+pub fn readv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno> {
+    let iovs = read_iovecs(iov_ptr, iovcnt)?;
+    let mut total = 0usize;
+    for (base, len) in iovs {
+        if len == 0 {
+            continue;
+        }
+        let n = read_syscall(fd, base, len)?;
+        total += n;
+        if n < len as usize {
+            break; // EOF 或部分读
+        }
+    }
+    Ok(total)
+}
+
+/// writev(fd, iov, iovcnt) — 向量写 (T1 G1 实装)
+///
+/// 逐 iovec 段委托 `write_syscall` (复用 fd 路由: 控制台/eventfd/VFS).
+/// 段写得少于请求字节视为部分写提前返回 (pipe/控制台语义).
+///
+/// # Errors
+/// - `iovcnt` 超 `IOV_MAX` → `EINVAL`
+/// - iovec 数组读取失败 → `EFAULT`
+/// - 单段错误由 `write_syscall` 以对应 `Errno` 传播.
+pub fn writev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64) -> Result<usize, Errno> {
+    let iovs = read_iovecs(iov_ptr, iovcnt)?;
+    let mut total = 0usize;
+    for (base, len) in iovs {
+        if len == 0 {
+            continue;
+        }
+        let n = write_syscall(fd, base, len)?;
+        total += n;
+        if n < len as usize {
+            break; // 部分写
+        }
+    }
+    Ok(total)
+}
+
+/// close_range(first, last, flags) — 批量关闭 fd (T1 G1 实装)
+///
+/// 遍历 VFS 全局 fd 表 `[first, last]` 中占用条目, 逐个 `vfs_close`
+/// (原子 claim-and-clear + inotify/epoll 通知, 机制在 framework).
+///
+/// # Errors
+/// - `first > last` → `EINVAL`
+/// - `flags` 含未知位 → `EINVAL`
+/// - `flags` 为 `CLOSE_RANGE_UNSHARE`/`CLOSE_RANGE_CLOEXEC` → `ENOSYS`
+///   (SIMPLIFIED: 仅支持直接关闭; UNSHARE (复制 fd 表后关) 与 CLOEXEC
+///   (置 close-on-exec) 需 per-process fd 表支持, 引入后扩展)
+pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, Errno> {
+    const CLOSE_RANGE_UNSHARE: u32 = 1 << 1;
+    const CLOSE_RANGE_CLOEXEC: u32 = 1 << 2;
+    const CLOSE_RANGE_ALLOWED: u32 = CLOSE_RANGE_UNSHARE | CLOSE_RANGE_CLOEXEC;
+
+    if first > last {
+        return Err(Errno::EINVAL);
+    }
+    if flags & !CLOSE_RANGE_ALLOWED != 0 {
+        return Err(Errno::EINVAL);
+    }
+    // SIMPLIFIED: UNSHARE/CLOEXEC 暂不实现 (见函数文档)
+    if flags != 0 {
+        return Err(Errno::ENOSYS);
+    }
+
+    let max_fd = crate::framework::fs::VFS_MAX_FDS as u32;
+    // 先收集占用 fd 列表 (释放表锁后再逐个关闭, vfs_close 内部自锁避免死锁)
+    let mut fds = alloc::vec::Vec::new();
+    {
+        let table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
+        for fd in first..=last {
+            if fd >= max_fd {
+                break;
+            }
+            if table[fd as usize].used {
+                fds.push(fd);
+            }
+        }
+    }
+    let mut closed = 0usize;
+    for fd in fds {
+        crate::framework::fs::api::vfs_close(fd);
+        closed += 1;
+    }
+    Ok(closed)
+}
+
+/// preadv(fd, iov, iovcnt, pos) — 显式偏移向量读 (T1 G1 实装)
+///
+/// 逐 iovec 段委托 framework 机制 `vfs_pread` (显式 offset 读, 不更新 fd
+/// 当前偏移). 段读得少于请求字节视为 EOF 提前返回.
+///
+/// # Errors
+/// - `pos` 为负 → `EINVAL`
+/// - iovec 段校验失败 → `EFAULT`; 其余错误由底层以对应 `Errno` 传播.
+pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<usize, Errno> {
+    let iovs = read_iovecs(iov_ptr, iovcnt)?;
+    if pos < 0 {
+        return Err(Errno::EINVAL);
+    }
+    let mut total = 0usize;
+    let mut offset = pos as u64;
+    for (base, len) in iovs {
+        if len == 0 {
+            continue;
+        }
+        if !raw::check_user_buf(base, len) {
+            return Err(Errno::EFAULT);
+        }
+        // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_read 一致)
+        let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
+        let n = crate::framework::fs::api::vfs_pread(fd as u32, base as *mut u8, count, offset);
+        if n < 0 {
+            if total > 0 {
+                break;
+            }
+            return Err(Errno::from_ret(i64::from(n)));
+        }
+        total += n as usize;
+        offset += n as u64;
+        if n == 0 || u64::from(n as u32) < len {
+            break; // EOF 或部分读
+        }
+    }
+    Ok(total)
+}
+
+/// pwritev(fd, iov, iovcnt, pos) — 显式偏移向量写 (T1 G1 实装)
+///
+/// 逐 iovec 段委托 framework 机制 `vfs_pwrite` (显式 offset 写, 不更新 fd
+/// 当前偏移, 不受 O_APPEND 影响). 段写得少于请求字节视为部分写提前返回.
+///
+/// # Errors
+/// - `pos` 为负 → `EINVAL`
+/// - iovec 段校验失败 → `EFAULT`; 其余错误由底层以对应 `Errno` 传播.
+pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<usize, Errno> {
+    let iovs = read_iovecs(iov_ptr, iovcnt)?;
+    if pos < 0 {
+        return Err(Errno::EINVAL);
+    }
+    let mut total = 0usize;
+    let mut offset = pos as u64;
+    for (base, len) in iovs {
+        if len == 0 {
+            continue;
+        }
+        if !raw::check_user_buf(base, len) {
+            return Err(Errno::EFAULT);
+        }
+        // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_write 一致)
+        let count = core::cmp::min(len, u64::from(u32::MAX)) as u32;
+        let n = crate::framework::fs::api::vfs_pwrite(fd as u32, base as *const u8, count, offset);
+        if n < 0 {
+            if total > 0 {
+                break;
+            }
+            return Err(Errno::from_ret(i64::from(n)));
+        }
+        total += n as usize;
+        offset += n as u64;
+        if u64::from(n as u32) < len {
+            break; // 部分写
+        }
+    }
+    Ok(total)
+}

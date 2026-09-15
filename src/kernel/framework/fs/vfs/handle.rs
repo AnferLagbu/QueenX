@@ -472,6 +472,67 @@ pub fn vfs_write_safe(fd: u32, buf: &[u8]) -> i32 {
     vfs_write(fd, buf.as_ptr(), buf.len() as u32)
 }
 
+// ============================================================================
+// pread / pwrite — 显式 offset I/O (T1 G1, preadv/pwritev 机制)
+// ============================================================================
+
+/// pread — 从显式 offset 读取, 不更新 fd 当前偏移 (POSIX pread 语义)
+///
+/// SIMPLIFIED: 不走 pcache 快路径 (直接 Inode trait 分发), 影响面: 4KB
+/// 对齐大读性能低于 vfs_read 快路径; 何时需扩展: 复用 vfs_read_internal 的
+/// 对齐检测 + pcache 快路径后.
+// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
+#[expect(clippy::cast_possible_truncation)]
+pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
+    if buf.is_null() || count == 0 {
+        return -1;
+    }
+    let Some(handle_id) = VFS_MANAGER.get_fd_handle(fd as usize) else {
+        return -1;
+    };
+    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    let mut user_buf = unsafe { UserWritePtr::new(buf, count as usize) };
+    OPEN_FILE_TABLE
+        .with_file(handle_id, |open_file| {
+            let pwm = open_file.pwm;
+            open_file
+                .inode()
+                .read(offset, user_buf.as_mut_slice(), pwm)
+                .map_or(-1, |n| n as i32)
+        })
+        .unwrap_or(-1)
+}
+
+/// pwrite — 从显式 offset 写入, 不更新 fd 当前偏移 (POSIX pwrite 语义)
+///
+/// 忽略 O_APPEND (pwrite 不受 append 模式影响, 写固定 offset).
+// 有意窄化: 资源类型转换, POSIX/Linux ABI 约定
+#[expect(clippy::cast_possible_truncation)]
+pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
+    if buf.is_null() || count == 0 {
+        return -1;
+    }
+    let Some(handle_id) = VFS_MANAGER.get_fd_handle(fd as usize) else {
+        return -1;
+    };
+    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    let user_buf = unsafe { UserReadPtr::new(buf, count as usize) };
+    OPEN_FILE_TABLE
+        .with_file(handle_id, |open_file| {
+            let pwm = open_file.pwm;
+            let node_id = open_file.inode_id();
+            open_file
+                .inode()
+                .write(offset, user_buf.as_slice(), pwm)
+                .map_or(-1, |n| {
+                    // inotify IN_MODIFY 通知 (与 vfs_write 一致)
+                    super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
+                    n as i32
+                })
+        })
+        .unwrap_or(-1)
+}
+
 /// Safe 包装: `vfs_close`
 pub fn vfs_close_safe(fd: u32) -> i32 {
     vfs_close(fd)

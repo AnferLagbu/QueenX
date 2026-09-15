@@ -177,6 +177,52 @@ pub fn ftruncate_syscall(fd: i32, length: i64) -> i64 {
     if result < 0 { Errno::EIO.as_ret() } else { 0 }
 }
 
+/// `AT_FDCWD` — 相对路径基于当前工作目录 (Linux ABI)
+const AT_FDCWD: i32 = -100;
+
+/// fchownat(dirfd, path, uid, gid, flags) 策略 (T1 G1 实装)
+///
+/// SIMPLIFIED: 仅支持 `dirfd == AT_FDCWD` (绝对路径语义, 复用 `chown_syscall`
+/// 的 UID/GID→PWM 查表 + `vfs_chown_ext`); 非 AT_FDCWD 的目录 fd 相对路径
+/// 需 VFS 目录 fd 解析机制, 暂不支持. `flags` (AT_SYMLINK_NOFOLLOW) 忽略
+/// (vfs_chown_ext 不跟随 symlink).
+pub fn fchownat_syscall(dirfd: i32, path_ptr: u64, uid: u32, gid: u32, _flags: i32) -> i64 {
+    if dirfd != AT_FDCWD {
+        return Errno::ENOTSUP.as_ret();
+    }
+    chown_syscall(path_ptr, uid, gid)
+}
+
+/// fallocate(fd, mode, offset, len) 策略 (T1 G1 实装)
+///
+/// SIMPLIFIED: 仅支持 `mode == 0` (分配并扩展文件大小到 `offset+len`,
+/// Linux fallocate 默认语义); 其他 mode 标志 (KEEP_SIZE 等) 暂不实现.
+/// 基于 `vfs_fstat_safe` + `vfs_truncate_internal` (仅扩展不缩小) 近似.
+pub fn fallocate_syscall(fd: i32, mode: i32, offset: u64, len: u64) -> i64 {
+    if mode != 0 {
+        return Errno::ENOSYS.as_ret();
+    }
+    if fd < 0 {
+        return Errno::EBADF.as_ret();
+    }
+    let Some(end) = offset.checked_add(len) else {
+        return Errno::EFBIG.as_ret();
+    };
+    // 仅扩展不缩小: 目标大小超过当前 size 时才截断扩展
+    let cur_size = crate::framework::fs::api::vfs_fstat_safe(
+        fd as u32,
+        crate::framework::credo::pwm_get_current(),
+    )
+    .map_or(0, |st| u64::from(st.size));
+    if end > cur_size {
+        let r = crate::framework::fs::vfs_truncate_internal(fd as u32, end);
+        if r < 0 {
+            return Errno::EIO.as_ret();
+        }
+    }
+    0
+}
+
 #[expect(
     clippy::match_same_arms,
     reason = "match_same_arms: match arm 重复是为可读性/调试断点; 当前优先 expect"

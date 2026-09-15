@@ -99,17 +99,19 @@ impl SyscallDispatch for ServicesSyscallDispatch {
 fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
         QX_SNAPSHOT_CLONE, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK,
-        SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_clock_gettime, SYS_close,
-        SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3, SYS_faccessat, SYS_fchmod,
-        SYS_fchmodat, SYS_fchown, SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate,
-        SYS_getcwd, SYS_getdents, SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch,
-        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
-        SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
-        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_read, SYS_readlink,
-        SYS_readlinkat, SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select,
-        SYS_sendfile, SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat, SYS_symlink,
-        SYS_symlinkat, SYS_sync, SYS_time, SYS_times, SYS_truncate, SYS_umask, SYS_umount2,
-        SYS_unlink, SYS_unlinkat, SYS_write,
+        SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_clock_gettime,
+        SYS_close_range, SYS_close, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
+        SYS_faccessat, SYS_fallocate, SYS_fchmod, SYS_fchmodat, SYS_fchown, SYS_fchownat,
+        SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd, SYS_getdents,
+        SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init1,
+        SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr, SYS_lseek,
+        SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
+        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_preadv, SYS_read,
+        SYS_readlink, SYS_readlinkat, SYS_readv, SYS_removexattr, SYS_rename, SYS_renameat,
+        SYS_rmdir, SYS_select, SYS_sendfile, SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat,
+        SYS_statx, SYS_symlink, SYS_symlinkat, SYS_sync, SYS_time, SYS_times, SYS_truncate,
+        SYS_umask, SYS_umount2, SYS_unlink, SYS_unlinkat, SYS_utimensat, SYS_write, SYS_writev,
+        SYS_pwritev,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -124,6 +126,30 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             Ok(fd) => as_ret(crate::services::fs::io::write_syscall(fd, a1, a2)),
             Err(_) => Errno::EINVAL.as_ret(),
         },
+        // readv/writev (T1 G1 实装): 向量 I/O, 逐 iovec 段委托 read/write
+        SYS_readv => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::services::fs::io::readv_syscall(fd, a1, a2)),
+            Err(_) => Errno::EINVAL.as_ret(),
+        },
+        SYS_writev => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::services::fs::io::writev_syscall(fd, a1, a2)),
+            Err(_) => Errno::EINVAL.as_ret(),
+        },
+        // close_range (T1 G1 实装): 批量关闭 fd
+        SYS_close_range => as_ret(crate::services::fs::io::close_range_syscall(
+            a0 as u32,
+            a1 as u32,
+            a2 as u32,
+        )),
+        // preadv/pwritev (T1 G1 实装): 显式偏移向量 I/O (pos 为负时 -EINVAL)
+        SYS_preadv => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::services::fs::io::preadv_syscall(fd, a1, a2, a3 as i64)),
+            Err(_) => Errno::EINVAL.as_ret(),
+        },
+        SYS_pwritev => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::services::fs::io::pwritev_syscall(fd, a1, a2, a3 as i64)),
+            Err(_) => Errno::EINVAL.as_ret(),
+        },
         SYS_open => as_ret(crate::services::fs::open::open_syscall(
             a0, a1 as i32, a2 as i32,
         )),
@@ -133,6 +159,14 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a0 as i32, a1,
         )),
         SYS_lstat => as_ret(crate::services::fs::stat::lstat_syscall(a0, a1)),
+        // statx (T1 G1 实装): 扩展文件状态 (Linux struct statx)
+        SYS_statx => as_ret(crate::services::fs::stat::statx_syscall(
+            a0 as i32, a1, a2 as u32, a3 as u32, a4,
+        )),
+        // utimensat (T1 G1 实装): 设置文件时间戳 (仅 AT_FDCWD)
+        SYS_utimensat => crate::services::fs::stat::utimensat_syscall(
+            a0 as i32, a1, a2, a3 as i32,
+        ),
         SYS_creat => as_ret(crate::services::fs::open::creat_syscall(
             a0, a2 as i32,
         )),
@@ -183,6 +217,10 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_fchown => as_ret(crate::services::fs::misc::fchown_syscall(
             a0 as i32, a1, a2,
         )),
+        // fchownat (T1 G1 实装): dirfd 相对路径 (当前仅 AT_FDCWD)
+        SYS_fchownat => crate::services::fs::file_ops::fchownat_syscall(
+            a0 as i32, a1, a2 as u32, a3 as u32, a4 as i32,
+        ),
 
         // 同步与挂载
         SYS_sync => as_ret(crate::services::fs::misc::sync_syscall()),
@@ -223,6 +261,10 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_ftruncate => {
             crate::services::fs::file_ops::ftruncate_syscall(a0 as i32, a1 as i64)
         }
+        // fallocate (T1 G1 实装): 预分配 (仅 mode=0, 扩展文件大小)
+        SYS_fallocate => crate::services::fs::file_ops::fallocate_syscall(
+            a0 as i32, a1 as i32, a2, a3,
+        ),
         SYS_flock => crate::services::fs::file_ops::flock_syscall(a0 as i32, a1 as i32),
         SYS_lseek => {
             crate::services::fs::dir_ops::lseek_syscall(a0 as i32, a1 as i64, a2 as i32)
