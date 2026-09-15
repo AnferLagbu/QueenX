@@ -414,171 +414,45 @@ pub const SYS_FB_RELEASE: u64 = 722;
 // ============================================================================
 
 // ---------- 500-509: Core I/O ----------
-pub const QX_EXIT: u64 = 501;
-pub const QX_WRITE: u64 = 502;
-pub const QX_READ: u64 = 503;
-pub const QX_OPEN: u64 = 504;
-pub const QX_CLOSE: u64 = 505;
-pub const QX_STAT: u64 = 506;
-pub const QX_FSTAT: u64 = 507;
-pub const QX_LSTAT: u64 = 508;
-pub const QX_LSEEK: u64 = 509;
 
 // ---------- 510-519: 内存管理 ----------
-pub const QX_MMAP: u64 = 510;
-pub const QX_BRK: u64 = 511;
-pub const QX_MPROTECT: u64 = 512;
-pub const QX_MUNMAP: u64 = 513;
-pub const QX_MREMAP: u64 = 514;
 // 515-519: reserved (madvise, mlock, munlock, mlockall, munlockall)
 
 // ---------- 520-539: 进程管理 ----------
-pub const QX_GETPID: u64 = 520;
-pub const QX_FORK: u64 = 521;
-pub const QX_EXECVE: u64 = 522;
-pub const QX_CLONE: u64 = 523;
-pub const QX_WAIT4: u64 = 524;
-pub const QX_EXIT_GROUP: u64 = 525;
-pub const QX_GETPPID: u64 = 526;
-pub const QX_GETTID: u64 = 527;
-pub const QX_GETPGID: u64 = 528;
-pub const QX_SETPGID: u64 = 529;
-pub const QX_GETSID: u64 = 530;
-pub const QX_SETSID: u64 = 531;
-pub const QX_NICE: u64 = 532;
-pub const QX_SCHED_YIELD: u64 = 533;
-pub const QX_SCHED_SETAFFINITY: u64 = 534;
-pub const QX_SCHED_GETAFFINITY: u64 = 535;
-pub const QX_GETPRIORITY: u64 = 536;
-pub const QX_SETPRIORITY: u64 = 537;
-pub const QX_TCGETPGRP: u64 = 538;
-pub const QX_TCSETPGRP: u64 = 539;
 
 // ---------- 540-559: 信号 ----------
-pub const QX_RT_SIGACTION: u64 = 540;
-pub const QX_RT_SIGPROCMASK: u64 = 541;
-pub const QX_RT_SIGRETURN: u64 = 542;
-pub const QX_KILL: u64 = 543;
-pub const QX_TGKILL: u64 = 544;
 // 545-559: 保留 (tkill, sigaltstack, rt_sigsuspend, ...)  // syscall 编号预留
-pub const QX_TKILL: u64 = 545;
 // P1-I-45: 接线 sigaltstack 替代栈系统调用
-pub const QX_SIGALTSTACK: u64 = 546;
 
 // ---------- 560-579: 文件系统操作 ----------
-pub const QX_MKDIR: u64 = 560;
-pub const QX_RMDIR: u64 = 561;
-pub const QX_RENAME: u64 = 562;
-pub const QX_LINK: u64 = 563;
-pub const QX_UNLINK: u64 = 564;
-pub const QX_SYMLINK: u64 = 565;
-pub const QX_READLINK: u64 = 566;
-pub const QX_CHMOD: u64 = 567;
-pub const QX_FCHMOD: u64 = 568;
-pub const QX_CHOWN: u64 = 569;
-pub const QX_FCHOWN: u64 = 570;
-pub const QX_FCHMODAT: u64 = 570; // fchmodat 映射到 FCHOWN 空间, 实际由 dispatch 区分
-pub const QX_UMASK: u64 = 571;
-pub const QX_ACCESS: u64 = 572;
-pub const QX_TRUNCATE: u64 = 573;
-pub const QX_FTRUNCATE: u64 = 574;
-pub const QX_GETDENTS: u64 = 575;
-pub const QX_GETCWD: u64 = 576;
-pub const QX_CHDIR: u64 = 577;
-pub const QX_CREAT: u64 = 578;
-pub const QX_PIPE: u64 = 579;
-pub const QX_PIPE2: u64 = 579; // pipe2 映射到 PIPE, flags 差异由 libc 处理
 
 // ---------- 580-589: FD / 同步 / 挂载 ----------
-pub const QX_DUP: u64 = 580;
-pub const QX_DUP2: u64 = 581;
-pub const QX_DUP3: u64 = 581; // dup3 映射到 DUP2, flags 差异由 libc 处理
-pub const QX_FCNTL: u64 = 582;
-pub const QX_IOCTL: u64 = 583;
-pub const QX_SYNC: u64 = 584;
-pub const QX_FSYNC: u64 = 585;
-pub const QX_MOUNT: u64 = 586;
-pub const QX_UMOUNT2: u64 = 587;
-pub const QX_POLL: u64 = 588;
-pub const QX_SELECT: u64 = 589;
 
 // ---------- 590-599: 身份 + 文件锁 ----------
-pub const QX_FLOCK: u64 = 590;
-pub const QX_GETUID: u64 = 591;
-pub const QX_GETGID: u64 = 592;
-pub const QX_SETUID: u64 = 593;
-pub const QX_SETGID: u64 = 594;
-pub const QX_GETEUID: u64 = 595;
-pub const QX_GETEGID: u64 = 596;
-pub const QX_SETEUID: u64 = 597;
-pub const QX_SETEGID: u64 = 598;
-pub const QX_SETREUID: u64 = 599;
 // QX_SETREGID 映射到 QX_SETREUID, 由 dispatch 区分
 
 // ---------- 600-619: 网络 ----------
-pub const QX_SOCKET: u64 = 600;
-pub const QX_SOCKETPAIR: u64 = 600; // socketpair 映射到 SOCKET, 由 dispatch 区分
-pub const QX_BIND: u64 = 601;
-pub const QX_LISTEN: u64 = 602;
-pub const QX_ACCEPT: u64 = 603;
-pub const QX_CONNECT: u64 = 604;
-pub const QX_SENDTO: u64 = 605;
-pub const QX_RECVFROM: u64 = 606;
-pub const QX_SENDMSG: u64 = 607;
-pub const QX_RECVMSG: u64 = 608;
-pub const QX_SHUTDOWN: u64 = 609;
-pub const QX_SETSOCKOPT: u64 = 610;
-pub const QX_GETSOCKOPT: u64 = 611;
-pub const QX_GETSOCKNAME: u64 = 612;
-pub const QX_GETPEERNAME: u64 = 613;
 // 614-619: 保留 (socketpair, ...)  // syscall 编号预留
 
 // ---------- 620-639: 同步 / IPC ----------
-pub const QX_FUTEX: u64 = 620;
-pub const QX_EPOLL_CREATE: u64 = 621;
-pub const QX_EPOLL_CTL: u64 = 622;
-pub const QX_EPOLL_WAIT: u64 = 623;
-pub const QX_EVENTFD: u64 = 624;
-pub const QX_EVENTFD2: u64 = 625;
-pub const QX_SIGNALFD: u64 = 626;
-pub const QX_SIGNALFD4: u64 = 627;
-pub const QX_TIMERFD_CREATE: u64 = 628;
-pub const QX_TIMERFD_SETTIME: u64 = 629;
-pub const QX_TIMERFD_GETTIME: u64 = 630;
 // 631-639: 保留 (msgqueue, shm, sem)  // syscall 编号预留
 
 // ---------- 640-649: inotify ----------
-pub const QX_INOTIFY_INIT1: u64 = 640;
-pub const QX_INOTIFY_ADD_WATCH: u64 = 641;
-pub const QX_INOTIFY_RM_WATCH: u64 = 642;
 
 // ---------- 650-659: sendfile / splice ----------  // 高效拷贝/拼接 syscall
-pub const QX_SENDFILE: u64 = 650;
-pub const QX_SPLICE: u64 = 651;
 
 // ---------- 700-709: 系统信息 ----------
-pub const QX_UNAME: u64 = 700;
-pub const QX_SYSINFO: u64 = 701;
-pub const QX_GETRLIMIT: u64 = 702;
-pub const QX_SETRLIMIT: u64 = 703;
-pub const QX_GETRUSAGE: u64 = 704;
 
 // ---------- 710-719: 时间 ----------
-pub const QX_CLOCK_GETTIME: u64 = 710;
-pub const QX_GETTIMEOFDAY: u64 = 711;
 // 712: 保留 (settimeofday)  // syscall 编号预留
-pub const QX_CLOCK_SETTIME: u64 = 712; // reserved
-pub const QX_NANOSLEEP: u64 = 713;
-pub const QX_ALARM: u64 = 714;
-pub const QX_GETITIMER: u64 = 715;
-pub const QX_SETITIMER: u64 = 716;
-pub const QX_TIME: u64 = 717;
-pub const QX_TIMES: u64 = 718;
 
 // ---------- 720-729: 设备 ----------
-pub const QX_FB_OPEN: u64 = 720;
-pub const QX_FB_MMAP: u64 = 721;
-pub const QX_FB_RELEASE: u64 = 722;
+// B09-17 (2026-09-14): 编号空间归位补齐 (dispatch/测试实际引用的 Linux 编号)
+pub const SYS_sigaltstack: u64 = 131;
+pub const SYS_setxattr: u64 = 188;
+pub const SYS_getxattr: u64 = 191;
+pub const SYS_listxattr: u64 = 194;
+pub const SYS_removexattr: u64 = 197;
 
 // ---------- 730-739: 设备固件加载 ----------
 pub const QX_FW_LOAD: u64 = 730;
@@ -588,37 +462,24 @@ pub const QX_FW_DETACH: u64 = 733;
 
 // ---------- 740-745: POSIX Timer ----------
 /// 创建 per-process 定时器 (`timer_create`)
-pub const QX_TIMER_CREATE: u64 = 740;
 /// 启动 / 调整 / 停止定时器 (`timer_settime`)
-pub const QX_TIMER_SETTIME: u64 = 741;
 /// 查询定时器剩余时间 (`timer_gettime`)
-pub const QX_TIMER_GETTIME: u64 = 742;
 /// 释放定时器 (`timer_delete`)
-pub const QX_TIMER_DELETE: u64 = 743;
 /// 返回补打次数 (`timer_getoverrun`)
-pub const QX_TIMER_GETOVERRUN: u64 = 744;
 /// 时钟分辨率 (`clock_getres`)
-pub const QX_CLOCK_GETRES: u64 = 745;
 
 // ---------- 746-747: 熵源 / Stack Canary (P1 #14) ----------
 /// 从内核熵源填充用户 buffer (Linux getrandom 兼容)
-pub const QX_GETRANDOM: u64 = 746;
 /// 读取当前进程 8 字节 stack canary (低字节恒为 0)
 pub const QX_GET_CANARY: u64 = 747;
 
 // ---------- 760-765: 内存建议与锁定 (madvise / mlock, P1 #15) ----------
 /// 设置内存区域访问模式建议 (madvise)
-pub const QX_MADVISE: u64 = 760;
 /// 锁定 [addr, addr+len) 物理页禁止换出 (mlock)
-pub const QX_MLOCK: u64 = 761;
 /// 解除锁定 (munlock)
-pub const QX_MUNLOCK: u64 = 762;
 /// 进程级锁定所有/未来映射 (mlockall)
-pub const QX_MLOCKALL: u64 = 763;
 /// 解除进程级所有锁定 (munlockall)
-pub const QX_MUNLOCKALL: u64 = 764;
 /// 查询每页驻留性 (mincore)
-pub const QX_MINCORE: u64 = 765;
 
 // ---------- 800-809: 内核调试 / 跟踪 (ftrace / KGDB) ----------
 /// 启用 ftrace 全局开关
@@ -635,9 +496,7 @@ pub const QX_KGDB_ENTER: u64 = 804;
 // ==================== C7: Seccomp / prctl ====================
 
 /// seccomp — 安装 Seccomp 过滤器
-pub const QX_SECCOMP: u64 = 805;
 /// prctl — 进程控制 (`Seccomp/no_new_privs` 子集)
-pub const QX_PRCTL: u64 = 806;
 
 // ==================== C5: 路由表 ====================
 
@@ -658,20 +517,14 @@ pub const QX_NF_DEL_RULE: u64 = 811;
 // ==================== C4: io_uring ====================
 
 /// `io_uring_setup` — 创建 `io_uring` 实例
-pub const QX_IO_URING_SETUP: u64 = 812;
 /// `io_uring_enter` — 提交/等待完成
-pub const QX_IO_URING_ENTER: u64 = 813;
 /// `io_uring_register` — 注册缓冲区/文件
-pub const QX_IO_URING_REGISTER: u64 = 814;
 /// `io_uring_submit_sqe` — 提交单个 SQE (简化版)
-pub const QX_IO_URING_SUBMIT: u64 = 815;
 
 // ==================== D1: Namespace ====================
 
 /// unshare — 取消共享指定 namespace
-pub const QX_UNSHARE: u64 = 820;
 /// setns — 切换到指定 namespace
-pub const QX_SETNS: u64 = 821;
 
 // ==================== D2: cgroup ====================
 
@@ -689,18 +542,13 @@ pub const QX_CGROUP_GET_STAT: u64 = 834;
 // ==================== D3: NUMA ====================
 
 /// `get_mempolicy` — 获取 NUMA 内存策略
-pub const QX_GET_MEMPOLICY: u64 = 840;
 /// `set_mempolicy` — 设置 NUMA 内存策略
-pub const QX_SET_MEMPOLICY: u64 = 841;
 /// `migrate_pages` — 迁移进程页面到目标节点
-pub const QX_MIGRATE_PAGES: u64 = 842;
 /// getcpu — 获取当前 CPU 和 NUMA 节点
-pub const QX_GETCPU: u64 = 843;
 
 // ==================== D4: eBPF ====================
 
 /// bpf — BPF 系统调用多路复用
-pub const QX_BPF: u64 = 850;
 
 // ==================== D5: 电源管理 ====================
 
@@ -733,7 +581,6 @@ pub const QX_TIMESYNC: u64 = 882;
 // ==================== D10: kexec ====================
 
 /// kexec — 直接内核引导系统调用
-pub const QX_KEXEC: u64 = 883;
 
 // ==================== D11: UEFI ====================
 
@@ -743,17 +590,15 @@ pub const QX_UEFI: u64 = 884;
 // ==================== D12: 扩展属性 (xattr) ====================
 
 /// setxattr — 设置扩展属性
-pub const QX_SETXATTR: u64 = 890;
 /// getxattr — 获取扩展属性
-pub const QX_GETXATTR: u64 = 891;
 /// listxattr — 列出扩展属性
-pub const QX_LISTXATTR: u64 = 892;
 /// removexattr — 删除扩展属性
-pub const QX_REMOVEXATTR: u64 = 893;
 
 // ==================== D13: 快照 (snapshot) ====================
 
 /// `snapshot_create` — 创建快照
+pub const QX_IO_URING_SUBMIT: u64 = 815;
+
 pub const QX_SNAPSHOT_CREATE: u64 = 895;
 /// `snapshot_destroy` — 销毁快照
 pub const QX_SNAPSHOT_DESTROY: u64 = 896;
@@ -834,8 +679,7 @@ const _: () = {
 ///
 /// 每个逻辑 syscall 只列一个代表值; 下列设计别名 (同编号, 由 dispatch 区分语义)
 /// 已从断言中剔除, 避免误判:
-///   - `SYS_FB_*` == `QX_FB_*` (720-722, 帧缓冲别名)
-///   - `SYS_seteuid`/`SYS_setegid` == `QX_SETEUID`/`QX_SETEGID` (597/598)
+///   - `SYS_FB_*` (720-722, 帧缓冲, QX_FB_* 别名已删 B09-17)
 ///   - `QX_FCHMODAT` == `QX_FCHOWN` (570) / `QX_PIPE2` == `QX_PIPE` (579)
 ///   - `QX_DUP3` == `QX_DUP2` (581) / `QX_SOCKETPAIR` == `QX_SOCKET` (600)
 const _: () = {
@@ -848,21 +692,14 @@ const _: () = {
         SYS_CREDO_DISK_INSTALL, SYS_CREDO_FAT_FORMAT, SYS_CREDO_PROC_LIST, SYS_CREDO_PROC_SETPRI,
         SYS_CREDO_PROC_SLEEP, SYS_CREDO_PROC_CPUTIME, SYS_CREDO_GETHOSTNAME,
         SYS_CREDO_SETHOSTNAME, SYS_CREDO_BOOT_CHECK, SYS_CREDO_REBOOT, SYS_CREDO_HOTPLUG_STATUS,
-        QX_FB_OPEN, QX_FB_MMAP, QX_FB_RELEASE, QX_SETEUID, QX_SETEGID, QX_UNAME, QX_SYSINFO,
-        QX_GETRLIMIT, QX_SETRLIMIT, QX_GETRUSAGE, QX_CLOCK_GETTIME, QX_GETTIMEOFDAY,
-        QX_NANOSLEEP, QX_ALARM, QX_GETITIMER, QX_SETITIMER, QX_TIME, QX_TIMES, QX_FW_LOAD,
-        QX_FW_GET, QX_FW_GET_INFO, QX_FW_DETACH, QX_TIMER_CREATE, QX_TIMER_SETTIME,
-        QX_TIMER_GETTIME, QX_TIMER_DELETE, QX_TIMER_GETOVERRUN, QX_CLOCK_GETRES, QX_GETRANDOM,
-        QX_GET_CANARY, QX_MADVISE, QX_MLOCK, QX_MUNLOCK, QX_MLOCKALL, QX_MUNLOCKALL, QX_MINCORE,
+        QX_FW_LOAD, QX_FW_GET, QX_FW_GET_INFO, QX_FW_DETACH,
+        QX_GET_CANARY,
         QX_FTRACE_ENABLE, QX_FTRACE_DISABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_KGDB_ENTER,
-        QX_SECCOMP, QX_PRCTL, QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_NF_ADD_RULE,
-        QX_NF_DEL_RULE, QX_IO_URING_SETUP, QX_IO_URING_ENTER, QX_IO_URING_REGISTER,
-        QX_IO_URING_SUBMIT, QX_UNSHARE, QX_SETNS, QX_CGROUP_CREATE, QX_CGROUP_DESTROY,
-        QX_CGROUP_ATTACH, QX_CGROUP_SET_LIMIT, QX_CGROUP_GET_STAT, QX_GET_MEMPOLICY,
-        QX_SET_MEMPOLICY, QX_MIGRATE_PAGES, QX_GETCPU, QX_BPF, QX_PM, QX_SECURE_BOOT, QX_TPM,
-        QX_CET, QX_TICKLESS, QX_TIMESYNC, QX_KEXEC, QX_UEFI, QX_SETXATTR, QX_GETXATTR, QX_LISTXATTR,
-        QX_REMOVEXATTR, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK,
-        QX_SNAPSHOT_CLONE,
+        QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_NF_ADD_RULE, QX_NF_DEL_RULE,
+        QX_IO_URING_SUBMIT,
+        QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_ATTACH, QX_CGROUP_SET_LIMIT,
+        QX_CGROUP_GET_STAT, QX_PM, QX_SECURE_BOOT, QX_TPM, QX_CET, QX_TICKLESS, QX_TIMESYNC,
+        QX_UEFI, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK, QX_SNAPSHOT_CLONE,
     ];
     let mut i = 0;
     while i < PRIVATE_NUMS.len() {
@@ -874,3 +711,16 @@ const _: () = {
         i += 1;
     }
 };
+
+// B09-17 (2026-09-14): framework dispatch 回退层引用的 Linux 编号
+pub const SYS_tcgetpgrp: u64 = 130;
+pub const SYS_tcsetpgrp: u64 = 133;
+pub const SYS_setrlimit: u64 = 160;
+pub const SYS_kexec_load: u64 = 246;
+pub const SYS_splice: u64 = 275;
+pub const SYS_unshare: u64 = 272;
+pub const SYS_setns: u64 = 308;
+pub const SYS_bpf: u64 = 321;
+pub const SYS_io_uring_setup: u64 = 425;
+pub const SYS_io_uring_enter: u64 = 426;
+pub const SYS_io_uring_register: u64 = 427;

@@ -37,84 +37,11 @@ pub use super::types::Errno;
 // QueenX 原生 syscall 编号 (QX_*)
 // ============================================================================
 
-pub use super::types::{
-    QX_ACCEPT, QX_ACCESS, QX_ALARM, QX_BIND, QX_BPF, QX_BRK, QX_CET, QX_CGROUP_ATTACH,
-    QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, QX_CHDIR,
-    QX_CHMOD, QX_CHOWN, QX_CLOCK_GETRES, QX_CLOCK_GETTIME, QX_CLONE, QX_CLOSE, QX_CONNECT,
-    QX_CREAT, QX_DUP, QX_DUP2, QX_EPOLL_CREATE, QX_EPOLL_CTL, QX_EPOLL_WAIT, QX_EVENTFD,
-    QX_EVENTFD2, QX_EXECVE, QX_EXIT, QX_EXIT_GROUP, QX_FB_MMAP, QX_FB_OPEN, QX_FB_RELEASE,
-    QX_FCHMOD, QX_FCHOWN, QX_FCNTL, QX_FLOCK, QX_FORK, QX_FSTAT, QX_FSYNC, QX_FTRACE_DISABLE,
-    QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FTRUNCATE, QX_FUTEX, QX_FW_DETACH,
-    QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_GET_CANARY, QX_GET_MEMPOLICY, QX_GETCPU, QX_GETCWD,
-    QX_GETDENTS, QX_GETEGID, QX_GETEUID, QX_GETGID, QX_GETITIMER, QX_GETPEERNAME, QX_GETPGID,
-    QX_GETPID, QX_GETPPID, QX_GETPRIORITY, QX_GETRANDOM, QX_GETRLIMIT, QX_GETRUSAGE, QX_GETSID,
-    QX_GETSOCKNAME, QX_GETSOCKOPT, QX_GETTID, QX_GETTIMEOFDAY, QX_GETUID, QX_INOTIFY_ADD_WATCH,
-    QX_INOTIFY_INIT1, QX_INOTIFY_RM_WATCH, QX_IO_URING_ENTER, QX_IO_URING_REGISTER,
-    QX_IO_URING_SETUP, QX_IO_URING_SUBMIT, QX_IOCTL, QX_KEXEC, QX_KGDB_ENTER, QX_KILL, QX_LINK,
-    QX_LISTEN, QX_LSEEK, QX_LSTAT, QX_MIGRATE_PAGES, QX_MKDIR, QX_MMAP, QX_MOUNT, QX_MPROTECT,
-    QX_MREMAP, QX_MUNMAP, QX_NANOSLEEP, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_NICE, QX_OPEN, QX_PIPE,
-    QX_PM, QX_POLL, QX_PRCTL, QX_READ, QX_READLINK, QX_RECVFROM, QX_RECVMSG, QX_RENAME, QX_RMDIR,
-    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_RT_SIGACTION, QX_RT_SIGPROCMASK,
-    QX_RT_SIGRETURN, QX_SCHED_GETAFFINITY, QX_SCHED_SETAFFINITY, QX_SCHED_YIELD, QX_SECCOMP,
-    QX_SECURE_BOOT, QX_SELECT, QX_SENDMSG, QX_SENDTO, QX_SET_MEMPOLICY, QX_SETEGID, QX_SETEUID,
-    QX_SETGID, QX_SETITIMER, QX_SETNS, QX_SETPGID, QX_SETPRIORITY, QX_SETREUID, QX_SETSID,
-    QX_SETSOCKOPT, QX_SETUID, QX_SHUTDOWN, QX_SIGNALFD, QX_SIGNALFD4, QX_SOCKET, QX_STAT,
-    QX_SYMLINK, QX_SYNC, QX_SYSINFO, QX_TGKILL, QX_TICKLESS, QX_TIME, QX_TIMER_CREATE,
-    QX_TIMER_DELETE, QX_TIMER_GETOVERRUN, QX_TIMER_GETTIME, QX_TIMER_SETTIME, QX_TIMERFD_CREATE,
-    QX_TIMERFD_GETTIME, QX_TIMERFD_SETTIME, QX_TIMES, QX_TIMESYNC, QX_TPM, QX_TRUNCATE, QX_UEFI,
-    QX_UMASK, QX_UMOUNT2, QX_UNAME, QX_UNLINK, QX_UNSHARE, QX_WAIT4, QX_WRITE,
-};
+pub use super::types::{ QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_GET_CANARY, QX_KGDB_ENTER, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI };
 
 // ============================================================================
-// Linux 兼容编号 (SYS_*) — 直接使用 Linux 标准编号
+// SYS_* 编号常量唯一定义于 `types.rs` (B09-17 归位); Credo 基准 400 见 types.rs.
 // ============================================================================
-
-pub const SYS_read: u64 = 0;
-pub const SYS_write: u64 = 1;
-pub const SYS_open: u64 = 2;
-pub const SYS_close: u64 = 3;
-pub const SYS_stat: u64 = 4;
-pub const SYS_fstat: u64 = 5;
-pub const SYS_lseek: u64 = 8;
-pub const SYS_mmap: u64 = 9;
-pub const SYS_munmap: u64 = 11;
-pub const SYS_brk: u64 = 12;
-pub const SYS_rt_sigaction: u64 = 13;
-pub const SYS_rt_sigprocmask: u64 = 14;
-pub const SYS_ioctl: u64 = 16;
-pub const SYS_pipe: u64 = 22;
-pub const SYS_dup: u64 = 32;
-pub const SYS_dup2: u64 = 33;
-pub const SYS_nanosleep: u64 = 35;
-pub const SYS_getpid: u64 = 39;
-pub const SYS_fork: u64 = 57;
-pub const SYS_execve: u64 = 59;
-pub const SYS_exit: u64 = 60;
-pub const SYS_wait4: u64 = 61;
-pub const SYS_kill: u64 = 62;
-pub const SYS_getdents: u64 = 78;
-pub const SYS_getcwd: u64 = 79;
-pub const SYS_chdir: u64 = 80;
-pub const SYS_rename: u64 = 82;
-pub const SYS_mkdir: u64 = 83;
-pub const SYS_rmdir: u64 = 84;
-pub const SYS_unlink: u64 = 87;
-pub const SYS_readlink: u64 = 89;
-pub const SYS_chmod: u64 = 90;
-pub const SYS_gettimeofday: u64 = 96;
-pub const SYS_getuid: u64 = 102;
-pub const SYS_getgid: u64 = 104;
-pub const SYS_sync: u64 = 162;
-pub const SYS_mount: u64 = 165;
-pub const SYS_umount2: u64 = 166;
-pub const SYS_sched_yield: u64 = 24;
-pub const SYS_exit_group: u64 = 231;
-pub const SYS_futex: u64 = 202;
-pub const SYS_clock_gettime: u64 = 228;
-pub const SYS_CREDO_BASE: u64 = 400;
-
-/// syscall 编号空间上界 (与 `services::syscall::types::MAX_SYSCALLS` 语义一致).
-pub const MAX_SYSCALLS: u64 = 900;
 
 /// 验证用户态指针是否在合法范围内
 pub fn validate_user_ptr(ptr: u64) -> bool {

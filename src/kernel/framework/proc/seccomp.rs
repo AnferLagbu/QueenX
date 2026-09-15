@@ -23,6 +23,9 @@ use crate::framework::proc::Pid;
 use crate::framework::proc::do_signal_send;
 use crate::framework::proc::process_get_current_pid;
 use crate::framework::syscall::Errno;
+use crate::framework::syscall::types::{
+    SYS_exit, SYS_exit_group, SYS_read, SYS_rt_sigreturn, SYS_write,
+};
 
 // ============================================================================
 // 常量
@@ -30,12 +33,14 @@ use crate::framework::syscall::Errno;
 
 const MAX_FILTERS: usize = 4;
 
+// B09-17 (2026-09-14): 白名单数值从 QX_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
+// 原 QX_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_read=0 等) 不一致 → 白名单永不命中 (bug).
 const STRICT_ALLOWED: &[u64] = &[
-    502, // QX_READ
-    503, // QX_WRITE
-    501, // QX_EXIT
-    525, // QX_EXIT_GROUP
-    542, // QX_RT_SIGRETURN
+    SYS_read,        // read
+    SYS_write,       // write
+    SYS_exit,        // exit
+    SYS_exit_group,  // exit_group
+    SYS_rt_sigreturn, // rt_sigreturn
 ];
 
 // ============================================================================

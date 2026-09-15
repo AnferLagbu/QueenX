@@ -94,18 +94,17 @@ impl SyscallDispatch for ServicesSyscallDispatch {
 /// 文件系统相关系统调用
 fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_GETXATTR, QX_LISTXATTR, QX_REMOVEXATTR, QX_SETXATTR, QX_SNAPSHOT_CLONE,
-        QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK, SYS_access, SYS_alarm,
-        SYS_chdir, SYS_chmod, SYS_chown, SYS_clock_gettime, SYS_close, SYS_copy_file_range,
-        SYS_creat, SYS_dup, SYS_dup2, SYS_dup3, SYS_faccessat, SYS_fchmod, SYS_fchmodat,
-        SYS_fchown, SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd,
-        SYS_getdents, SYS_getitimer, SYS_inotify_add_watch, SYS_inotify_init1,
-        SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_lseek, SYS_lstat, SYS_mkdir,
-        SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open, SYS_open_by_handle_at,
-        SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_readlink, SYS_readlinkat, SYS_rename,
-        SYS_renameat, SYS_rmdir, SYS_select, SYS_setitimer, SYS_stat, SYS_symlink, SYS_symlinkat,
-        SYS_sync, SYS_time, SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink,
-        SYS_unlinkat,
+        QX_SNAPSHOT_CLONE, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK,
+        SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_clock_gettime, SYS_close,
+        SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3, SYS_faccessat, SYS_fchmod,
+        SYS_fchmodat, SYS_fchown, SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate,
+        SYS_getcwd, SYS_getdents, SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch,
+        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
+        SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
+        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_readlink,
+        SYS_readlinkat, SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select,
+        SYS_setitimer, SYS_setxattr, SYS_stat, SYS_symlink, SYS_symlinkat, SYS_sync, SYS_time,
+        SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink, SYS_unlinkat,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -266,28 +265,28 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             }
         }
 
-        // 扩展属性
-        QX_SETXATTR => as_ret(crate::services::fs::xattr::setxattr_syscall(
+        // 扩展属性 (B09-17: QX_SETXATTR 890 → SYS_setxattr 188, Linux 编号空间归位)
+        SYS_setxattr => as_ret(crate::services::fs::xattr::setxattr_syscall(
             a0,
             a1,
             a2,
             a3 as usize,
             a5,
         )),
-        QX_GETXATTR => as_ret(crate::services::fs::xattr::getxattr_syscall(
+        SYS_getxattr => as_ret(crate::services::fs::xattr::getxattr_syscall(
             a0,
             a1,
             a2,
             a3 as usize,
             a5,
         )),
-        QX_LISTXATTR => as_ret(crate::services::fs::xattr::listxattr_syscall(
+        SYS_listxattr => as_ret(crate::services::fs::xattr::listxattr_syscall(
             a0,
             a1,
             a2 as usize,
             a4,
         )),
-        QX_REMOVEXATTR => as_ret(crate::services::fs::xattr::removexattr_syscall(
+        SYS_removexattr => as_ret(crate::services::fs::xattr::removexattr_syscall(
             a0, a1, a4,
         )),
 

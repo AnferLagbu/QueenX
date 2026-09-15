@@ -8,16 +8,16 @@ use core::sync::atomic::Ordering;
 
 use super::raw;
 use super::types::{
-    Errno, QX_ACCEPT, QX_BIND, QX_BPF, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
-    QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, QX_CONNECT, QX_EXECVE,
+    Errno, SYS_accept, SYS_bind, SYS_bpf, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
+    QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect, SYS_execve,
     QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
-    QX_FW_GET_INFO, QX_FW_LOAD, QX_GETPEERNAME, QX_GETSOCKNAME, QX_GETSOCKOPT, QX_IO_URING_ENTER,
-    QX_IO_URING_REGISTER, QX_IO_URING_SETUP, QX_IO_URING_SUBMIT, QX_KEXEC, QX_KGDB_ENTER,
-    QX_LISTEN, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_PRCTL, QX_RECVFROM, QX_RECVMSG,
-    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_RT_SIGRETURN, QX_SECCOMP, QX_SECURE_BOOT,
-    QX_SENDFILE, QX_SENDMSG, QX_SENDTO, QX_SETNS, QX_SETRLIMIT, QX_SETSOCKOPT, QX_SHUTDOWN,
-    QX_SOCKET, QX_SPLICE, QX_TCGETPGRP, QX_TCSETPGRP, QX_TGKILL, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
-    QX_UEFI, QX_UNSHARE, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
+    QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_io_uring_enter,
+    SYS_io_uring_register, SYS_io_uring_setup, QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
+    SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_prctl, SYS_recvfrom, SYS_recvmsg,
+    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, SYS_rt_sigreturn, SYS_seccomp, QX_SECURE_BOOT,
+    SYS_sendfile, SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setrlimit, SYS_setsockopt, SYS_shutdown,
+    SYS_socket, SYS_splice, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
+    QX_UEFI, SYS_unshare, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
     SYS_read, SYS_write,
 };
 // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
@@ -219,7 +219,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== 信号 ====================
-        QX_RT_SIGRETURN => dispatch!(sys_rt_sigreturn(), b"rt_sigreturn\0"),
+        SYS_rt_sigreturn => dispatch!(sys_rt_sigreturn(), b"rt_sigreturn\0"),
 
         // ==================== 设备固件加载 ====================
         QX_FW_LOAD => dispatch!(
@@ -262,11 +262,11 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== C7: Seccomp / prctl ====================
-        QX_SECCOMP => dispatch!(
+        SYS_seccomp => dispatch!(
             crate::framework::proc::sys_seccomp(a0 as u32, a1 as u32, a2),
             b"seccomp\0"
         ),
-        QX_PRCTL => dispatch!(
+        SYS_prctl => dispatch!(
             crate::framework::proc::sys_prctl_prctl(a0 as i64, a1, a2, a3, a4),
             b"prctl\0"
         ),
@@ -296,15 +296,15 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== C4: io_uring ====================
-        QX_IO_URING_SETUP => dispatch!(
+        SYS_io_uring_setup => dispatch!(
             crate::framework::io::iouring::sys_io_uring_setup(a0),
             b"io_uring_setup\0"
         ),
-        QX_IO_URING_ENTER => dispatch!(
+        SYS_io_uring_enter => dispatch!(
             crate::framework::io::iouring::sys_io_uring_enter(a0, a1, a2),
             b"io_uring_enter\0"
         ),
-        QX_IO_URING_REGISTER => dispatch!(
+        SYS_io_uring_register => dispatch!(
             crate::framework::io::iouring::sys_io_uring_register(a0, a1, a2, a3),
             b"io_uring_register\0"
         ),
@@ -314,11 +314,11 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D1: Namespace ====================
-        QX_UNSHARE => dispatch!(
+        SYS_unshare => dispatch!(
             crate::framework::proc::sys_unshare(a0),
             b"unshare\0"
         ),
-        QX_SETNS => dispatch!(
+        SYS_setns => dispatch!(
             crate::framework::proc::sys_setns(a0, a1),
             b"setns\0"
         ),
@@ -346,7 +346,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D4: eBPF ====================
-        QX_BPF => dispatch!(
+        SYS_bpf => dispatch!(
             crate::framework::debug::sys_bpf(a0, a1, a2),
             b"bpf\0"
         ),
@@ -386,7 +386,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D10: kexec ====================
-        QX_KEXEC => dispatch!(
+        SYS_kexec_load => dispatch!(
             crate::framework::driver::sys_kexec(a0, a1, a2, a3),
             b"kexec\0"
         ),
@@ -398,29 +398,29 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== 进程 ====================
-        QX_TCGETPGRP => dispatch!(
+        SYS_tcgetpgrp => dispatch!(
             crate::framework::proc::session::sys_tcgetpgrp(a0 as i32),
             b"tcgetpgrp\0"
         ),
-        QX_TCSETPGRP => dispatch!(
+        SYS_tcsetpgrp => dispatch!(
             crate::framework::proc::session::sys_tcsetpgrp(a0 as i32, a1 as i32),
             b"tcsetpgrp\0"
         ),
 
         // ==================== 网络 (services 代理) ====================
-        #[cfg(feature = "net")]
-        QX_GETSOCKNAME => dispatch!(sys_getsockname(a0 as i32, a1, a2), b"getsockname\0"),
-        #[cfg(feature = "net")]
-        QX_GETPEERNAME => dispatch!(sys_getpeername(a0 as i32, a1, a2), b"getpeername\0"),
+        // 分层契约 (docs/plan/syscall-dispatch-cleanup.md B1/B3): 网络 syscall 由
+        // services::syscall::dispatch_net 真实实现 (无 cfg 门控, 所有构建配置下
+        // 优先命中); 本回退层仅保留 not(net) 哨兵, 禁止新增与 services 重叠的
+        // 真实实现分支 (见 mod.rs 分层契约).
         #[cfg(not(feature = "net"))]
-        QX_SOCKET | QX_CONNECT | QX_ACCEPT | QX_SENDTO | QX_RECVFROM | QX_SHUTDOWN | QX_BIND
-        | QX_LISTEN | QX_SENDMSG | QX_RECVMSG | QX_SETSOCKOPT | QX_GETSOCKOPT | QX_GETSOCKNAME
-        | QX_GETPEERNAME => {
+        SYS_socket | SYS_connect | SYS_accept | SYS_sendto | SYS_recvfrom | SYS_shutdown | SYS_bind
+        | SYS_listen | SYS_sendmsg | SYS_recvmsg | SYS_setsockopt | SYS_getsockopt | SYS_getsockname
+        | SYS_getpeername => {
             dispatch!(Errno::ENOSYS.as_ret(), b"net_nosys\0")
         }
 
         // ==================== 进程创建 ====================
-        QX_EXECVE => dispatch!(
+        SYS_execve => dispatch!(
             crate::framework::syscall::execve::ExecveResult::from_ret(sys_execve(
                 a0 as *const u8,
                 a1 as *const *const u8,
@@ -431,14 +431,14 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== 时间 ====================
-        QX_SETRLIMIT => dispatch!(
+        SYS_setrlimit => dispatch!(
             crate::framework::proc::sys_setrlimit(a0 as i32, a1),
             b"setrlimit\0"
         ),
-        QX_TGKILL => dispatch!(sys_tgkill(a0 as i32, a1 as i32, a2 as i32), b"tgkill\0"),
+        SYS_tgkill => dispatch!(sys_tgkill(a0 as i32, a1 as i32, a2 as i32), b"tgkill\0"),
 
         // ==================== sendfile / splice ====================
-        QX_SENDFILE => dispatch!(
+        SYS_sendfile => dispatch!(
             crate::framework::syscall::sendfile::sys_sendfile(
                 a0 as i32,
                 a1 as i32,
@@ -447,7 +447,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
             ),
             b"sendfile\0"
         ),
-        QX_SPLICE => dispatch!(
+        SYS_splice => dispatch!(
             crate::framework::syscall::sendfile::sys_splice(
                 a0 as i32,
                 a1,
@@ -696,16 +696,6 @@ fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *const u8) -
     } else {
         0
     }
-}
-
-#[cfg(feature = "net")]
-fn sys_getsockname(sockfd: i32, addr: u64, addrlen: u64) -> i64 {
-    crate::framework::net::syscall::getsockname_syscall(sockfd, addr, addrlen)
-}
-
-#[cfg(feature = "net")]
-fn sys_getpeername(sockfd: i32, addr: u64, addrlen: u64) -> i64 {
-    crate::framework::net::syscall::getpeername_syscall(sockfd, addr, addrlen)
 }
 
 #[expect(

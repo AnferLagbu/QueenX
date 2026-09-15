@@ -30,6 +30,16 @@ pub mod wait4;
 ///   800-899 : QueenX 自由 syscall (QX_*) — 扩展
 ///
 /// 0-299 直接走 Linux ABI, 无翻译层. 500+ 与 Linux 错开, 避免与未来 Linux 新增 syscall 冲突.
+///
+/// # 双层分发契约 (B09-18, docs/plan/syscall-dispatch-cleanup.md)
+///
+/// 调用链: 中断入口 → services 策略分发 (优先) → 返回 ENOSYS 时 framework 回退层兜底.
+///
+/// - **回退层内容限定**: 仅允许 "机制独有 (QX_*) + 未迁移项 (SYS_*/CREDO/FB) + ENOSYS 哨兵",
+///   **禁止新增与 services 重叠的真实实现分支** (重叠分支 = services 优先命中下的死代码).
+/// - **新 syscall 归属规范**: Linux 标准编号 (`SYS_*`) → 实现在 services;
+///   QX 独有机制 (固件/ftrace/cgroup/PM 等) → 实现在 framework 回退层.
+/// - 编号常量唯一定义于 `types.rs` (B09-17 归位), 禁止在其他文件重复定义.
 // 公共接口 re-export — 避免跨子系统直接访问内部子模块
 pub use epoll::{EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_pwake};
 pub use sendfile::{
