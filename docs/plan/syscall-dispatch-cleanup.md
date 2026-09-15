@@ -65,7 +65,7 @@ seccomp 检查 → current_syscall_dispatch().dispatch()（services 策略，225
 - [X] B1：回退层网络重叠分支删除（2 net 臂 + 2 包装函数；socket/listen 仅在哨兵臂，见 B1 实施记录）
 - [X] B2：65 编号分类 audit（27 机制独有 / 24 未迁移登记 / 14 哨兵，真实重叠归零）
 - [X] B3：分层契约文档化（mod.rs "双层分发契约" + dispatch.rs 哨兵区注释）
-- [ ] B4：全量验证（双架构 0w0e ✓ / clippy 双架构 0w ✓ / 核心审计 8 项 ✓ / QEMU boot ✓ / test-unit 运行中）+ commit
+- [X] B4：全量验证通过（build all 5/5 / clippy 双架构 0w / 核心审计 8 项 / host-tests 全量 / QEMU boot Ring3 / QEMU kernel_test 468 全过含 UDS 套件），commit aea73cd1
 
 ## 详情
 
