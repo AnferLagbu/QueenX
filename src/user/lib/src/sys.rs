@@ -218,7 +218,6 @@ pub const SYS_getpgid: u64 = 111;
 pub const SYS_setsid: u64 = 112;
 pub const SYS_gettid: u64 = 186;
 pub const SYS_nanosleep: u64 = 35;
-pub const SYS_tgkill: u64 = 234;
 pub const SYS_rt_sigaction: u64 = 13;
 pub const SYS_rt_sigprocmask: u64 = 14;
 pub const SYS_umask: u64 = 95;
@@ -234,7 +233,6 @@ pub fn gettid() -> i64                                     { unsafe { sys0(SYS_g
 pub fn umask(mask: u32) -> u32                             { unsafe { sys1(SYS_umask, mask as u64) as u32 } }
 pub fn nanosleep(req: &Timespec) -> i32                    { unsafe { sys2(SYS_nanosleep, req as *const Timespec as u64, 0) as i32 } }
 pub fn kill(pid: i32, sig: i32) -> i32                     { unsafe { sys2(62, pid as u64, sig as u64) as i32 } }
-pub fn tgkill(tgid: i32, tid: i32, sig: i32) -> i32        { unsafe { sys3(SYS_tgkill, tgid as u64, tid as u64, sig as u64) as i32 } }
 
 // ============================================================
 // 热插拔状态查询

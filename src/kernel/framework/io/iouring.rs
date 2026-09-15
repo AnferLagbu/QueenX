@@ -464,11 +464,6 @@ pub fn sys_io_uring_enter(id: u64, to_submit: u64, min_complete: u64) -> i64 {
     }
 }
 
-/// `sys_io_uring_register` — 注册缓冲区/文件 (当前桩实现)
-pub fn sys_io_uring_register(_id: u64, _opcode: u64, _arg: u64, _nr_args: u64) -> i64 {
-    -(Errno::ENOSYS as i64)
-}
-
 /// `sys_io_uring_submit_sqe` — 提交单个 SQE
 pub fn sys_io_uring_submit_sqe(
     id: u64,

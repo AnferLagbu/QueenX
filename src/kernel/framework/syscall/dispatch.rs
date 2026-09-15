@@ -12,11 +12,11 @@ use super::types::{
     QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect, SYS_execve,
     QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
     QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_io_uring_enter,
-    SYS_io_uring_register, SYS_io_uring_setup, QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
+    SYS_io_uring_setup, QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
     SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_prctl, SYS_recvfrom, SYS_recvmsg,
-    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, SYS_rt_sigreturn, SYS_seccomp, QX_SECURE_BOOT,
+    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, SYS_seccomp, QX_SECURE_BOOT,
     SYS_sendfile, SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setrlimit, SYS_setsockopt, SYS_shutdown,
-    SYS_socket, SYS_splice, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
+    SYS_socket, SYS_splice, SYS_tcgetpgrp, SYS_tcsetpgrp, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
     QX_UEFI, SYS_unshare, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
     SYS_read, SYS_write,
 };
@@ -115,6 +115,21 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
                 f.rflags = sigframe.rflags;
                 f.rsp = sigframe.rsp;
                 f.ss = sigframe.ss;
+            }
+            // P1-I-45: sigreturn 清除替代栈 SS_ONSTACK 标志 (原 sys_rt_sigreturn
+            // 死分支中的清除逻辑, T3 迁移至本可达路径——sigreturn 返回后不再处于
+            // 替代栈上, POSIX 语义).
+            {
+                let cur = crate::framework::proc::process_get_current_pid();
+                if cur != 0 {
+                    crate::framework::proc::process_with_mut(cur, |proc| {
+                        let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
+                        proc.sigaltstack_flags.store(
+                            flags & !crate::framework::proc::SS_ONSTACK,
+                            Ordering::Release,
+                        );
+                    });
+                }
             }
             return;
         }
@@ -219,7 +234,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== 信号 ====================
-        SYS_rt_sigreturn => dispatch!(sys_rt_sigreturn(), b"rt_sigreturn\0"),
+        // T3 (syscall-followup): SYS_rt_sigreturn 分支已删除——pre-dispatch 特殊路径
+        // (L89-119) 无条件拦截编号 15 并直接恢复 sigframe 返回, 本分发器永不可达.
 
         // ==================== 设备固件加载 ====================
         QX_FW_LOAD => dispatch!(
@@ -304,10 +320,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
             crate::framework::io::iouring::sys_io_uring_enter(a0, a1, a2),
             b"io_uring_enter\0"
         ),
-        SYS_io_uring_register => dispatch!(
-            crate::framework::io::iouring::sys_io_uring_register(a0, a1, a2, a3),
-            b"io_uring_register\0"
-        ),
+        // T3 (syscall-followup): SYS_io_uring_register 分支已删除——原实现为恒
+        // ENOSYS 桩 (iouring.rs), 删除后落 `_ =>` 兜底 ENOSYS, 行为不变.
+        // 实装注册缓冲区/文件语义时在 services 层接线 (T2 批 3).
         QX_IO_URING_SUBMIT => dispatch!(
             crate::framework::io::iouring::sys_io_uring_submit_sqe(a0, a1, a2, a3, a4, a5),
             b"io_uring_submit\0"
@@ -435,7 +450,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
             crate::framework::proc::sys_setrlimit(a0 as i32, a1),
             b"setrlimit\0"
         ),
-        SYS_tgkill => dispatch!(sys_tgkill(a0 as i32, a1 as i32, a2 as i32), b"tgkill\0"),
+        // T3 (syscall-followup): SYS_tgkill 分支已删除——原实现忽略 _tgid 且
+        // 语义错位 (将 tid 当 pid 发信号), 属半成品; 用户态 0 调用方. 恢复
+        // ENOSYS 安全态, 实装线程组语义时在 services 层接线 (T1/T2).
 
         // ==================== sendfile / splice ====================
         SYS_sendfile => dispatch!(
@@ -753,10 +770,6 @@ pub(crate) fn sys_kill(pid: i32, sig: i32) -> i64 {
     }
 }
 
-fn sys_tgkill(_tgid: i32, tid: i32, sig: i32) -> i64 {
-    sys_kill(tid, sig)
-}
-
 // ============================================================================
 // 信号框架
 // ============================================================================
@@ -834,21 +847,6 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
         crate::framework::proc::set_blocked_mask(pid, updated);
     }
 
-    0
-}
-
-fn sys_rt_sigreturn() -> i64 {
-    if let Some(pid) =
-        Some(crate::framework::proc::process_get_current_pid()).filter(|&p| p != 0)
-    {
-        crate::framework::proc::process_with_mut(pid, |proc| {
-            let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
-            proc.sigaltstack_flags.store(
-                flags & !crate::framework::proc::SS_ONSTACK,
-                Ordering::Release,
-            );
-        });
-    }
     0
 }
 

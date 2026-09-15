@@ -47,17 +47,20 @@ fn source_signal_uses_sigaltstack() {
 
 #[test]
 fn source_syscall_clears_onstack_on_sigreturn() {
-    // P1-I-45 源码静态扫描: syscall/dispatch.rs::sys_rt_sigreturn 必须清 SS_ONSTACK
+    // P1-I-45 源码静态扫描: dispatch.rs pre-dispatch rt_sigreturn 特殊路径
+    // 必须清 SS_ONSTACK (T3 迁移: 原 sys_rt_sigreturn 死分支函数已删除,
+    // 清除逻辑随迁移至 syscall_dispatch_from_frame 可达路径)
     let source = include_str!("../../src/kernel/framework/syscall/dispatch.rs");
     let rt_sigreturn_start = source
-        .find("fn sys_rt_sigreturn() -> i64 {")
-        .expect("必须存在 sys_rt_sigreturn");
-    let rt_sigreturn_body = &source[rt_sigreturn_start..];
+        .find("if is_rt_sigreturn {")
+        .expect("必须存在 rt_sigreturn 特殊处理路径");
+    let rt_sigreturn_block = &source[rt_sigreturn_start..source
+        .find("let a0 = f.rdi;")
+        .expect("必须存在 rt_sigreturn 块结束标记")];
     // 必须清 SS_ONSTACK
     assert!(
-        rt_sigreturn_body.contains("!crate::framework::proc::signal::SS_ONSTACK")
-            || rt_sigreturn_body.contains("!crate::framework::proc::SS_ONSTACK")
-            || rt_sigreturn_body.contains("!SS_ONSTACK"),
-        "P1-I-45: sys_rt_sigreturn 必须清除 SS_ONSTACK 标记"
+        rt_sigreturn_block.contains("sigaltstack_flags")
+            && rt_sigreturn_block.contains("!crate::framework::proc::SS_ONSTACK"),
+        "P1-I-45: rt_sigreturn 路径必须清除 SS_ONSTACK 标记"
     );
 }
