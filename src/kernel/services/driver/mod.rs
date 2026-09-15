@@ -51,6 +51,8 @@ pub mod display;
 pub mod kexec;
 /// D11: UEFI 安全封装
 pub mod uefi;
+/// 帧缓冲 syscall 安全代理 (fb_open/fb_mmap/fb_release, T2 批 5)
+pub mod fb;
 
 // ============================================================================
 // T-04: 中断处理决策策略

@@ -19,11 +19,12 @@
 //!   进程 (含 execve, setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp,
 //!   unshare, setns), 信号, 网络, 凭证, 同步, 定时器, 事件轮询,
 //!   eventfd/signalfd/timerfd, io_uring (setup/enter) 与 eBPF (bpf),
-//!   kexec (kexec_load) 等, Credo 私有 syscall, 存储设备, inotify,
+//!   kexec (kexec_load) 等, Credo 私有 syscall (含 disk_install/hotplug),
+//!   帧缓冲 (fb_open/fb_mmap/fb_release), 存储设备, inotify,
 //!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级
 //! - 待迁移: firmware, ftrace/kgdb,
 //!   路由/Netfilter, cgroup, NUMA, PM, TPM,
-//!   CET, tickless, timesync, UEFI, 帧缓冲 等
+//!   CET, tickless, timesync, UEFI 等
 //!
 //! 评估日期: 2026-06-19
 
@@ -708,12 +709,16 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_CREDO_CREATE_FIRST, SYS_CREDO_CREATE_IDENTITY, SYS_CREDO_DELETE_IDENTITY,
         SYS_CREDO_DISK_FORMAT, SYS_CREDO_DISK_INFO, SYS_CREDO_DISK_LIST, SYS_CREDO_DISK_PARTITION,
         SYS_CREDO_FAT_FORMAT, SYS_CREDO_GET_CAPS, SYS_CREDO_GET_PWM, SYS_CREDO_GETHOSTNAME,
-        SYS_CREDO_GRANT, SYS_CREDO_IDENTITY_INFO, SYS_CREDO_LOGIN, SYS_CREDO_LOGOUT,
-        SYS_CREDO_PROC_CPUTIME, SYS_CREDO_PROC_LIST, SYS_CREDO_PROC_SETPRI, SYS_CREDO_PROC_SLEEP,
-        SYS_CREDO_REBOOT, SYS_CREDO_REVOKE, SYS_CREDO_SET_PWM, SYS_CREDO_SETHOSTNAME,
-        SYS_CREDO_VERIFY_PASSWORD, SYS_getegid, SYS_geteuid, SYS_getgid, SYS_getuid, SYS_setegid,
-        SYS_seteuid, SYS_setgid, SYS_setregid, SYS_setreuid, SYS_setuid,
+        SYS_CREDO_GRANT, SYS_CREDO_HOTPLUG_STATUS, SYS_CREDO_IDENTITY_INFO, SYS_CREDO_LOGIN,
+        SYS_CREDO_LOGOUT, SYS_CREDO_PROC_CPUTIME, SYS_CREDO_PROC_LIST, SYS_CREDO_PROC_SETPRI,
+        SYS_CREDO_PROC_SLEEP, SYS_CREDO_REBOOT, SYS_CREDO_REVOKE, SYS_CREDO_SET_PWM,
+        SYS_CREDO_SETHOSTNAME, SYS_CREDO_VERIFY_PASSWORD, SYS_getegid, SYS_geteuid, SYS_getgid,
+        SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid, SYS_setregid, SYS_setreuid, SYS_setuid,
     };
+    // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
+    // (aarch64 生产构建走 `_ =>` 兜底 ENOSYS, 与迁移前 framework cfg 语义一致)
+    #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
+    use crate::services::syscall::types::SYS_CREDO_DISK_INSTALL;
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
     Some(match num {
@@ -823,6 +828,17 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
                 Err(e) => e.as_ret(),
             }
         }
+        // T2 批 5: 引导安装 / 热插拔状态 自 framework 回退层迁移
+        // (委托 framework 机制 sys_boot_install / sys_hotplug_status)
+        #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
+        SYS_CREDO_DISK_INSTALL => {
+            crate::services::credo::storage::disk::boot_install_syscall(a0 as u32)
+        }
+        #[cfg(feature = "kernel_test")]
+        SYS_CREDO_DISK_INSTALL => Errno::ENOSYS.as_ret(),
+        SYS_CREDO_HOTPLUG_STATUS => {
+            crate::services::credo::storage::disk::hotplug_status_syscall(a0, a1 as u32)
+        }
         SYS_CREDO_FAT_FORMAT => {
             match crate::services::credo::storage::disk::fat_format(a0 as u32) {
                 Ok(()) => 0,
@@ -837,9 +853,9 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_GET_CANARY, SYS_bpf, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter,
-        SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create, SYS_timer_delete,
-        SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
+        QX_GET_CANARY, SYS_bpf, SYS_clock_getres, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
+        SYS_getrandom, SYS_io_uring_enter, SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create,
+        SYS_timer_delete, SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -867,6 +883,12 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
         // 委托 framework 机制 (debug::sys_bpf / driver::sys_kexec)
         SYS_bpf => crate::services::debug::ebpf::bpf_syscall(a0, a1, a2),
         SYS_kexec_load => crate::services::driver::kexec::kexec_syscall(a0, a1, a2, a3),
+
+        // 帧缓冲 (T2 批 5, syscall-followup): 委托 framework 机制
+        // (机制函数: sys_fb_open / sys_fb_mmap / sys_fb_release)
+        SYS_FB_OPEN => crate::services::driver::fb::fb_open_syscall(a0, a1),
+        SYS_FB_MMAP => crate::services::driver::fb::fb_mmap_syscall(a0, a1, a2),
+        SYS_FB_RELEASE => crate::services::driver::fb::fb_release_syscall(a0),
 
         // 熵源 / Stack Canary (§6.1 下沉 services/syscall/canary)
         SYS_getrandom => crate::services::syscall::canary::sys_getrandom(a0, a1, a2),

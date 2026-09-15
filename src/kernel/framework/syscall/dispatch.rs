@@ -17,11 +17,10 @@ use super::types::{
     QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT,
     SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown,
     SYS_socket, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
-    QX_UEFI, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
+    QX_UEFI,
 };
-// SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
-#[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
-use super::types::SYS_CREDO_DISK_INSTALL;
+// SYS_CREDO_DISK_INSTALL 分支已迁至 services (T2 批 5), 编号常量仅在 types.rs 保留
+// (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
 
 /// fb_mmap 目标虚拟地址上界 — 集中定义于 `framework::constants::limits`
 /// (与用户指针校验边界语义不同, 见该常量注释).
@@ -181,10 +180,6 @@ pub unsafe extern "C" fn syscall_dispatch(
 #[expect(
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
-)]
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "syscall handler 中 u64 → u32/i32 转换: 剩余 cast 是 sys_* 函数内数据转换, 已知安全"
 )]
 fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     // 直接 Linux ABI: syscall 编号直接使用 Linux 标准编号, 无需翻译
@@ -390,20 +385,14 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // framework 机制 (framework::syscall::sendfile::sys_sendfile / sys_splice).
 
         // ==================== Credo 私有 syscall ====================
-        #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-        SYS_CREDO_DISK_INSTALL => dispatch!(sys_boot_install(a0 as u32), b"credo_diskinst\0"),
-        #[cfg(feature = "kernel_test")]
-        SYS_CREDO_DISK_INSTALL => dispatch!(Errno::ENOSYS.as_ret(), b"credo_disk_nosys\0"),
-
-        SYS_CREDO_HOTPLUG_STATUS => dispatch!(
-            sys_hotplug_status(a0 as *mut u8, a1 as u32),
-            b"credo_hotplug_status\0"
-        ),
+        // T2 批 5 (syscall-followup): SYS_CREDO_DISK_INSTALL / SYS_CREDO_HOTPLUG_STATUS
+        // 分支已迁至 services (services::credo::storage::disk::boot_install_syscall /
+        // hotplug_status_syscall), 委托本层机制 (sys_boot_install / sys_hotplug_status).
 
         // ==================== 帧缓冲设备 ====================
-        SYS_FB_OPEN => dispatch!(sys_fb_open(a0, a1), b"fb_open\0"),
-        SYS_FB_MMAP => dispatch!(sys_fb_mmap(a0, a1, a2), b"fb_mmap\0"),
-        SYS_FB_RELEASE => dispatch!(sys_fb_release(a0), b"fb_release\0"),
+        // T2 批 5 (syscall-followup): SYS_FB_OPEN / SYS_FB_MMAP / SYS_FB_RELEASE 分支
+        // 已迁至 services (services::driver::fb::fb_*_syscall), 委托本层机制
+        // (机制函数: sys_fb_open / sys_fb_mmap / sys_fb_release).
 
         // 未匹配的 syscall 编号
         _ => Errno::ENOSYS.as_ret(),
@@ -606,7 +595,12 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
 // 热插拔 / 帧缓冲
 // ============================================================================
 
-fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
+/// `sys_hotplug_status` — 读取热插拔状态 (机制: 用户 buffer 写入 + 驱动状态读取)
+///
+/// T2 批 5 (syscall-followup): syscall 策略入口迁至 services
+/// (services::credo::storage::disk::hotplug_status_syscall), 本函数保留为
+/// 机制库 (unsafe 用户指针写入), 经 framework::syscall 顶层 re-export 消费.
+pub fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
     if buf.is_null() || buf_size == 0 {
         return Errno::EINVAL.as_ret();
     }
@@ -712,6 +706,14 @@ fn sys_hotplug_status(buf: *mut u8, buf_size: u32) -> i64 {
 // 帧缓冲设备
 // ============================================================================
 
+/// fb_mmap 建立的映射记录 (cr3, 起始 vaddr, 页数) — 供 fb_release 解除映射
+///
+/// SIMPLIFIED: 仅单槽记录 (当前唯一用户 fbterm 单次 mmap); 影响面: 多进程/
+/// 多映射场景 release 仅清最后一条映射; 何时需扩展: 引入 per-process 映射表
+/// (per-fd fb 句柄状态) 后替换.
+static FB_MAP_RECORD: crate::framework::sync::IrqSpinLock<Option<(u64, u64, u64)>> =
+    crate::framework::sync::IrqSpinLock::new(None);
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct FbInfo {
@@ -724,7 +726,15 @@ struct FbInfo {
     _pad: [u8; 3],
 }
 
-fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
+/// `sys_fb_open` — 查询帧缓冲信息 (机制: FB 驱动读取 + 用户结构写入)
+///
+/// T2 批 5 (syscall-followup): syscall 策略入口迁至 services
+/// (services::driver::fb::fb_open_syscall), 本函数保留为机制库.
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "missing_panics_doc: get_framebuffer 守卫在 fb_addr/ENODEV 前置检查后必有值 (FB 已初始化), unwrap 不会实际触发"
+)]
+pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
     if info_ptr == 0 || !raw::check_user_ptr(info_ptr) {
         return Errno::EFAULT.as_ret();
     }
@@ -767,7 +777,12 @@ fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
     0
 }
 
-fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
+/// `sys_fb_mmap` — 建立帧缓冲页映射 (机制: 页表操作)
+///
+/// T2 批 5 (syscall-followup): syscall 策略入口迁至 services
+/// (services::driver::fb::fb_mmap_syscall), 本函数保留为机制库
+/// (页表映射, unsafe). 成功建立映射后记录到 `FB_MAP_RECORD` 供 release 解除.
+pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
     if target_vaddr == 0 || target_vaddr & 0xFFF != 0 {
         return Errno::EINVAL.as_ret();
     }
@@ -813,11 +828,35 @@ fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
         vmm.map_page_in_table(cr3, va, pa, flags);
     }
 
+    // 记录映射区间供 release 解除 (单槽, 见 FB_MAP_RECORD SIMPLIFIED 注释)
+    *FB_MAP_RECORD.lock() = Some((cr3, target_vaddr, pages));
+
     target_vaddr as i64
 }
 
-fn sys_fb_release(_vaddr: u64) -> i64 {
-    0
+/// `sys_fb_release` — 解除帧缓冲页映射 (机制: 页表操作)
+///
+/// T2 批 5 (syscall-followup): 自空 stub 实装 — 依 `FB_MAP_RECORD` 解除
+/// `sys_fb_mmap` 建立的映射并清记录. syscall 策略入口迁至 services
+/// (services::driver::fb::fb_release_syscall).
+pub fn sys_fb_release(vaddr: u64) -> i64 {
+    let vmm = crate::framework::mm::get_vmm();
+    let mut record = FB_MAP_RECORD.lock();
+    if let Some((cr3, va, pages)) = *record {
+        if vaddr != va {
+            return Errno::EINVAL.as_ret();
+        }
+        for i in 0..pages {
+            vmm.unmap_page_in_table(
+                cr3,
+                crate::framework::mm::VirtAddr(va + i * crate::framework::mm::PAGE_SIZE),
+            );
+        }
+        *record = None;
+        0
+    } else {
+        Errno::EINVAL.as_ret()
+    }
 }
 
 // ============================================================================
@@ -840,7 +879,11 @@ const BOOT_PART_SECTORS: u32 = 16384;
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
-fn sys_boot_install(disk_id: u32) -> i64 {
+/// `sys_boot_install` — 引导安装 (机制: 磁盘扇区写 + stage1/内核拷贝, 仅 x86_64)
+///
+/// T2 批 5 (syscall-followup): syscall 策略入口迁至 services
+/// (services::credo::storage::disk::boot_install_syscall), 本函数保留为机制库.
+pub fn sys_boot_install(disk_id: u32) -> i64 {
     let pwm = crate::framework::credo::pwm_get_current();
     if !crate::framework::credo::pwm_has_capability(pwm, 4, 0) {
         return Errno::EACCES.as_ret();

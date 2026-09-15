@@ -206,6 +206,8 @@ pub fn disk_format(id: u32) -> i32                         { unsafe { sys2(SYS_C
 pub fn disk_partition(id: u32, sectors: u64) -> i64        { unsafe { sys2(SYS_CREDO_DISK_PARTITION, id as u64, sectors) } }
 pub fn boot_install(id: u32) -> i64                        { unsafe { sys1(SYS_CREDO_DISK_INSTALL, id as u64) } }
 pub fn fat_format(id: u32) -> i64                          { unsafe { sys1(SYS_CREDO_FAT_FORMAT, id as u64) } }
+// T2 批 5 (syscall-followup): 补 wrapper — 原仅常量无 wrapper 无调用 (T3 登记)
+pub fn hotplug_status(buf: &mut [u8]) -> i64               { unsafe { sys2(SYS_CREDO_HOTPLUG_STATUS, buf.as_mut_ptr() as u64, buf.len() as u64) } }
 
 // ============================================================
 // 新增 POSIX syscall wrapper

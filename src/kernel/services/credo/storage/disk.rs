@@ -180,3 +180,29 @@ pub fn fat_format(disk_id: u32) -> Result<(), Errno> {
     let _ = id;
     Err(Errno::ENOSYS)
 }
+
+/// boot_install(disk_id) 策略 — 引导安装 (T2 批 5 自 framework 回退层迁移)
+///
+/// 委托 framework 机制 `sys_boot_install` (磁盘扇区写 + stage1/内核拷贝,
+/// unsafe 机制库). 仅 x86_64 生产构建实装; 其余构建配置 (kernel_test /
+/// aarch64) 返回 ENOSYS (与原 framework cfg 门控语义一致).
+#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
+pub fn boot_install_syscall(disk_id: u32) -> i64 {
+    crate::framework::syscall::sys_boot_install(disk_id)
+}
+
+/// boot_install 非实装路径 (kernel_test 主机维度) — ENOSYS
+#[cfg(feature = "kernel_test")]
+pub fn boot_install_syscall(_disk_id: u32) -> i64 {
+    Errno::ENOSYS.as_ret()
+}
+
+/// hotplug_status(buf, buf_size) 策略 — 读取热插拔状态 (T2 批 5 自 framework
+/// 回退层迁移)
+///
+/// 委托 framework 机制 `sys_hotplug_status` (unsafe 用户 buffer 写入 +
+/// 驱动状态读取, 机制库). `buf_ptr` 为用户态缓冲区指针 (u64 位宽), 仅做
+/// 类型转换后委托, 指针有效性由机制层校验.
+pub fn hotplug_status_syscall(buf_ptr: u64, buf_size: u32) -> i64 {
+    crate::framework::syscall::sys_hotplug_status(buf_ptr as *mut u8, buf_size)
+}

@@ -103,7 +103,7 @@ T7 (预存登记)
 ## 状态
 
 - [X] T3：半成品清除 + 用户态调用 audit（2026-09-15 完成，见下方 T3 实施记录）
-- [ ] T2：回退层 21 保留项 → services 迁移（批 1 完成，见下方 T2 实施记录；批 2-5 待做）
+- [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
 - [ ] T1：R2 未实装 SYS_* 实装（先重扫核实清单，与 T2 并行）
 - [ ] T4-T7：登记排后（R3 pub mod / R1 445 项 / TODO 33 项 / aarch64 编号）
 
@@ -195,6 +195,24 @@ T7 (预存登记)
 **framework 回退层清理**：删 SYS_unshare/SYS_setns/SYS_bpf/SYS_kexec_load 4 分支 + `sys_unshare`/`sys_setns` 策略入口；proc/mod.rs namespace re-export 收口（NamespaceSet 保留，sys_setns/sys_unshare 移除）；bpf/kexec 机制函数保留（services 代理委托调用）。
 
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过（TD-22 注释中文化 100%）、host-tests 全量、QEMU boot（Ring 3/init）通过。
+
+### T2 实施记录（批 5，收官）
+
+**迁移项**（5 项，services 0 unsafe）：
+
+| 项 | services 落点 | 要点 |
+|---|---|---|
+| CREDO_DISK_INSTALL | `services/credo/storage/disk.rs`（`boot_install_syscall`） | cfg 门控镜像原回退层（x86_64 生产委托 `sys_boot_install`；kernel_test ENOSYS；aarch64 生产分支不编译走 `_ =>` 兜底）；机制含磁盘扇区写 + credo 权限检查留 framework |
+| CREDO_HOTPLUG_STATUS | 同上（`hotplug_status_syscall`） | 委托 `sys_hotplug_status`（unsafe 用户 buffer 写入 + 驱动状态读取）；用户态补 `hotplug_status` wrapper（T3 登记项） |
+| FB_OPEN | `services/driver/fb.rs`（`fb_open_syscall`，新建模块） | 委托 `sys_fb_open`（FB 驱动读取 + 用户 FbInfo 写入） |
+| FB_MMAP | 同上（`fb_mmap_syscall`） | 委托 `sys_fb_mmap`（页表映射）；机制层新增 `FB_MAP_RECORD` 单槽记录映射区间供 release 解除 |
+| FB_RELEASE | 同上（`fb_release_syscall`） | **自空 stub 实装**：依 `FB_MAP_RECORD` unmap 页表并清记录（SIMPLIFIED：单槽，多映射需扩展 per-process 表） |
+
+**framework 回退层清理**：删 SYS_CREDO_DISK_INSTALL/SYS_CREDO_HOTPLUG_STATUS/SYS_FB_OPEN/SYS_FB_MMAP/SYS_FB_RELEASE 5 分支；5 个机制函数 pub 化（经 `framework::syscall` 顶层 `pub use dispatch::*` re-export 供 services 委托）；`sys_fb_release` 空 stub 实装（FB_MAP_RECORD 记录 + unmap）。
+
+**验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
+
+**T2 收官结论**：21 保留项全部迁移（批 1-5）；framework 回退层收敛为机制独有 + ENOSYS 哨兵，与分层契约一致（B2 契约允许面）。
 
 ## 详情
 
