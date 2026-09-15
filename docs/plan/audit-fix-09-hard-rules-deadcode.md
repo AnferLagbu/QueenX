@@ -97,7 +97,7 @@
     - **保留 QX_*（32 项）**：Linux 无对应 syscall 的 QX 独有功能——R2 未接线 3 项（FB_OPEN/FB_MMAP/FB_RELEASE，framebuffer 走 ioctl/DRM 故无独立 Linux syscall）+ dispatch 已接线 29 项（FW_LOAD/FW_GET/FW_GET_INFO/FW_DETACH、FTRACE_ENABLE/DISABLE/READ/STAT、KGDB_ENTER、ROUTE_ADD/DEL/QUERY、NF_ADD_RULE/NF_DEL_RULE、CGROUP_CREATE/DESTROY/ATTACH/SET_LIMIT/GET_STAT、PM、SECURE_BOOT、TPM、CET、TICKLESS、TIMESYNC、UEFI）。处置：保留 500+ 区，按治理决策接线或登记预留。
     - **R2 SYS_* 38 项接线**：execve/fdatasync/tgkill/inotify_init/mbind/readv/writev/sendfile/preadv/pwritev/fchownat/statx/fallocate/utimensat/close_range/epoll_pwait/ppoll/set_robust_list/get_robust_list/execveat/waitid/process_vm_readv/process_vm_writev/userfaultfd/recvmmsg/sendmmsg/socketpair/seccomp/prctl/arch_prctl/capget/capset/pivot_root/chroot/clock_nanosleep/settimeofday/adjtimex/setdomainname——部分已实装挂 QX 编号（execve/tgkill/seccomp），其余需按实装计划推进。
   - 验证：迁移后 `audit_unwired_pub_fn.py` R2 应大幅下降（133 项从 QX_* 区消除）；双架构 0w0e + host-tests + QEMU（syscall 路径改动必跑）。
-  - 状态：[]
+  - 状态：[X]（2026-09-15 编号空间归位完成，commit aea73cd1——**已实装项全部归位**：types.rs 唯一权威（删 163 个挂标准功能的 QX_* 常量、补 16 个 SYS_*）、framework dispatch 30 分支 QX_*→SYS_*（原 500+ 编号与用户态 Linux 编号 0-299 不一致 → 30 syscall 不可达 bug）、services xattr 分支同步、seccomp STRICT_ALLOWED 白名单归位（原永不命中 bug）、api.rs 43 重复常量 + 双份 MAX_SYSCALLS 消除、双 dispatch 重叠分支归零（收尾工程 [syscall-dispatch-cleanup.md](syscall-dispatch-cleanup.md)：回退层 65 编号 = 27 机制独有/24 未迁移登记/14 ENOSYS 哨兵）。**剩余**：R2 未实装 SYS_*（116 项）的功能实装接线归 B09-05/D-2 推进，非编号治理范畴）
 
 - **B09-18. R2 syscall 三分类治理清单（2026-09-09 新增，附 B09-05 实测数据）**
   - 描述：实测 2026-09-09 扫描数据（与 B09-05 文档登记数字的出入）：
@@ -106,7 +106,7 @@
     - R3 pub mod 实际 **7 项**（文档 36，少 29——多数已治理或误报排除）
     - R4 struct 实际 **1 项**（DomainFlags，与文档一致）
   - 方案：按 2026-09-09 治理决策三分层（DECISION-052）重排 B09-05/06/07 处置——垃圾删除 / 已实装接线 / 未来预留迁移文档。R1 445 项高密度文件 Top：apic.rs 19、xhci.rs 14、display/controller.rs 11、nestfs/dedup.rs 10、aarch64/mmu.rs 9、credo/identity.rs 9、cgroup.rs 8。
-  - 状态：[]
+  - 状态：[]（2026-09-15 注记：dispatch 层三分类数据已由 [syscall-dispatch-cleanup.md](syscall-dispatch-cleanup.md) B2 audit 刷新——framework 回退层 65 编号 = 27 机制独有（QX_*）/24 未迁移（登记）/14 ENOSYS 哨兵；全量 R1/R3 清单刷新仍随 B09-06/07 处置时更新）
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
   - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
