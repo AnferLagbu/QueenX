@@ -9,16 +9,15 @@ use core::sync::atomic::Ordering;
 use super::raw;
 use super::types::{
     Errno, SYS_accept, SYS_bind, SYS_bpf, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
-    QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect, SYS_execve,
+    QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect,
     QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
     QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_io_uring_enter,
     SYS_io_uring_setup, QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
     SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_prctl, SYS_recvfrom, SYS_recvmsg,
     QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, SYS_seccomp, QX_SECURE_BOOT,
-    SYS_sendfile, SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setrlimit, SYS_setsockopt, SYS_shutdown,
+    SYS_sendfile, SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setsockopt, SYS_shutdown,
     SYS_socket, SYS_splice, SYS_tcgetpgrp, SYS_tcsetpgrp, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
     QX_UEFI, SYS_unshare, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
-    SYS_read, SYS_write,
 };
 // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
 #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
@@ -27,18 +26,6 @@ use super::types::SYS_CREDO_DISK_INSTALL;
 /// fb_mmap 目标虚拟地址上界 — 集中定义于 `framework::constants::limits`
 /// (与用户指针校验边界语义不同, 见该常量注释).
 use crate::framework::constants::limits::FB_MMAP_ADDR_MAX;
-
-/// 用户态寄存器值 → 文件描述符 (i32) 严格转换
-///
-/// 用户态可在任意 64 位寄存器值上调用 syscall, 直接 `a0 as i32` 会导致
-/// 大于 i32::MAX 的合法 fd 被截断为负数, 或 0xFFFFFFFF..FFFF 被截断为 -1
-/// (误处理为 EBADF 而非 EINVAL). 此处用 try_from 严格校验, 失败时返回 -EINVAL.
-///
-/// SAFETY: 调用方需确保传入 fd (a0) 来自用户态寄存器, 内核不应信任其值域.
-#[inline]
-fn try_fd(a0: u64) -> Option<i32> {
-    i32::try_from(a0).ok()
-}
 
 #[cfg(target_arch = "x86_64")]
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -197,7 +184,7 @@ pub unsafe extern "C" fn syscall_dispatch(
 )]
 #[expect(
     clippy::cast_possible_truncation,
-    reason = "syscall handler 中 u64 → u32/i32 转换: 严格校验在 try_fd/try_flags helper 内; 剩余 cast 是 sys_* 函数内数据转换, 已知安全"
+    reason = "syscall handler 中 u64 → u32/i32 转换: 剩余 cast 是 sys_* 函数内数据转换, 已知安全"
 )]
 #[expect(
     clippy::cast_possible_wrap,
@@ -220,19 +207,6 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 
     // framework 回退: 处理尚未迁移到 services 的 syscall
     match num {
-        // ==================== 文件 I/O ====================
-        SYS_read => {
-            // 严格校验 fd (用户态可传任意 u64), 失败返回 -EINVAL (Errno::EINVAL as i64)
-            try_fd(a0).map_or_else(
-                || -(Errno::EINVAL as i64),
-                |fd| dispatch!(sys_read(fd, a1 as *mut u8, a2), b"read\0"),
-            )
-        }
-        SYS_write => try_fd(a0).map_or_else(
-            || -(Errno::EINVAL as i64),
-            |fd| dispatch!(sys_write(fd, a1 as *const u8, a2), b"write\0"),
-        ),
-
         // ==================== 信号 ====================
         // T3 (syscall-followup): SYS_rt_sigreturn 分支已删除——pre-dispatch 特殊路径
         // (L89-119) 无条件拦截编号 15 并直接恢复 sigframe 返回, 本分发器永不可达.
@@ -434,25 +408,12 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
             dispatch!(Errno::ENOSYS.as_ret(), b"net_nosys\0")
         }
 
-        // ==================== 进程创建 ====================
-        SYS_execve => dispatch!(
-            crate::framework::syscall::execve::ExecveResult::from_ret(sys_execve(
-                a0 as *const u8,
-                a1 as *const *const u8,
-                a2 as *const *const u8
-            ))
-            .as_ret(),
-            b"execve\0"
-        ),
-
         // ==================== 时间 ====================
-        SYS_setrlimit => dispatch!(
-            crate::framework::proc::sys_setrlimit(a0 as i32, a1),
-            b"setrlimit\0"
-        ),
         // T3 (syscall-followup): SYS_tgkill 分支已删除——原实现忽略 _tgid 且
         // 语义错位 (将 tid 当 pid 发信号), 属半成品; 用户态 0 调用方. 恢复
         // ENOSYS 安全态, 实装线程组语义时在 services 层接线 (T1/T2).
+        // T2 (syscall-followup): SYS_execve / SYS_setrlimit 分支已迁至
+        // services (services::proc::exec / services::proc::sysinfo).
 
         // ==================== sendfile / splice ====================
         SYS_sendfile => dispatch!(
@@ -498,222 +459,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 }
 
 // ============================================================================
-// 文件 I/O — read / write
+// 时间
 // ============================================================================
-
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "fd as u32: fd 由 try_fd 严格校验, 在 i32 范围内; count as u32: 单次 read 不会超过 u32::MAX (Linux ABI)"
-)]
-fn sys_read(fd: i32, buf: *mut u8, count: u64) -> i64 {
-    if buf.is_null() || count == 0 {
-        return Errno::EINVAL.as_ret();
-    }
-    if !raw::check_user_buf(buf as u64, count) {
-        return Errno::EFAULT.as_ret();
-    }
-    if fd == 1 || fd == 2 {
-        return Errno::EBADF.as_ret();
-    }
-    if fd == 0 {
-        #[cfg(not(feature = "kernel_test"))]
-        {
-            #[cfg(target_arch = "x86_64")]
-            {
-                // 键盘 stdin: keyboard_has_data/get_char 由 framework input 机制提供。
-                // 串口 stdin 随 DECISION-G §6.4 char 下沉移除 (framework 不再持有串口 FFI,
-                // 控制台输入待 devfs 桥接入 services char 权威)。
-                if let Some(c) = raw::read_keyboard_byte() {
-                    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                    unsafe { raw::write_u8(buf, c) };
-                    return 1;
-                }
-            }
-        }
-        return 0;
-    }
-    if crate::framework::syscall::eventfd::is_eventfd_fd(fd) {
-        return crate::framework::syscall::eventfd::sys_eventfd_read(fd, buf as u64);
-    }
-    if crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
-        return crate::framework::syscall::signalfd::sys_signalfd_read(fd, buf as u64);
-    }
-    if crate::framework::syscall::timerfd::is_timerfd_fd(fd) {
-        return crate::framework::syscall::timerfd::sys_timerfd_read(fd, buf as u64);
-    }
-    if crate::framework::fs::is_inotify_fd(fd) {
-        return crate::framework::fs::sys_inotify_read(i64::from(fd), buf, count as usize);
-    }
-    i64::from(crate::framework::fs::vfs_read(
-        fd as u32,
-        buf,
-        count as u32,
-    ))
-}
-
-/// 从用户空间缓冲区复制数据到内核缓冲区.
-///
-/// framekernel 架构下内核页表不映射用户页面, 需要通过用户页表
-/// 将用户虚拟地址转译为物理地址, 再通过 `KERNEL_BASE` 恒等映射访问.
-///
-/// 返回实际复制的字节数; 若任一转译失败则返回已复制字节数 (调用方按需处理).
-fn copy_from_user_buf(user_buf: *const u8, kernel_buf: &mut [u8], user_cr3: u64) -> usize {
-    if user_buf.is_null() || kernel_buf.is_empty() || user_cr3 == 0 {
-        return 0;
-    }
-    let vmm = crate::framework::mm::get_vmm();
-    let page_size = crate::framework::mm::PAGE_SIZE as u64;
-    let kernel_base = crate::framework::mm::KERNEL_BASE as u64;
-    let total = kernel_buf.len();
-    let mut copied: usize = 0;
-    while copied < total {
-        let user_va = user_buf as u64 + copied as u64;
-        let page_va = user_va & !(page_size - 1);
-        let offset = user_va & (page_size - 1);
-        let step = (page_size - offset).min((total - copied) as u64) as usize;
-        let phys = match vmm
-            .get_physical_in_pml4(user_cr3, crate::framework::mm::VirtAddr(page_va))
-        {
-            Some(p) => p.as_u64(),
-            None => break,
-        };
-        let kernel_va = phys + kernel_base + offset;
-        // SAFETY: kernel_va 由用户页表转译 + KERNEL_BASE 偏移, 在恒等映射范围内.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                kernel_va as *const u8,
-                kernel_buf.as_mut_ptr().add(copied),
-                step,
-            );
-        }
-        copied += step;
-    }
-    copied
-}
-
-fn sys_write(fd: i32, buf: *const u8, count: u64) -> i64 {
-    if buf.is_null() || count == 0 {
-        return Errno::EINVAL.as_ret();
-    }
-    if !raw::check_user_buf(buf as u64, count) {
-        return Errno::EFAULT.as_ret();
-    }
-    if fd == 1 || fd == 2 {
-        let user_cr3 = crate::framework::mm::read_user_cr3_asm();
-        let mut remaining = (count as usize).min(4096);
-        let mut buf_off: usize = 0;
-        while remaining > 0 {
-            let chunk = remaining.min(256);
-            let mut kernel_buf = [0u8; 256];
-            let copied = copy_from_user_buf(
-                // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-                unsafe { buf.add(buf_off) },
-                &mut kernel_buf[..chunk],
-                user_cr3,
-            );
-            if copied == 0 {
-                return Errno::EFAULT.as_ret();
-            }
-            crate::framework::klog::serial_write_bytes(&kernel_buf[..copied]);
-            buf_off += copied;
-            remaining -= copied;
-        }
-        return count as i64;
-    }
-    if crate::framework::syscall::eventfd::is_eventfd_fd(fd) {
-        if count < 8 {
-            return Errno::EINVAL.as_ret();
-        }
-        let user_cr3 = crate::framework::mm::read_user_cr3_asm();
-        let mut val_buf = [0u8; 8];
-        if copy_from_user_buf(buf, &mut val_buf, user_cr3) < 8 {
-            return Errno::EFAULT.as_ret();
-        }
-        let value = u64::from_ne_bytes(val_buf);
-        return crate::framework::syscall::eventfd::sys_eventfd_write(fd, value);
-    }
-    // 文件写入: 分块拷贝用户数据到内核缓冲区, 再走 VFS
-    let user_cr3 = crate::framework::mm::read_user_cr3_asm();
-    let total = (count as usize).min(4096);
-    let mut kernel_buf = [0u8; 256];
-    let mut written: usize = 0;
-    while written < total {
-        let chunk = (total - written).min(kernel_buf.len());
-        let copied = copy_from_user_buf(
-            // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-            unsafe { buf.add(written) },
-            &mut kernel_buf[..chunk],
-            user_cr3,
-        );
-        if copied == 0 {
-            break;
-        }
-        let n = crate::framework::fs::vfs_write_safe(fd as u32, &kernel_buf[..copied]);
-        if n < 0 {
-            return i64::from(n);
-        }
-        written += copied;
-    }
-    written as i64
-}
-
-// ============================================================================
-// execve / 网络 / 时间
-// ============================================================================
-
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-fn sys_execve(path: *const u8, argv: *const *const u8, envp: *const *const u8) -> i64 {
-    if path.is_null() || !raw::check_user_ptr(path as u64) {
-        return Errno::EFAULT.as_ret();
-    }
-    let _ = envp;
-    let mut argc: u32 = 0;
-    if !argv.is_null() {
-        if !raw::check_user_ptr(argv as u64) {
-            return Errno::EFAULT.as_ret();
-        }
-        let mut p = argv;
-        loop {
-            if !raw::check_user_ptr(p as u64) {
-                return Errno::EFAULT.as_ret();
-            }
-            // SAFETY: p 是经过 check_user_ptr 验证的用户空间指针
-            let entry = unsafe { core::ptr::read_volatile(p) };
-            if entry.is_null() {
-                break;
-            }
-            if !raw::check_user_ptr(entry as u64) {
-                return Errno::EFAULT.as_ret();
-            }
-            argc += 1;
-            // SAFETY: p 指向用户空间数组元素; 由 argc 计数 + NULL 终止保证不越界
-            p = unsafe { p.add(1) };
-        }
-    }
-
-    // SUID 处理
-    let mut stat_buf = core::mem::MaybeUninit::<crate::framework::fs::VfsStat>::uninit();
-    let current_pwm = crate::framework::credo::get_current_pwm();
-    let stat_result =
-        crate::framework::fs::vfs_stat_internal(path, stat_buf.as_mut_ptr(), current_pwm);
-    if stat_result == 0 {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        let st = unsafe { stat_buf.assume_init() };
-        if (st.perm & 0o4000) != 0 && st.owner_pwm != 0 {
-            crate::framework::credo::elevate_for_suid(st.owner_pwm);
-        }
-    }
-
-    let result = crate::framework::proc::proc_exec_replace(path, argv, argc);
-    if result < 0 {
-        Errno::ENOENT.as_ret()
-    } else {
-        0
-    }
-}
 
 #[expect(
     clippy::similar_names,

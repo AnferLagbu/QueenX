@@ -15,10 +15,11 @@
 //!
 //! ## 迁移状态
 //!
-//! - 已迁移: 文件 I/O, 文件系统, 内存管理, 进程, 信号, 网络, 凭证, 同步, 定时器,
-//!   事件轮询, eventfd/signalfd/timerfd, Credo 私有 syscall, 存储设备, inotify,
+//! - 已迁移: 文件 I/O (含 read/write), 文件系统, 内存管理, 进程 (含 execve,
+//!   setrlimit), 信号, 网络, 凭证, 同步, 定时器, 事件轮询,
+//!   eventfd/signalfd/timerfd, Credo 私有 syscall, 存储设备, inotify,
 //!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级
-//! - 待迁移: read/write, execve, firmware, ftrace/kgdb, seccomp/prctl,
+//! - 待迁移: firmware, ftrace/kgdb, seccomp/prctl,
 //!   路由/Netfilter, `io_uring`, namespace, cgroup, NUMA, eBPF, PM, TPM,
 //!   CET, tickless, timesync, kexec, UEFI, 帧缓冲, sendfile/splice 等
 //!
@@ -101,15 +102,24 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getcwd, SYS_getdents, SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch,
         SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
         SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
-        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_readlink,
+        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_read, SYS_readlink,
         SYS_readlinkat, SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select,
         SYS_setitimer, SYS_setxattr, SYS_stat, SYS_symlink, SYS_symlinkat, SYS_sync, SYS_time,
-        SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink, SYS_unlinkat,
+        SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink, SYS_unlinkat, SYS_write,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
     Some(match num {
         // 文件 I/O
+        // read/write: fd 严格校验 (用户态可传任意 u64, try_from 失败返回 -EINVAL)
+        SYS_read => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::services::fs::io::read_syscall(fd, a1, a2)),
+            Err(_) => Errno::EINVAL.as_ret(),
+        },
+        SYS_write => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::services::fs::io::write_syscall(fd, a1, a2)),
+            Err(_) => Errno::EINVAL.as_ret(),
+        },
         SYS_open => as_ret(crate::services::fs::open::open_syscall(
             a0, a1 as i32, a2 as i32,
         )),
@@ -315,12 +325,13 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程相关系统调用
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_clone, SYS_clone3, SYS_exit, SYS_exit_group, SYS_fork, SYS_getpgid, SYS_getpid,
-        SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid, SYS_gettid,
-        SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice, SYS_pidfd_getfd,
-        SYS_pidfd_open, SYS_pidfd_send_signal, SYS_reboot, SYS_rt_sigaction, SYS_rt_sigprocmask,
-        SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield, SYS_sethostname, SYS_setpgid,
-        SYS_setpriority, SYS_setsid, SYS_sysinfo, SYS_uname, SYS_wait4,
+        SYS_clone, SYS_clone3, SYS_execve, SYS_exit, SYS_exit_group, SYS_fork, SYS_getpgid,
+        SYS_getpid, SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid,
+        SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
+        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_reboot, SYS_rt_sigaction,
+        SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield,
+        SYS_sethostname, SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_sysinfo,
+        SYS_uname, SYS_wait4,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -370,6 +381,8 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 进程生命周期
         SYS_fork => crate::services::proc::lifecycle::fork_syscall(),
+        // execve: 进程替换 (path/argv 为用户指针, envp 当前忽略)
+        SYS_execve => as_ret(crate::services::proc::exec::execve_syscall(a0, a1, a2)),
         SYS_exit => crate::services::proc::lifecycle::exit_syscall(a0 as i32),
         // SIMPLIFIED: exit_group 暂等同 exit (B05-43 返工登记); 影响面: 线程组未实现
         // 组级终止, 仅结束当前进程; 何时需扩展: 引入 tgid/线程组基础结构后遍历组内
@@ -381,6 +394,7 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getrusage => crate::services::proc::sysinfo::getrusage_syscall(a0 as i32, a1),
         SYS_sysinfo => crate::services::proc::sysinfo::sysinfo_syscall(a0),
         SYS_getrlimit => crate::services::proc::sysinfo::getrlimit_syscall(a0 as i32, a1),
+        SYS_setrlimit => crate::services::proc::sysinfo::setrlimit_syscall(a0 as i32, a1),
         SYS_uname => as_ret(crate::services::proc::info::uname_syscall(a0)),
         SYS_gettimeofday => as_ret(crate::services::timer::clock::gettimeofday_syscall(
             a0,

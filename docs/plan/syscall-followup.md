@@ -40,7 +40,7 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 
 **方案**：逐批迁移——每项：services 实现（或确认 services 已实现如 sendfile）→ services dispatch 接线 → 回退层删分支 + 契约注释更新 → 测试。
 **分批**：
-- 批 1 核心 I/O/进程：read/write/execve/rt_sigreturn/setrlimit/tgkill（用户态核心，优先级最高）
+- 批 1 核心 I/O/进程：read/write/execve/rt_sigreturn/setrlimit/tgkill（用户态核心，优先级最高；实际迁移项为 read/write/execve/setrlimit——rt_sigreturn 已随 T3 清除，tgkill 归 T1 实装）
 - 批 2 安全/机制：seccomp/prctl/tcgetpgrp/tcsetpgrp
 - 批 3 网络/异步：sendfile/splice/io_uring×3
 - 批 4 namespace/调试：unshare/setns/bpf/kexec_load
@@ -103,7 +103,7 @@ T7 (预存登记)
 ## 状态
 
 - [X] T3：半成品清除 + 用户态调用 audit（2026-09-15 完成，见下方 T3 实施记录）
-- [ ] T2：回退层 21 保留项 → services 迁移（批 1-5）
+- [ ] T2：回退层 21 保留项 → services 迁移（批 1 完成，见下方 T2 实施记录；批 2-5 待做）
 - [ ] T1：R2 未实装 SYS_* 实装（先重扫核实清单，与 T2 并行）
 - [ ] T4-T7：登记排后（R3 pub mod / R1 445 项 / TODO 33 项 / aarch64 编号）
 
@@ -128,6 +128,22 @@ T7 (预存登记)
 **半成品补充发现（不清除，登记 T2 处置）**：`sys_fb_release` 空 stub（恒 0 无释放动作，有用户 → T2 批 5 实装）；`sys_tcgetpgrp/sys_tcsetpgrp` `_fd` 参数忽略（POSIX 简化语义，T2 批 2 迁移时确认）；用户态 sys.rs `SYS_CREDO_HOTPLUG_STATUS` 常量无 wrapper 无调用（T2 批 5 补 wrapper）。
 
 **验证**：build.sh all 5/5（双架构 0w0e + host-tests 全量 + asm 门控 + link）、clippy 双架构 0 warning、核心审计 8 项通过、QEMU boot（Ring 3/init）通过。
+
+### T2 实施记录（批 1）
+
+**迁移项**（4 项，services 0 unsafe）：
+
+| 项 | services 落点 | 要点 |
+|---|---|---|
+| read/write | `services/fs/io.rs`（`read_syscall`/`write_syscall`） | fd 路由策略（stdin/stdout/eventfd/signalfd/timerfd/inotify/VFS）整体迁入；fd 严格转换（try_from，失败 -EINVAL）随分支迁至 services dispatch |
+| execve | `services/proc/exec.rs`（`execve_syscall`） | 指针校验 + argv 扫描（`api::read_u64_from_user` safe 读取）+ SUID 判定 + 委托 `proc_exec_replace`；`ExecveResult` 包装类型删除（唯一消费者是被删回退分支），services 直接返回精确 Errno（EFAULT/ENOENT，与原 from_ret 映射一致） |
+| setrlimit | `services/proc/sysinfo.rs`（`setrlimit_syscall`，与 getrlimit 同落点） | RlimitTable 机制字段留在 framework（DECISION-J 第十九批判据不变）；services 做策略：校验 + `read_struct_from_user` 读取 + 特权判定（pid==1）+ 委托表更新 |
+
+**机制统一**：write 路径的用户数据拷贝由 framework dispatch 私有的 `copy_from_user_buf`（CR3 页表走查）统一到 `framework::mm::copy_user`（`copy_from_user`/`copy_to_user`，异常表兜底，services 已有使用先例）；并行实现收敛为单一权威。stdin 单字节写入改 `copy_to_user`（替代 unsafe `raw::write_u8`，后者随迁移失去唯一调用方删除）。
+
+**framework 回退层清理**：删 SYS_read/SYS_write/SYS_execve/SYS_setrlimit 4 分支 + `sys_read`/`sys_write`/`sys_execve`/`copy_from_user_buf`/`try_fd` + `framework/syscall/execve.rs` 模块；types.rs 编号常量保留（编号空间权威不受迁移影响）。
+
+**验证**：build.sh all 5/5、clippy 3 维（pedantic x86_64 + kernel_test + host-test）0 warning、核心审计 8 项通过（deadlock 唯一 HIGH 为预存 AP_STARTUP_LOCK 人工审查项，非本次引入）、QEMU boot（Ring 3/init）通过、QEMU kernel_test 468/468 全过（含用户态 init/eash 真实执行 read/write 路径）。
 
 ## 详情
 

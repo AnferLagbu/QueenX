@@ -4,8 +4,6 @@ pub mod dispatch;
 /// T-03: 系统调用分发决策 trait
 pub mod dispatch_trait;
 pub mod epoll;
-/// execve 结果类型 (第二十五批自 services 迁回, 机制持有)
-pub mod execve;
 pub mod eventfd;
 pub mod firmware;
 pub mod ftrace_kgdb;
@@ -142,17 +140,6 @@ pub(crate) mod raw {
     }
 
     // ============= 用户态读写助手（unsafe 集中点） =============
-
-    /// 写一个 u8 到用户指针。
-    /// # Safety
-    /// 调用方必须先调用 `check_user_ptr(ptr as u64)` 验证指针合法。
-    #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
-    pub unsafe fn write_u8(ptr: *mut u8, val: u8) {
-        // SAFETY: 调用方已通过 `check_user_ptr` 验证 ptr 指向有效且对齐的
-        // 用户空间地址 (1 字节自然对齐)；write_volatile 防止编译器优化掉
-        // 设备/共享内存访问。
-        unsafe { core::ptr::write_volatile(ptr, val) }
-    }
 
     /// 写一个 u32 到用户指针。
     /// # Safety

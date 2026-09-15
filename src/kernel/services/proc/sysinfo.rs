@@ -1,10 +1,11 @@
 #![deny(unsafe_code)]
-//! 系统信息策略 — getrusage / sysinfo / getrlimit / gethostname / sethostname / boot_check
+//! 系统信息策略 — getrusage / sysinfo / getrlimit / setrlimit / gethostname / sethostname / boot_check
 //!
 //! 从 framework/syscall/mod.rs 迁移的策略代码:
 //! - getrusage_syscall: 资源使用统计
 //! - sysinfo_syscall: 系统信息
 //! - getrlimit_syscall: 资源限制查询
+//! - setrlimit_syscall: 资源限制设置 (T2 批 1 自 framework 回退层迁移)
 //! - gethostname_syscall: 获取主机名
 //! - sethostname_syscall: 设置主机名
 //! - boot_check_syscall: 启动检查
@@ -76,6 +77,42 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
         return Errno::EFAULT.as_ret();
     }
     0
+}
+
+/// setrlimit(resource, rlim) 策略 — 设置资源限制
+///
+/// T2 批 1 (syscall-followup): 自 framework 回退层迁移. RlimitTable 机制
+/// 字段仍归 framework (DECISION-J 第十九批判据), services 仅做策略:
+/// 指针校验 + 读取 rlim_cur/rlim_max + 特权判定 + 委托表更新.
+pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
+    use crate::framework::proc::rlimit::RLIMIT_NLIMITS;
+
+    if rlim_ptr == 0 {
+        return Errno::EINVAL.as_ret();
+    }
+    if !(0..RLIMIT_NLIMITS as i32).contains(&resource) {
+        return Errno::EINVAL.as_ret();
+    }
+
+    // 从用户空间读取 rlim_cur / rlim_max (16 字节, safe 包装先校验后读)
+    let mut vals = [0u64; 2];
+    if !crate::framework::syscall::api::read_struct_from_user(rlim_ptr, &mut vals) {
+        return Errno::EFAULT.as_ret();
+    }
+    let (cur, max) = (vals[0], vals[1]);
+
+    // 特权判定: pid=1 (init) 视为特权进程
+    let pid = crate::framework::proc::process_get_current_pid();
+    let is_privileged = pid == 1;
+
+    match crate::framework::proc::process_with(pid, |proc| {
+        let mut rlimit_table = proc.rlimit_table.lock();
+        rlimit_table.set(resource as usize, cur, max, is_privileged)
+    }) {
+        Some(Ok(())) => 0,
+        Some(Err(e)) => e.as_ret(),
+        None => Errno::ESRCH.as_ret(),
+    }
 }
 
 /// getrlimit(resource, rlim) 策略
