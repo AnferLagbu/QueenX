@@ -162,6 +162,23 @@ T7 (预存登记)
 
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
 
+### T2 实施记录（批 3）
+
+**迁移项**（4 项，services 0 unsafe）：
+
+| 项 | services 落点 | 要点 |
+|---|---|---|
+| sendfile | `services/fs/sendfile.rs`（`sys_sendfile`，既有封装，本次接线） | 委托 framework 机制 `framework::syscall::sendfile::sys_sendfile`（VFS/IPC/pipe 访问 + unsafe 用户 offset 指针，机制留 framework） |
+| splice | `services/fs/sendfile.rs`（`sys_splice`，既有封装，本次接线） | 同上，委托 `framework::syscall::sendfile::sys_splice` |
+| io_uring_setup | `services/io/iouring.rs`（`io_uring_setup_syscall`） | 委托 framework 机制 `io_uring_setup`（全局实例表 + ID 分配），services 仅参数转换 + errno 映射 |
+| io_uring_enter | `services/io/iouring.rs`（`io_uring_enter_syscall`） | 委托 framework 机制 `io_uring_enter`（SQE→CQE 处理） |
+
+**机制保留（framework）**：`framework/syscall/sendfile.rs`（sys_sendfile/sys_splice 完整实现 + SPLICE_F_* 常量，services 经 `framework::syscall` 顶层 re-export 消费）；`framework/io/iouring.rs`（IoUring/RingBuffer/Sqe/Cqe + io_uring_setup/enter/destroy/submit/reap 机制函数 + `sys_io_uring_submit_sqe`——QX_IO_URING_SUBMIT 机制独有，留在回退层）。
+
+**framework 回退层清理**：删 SYS_sendfile/SYS_splice/SYS_io_uring_setup/SYS_io_uring_enter 4 分支 + `sys_io_uring_setup`/`sys_io_uring_enter` 薄策略入口（参数转换类，迁 services 后无调用方）；sendfile/splice 实现在 framework 保留为机制库（services 委托调用）。
+
+**验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
+
 ## 详情
 
 ### 源码核实（2026-09-15）

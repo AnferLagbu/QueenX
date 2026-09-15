@@ -11,12 +11,12 @@ use super::types::{
     Errno, SYS_accept, SYS_bind, SYS_bpf, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
     QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect,
     QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
-    QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_io_uring_enter,
-    SYS_io_uring_setup, QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
+    QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
+    QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
     SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_recvfrom, SYS_recvmsg,
     QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT,
-    SYS_sendfile, SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setsockopt, SYS_shutdown,
-    SYS_socket, SYS_splice, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
+    SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setsockopt, SYS_shutdown,
+    SYS_socket, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
     QX_UEFI, SYS_unshare, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
 };
 // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
@@ -276,14 +276,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== C4: io_uring ====================
-        SYS_io_uring_setup => dispatch!(
-            crate::framework::io::iouring::sys_io_uring_setup(a0),
-            b"io_uring_setup\0"
-        ),
-        SYS_io_uring_enter => dispatch!(
-            crate::framework::io::iouring::sys_io_uring_enter(a0, a1, a2),
-            b"io_uring_enter\0"
-        ),
+        // T2 批 3 (syscall-followup): SYS_io_uring_setup / SYS_io_uring_enter
+        // 分支已迁至 services (services::io::iouring::io_uring_setup_syscall /
+        // io_uring_enter_syscall).
         // T3 (syscall-followup): SYS_io_uring_register 分支已删除——原实现为恒
         // ENOSYS 桩 (iouring.rs), 删除后落 `_ =>` 兜底 ENOSYS, 行为不变.
         // 实装注册缓冲区/文件语义时在 services 层接线 (T2 批 3).
@@ -400,26 +395,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // services (services::proc::exec / services::proc::sysinfo).
 
         // ==================== sendfile / splice ====================
-        SYS_sendfile => dispatch!(
-            crate::framework::syscall::sendfile::sys_sendfile(
-                a0 as i32,
-                a1 as i32,
-                a2,
-                a3 as usize
-            ),
-            b"sendfile\0"
-        ),
-        SYS_splice => dispatch!(
-            crate::framework::syscall::sendfile::sys_splice(
-                a0 as i32,
-                a1,
-                a2 as i32,
-                a3,
-                a4 as usize,
-                a5 as u32
-            ),
-            b"splice\0"
-        ),
+        // T2 批 3 (syscall-followup): SYS_sendfile / SYS_splice 分支已迁至
+        // services (services::fs::sendfile::sys_sendfile / sys_splice), 委托
+        // framework 机制 (framework::syscall::sendfile::sys_sendfile / sys_splice).
 
         // ==================== Credo 私有 syscall ====================
         #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]

@@ -447,22 +447,10 @@ pub fn io_uring_reap(id: u32) -> Option<Cqe> {
 // Syscall 接口
 // ============================================================================
 
-/// `sys_io_uring_setup` — 创建 `io_uring` 实例
-pub fn sys_io_uring_setup(entries: u64) -> i64 {
-    let pid = crate::framework::proc::process_get_current_pid();
-    match io_uring_setup(entries as u32, pid as u32) {
-        Ok(id) => i64::from(id),
-        Err(e) => -(e as i64),
-    }
-}
-
-/// `sys_io_uring_enter` — 进入 `io_uring` (提交 + 等待完成)
-pub fn sys_io_uring_enter(id: u64, to_submit: u64, min_complete: u64) -> i64 {
-    match io_uring_enter(id as u32, to_submit as u32, min_complete as u32) {
-        Ok(n) => i64::from(n),
-        Err(e) => -(e as i64),
-    }
-}
+// T2 批 3 (syscall-followup): sys_io_uring_setup / sys_io_uring_enter 策略
+// 入口已迁至 services (services::io::iouring::io_uring_setup_syscall /
+// io_uring_enter_syscall), 委托本文件机制函数 (io_uring_setup / io_uring_enter).
+// 以下仅保留 QX_IO_URING_SUBMIT 机制独有入口 (QX_* 归 framework 回退层).
 
 /// `sys_io_uring_submit_sqe` — 提交单个 SQE
 pub fn sys_io_uring_submit_sqe(

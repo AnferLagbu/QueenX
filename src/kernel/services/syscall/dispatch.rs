@@ -15,14 +15,14 @@
 //!
 //! ## 迁移状态
 //!
-//! - 已迁移: 文件 I/O (含 read/write), 文件系统, 内存管理, 进程 (含 execve,
-//!   setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp), 信号, 网络, 凭证,
-//!   同步, 定时器, 事件轮询, eventfd/signalfd/timerfd, Credo 私有 syscall,
-//!   存储设备, inotify, 内存建议与锁定, 进程创建/等待, 系统信息,
-//!   CPU 亲和性, 进程优先级
+//! - 已迁移: 文件 I/O (含 read/write, sendfile, splice), 文件系统, 内存管理,
+//!   进程 (含 execve, setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp), 信号,
+//!   网络, 凭证, 同步, 定时器, 事件轮询, eventfd/signalfd/timerfd,
+//!   io_uring (setup/enter), Credo 私有 syscall, 存储设备, inotify,
+//!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级
 //! - 待迁移: firmware, ftrace/kgdb,
-//!   路由/Netfilter, `io_uring`, namespace, cgroup, NUMA, eBPF, PM, TPM,
-//!   CET, tickless, timesync, kexec, UEFI, 帧缓冲, sendfile/splice 等
+//!   路由/Netfilter, namespace, cgroup, NUMA, eBPF, PM, TPM,
+//!   CET, tickless, timesync, kexec, UEFI, 帧缓冲 等
 //!
 //! 评估日期: 2026-06-19
 
@@ -105,8 +105,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
         SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_read, SYS_readlink,
         SYS_readlinkat, SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select,
-        SYS_setitimer, SYS_setxattr, SYS_stat, SYS_symlink, SYS_symlinkat, SYS_sync, SYS_time,
-        SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink, SYS_unlinkat, SYS_write,
+        SYS_sendfile, SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat, SYS_symlink,
+        SYS_symlinkat, SYS_sync, SYS_time, SYS_times, SYS_truncate, SYS_umask, SYS_umount2,
+        SYS_unlink, SYS_unlinkat, SYS_write,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -257,6 +258,22 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a3,
             a4 as usize,
         )),
+        // sendfile / splice (T2 批 3, syscall-followup): 零拷贝数据传输,
+        // 委托 framework 机制 (VFS/IPC/pipe 访问), services 封装类型安全 API
+        SYS_sendfile => crate::services::fs::sendfile::sys_sendfile(
+            a0 as i32,
+            a1 as i32,
+            a2,
+            a3 as usize,
+        ),
+        SYS_splice => crate::services::fs::sendfile::sys_splice(
+            a0 as i32,
+            a1,
+            a2 as i32,
+            a3,
+            a4 as usize,
+            a5 as u32,
+        ),
         SYS_name_to_handle_at => {
             // 显式错误透传: 具体 Errno 而非通用负值 (B05-41 返工)
             match crate::services::fs::file_handle::name_to_handle_at_syscall(
@@ -814,8 +831,9 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_GET_CANARY, SYS_clock_getres, SYS_getrandom, SYS_timer_create, SYS_timer_delete,
-        SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
+        QX_GET_CANARY, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter, SYS_io_uring_setup,
+        SYS_timer_create, SYS_timer_delete, SYS_timer_getoverrun, SYS_timer_gettime,
+        SYS_timer_settime,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -831,6 +849,13 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::services::syscall::posix_timer::sys_timer_getoverrun(a0)
         }
         SYS_clock_getres => crate::services::syscall::posix_timer::sys_clock_getres(a0, a1),
+
+        // io_uring 异步 I/O (T2 批 3, syscall-followup): 委托 framework 机制
+        // (IoUring 实例表), services 仅参数转换 + 错误码映射
+        SYS_io_uring_setup => crate::services::io::iouring::io_uring_setup_syscall(a0),
+        SYS_io_uring_enter => {
+            crate::services::io::iouring::io_uring_enter_syscall(a0, a1, a2)
+        }
 
         // 熵源 / Stack Canary (§6.1 下沉 services/syscall/canary)
         SYS_getrandom => crate::services::syscall::canary::sys_getrandom(a0, a1, a2),
