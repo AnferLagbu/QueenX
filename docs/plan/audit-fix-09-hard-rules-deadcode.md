@@ -106,7 +106,7 @@
     - R3 pub mod 实际 **7 项**（文档 36，少 29——多数已治理或误报排除）
     - R4 struct 实际 **1 项**（DomainFlags，与文档一致）
   - 方案：按 2026-09-09 治理决策三分层（DECISION-052）重排 B09-05/06/07 处置——垃圾删除 / 已实装接线 / 未来预留迁移文档。R1 445 项高密度文件 Top：apic.rs 19、xhci.rs 14、display/controller.rs 11、nestfs/dedup.rs 10、aarch64/mmu.rs 9、credo/identity.rs 9、cgroup.rs 8。
-  - 状态：[]（2026-09-15 注记：dispatch 层三分类数据已由 [syscall-dispatch-cleanup.md](syscall-dispatch-cleanup.md) B2 audit 刷新——framework 回退层 65 编号 = 27 机制独有（QX_*）/24 未迁移（登记）/14 ENOSYS 哨兵；全量 R1/R3 清单刷新仍随 B09-06/07 处置时更新）
+  - 状态：[]（2026-09-15 注记：dispatch 层三分类数据已由 [syscall-dispatch-cleanup.md](archive/syscall-dispatch-cleanup.md) B2 audit 刷新——framework 回退层 65 编号 = 27 机制独有（QX_*）/24 未迁移（登记）/14 ENOSYS 哨兵；全量 R1/R3 清单刷新仍随 B09-06/07 处置时更新）
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
   - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。

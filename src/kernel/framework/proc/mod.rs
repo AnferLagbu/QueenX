@@ -114,7 +114,8 @@ pub use madvise_mlock::{
 pub use elf::{Elf64Header, Elf64Phdr, ElfLoadResult, elf_load, elf_validate};
 
 // rlimit 公共接口显式 re-export — glob re-export 可能被遮蔽
-pub use rlimit::{RLIM_INFINITY, RLIMIT_CORE, get_memlock_limit, sys_getrlimit, sys_setrlimit};
+// sys_getrlimit / sys_setrlimit 已随 T2 迁至 services (syscall-followup), 此处仅保留机制字段与查询辅助
+pub use rlimit::{RLIM_INFINITY, RLIMIT_CORE, get_memlock_limit};
 
 // seccomp 公共接口 re-export — 避免跨子系统直接访问 proc::seccomp 内部
 pub use seccomp::{SeccompMode, SeccompState, seccomp_check, sys_prctl_prctl, sys_seccomp};

@@ -339,7 +339,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 |---|---|---|---|
 | **X** | ① char serial/vga 接线（char 桥模式，`9ba997e3` 已验证）+ ② 前置核实表更新（L941-L943：virtio 两行标"已核实 L962/L1008"、storage 两行标"归 storage 专项"）| 无（桥模式已跑通）| 双架构 0w0e + clippy 0 + 核心审计 + host-tests + **QEMU 冒烟**（接线触启动路径）|
 | **Y** | ① storage 专项 5 子步（DECISION-H：0 号 identify helper → _block 适配器 → MSI-X/IRQ → storage_init 退位 → QEMU 存储冒烟）| 无（独立排期）| 每子步双架构 0w0e + host-tests + 专项 QEMU 存储冒烟 + audit_services_boundary |
-| **Z** | ③ transport 去重（services `VirtioDevice` 删/薄代理，framework `VirtioMmioDevice` 保留，**已完成 `77407b8e`**）→ ④ NetOps 安全桥（同 CharOps 桥模式，net 中断驱动路径，**设计文档 [netops-bridge-design.md](netops-bridge-design.md) 已审核通过（P1×2 + P2×3 修正后实施），实施完成**：framework `net_device_ops.rs` trait + 泛型桥 + DECISION-K 注册契约槽位；services `VirtioNetDriver` impl + `net_init` 填充；旧 framework `VirtioNet` 驱动 + `virtio_net_*` FFI + `VIRTIO_NET_OPS_STATIC` + `probe_all` 已删除）| ③ 是 ④ 前置（transport 单一化后桥接线更干净）| ③ 双架构 0w0e + 核心审计；④ 双架构 0w0e + clippy + 核心审计 + host-tests（含桥契约套件）+ QEMU aarch64 virt 挂网卡冒烟 |
+| **Z** | ③ transport 去重（services `VirtioDevice` 删/薄代理，framework `VirtioMmioDevice` 保留，**已完成 `77407b8e`**）→ ④ NetOps 安全桥（同 CharOps 桥模式，net 中断驱动路径，**设计文档 [netops-bridge-design.md](archive/netops-bridge-design.md) 已审核通过（P1×2 + P2×3 修正后实施），实施完成**：framework `net_device_ops.rs` trait + 泛型桥 + DECISION-K 注册契约槽位；services `VirtioNetDriver` impl + `net_init` 填充；旧 framework `VirtioNet` 驱动 + `virtio_net_*` FFI + `VIRTIO_NET_OPS_STATIC` + `probe_all` 已删除）| ③ 是 ④ 前置（transport 单一化后桥接线更干净）| ③ 双架构 0w0e + 核心审计；④ 双架构 0w0e + clippy + 核心审计 + host-tests（含桥契约套件）+ QEMU aarch64 virt 挂网卡冒烟 |
 
 **执行顺序**：X / Y 可并行（独立）；Z 内部 ③→④ 串行。④ 为接线最后一步（依赖 nic_probe_all 接入点确认）。
 
@@ -377,7 +377,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 ### 委托批次 Z ④ 执行记录（NetOps 安全桥，实施：AI）
 
-- **目标**：services `VirtioNetDriver`（0 unsafe）接入 smoltcp。`ChitinNetDevice` 要求 `&'static NetOps`（extern "C" 指针表，需裸指针转换），services 无法直接构造 → framework 提供安全桥 trait + 泛型桥（monomorphization 生成 extern "C" 回调，unsafe 转换全部留在 framework）。设计见 [netops-bridge-design.md](netops-bridge-design.md)（审核通过，P1×2 + P2×3 修正后实施）。
+- **目标**：services `VirtioNetDriver`（0 unsafe）接入 smoltcp。`ChitinNetDevice` 要求 `&'static NetOps`（extern "C" 指针表，需裸指针转换），services 无法直接构造 → framework 提供安全桥 trait + 泛型桥（monomorphization 生成 extern "C" 回调，unsafe 转换全部留在 framework）。设计见 [netops-bridge-design.md](archive/netops-bridge-design.md)（审核通过，P1×2 + P2×3 修正后实施）。
 - **framework 新增**（`net/net_device_ops.rs`）：`NetDeviceOps` trait（send/try_receive/get_mac/handle_irq 默认空）+ `net_ops_for::<T>` 泛型桥（Box::leak 生成 `&'static NetOps`）+ `register_net_device::<T>`（Box::into_raw 所有权转移，注册前安全读 MAC）+ DECISION-K 注册契约槽（`NET_SERVICES_DRIVER: OnceLock<fn() -> Option<NetDeviceRegistration>>` + `net_register_services_driver` set-once + `net_services_driver` 单向拉取）。`net_services_driver` 按 kernel_test cfg-out 同步门控（probe 模块 kernel_test 下不编译，F9）。
 - **framework 删除**：`driver/virtio/net.rs` 旧 `VirtioNet` 驱动（~620 行）+ `virtio_net_*` FFI + `VIRTIO_NET_OPS_STATIC`；`nic_probe_all` virtio 分支改经槽位拉取（e1000 失败后）。
 - **services 接线**：`VirtioNetDriver` impl `NetDeviceOps`（`try_receive` 显式全路径 `VirtioNetDriver::try_receive(self, buf)` 防同名递归，P1-1）+ `finalize`（vq0/vq1 MMIO 配置 + DRIVER_OK + RX 预填）+ `net_init` 填充探测回调（crate root 在 `qx_net_init` 前编排）。`virtio_net_registration` 扫描 virtio-mmio 发现 `VIRTIO_ID_NET` 即 `VirtioNetDriver::new` + `finalize` + `register_net_device`。
@@ -408,7 +408,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
   - 背景：`src/rust/src/lib.rs:188` `#[path = "../../kernel/mod.rs"] pub mod kernel;` 使 rust-analyzer 报 `unresolved module`（跨 crate 目录 `#[path]` 是 RA 已知解析缺陷），但 cargo 双架构 0 error（路径实际有效）。
   - 方案：将 kernel 改为 workspace 独立 crate（成员 crate），lib.rs 以正常 `use` 依赖而非 `#[path]` 内嵌模块——RA 原生支持 crate 依赖，根治误报。
   - 代价：Cargo.toml workspace 成员 + 全部 `crate::kernel::` 路径引用改写（大量），独立工程。
-  - 状态：**实施完成（2026-09-14）**。kernel 独立 crate（src/kernel）+ queenx 壳（pub use kernel）；`crate::kernel::`→`crate::` 3370 处；Makefile/CI/audit 检查点指向 kernel manifest + clippy.toml/rustfmt.toml/.cargo config 随迁；host-tests 静态契约测试同步；RA 误报根因（跨 crate #[path]）移除。验证：双架构 0w0e + clippy + audit quick + host-tests 755/0 + QEMU 双机型 + kernel_test 链接。实施记录见 `docs/plan/kernel-crate-separation.md`。
+  - 状态：**实施完成（2026-09-14）**。kernel 独立 crate（src/kernel）+ queenx 壳（pub use kernel）；`crate::kernel::`→`crate::` 3370 处；Makefile/CI/audit 检查点指向 kernel manifest + clippy.toml/rustfmt.toml/.cargo config 随迁；host-tests 静态契约测试同步；RA 误报根因（跨 crate #[path]）移除。验证：双架构 0w0e + clippy + audit quick + host-tests 755/0 + QEMU 双机型 + kernel_test 链接。实施记录见 `docs/plan/archive/kernel-crate-separation.md`。
   - 关联：与分册 9 B09-19 孤儿测试治理无冲突；与 F/S 分层无冲突（纯工程结构改造）；为后续拆 services 独立 crate（编译器级 F1 services 0 unsafe / F3 无环依赖）铺路。
 - **预存审计积压登记（登记，2026-09-13）：六项审计积压处置分类**
   - 来源：委托人报告（§12.5 报告），按"登记待处置"处理，与方案 D 同类，**不阻塞批次 Z 开工**。
