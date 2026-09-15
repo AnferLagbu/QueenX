@@ -8,16 +8,16 @@ use core::sync::atomic::Ordering;
 
 use super::raw;
 use super::types::{
-    Errno, SYS_accept, SYS_bind, SYS_bpf, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
+    Errno, SYS_accept, SYS_bind, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
     QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect,
     QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
     QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
-    QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
+    QX_IO_URING_SUBMIT, QX_KGDB_ENTER,
     SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_recvfrom, SYS_recvmsg,
     QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT,
-    SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setsockopt, SYS_shutdown,
+    SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown,
     SYS_socket, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
-    QX_UEFI, SYS_unshare, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
+    QX_UEFI, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
 };
 // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
 #[cfg(any(feature = "kernel_test", target_arch = "x86_64"))]
@@ -288,14 +288,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D1: Namespace ====================
-        SYS_unshare => dispatch!(
-            crate::framework::proc::sys_unshare(a0),
-            b"unshare\0"
-        ),
-        SYS_setns => dispatch!(
-            crate::framework::proc::sys_setns(a0, a1),
-            b"setns\0"
-        ),
+        // T2 批 4 (syscall-followup): SYS_unshare / SYS_setns 分支已迁至
+        // services (services::proc::namespace::unshare_syscall / setns_syscall).
 
         // ==================== D2: cgroup ====================
         QX_CGROUP_CREATE => dispatch!(
@@ -320,10 +314,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D4: eBPF ====================
-        SYS_bpf => dispatch!(
-            crate::framework::debug::sys_bpf(a0, a1, a2),
-            b"bpf\0"
-        ),
+        // T2 批 4 (syscall-followup): SYS_bpf 分支已迁至 services
+        // (services::debug::ebpf::bpf_syscall, 委托 framework debug::sys_bpf).
 
         // ==================== D5: 电源管理 ====================
         QX_PM => dispatch!(
@@ -360,10 +352,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== D10: kexec ====================
-        SYS_kexec_load => dispatch!(
-            crate::framework::driver::sys_kexec(a0, a1, a2, a3),
-            b"kexec\0"
-        ),
+        // T2 批 4 (syscall-followup): SYS_kexec_load 分支已迁至 services
+        // (services::driver::kexec::kexec_syscall, 委托 framework driver::sys_kexec).
 
         // ==================== D11: UEFI ====================
         QX_UEFI => dispatch!(

@@ -16,13 +16,14 @@
 //! ## 迁移状态
 //!
 //! - 已迁移: 文件 I/O (含 read/write, sendfile, splice), 文件系统, 内存管理,
-//!   进程 (含 execve, setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp), 信号,
-//!   网络, 凭证, 同步, 定时器, 事件轮询, eventfd/signalfd/timerfd,
-//!   io_uring (setup/enter), Credo 私有 syscall, 存储设备, inotify,
+//!   进程 (含 execve, setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp,
+//!   unshare, setns), 信号, 网络, 凭证, 同步, 定时器, 事件轮询,
+//!   eventfd/signalfd/timerfd, io_uring (setup/enter) 与 eBPF (bpf),
+//!   kexec (kexec_load) 等, Credo 私有 syscall, 存储设备, inotify,
 //!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级
 //! - 待迁移: firmware, ftrace/kgdb,
-//!   路由/Netfilter, namespace, cgroup, NUMA, eBPF, PM, TPM,
-//!   CET, tickless, timesync, kexec, UEFI, 帧缓冲 等
+//!   路由/Netfilter, cgroup, NUMA, PM, TPM,
+//!   CET, tickless, timesync, UEFI, 帧缓冲 等
 //!
 //! 评估日期: 2026-06-19
 
@@ -348,8 +349,9 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
         SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
         SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
-        SYS_sched_yield, SYS_seccomp, SYS_sethostname, SYS_setpgid, SYS_setpriority,
-        SYS_setrlimit, SYS_setsid, SYS_sysinfo, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_uname, SYS_wait4,
+        SYS_sched_yield, SYS_seccomp, SYS_sethostname, SYS_setns, SYS_setpgid, SYS_setpriority,
+        SYS_setrlimit, SYS_setsid, SYS_sysinfo, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_uname,
+        SYS_unshare, SYS_wait4,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -370,6 +372,10 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         // seccomp / prctl (T2 批 2, syscall-followup)
         SYS_seccomp => crate::services::proc::seccomp::seccomp_syscall(a0 as u32, a1 as u32, a2),
         SYS_prctl => crate::services::proc::seccomp::prctl_syscall(a0 as i64, a1, a2, a3, a4),
+
+        // namespace (T2 批 4, syscall-followup)
+        SYS_unshare => crate::services::proc::namespace::unshare_syscall(a0),
+        SYS_setns => crate::services::proc::namespace::setns_syscall(a0, a1),
 
         // 信号
         SYS_rt_sigaction => as_ret(crate::services::proc::signal::rt_sigaction_syscall(
@@ -831,9 +837,9 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_GET_CANARY, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter, SYS_io_uring_setup,
-        SYS_timer_create, SYS_timer_delete, SYS_timer_getoverrun, SYS_timer_gettime,
-        SYS_timer_settime,
+        QX_GET_CANARY, SYS_bpf, SYS_clock_getres, SYS_getrandom, SYS_io_uring_enter,
+        SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create, SYS_timer_delete,
+        SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -856,6 +862,11 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_io_uring_enter => {
             crate::services::io::iouring::io_uring_enter_syscall(a0, a1, a2)
         }
+
+        // eBPF / kexec (T2 批 4, syscall-followup): 既有安全代理接线,
+        // 委托 framework 机制 (debug::sys_bpf / driver::sys_kexec)
+        SYS_bpf => crate::services::debug::ebpf::bpf_syscall(a0, a1, a2),
+        SYS_kexec_load => crate::services::driver::kexec::kexec_syscall(a0, a1, a2, a3),
 
         // 熵源 / Stack Canary (§6.1 下沉 services/syscall/canary)
         SYS_getrandom => crate::services::syscall::canary::sys_getrandom(a0, a1, a2),

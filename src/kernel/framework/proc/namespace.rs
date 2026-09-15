@@ -777,57 +777,7 @@ pub fn ns_register(ns_set: &NamespaceSet) {
 }
 
 // ============================================================================
-// Syscall 接口
+// syscall 策略入口 (sys_unshare / sys_setns) 已迁至 services
+// (services::proc::namespace::unshare_syscall / setns_syscall, T2 批 4,
+// syscall-followup) — 参数解析 + 特权判定 + 委托机制状态变更.
 // ============================================================================
-
-/// `sys_unshare` — 取消共享指定 namespace
-pub fn sys_unshare(flags: u64) -> i64 {
-    let pid = crate::framework::proc::process_get_current_pid();
-
-    let result = crate::framework::proc::PROCESS_TABLE
-        .with_process_mut(pid, |p| p.namespaces.lock().unshare(flags));
-
-    match result {
-        Some(Ok(())) => 0,
-        Some(Err(e)) => -(e as i64),
-        None => -(Errno::ESRCH as i64),
-    }
-}
-
-/// `sys_setns` — 切换到指定 namespace
-pub fn sys_setns(ns_type: u64, target_ns_id: u64) -> i64 {
-    // B06-18: 修正原 `1 << (ns_type + 8)` 位运算公式错误 (恒不匹配 CLONE_NEW* 导致
-    // from_clone_flag 恒 None)。现直接用 ns_type 匹配: 兼容 CLONE_NEW* 标志位
-    // (0x00020000 等) 与 QueenX 简化枚举值 (0-6) 两种语义。
-    let ns_t = match NsType::from_clone_flag(ns_type) {
-        Some(t) => t,
-        None => match ns_type {
-            0 => NsType::Mount,
-            1 => NsType::Uts,
-            2 => NsType::Ipc,
-            3 => NsType::User,
-            4 => NsType::Pid,
-            5 => NsType::Net,
-            6 => NsType::Cgroup,
-            _ => return -(Errno::EINVAL as i64),
-        },
-    };
-
-    // B06-20: setns 切换 namespace 需 CAP_SYS_ADMIN (SYSTEM 域 0x01), 与 mount/umount2 先例一致
-    let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::api::pwm_has_capability(pwm, 0, 0x01) {
-        return -(Errno::EPERM as i64);
-    }
-
-    let pid = crate::framework::proc::process_get_current_pid();
-
-    let result = crate::framework::proc::PROCESS_TABLE.with_process_mut(pid, |p| {
-        p.namespaces.lock().setns_by_type(ns_t, target_ns_id)
-    });
-
-    match result {
-        Some(Ok(())) => 0,
-        Some(Err(e)) => -(e as i64),
-        None => -(Errno::ESRCH as i64),
-    }
-}

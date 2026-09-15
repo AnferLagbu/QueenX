@@ -126,7 +126,9 @@ pub use seccomp::{
 };
 
 // namespace 公共接口 re-export — 避免跨子系统直接访问 proc::namespace 内部
-pub use namespace::{NamespaceSet, sys_setns, sys_unshare};
+// sys_setns/sys_unshare 已随 T2 批 4 迁至 services (syscall-followup);
+// NamespaceSet 机制字段保留
+pub use namespace::NamespaceSet;
 
 // cgroup 公共接口 re-export — 避免跨子系统直接访问 proc::cgroup 内部
 pub use cgroup::{

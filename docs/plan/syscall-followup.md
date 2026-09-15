@@ -179,6 +179,23 @@ T7 (预存登记)
 
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
 
+### T2 实施记录（批 4）
+
+**迁移项**（4 项，services 0 unsafe）：
+
+| 项 | services 落点 | 要点 |
+|---|---|---|
+| unshare | `services/proc/namespace.rs`（`unshare_syscall`） | 委托 `NamespaceSet::unshare`（机制：按 flags 创建新 ns 实例）；services 仅 errno 映射 |
+| setns | `services/proc/namespace.rs`（`setns_syscall`） | 参数解析（CLONE_NEW_* 标志位与简化枚举双语义，B06-18 语义保留）+ CAP_SYS_ADMIN 特权判定（`credo::pwm_has_capability`，经顶层 re-export）+ 委托 `setns_by_type` |
+| bpf | `services/debug/ebpf.rs`（`bpf_syscall`，既有安全代理接线） | 委托 framework `debug::sys_bpf`（机制） |
+| kexec_load | `services/driver/kexec.rs`（`kexec_syscall`，既有安全代理接线） | 委托 framework `driver::sys_kexec`（extern "C" 机制函数） |
+
+**机制保留（framework）**：`framework/proc/namespace.rs`（NamespaceSet/各 ns 实例/NsType/CLONE_NEW_*/NsRegistry/ns_register + unshare/setns_by_type 机制语义）；`framework/debug`（sys_bpf + BPF 子系统）；`framework/driver/kexec.rs`（sys_kexec + KexecSubsystem）。
+
+**framework 回退层清理**：删 SYS_unshare/SYS_setns/SYS_bpf/SYS_kexec_load 4 分支 + `sys_unshare`/`sys_setns` 策略入口；proc/mod.rs namespace re-export 收口（NamespaceSet 保留，sys_setns/sys_unshare 移除）；bpf/kexec 机制函数保留（services 代理委托调用）。
+
+**验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过（TD-22 注释中文化 100%）、host-tests 全量、QEMU boot（Ring 3/init）通过。
+
 ## 详情
 
 ### 源码核实（2026-09-15）
