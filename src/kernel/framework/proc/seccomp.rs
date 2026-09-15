@@ -31,7 +31,11 @@ use crate::framework::syscall::types::{
 // 常量
 // ============================================================================
 
-const MAX_FILTERS: usize = 4;
+/// 每进程最大 seccomp filter 数 (Linux 语义上限)
+///
+/// T2 批 2 (syscall-followup): 原 sys_seccomp 策略入口迁至 services, 本常量
+/// 属机制语义 (seccomp_check 与 services 策略共用), 保持 framework 单一权威.
+pub const MAX_FILTERS: usize = 4;
 
 // B09-17 (2026-09-14): 白名单数值从 QX_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
 // 原 QX_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_read=0 等) 不一致 → 白名单永不命中 (bug).
@@ -98,7 +102,11 @@ impl SeccompAction {
     }
 }
 
-const DEFAULT_ACTION: SeccompAction = SeccompAction::Allow;
+/// 默认 seccomp 动作 (Linux SECCOMP_RET_ALLOW)
+///
+/// T2 批 2 (syscall-followup): services 策略入口 (seccomp_syscall) 依赖本常量
+/// 构造初始 filter, 与机制检查 seccomp_check 共用同一权威定义.
+pub const DEFAULT_ACTION: SeccompAction = SeccompAction::Allow;
 
 // ============================================================================
 // 参数比较器
@@ -290,105 +298,10 @@ pub fn seccomp_check(syscall_nr: u64, args: &[u64; 6]) -> Option<i64> {
 }
 
 // ============================================================================
-// Syscall 入口
+// syscall 策略入口 (sys_seccomp / sys_prctl_prctl) 已迁至 services
+// (services::proc::seccomp::seccomp_syscall / prctl_syscall, T2 批 2,
+// syscall-followup) — 参数校验 + 特权判定 + 委托机制状态变更.
 // ============================================================================
-
-pub fn sys_seccomp(operation: u32, _flags: u32, _args_ptr: u64) -> i64 {
-    let pid = process_get_current_pid();
-
-    match operation {
-        0 => {
-            match PROCESS_TABLE
-                .with_process(pid, |p| {
-                    let mode = p.seccomp.get_mode();
-                    if mode != SeccompMode::Disabled {
-                        return Err(Errno::EINVAL);
-                    }
-                    p.seccomp
-                        .mode
-                        .store(SeccompMode::Strict as u8, Ordering::Release);
-                    Ok(())
-                })
-                .unwrap_or(Err(Errno::ESRCH))
-            {
-                Ok(()) => 0,
-                Err(e) => -(e as i64),
-            }
-        }
-        1 => {
-            let has_priv = PROCESS_TABLE
-                .with_process(pid, |p| p.seccomp.is_no_new_privs())
-                .unwrap_or(false);
-
-            if !has_priv {
-                if pid != 1 {
-                    return -(Errno::EACCES as i64);
-                }
-            }
-
-            match PROCESS_TABLE
-                .with_process(pid, |p| {
-                    let mode = p.seccomp.get_mode();
-                    if mode == SeccompMode::Strict {
-                        return Err(Errno::EINVAL);
-                    }
-                    let mut filters = p.seccomp.filters.lock();
-                    if filters.len() >= MAX_FILTERS {
-                        return Err(Errno::ENOMEM);
-                    }
-                    let filter = SeccompFilter::new(Vec::new(), DEFAULT_ACTION);
-                    filters.push(filter);
-                    p.seccomp
-                        .mode
-                        .store(SeccompMode::Filter as u8, Ordering::Release);
-                    Ok(())
-                })
-                .unwrap_or(Err(Errno::ESRCH))
-            {
-                Ok(()) => 0,
-                Err(e) => -(e as i64),
-            }
-        }
-        _ => -(Errno::EINVAL as i64),
-    }
-}
-
-// prctl option 常量 (Linux ABI)
-const PR_SET_SECCOMP: i64 = 22;
-const PR_GET_SECCOMP: i64 = 21;
-const PR_SET_NO_NEW_PRIVS: i64 = 38;
-const PR_GET_NO_NEW_PRIVS: i64 = 39;
-
-pub fn sys_prctl_prctl(option: i64, arg2: u64, _arg3: u64, _arg4: u64, _arg5: u64) -> i64 {
-    let pid = process_get_current_pid();
-
-    match option {
-        PR_SET_SECCOMP => match arg2 {
-            1 => sys_seccomp(0, 0, 0),
-            2 => sys_seccomp(1, 0, 0),
-            _ => -(Errno::EINVAL as i64),
-        },
-        PR_GET_SECCOMP => {
-            let mode = PROCESS_TABLE
-                .with_process(pid, |p| p.seccomp.get_mode())
-                .unwrap_or(SeccompMode::Disabled);
-            mode as i64
-        }
-        PR_SET_NO_NEW_PRIVS => {
-            if arg2 != 1 {
-                return -(Errno::EINVAL as i64);
-            }
-            PROCESS_TABLE
-                .with_process(pid, |p| p.seccomp.set_no_new_privs())
-                .unwrap_or(());
-            0
-        }
-        PR_GET_NO_NEW_PRIVS => PROCESS_TABLE
-            .with_process(pid, |p| i64::from(p.seccomp.is_no_new_privs()))
-            .unwrap_or(0),
-        _ => -(Errno::ENOSYS as i64),
-    }
-}
 
 /// 为指定进程添加 seccomp 过滤规则.
 ///

@@ -118,7 +118,12 @@ pub use elf::{Elf64Header, Elf64Phdr, ElfLoadResult, elf_load, elf_validate};
 pub use rlimit::{RLIM_INFINITY, RLIMIT_CORE, get_memlock_limit};
 
 // seccomp 公共接口 re-export — 避免跨子系统直接访问 proc::seccomp 内部
-pub use seccomp::{SeccompMode, SeccompState, seccomp_check, sys_prctl_prctl, sys_seccomp};
+// sys_seccomp/sys_prctl_prctl 已随 T2 批 2 迁至 services (syscall-followup);
+// 此处仅保留机制类型/常量/检查入口供 services 策略消费
+pub use seccomp::{
+    DEFAULT_ACTION, MAX_FILTERS, SeccompAction, SeccompFilter, SeccompMode, SeccompRule,
+    SeccompState, seccomp_check,
+};
 
 // namespace 公共接口 re-export — 避免跨子系统直接访问 proc::namespace 内部
 pub use namespace::{NamespaceSet, sys_setns, sys_unshare};

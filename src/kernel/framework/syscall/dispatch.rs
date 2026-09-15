@@ -13,10 +13,10 @@ use super::types::{
     QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
     QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_io_uring_enter,
     SYS_io_uring_setup, QX_IO_URING_SUBMIT, SYS_kexec_load, QX_KGDB_ENTER,
-    SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_prctl, SYS_recvfrom, SYS_recvmsg,
-    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, SYS_seccomp, QX_SECURE_BOOT,
+    SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_recvfrom, SYS_recvmsg,
+    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT,
     SYS_sendfile, SYS_sendmsg, SYS_sendto, SYS_setns, SYS_setsockopt, SYS_shutdown,
-    SYS_socket, SYS_splice, SYS_tcgetpgrp, SYS_tcsetpgrp, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
+    SYS_socket, SYS_splice, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
     QX_UEFI, SYS_unshare, SYS_CREDO_HOTPLUG_STATUS, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
 };
 // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用, aarch64 生产构建不引用
@@ -186,10 +186,6 @@ pub unsafe extern "C" fn syscall_dispatch(
     clippy::cast_possible_truncation,
     reason = "syscall handler 中 u64 → u32/i32 转换: 剩余 cast 是 sys_* 函数内数据转换, 已知安全"
 )]
-#[expect(
-    clippy::cast_possible_wrap,
-    reason = "syscall handler 中 usize/u64 互转: 内核/用户态地址均为 usize 表示, 位宽不变"
-)]
 fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     // 直接 Linux ABI: syscall 编号直接使用 Linux 标准编号, 无需翻译
 
@@ -252,14 +248,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== C7: Seccomp / prctl ====================
-        SYS_seccomp => dispatch!(
-            crate::framework::proc::sys_seccomp(a0 as u32, a1 as u32, a2),
-            b"seccomp\0"
-        ),
-        SYS_prctl => dispatch!(
-            crate::framework::proc::sys_prctl_prctl(a0 as i64, a1, a2, a3, a4),
-            b"prctl\0"
-        ),
+        // T2 批 2 (syscall-followup): SYS_seccomp / SYS_prctl 分支已迁至
+        // services (services::proc::seccomp::seccomp_syscall / prctl_syscall).
 
         // ==================== C5: 路由表 ====================
         QX_ROUTE_ADD => dispatch!(
@@ -387,14 +377,8 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         ),
 
         // ==================== 进程 ====================
-        SYS_tcgetpgrp => dispatch!(
-            crate::framework::proc::session::sys_tcgetpgrp(a0 as i32),
-            b"tcgetpgrp\0"
-        ),
-        SYS_tcsetpgrp => dispatch!(
-            crate::framework::proc::session::sys_tcsetpgrp(a0 as i32, a1 as i32),
-            b"tcsetpgrp\0"
-        ),
+        // T2 批 2 (syscall-followup): SYS_tcgetpgrp / SYS_tcsetpgrp 分支已迁至
+        // services (services::proc::session::tcgetpgrp_syscall / tcsetpgrp_syscall).
 
         // ==================== 网络 (services 代理) ====================
         // 分层契约 (docs/plan/syscall-dispatch-cleanup.md B1/B3): 网络 syscall 由

@@ -501,54 +501,9 @@ pub fn get_foreground_pgid() -> u32 {
     SESSION_MANAGER.get_foreground_pgid(sid)
 }
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
-/// tcsetpgrp — 设置前台进程组
-pub fn sys_tcsetpgrp(_fd: i32, pgid: i32) -> i64 {
-    if pgid <= 0 {
-        return -22;
-    }
-
-    let pid = process_get_current_pid();
-    if pid == 0 {
-        return -1;
-    }
-
-    let sid = PROCESS_TABLE
-        .with_process(pid, |p| p.session_id.load(Ordering::SeqCst))
-        .unwrap_or(0);
-
-    if sid == 0 {
-        return -1;
-    }
-
-    let mut found = false;
-    PROCESS_TABLE.for_each(|proc| {
-        let pg = proc.pgid.load(Ordering::SeqCst);
-        let proc_sid = proc.session_id.load(Ordering::SeqCst);
-        if pg == pgid as u32 && proc_sid == sid {
-            found = true;
-        }
-        true
-    });
-
-    if !found {
-        return -22;
-    }
-
-    if SESSION_MANAGER.set_foreground_pgid(sid, pgid as u32) {
-        0
-    } else {
-        -1
-    }
-}
-
-/// tcgetpgrp — 获取前台进程组
-pub fn sys_tcgetpgrp(_fd: i32) -> i64 {
-    i64::from(get_foreground_pgid())
-}
+/// tcsetpgrp / tcgetpgrp syscall 策略已迁至 services
+/// (services::proc::session::tcsetpgrp_syscall / tcgetpgrp_syscall, T2 批 2,
+/// syscall-followup) — 本文件仅保留机制 (SessionManager / 会话进程组查询辅助).
 
 /// 向前台进程组发送信号
 pub fn signal_foreground_pgid(sig: u8) {

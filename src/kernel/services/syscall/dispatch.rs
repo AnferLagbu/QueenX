@@ -16,10 +16,11 @@
 //! ## 迁移状态
 //!
 //! - 已迁移: 文件 I/O (含 read/write), 文件系统, 内存管理, 进程 (含 execve,
-//!   setrlimit), 信号, 网络, 凭证, 同步, 定时器, 事件轮询,
-//!   eventfd/signalfd/timerfd, Credo 私有 syscall, 存储设备, inotify,
-//!   内存建议与锁定, 进程创建/等待, 系统信息, CPU 亲和性, 进程优先级
-//! - 待迁移: firmware, ftrace/kgdb, seccomp/prctl,
+//!   setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp), 信号, 网络, 凭证,
+//!   同步, 定时器, 事件轮询, eventfd/signalfd/timerfd, Credo 私有 syscall,
+//!   存储设备, inotify, 内存建议与锁定, 进程创建/等待, 系统信息,
+//!   CPU 亲和性, 进程优先级
+//! - 待迁移: firmware, ftrace/kgdb,
 //!   路由/Netfilter, `io_uring`, namespace, cgroup, NUMA, eBPF, PM, TPM,
 //!   CET, tickless, timesync, kexec, UEFI, 帧缓冲, sendfile/splice 等
 //!
@@ -328,10 +329,10 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_clone, SYS_clone3, SYS_execve, SYS_exit, SYS_exit_group, SYS_fork, SYS_getpgid,
         SYS_getpid, SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid,
         SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
-        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_reboot, SYS_rt_sigaction,
-        SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield,
-        SYS_sethostname, SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_sysinfo,
-        SYS_uname, SYS_wait4,
+        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
+        SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
+        SYS_sched_yield, SYS_seccomp, SYS_sethostname, SYS_setpgid, SYS_setpriority,
+        SYS_setrlimit, SYS_setsid, SYS_sysinfo, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_uname, SYS_wait4,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -346,6 +347,12 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_setsid => crate::services::proc::session::proc_setsid(),
         SYS_getsid => crate::services::proc::session::proc_getsid(a0 as i32),
         SYS_setpgid => crate::services::proc::session::proc_setpgid(a0 as i32, a1 as i32),
+        SYS_tcgetpgrp => crate::services::proc::session::tcgetpgrp_syscall(a0 as i32),
+        SYS_tcsetpgrp => crate::services::proc::session::tcsetpgrp_syscall(a0 as i32, a1 as i32),
+
+        // seccomp / prctl (T2 批 2, syscall-followup)
+        SYS_seccomp => crate::services::proc::seccomp::seccomp_syscall(a0 as u32, a1 as u32, a2),
+        SYS_prctl => crate::services::proc::seccomp::prctl_syscall(a0 as i64, a1, a2, a3, a4),
 
         // 信号
         SYS_rt_sigaction => as_ret(crate::services::proc::signal::rt_sigaction_syscall(
