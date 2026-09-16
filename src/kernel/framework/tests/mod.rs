@@ -516,6 +516,7 @@ pub fn register_all_tests() {
         crate::framework::config::memory::register_aslr_tests();
         crate::framework::fs::initramfs::register_initramfs_tests();
         crate::framework::syscall::futex::register_futex_tests();
+        crate::framework::proc::robust::register_robust_tests();
         crate::framework::mm::pcache::register_pcache_tests();
         crate::framework::mm::swap::register_swap_tests();
         crate::framework::pci::msi::register_msi_tests();

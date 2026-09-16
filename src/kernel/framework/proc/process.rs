@@ -249,9 +249,25 @@ pub struct Process {
 
     /// Per-process TLS 基址 (`x86_64`: `MSR_FS_BASE`, aarch64: `tpidr_el0`)
     ///
-    /// `clone(CLONE_SETTLS)` 设置, 上下文切换时恢复到对应系统寄存器.
+    /// `clone(CLONE_SETTLS)` 设置. 当前仅存储, 切换恢复未实装; x86_64 需在
+    /// 切换时写 MSR_FS_BASE、aarch64 写 tpidr_el0 (待用户态线程库出现时实装).
     /// 0 表示未设置.
     pub tls_base: AtomicU64,
+
+    /// CLONE_CHILD_CLEARTID 登记的清除地址
+    ///
+    /// 进程退出时向该用户地址写 0 并对其实施 futex 唤醒.
+    /// 0 表示未设置.
+    pub clear_child_tid: AtomicU64,
+
+    /// set_robust_list 登记的 robust list 头指针 (用户地址)
+    ///
+    /// 进程退出时遍历该链表, 对本进程持有的 futex 置 `FUTEX_OWNER_DIED`
+    /// 并唤醒等待者. 0 表示未登记.
+    pub robust_head: AtomicU64,
+
+    /// robust list 头结构长度 (字节, 合法值 24)
+    pub robust_len: AtomicU32,
 }
 
 // ✅ P0-5 修复: 添加详细的安全性不变性注释
@@ -346,6 +362,9 @@ impl Process {
             ),
             session_elev_depth: AtomicIsize::new(0),
             tls_base: AtomicU64::new(0),
+            clear_child_tid: AtomicU64::new(0),
+            robust_head: AtomicU64::new(0),
+            robust_len: AtomicU32::new(0),
         }
     }
 

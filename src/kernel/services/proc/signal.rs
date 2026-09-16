@@ -458,6 +458,58 @@ pub fn kill_syscall(pid: i32, sig: i32) -> Result<usize, crate::framework::sysca
     }
 }
 
+/// `tgkill(tgid, tid, sig)` 策略 — 向进程内指定线程发送信号
+///
+/// 校验链: 参数范围 → 目标存在性 → tgid/tid 归属关系 → 投递.
+/// `sig == 0` 为存在性探测 (不投递, 合法返回 0).
+///
+// SIMPLIFIED: 当前无线程组模型 (tid == pid, 每个进程即自身线程组), 以
+// `tgid == tid` 等价校验替代 Linux "tid 必须属于 tgid 线程组" 判定;
+// 影响面: 多线程进程内定向投递暂不可用 (线程组到来前无此语义);
+// 何时需扩展: multithreading-project K-06 引入线程组后改为查询 tid
+// 所属进程的 tgid 字段比对.
+///
+/// # Errors
+///
+/// - `tgid <= 0` 或 `tid <= 0` 或 `sig` 不在 `0..=63` → `EINVAL`
+/// - tgid/tid 不匹配或目标进程不存在 → `ESRCH`
+#[expect(
+    clippy::similar_names,
+    reason = "变量名相似表达同族概念 (tgid/tid); 重命名会破坏 POSIX 语义对应, 仅在确实混淆时才人工拆分"
+)]
+pub fn tgkill_syscall(
+    tgid: i32,
+    tid: i32,
+    sig: i32,
+) -> Result<usize, crate::framework::syscall::Errno> {
+    use crate::framework::syscall::Errno;
+
+    if tgid <= 0 || tid <= 0 {
+        return Err(Errno::EINVAL);
+    }
+    if !(0..=63).contains(&sig) {
+        return Err(Errno::EINVAL);
+    }
+
+    // 目标存在性校验 (tid 在当前模型下即 pid)
+    let target = crate::framework::proc::api::process_with(tid as u32, |p| p.pid)
+        .ok_or(Errno::ESRCH)?;
+    if target.0 != tgid as u32 {
+        // 无线程组模型下 tid 所属进程的 tgid 即其 pid
+        return Err(Errno::ESRCH);
+    }
+    if sig == 0 {
+        return Ok(0);
+    }
+
+    let ret = crate::framework::syscall::api::sys_kill(tid, sig);
+    if ret < 0 {
+        Err(Errno::from_ret(ret))
+    } else {
+        Ok(ret as usize)
+    }
+}
+
 /// `rt_sigaction` 系统调用安全代理
 ///
 /// 验证: signum 1..=31 (标准信号) 或 32..=63 (RT信号)

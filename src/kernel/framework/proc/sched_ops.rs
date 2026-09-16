@@ -184,12 +184,6 @@ pub extern "C" fn scheduler_set_proc_limit(pwm: u64, max_procs: u32) {
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn proc_exit_internal(exit_code: u32) {
-    SCHEDULER.exit(exit_code);
-}
-
-// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
-#[unsafe(no_mangle)]
 pub extern "C" fn proc_get_current_pid_internal() -> Pid {
     SCHEDULER.current().unwrap_or(0)
 }

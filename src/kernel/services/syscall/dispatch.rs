@@ -17,7 +17,8 @@
 //!
 //! - 已迁移: 文件 I/O (含 read/write, sendfile, splice), 文件系统, 内存管理,
 //!   进程 (含 execve, setrlimit, seccomp, prctl, tcgetpgrp, tcsetpgrp,
-//!   unshare, setns), 信号, 网络, 凭证, 同步, 定时器, 事件轮询,
+//!   unshare, setns, tgkill, waitid, robust_list), 信号, 网络, 凭证, 同步,
+//!   定时器, 事件轮询,
 //!   eventfd/signalfd/timerfd, io_uring (setup/enter) 与 eBPF (bpf),
 //!   kexec (kexec_load) 等, Credo 私有 syscall (含 disk_install/hotplug),
 //!   帧缓冲 (fb_open/fb_mmap/fb_release), 存储设备, inotify,
@@ -388,13 +389,13 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
         SYS_clone, SYS_clone3, SYS_execve, SYS_exit, SYS_exit_group, SYS_fork, SYS_getpgid,
-        SYS_getpid, SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid,
-        SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
-        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
+        SYS_getpid, SYS_getppid, SYS_getpriority, SYS_get_robust_list, SYS_getrlimit,
+        SYS_getrusage, SYS_getsid, SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create,
+        SYS_nanosleep, SYS_nice, SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
         SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
-        SYS_sched_yield, SYS_seccomp, SYS_sethostname, SYS_setns, SYS_setpgid, SYS_setpriority,
-        SYS_setrlimit, SYS_setsid, SYS_sysinfo, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_uname,
-        SYS_unshare, SYS_wait4,
+        SYS_sched_yield, SYS_seccomp, SYS_sethostname, SYS_setns, SYS_set_robust_list,
+        SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_sysinfo, SYS_tcgetpgrp,
+        SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -429,6 +430,9 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         }
         SYS_kill => as_ret(crate::services::proc::signal::kill_syscall(
             a0 as i32, a1 as i32,
+        )),
+        SYS_tgkill => as_ret(crate::services::proc::signal::tgkill_syscall(
+            a0 as i32, a1 as i32, a2 as i32,
         )),
 
         // 进程优先级
@@ -524,6 +528,15 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_wait4 => as_ret(crate::services::proc::wait4::wait4_syscall(
             a0 as i32, a1, a2 as i32,
         )),
+        SYS_waitid => as_ret(crate::services::proc::wait4::waitid_syscall(
+            a0 as i32, a1, a2, a3 as i32,
+        )),
+        SYS_set_robust_list => as_ret(crate::services::proc::clone::set_robust_list_syscall(
+            a0, a1,
+        )),
+        SYS_get_robust_list => as_ret(crate::services::proc::clone::get_robust_list_syscall(
+            a0 as i32, a1, a2,
+        )),
 
         // 系统信息
         SYS_reboot => crate::services::proc::sysinfo::reboot_syscall(a0 as i32),
@@ -553,8 +566,8 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
         SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
-        SYS_listen, SYS_recvfrom, SYS_recvmsg, SYS_sendmsg, SYS_sendto, SYS_setsockopt,
-        SYS_shutdown, SYS_socket,
+        SYS_listen, SYS_recvfrom, SYS_recvmmsg, SYS_recvmsg, SYS_sendmmsg, SYS_sendmsg,
+        SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket, SYS_socketpair,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -588,6 +601,16 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
         SYS_recvmsg => as_ret(crate::services::net::syscall::recvmsg_syscall(
             a0 as i32, a1, a2 as i32,
+        )),
+        // recvmmsg/sendmmsg/socketpair (T1 G3 实装): UDS 分流在 services 层
+        SYS_recvmmsg => as_ret(crate::services::net::syscall::recvmmsg_syscall(
+            a0 as i32, a1, a2 as u32, a3 as u32, a4,
+        )),
+        SYS_sendmmsg => as_ret(crate::services::net::syscall::sendmmsg_syscall(
+            a0 as i32, a1, a2 as u32, a3 as u32,
+        )),
+        SYS_socketpair => as_ret(crate::services::net::syscall::socketpair_syscall(
+            a0 as i32, a1 as i32, a2 as i32, a3,
         )),
         SYS_setsockopt => as_ret(crate::services::net::syscall::setsockopt_syscall(
             a0 as i32, a1 as i32, a2 as i32, a3, a4 as u32,

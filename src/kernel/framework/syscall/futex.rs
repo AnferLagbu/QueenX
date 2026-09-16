@@ -333,7 +333,9 @@ fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
 }
 
 /// `FUTEX_WAKE`: 唤醒等待者
-fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
+///
+/// 公开给 `framework::proc::robust` 退出路径使用 (robust futex / CLEARTID 唤醒).
+pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
     if max_count == 0 {
         return 0;
     }

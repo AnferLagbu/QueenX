@@ -10,6 +10,7 @@
 
 use crate::framework::sync::IrqSpinLock;
 use crate::framework::syscall::Errno;
+use crate::services::proc::fd_alloc::{FdSubsystem, free_fd};
 
 // ============================================================================
 // 常量
@@ -320,6 +321,59 @@ pub fn uds_create(sock_type: UnixSockType) -> Result<i32, UdsError> {
         s.dgram_len = 0;
         s.dgram_pending = false;
         Ok(fd)
+    })
+}
+
+/// 创建一对互相连接的 UDS 套接字 (`socketpair` 机制核心)
+///
+/// 两端同类型且互设 peer, 均为 Connected 状态, 无路径绑定 (对齐 Linux `socketpair(AF_UNIX)` 语义)。
+///
+/// # Errors
+///
+/// 无空闲槽位或 FD 达 `MAX_UDS_FD` 上限时返回 `Err(UdsError::NoMem)`; 第二端创建失败时
+/// 回滚关闭第一端; 槽位关联异常时返回 `Err(UdsError::BadFd)` 并回滚两端。
+pub fn uds_socketpair(sock_type: UnixSockType) -> Result<(i32, i32), UdsError> {
+    let fd0 = uds_create(sock_type)?;
+    let fd1 = match uds_create(sock_type) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = uds_close(fd0);
+            return Err(e);
+        }
+    };
+    let linked = UDS_STATE.with_mut(|state| {
+        let slot0 = fd_to_idx(fd0)? as usize;
+        let slot1 = fd_to_idx(fd1)? as usize;
+        if state.sockets[slot0].id == 0 || state.sockets[slot1].id == 0 || slot0 == slot1 {
+            return Err(UdsError::BadFd);
+        }
+        // 互设 peer 并置 Connected (参照 uds_connect Dgram 分支的双向 peer 模式)
+        state.sockets[slot0].peer = Some(state.sockets[slot1].id);
+        state.sockets[slot1].peer = Some(state.sockets[slot0].id);
+        state.sockets[slot0].state = UnixSockState::Connected;
+        state.sockets[slot1].state = UnixSockState::Connected;
+        Ok(())
+    });
+    if let Err(e) = linked {
+        let _ = uds_close(fd0);
+        let _ = uds_close(fd1);
+        return Err(e);
+    }
+    Ok((fd0, fd1))
+}
+
+/// 查询 UDS 套接字类型 (`recvmmsg` 分流 Stream/Dgram 接收原语时使用)
+///
+/// # Errors
+///
+/// `fd` 无效 (非 UDS 或槽位为空) 时返回 `Err(UdsError::BadFd)`。
+pub fn uds_sock_type(fd: i32) -> Result<UnixSockType, UdsError> {
+    UDS_STATE.with(|state| {
+        let idx = fd_to_idx(fd)? as usize;
+        if state.sockets[idx].id == 0 {
+            return Err(UdsError::BadFd);
+        }
+        Ok(state.sockets[idx].sock_type)
     })
 }
 
@@ -637,8 +691,12 @@ pub fn uds_recv(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
 ///
 /// # Errors
 ///
-/// 当目标路径不存在时返回 `Err(UdsError::ConnRefused)`; 目标套接字非数据报类型时返回 `Err(UdsError::Invalid)`。
+/// 当目标路径不存在时返回 `Err(UdsError::ConnRefused)`; 目标套接字非数据报类型时返回 `Err(UdsError::Invalid)`;
+/// 数据超过 `UNIX_DGRAM_MAX` 时返回 `Err(UdsError::Invalid)` (越界写防护)。
 pub fn uds_sendto(_fd: i32, data: &[u8], dest_path: &[u8]) -> Result<usize, UdsError> {
+    if data.len() > UNIX_DGRAM_MAX {
+        return Err(UdsError::Invalid);
+    }
     UDS_STATE.with_mut(|state| {
         let pidx = state.find_path(dest_path).ok_or(UdsError::ConnRefused)? as usize;
         let target_idx = state.paths[pidx].sock_idx as usize;
@@ -667,6 +725,62 @@ pub fn uds_sendto(_fd: i32, data: &[u8], dest_path: &[u8]) -> Result<usize, UdsE
         }
         Ok(data.len())
     })
+}
+
+// SIMPLIFIED: Dgram 已连接发送为单条在途非排队 (Linux 为可靠排队缓冲);
+// 影响: 对端未收走时再次发送返回 EAGAIN 而非入队, 高吞吐场景可能放大 EAGAIN;
+// 扩展时机: dgram 缓冲队列化 (环形队列 + 容量配置) 时改写本函数为追加队尾.
+/// 向已连接的 UDS 套接字发送数据 (`sendmsg`/`sendmmsg` 无目标地址路径)
+///
+/// Stream: 委托 [`uds_send`] (要求 Connected, 语义一致)。Dgram: 需互设 peer
+/// (socketpair 或 `uds_connect`), 写入对端 dgram 缓冲并附加凭据 (同 [`uds_sendto`])。
+///
+/// # Errors
+///
+/// `fd` 无效时返回 `Err(UdsError::BadFd)`; 未连接或对端已关闭时返回 `Err(UdsError::NotFound)`;
+/// 数据超过 `UNIX_DGRAM_MAX` 时返回 `Err(UdsError::Invalid)`; 对端已有在途数据报时返回
+/// `Err(UdsError::Again)`。
+pub fn uds_send_connected(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
+    let sock_type = uds_sock_type(fd)?;
+    match sock_type {
+        UnixSockType::Stream => uds_send(fd, data),
+        UnixSockType::Dgram => UDS_STATE.with_mut(|state| {
+            let idx = fd_to_idx(fd)? as usize;
+            if state.sockets[idx].state != UnixSockState::Connected {
+                return Err(UdsError::NotFound);
+            }
+            let peer_id = state.sockets[idx].peer.ok_or(UdsError::NotFound)?;
+            let peer_idx = state.socket_idx_by_id(peer_id).ok_or(UdsError::NotFound)? as usize;
+            let peer = &mut state.sockets[peer_idx];
+            if peer.peer_closed {
+                return Err(UdsError::NotFound);
+            }
+            if data.len() > UNIX_DGRAM_MAX {
+                return Err(UdsError::Invalid);
+            }
+            if peer.dgram_pending {
+                return Err(UdsError::Again);
+            }
+            peer.dgram_buf[..data.len()].copy_from_slice(data);
+            peer.dgram_len = data.len() as u32;
+            peer.dgram_pending = true;
+            // v2 SO_PASSCRED: 同 uds_sendto, 对端启用时附加 SCM_CREDENTIALS 12 字节
+            if peer.passcred && peer.dgram_len as usize + 12 <= UNIX_DGRAM_MAX {
+                let cred = current_scm_credentials();
+                let off = peer.dgram_len as usize;
+                let p = cred.pid.to_ne_bytes();
+                let u = cred.uid.to_ne_bytes();
+                let g = cred.gid.to_ne_bytes();
+                let mut bytes = [0u8; 12];
+                bytes[0..4].copy_from_slice(&p);
+                bytes[4..8].copy_from_slice(&u);
+                bytes[8..12].copy_from_slice(&g);
+                peer.dgram_buf[off..off + 12].copy_from_slice(&bytes);
+                peer.dgram_len += 12;
+            }
+            Ok(data.len())
+        }),
+    }
 }
 
 #[expect(
@@ -732,7 +846,7 @@ pub fn uds_recvfrom_with_creds(
     })
 }
 
-/// 关闭 UDS 套接字并清理其路径绑定与对端关系
+/// 关闭 UDS 套接字并清理其路径绑定、对端关系与 fd_alloc 位图位
 ///
 /// # Errors
 ///
@@ -765,6 +879,8 @@ pub fn uds_close(fd: i32) -> Result<(), UdsError> {
                 let client_id = state.sockets[idx].listen_pending[pos as usize];
                 if let Some(ci) = state.socket_idx_by_id(client_id) {
                     state.sockets[ci as usize] = UnixSocket::empty();
+                    // pending client 已分配的 fd_alloc 位同步回收 (fd = 基址 + 槽位)
+                    let _ = free_fd(FdSubsystem::Uds, UDS_FD_BASE + i32::from(ci));
                 }
             }
         }
@@ -785,6 +901,8 @@ pub fn uds_close(fd: i32) -> Result<(), UdsError> {
         }
 
         state.sockets[idx] = UnixSocket::empty();
+        // fd_alloc 位图位回收 (对齐 pidfd close 释放模式; 预存泄漏修复)
+        let _ = free_fd(FdSubsystem::Uds, fd);
         Ok(())
     })
 }
@@ -1074,6 +1192,24 @@ pub fn sendto(fd: i32, data: &[u8], dest: &SockAddrUn) -> UnixResult<usize> {
     uds_sendto(fd, data, dest.path_slice()).map_err(Into::into)
 }
 
+/// 安全封装: 创建一对互相连接的 UDS 套接字, 委托给 [`uds_socketpair`]
+///
+/// # Errors
+///
+/// 无空闲槽位或 FD 达上限时映射为 `Err(UnixSocketError)`。
+pub fn socketpair(sock_type: SockType) -> UnixResult<(i32, i32)> {
+    uds_socketpair(sock_type).map_err(Into::into)
+}
+
+/// 安全封装: 向已连接套接字发送数据, 委托给 [`uds_send_connected`]
+///
+/// # Errors
+///
+/// `fd` 无效、未连接、对端已关闭或对端在途数据报未收走时映射为 `Err(UnixSocketError)`。
+pub fn send_connected(fd: i32, data: &[u8]) -> UnixResult<usize> {
+    uds_send_connected(fd, data).map_err(Into::into)
+}
+
 /// 安全封装: 数据报接收, 委托给 [`uds_recvfrom`]
 ///
 /// # Errors
@@ -1196,5 +1332,61 @@ mod tests {
         let r2 = uds_close(cli2);
         assert_eq!(r1, Err(UdsError::BadFd));
         assert_eq!(r2, Err(UdsError::BadFd));
+    }
+
+    #[test]
+    fn socketpair_stream_bidirectional() {
+        uds_reset_for_test();
+        let (a, b) = uds_socketpair(UnixSockType::Stream).expect("socketpair");
+        assert_ne!(a, b);
+        let n = uds_send(a, b"ping").expect("send a->b");
+        assert_eq!(n, 4);
+        let mut buf = [0u8; 8];
+        let m = uds_recv(b, &mut buf).expect("recv b");
+        assert_eq!(m, 4);
+        assert_eq!(&buf[..4], b"ping");
+        let k = uds_send(b, b"pong").expect("send b->a");
+        assert_eq!(k, 4);
+        let mut buf2 = [0u8; 8];
+        let p = uds_recv(a, &mut buf2).expect("recv a");
+        assert_eq!(p, 4);
+        assert_eq!(&buf2[..4], b"pong");
+        uds_close(a).expect("close a");
+        uds_close(b).expect("close b");
+    }
+
+    #[test]
+    fn socketpair_dgram_connected_send() {
+        uds_reset_for_test();
+        let (a, b) = uds_socketpair(UnixSockType::Dgram).expect("socketpair");
+        // 已连接 Dgram 无路径发送走 uds_send_connected, 接收走 uds_recvfrom
+        let n = uds_send_connected(a, b"dg").expect("send_connected");
+        assert_eq!(n, 2);
+        let mut buf = [0u8; 8];
+        let m = uds_recvfrom(b, &mut buf).expect("recvfrom");
+        assert_eq!(m, 2);
+        assert_eq!(&buf[..2], b"dg");
+        // 对端在途未收走时再发 → EAGAIN (单条在途简化)
+        let _ = uds_send_connected(a, b"first").expect("first");
+        assert_eq!(uds_send_connected(a, b"second"), Err(UdsError::Again));
+        let _ = uds_recvfrom(b, &mut buf).expect("drain");
+        uds_close(a).expect("close a");
+        uds_close(b).expect("close b");
+    }
+
+    #[test]
+    fn socketpair_rollback_on_second_create_failure() {
+        uds_reset_for_test();
+        // 占满 MAX_UDS_FD - 1 个槽位, socketpair 需连续 2 个空槽 → 第二端 NoMem
+        let mut filled = 0usize;
+        let mut guard = [0i32; MAX_UDS_FD];
+        while filled < MAX_UDS_FD - 1 {
+            guard[filled] = uds_create(UnixSockType::Stream).expect("fill");
+            filled += 1;
+        }
+        assert_eq!(uds_socketpair(UnixSockType::Stream), Err(UdsError::NoMem));
+        // 回滚验证: 第一端已被关闭释放槽位, 单个创建应成功
+        let one = uds_create(UnixSockType::Stream).expect("single after rollback");
+        let _ = one;
     }
 }

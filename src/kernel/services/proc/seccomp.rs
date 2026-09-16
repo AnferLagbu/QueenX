@@ -87,11 +87,14 @@ const PR_SET_SECCOMP: i64 = 22;
 const PR_GET_SECCOMP: i64 = 21;
 const PR_SET_NO_NEW_PRIVS: i64 = 38;
 const PR_GET_NO_NEW_PRIVS: i64 = 39;
+const PR_SET_NAME: i64 = 15;
+const PR_GET_NAME: i64 = 16;
 
 /// prctl(option, arg2, arg3, arg4, arg5) 策略
 ///
-/// T2 批 2 自 framework 回退层迁移. 当前仅实装 seccomp / no_new_privs
-/// 四个 option, 其余返回 ENOSYS (与原 framework 行为一致).
+/// T2 批 2 自 framework 回退层迁移. 当前实装 seccomp / no_new_privs /
+/// 进程名 (PR_SET_NAME/PR_GET_NAME) 六个 option, 其余返回 ENOSYS
+/// (与原 framework 行为一致).
 pub fn prctl_syscall(option: i64, arg2: u64, _arg3: u64, _arg4: u64, _arg5: u64) -> i64 {
     let pid = process_get_current_pid();
 
@@ -114,6 +117,34 @@ pub fn prctl_syscall(option: i64, arg2: u64, _arg3: u64, _arg4: u64, _arg5: u64)
         }
         PR_GET_NO_NEW_PRIVS => process_with(pid, |p| i64::from(p.seccomp.is_no_new_privs()))
             .unwrap_or(0),
+        PR_SET_NAME => {
+            // 进程名 (comm 语义): 拷贝用户字符串, 截断到 15 字符 + NUL
+            let Ok(name) = crate::framework::mm::copy_user::copy_string_from_user(arg2, 16)
+            else {
+                return Errno::EFAULT.as_ret();
+            };
+            let mut buf = name.into_bytes();
+            buf.truncate(15);
+            buf.push(0);
+            let comm = alloc::string::String::from_utf8_lossy(&buf).into_owned();
+            process_with(pid, |p| {
+                *p.name.lock() = comm;
+            })
+            .unwrap_or(());
+            0
+        }
+        PR_GET_NAME => {
+            // 写回 16 字节 NUL 结尾缓冲区 (与内核 comm 一致)
+            let name = process_with(pid, |p| p.name.lock().clone()).unwrap_or_default();
+            let mut bytes = [0u8; 16];
+            for (i, b) in name.as_bytes().iter().take(15).enumerate() {
+                bytes[i] = *b;
+            }
+            if !crate::framework::syscall::api::write_struct_to_user(arg2, &bytes) {
+                return Errno::EFAULT.as_ret();
+            }
+            0
+        }
         _ => Errno::ENOSYS.as_ret(),
     }
 }

@@ -32,10 +32,81 @@ pub const WNOHANG: i32 = 0x1;
 pub const WUNTRACED: i32 = 0x2;
 pub const WCONTINUED: i32 = 0x8;
 
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
+/// 等待收集结果 (wait4 与 services 层 waitid 共用)
+#[derive(Debug)]
+pub struct WaitInfo {
+    /// 被收割 (或观察) 的子进程 PID
+    pub pid: u32,
+    /// 子进程退出码 (原始值)
+    pub exit_code: u32,
+}
+
+/// 等待结果
+#[derive(Debug)]
+pub enum WaitOutcome {
+    /// 收割成功 (keep_zombie 时不释放子进程 PCB)
+    Reaped(WaitInfo),
+    /// 有匹配子进程但尚未退出 (仅非阻塞模式返回)
+    Running,
+    /// 无匹配子进程
+    NoChild,
+}
+
+/// 统一的子进程等待/收割机制 (sys_wait4 与 services 层 waitid 共用)
+///
+/// - `target_pid > 0`: 等待特定 PID 的子进程
+/// - `target_pid == 0`: 等待同进程组任意子进程
+/// - `target_pid == -1`: 等待任意子进程
+/// - `target_pid < -1`: 等待进程组 |target_pid| 内的任意子进程
+///
+/// `non_blocking`: true 时子进程未退出立即返回 `Running`.
+/// `keep_zombie`: true 时读取退出码后保留子进程 Zombie 状态 (WNOWAIT 语义).
+pub fn wait_reap(target_pid: i32, non_blocking: bool, keep_zombie: bool) -> WaitOutcome {
+    let current_pid = api::process_get_current_pid();
+    if current_pid == 0 {
+        return WaitOutcome::NoChild;
+    }
+
+    let Some(child_pid) = find_waitable_child(current_pid, target_pid) else {
+        return WaitOutcome::NoChild;
+    };
+
+    let state = api::process_with(child_pid, super::super::proc::process::Process::get_state)
+        .unwrap_or(ProcessState::Terminated);
+
+    if state != ProcessState::Zombie {
+        if non_blocking {
+            return WaitOutcome::Running;
+        }
+        // 阻塞等待: 循环检查子进程状态, 直到变为 Zombie
+        loop {
+            let state =
+                api::process_with(child_pid, super::super::proc::process::Process::get_state)
+                    .unwrap_or(ProcessState::Terminated);
+            if state == ProcessState::Zombie {
+                return reap_zombie(child_pid, keep_zombie);
+            }
+            // 子进程未退出, 阻塞当前进程并调度到子进程
+            crate::framework::proc::scheduler_yield();
+        }
+    }
+
+    reap_zombie(child_pid, keep_zombie)
+}
+
+/// 收割 Zombie 子进程: 读取退出码, 按 `keep_zombie` 决定是否释放 PCB
+fn reap_zombie(child_pid: u32, keep_zombie: bool) -> WaitOutcome {
+    let exit_code =
+        api::process_with(child_pid, |p| p.exit_code.load(Ordering::SeqCst)).unwrap_or(0);
+    if !keep_zombie {
+        api::process_remove_and_free(child_pid);
+    }
+    WaitOutcome::Reaped(WaitInfo {
+        pid: child_pid,
+        exit_code,
+    })
+}
+
 /// wait4 系统调用实现
 ///
 /// 返回子进程 PID, 或错误 (ECHILD/EINTR).
@@ -58,68 +129,27 @@ pub fn sys_wait4(pid: i32, wstatus_ptr: u64, options: i32) -> i64 {
 
     let non_blocking = options & WNOHANG != 0;
 
-    // 查找匹配的子进程
-    let child_pid = if let Some(p) = find_waitable_child(current_pid, pid) {
-        p
-    } else {
-        if non_blocking {
-            return 0; // WNOHANG: 无可等待子进程
-        }
-        return Errno::ECHILD.as_ret(); // 无子进程
-    };
-
-    // 检查子进程是否已退出
-    let state = api::process_with(child_pid, super::super::proc::process::Process::get_state)
-        .unwrap_or(ProcessState::Terminated);
-
-    if state == ProcessState::Zombie {
-        // 子进程已退出, 收集状态
-        let exit_code =
-            api::process_with(child_pid, |p| p.exit_code.load(Ordering::SeqCst)).unwrap_or(0);
-
-        // 写入 wstatus (WIFEXITED | exit_code << 8)
-        if wstatus_ptr != 0 {
-            // SAFETY: wstatus_ptr 由 check_user_ptr 验证
-            unsafe {
-                let status: i32 = (exit_code as i32) << 8;
-                core::ptr::write_volatile(wstatus_ptr as *mut i32, status);
-            }
-        }
-
-        // 释放子进程 PCB
-        api::process_remove_and_free(child_pid);
-        return i64::from(child_pid);
-    }
-
-    // 子进程仍在运行
-    if non_blocking {
-        return 0;
-    }
-
-    // 阻塞等待: 循环检查子进程状态, 直到变为 Zombie
-    loop {
-        let state = api::process_with(child_pid, super::super::proc::process::Process::get_state)
-            .unwrap_or(ProcessState::Terminated);
-
-        if state == ProcessState::Zombie {
-            // 子进程已退出, 收集状态
-            let exit_code =
-                api::process_with(child_pid, |p| p.exit_code.load(Ordering::SeqCst)).unwrap_or(0);
-
+    match wait_reap(pid, non_blocking, false) {
+        WaitOutcome::Reaped(info) => {
+            // 写入 wstatus (WIFEXITED | exit_code << 8)
             if wstatus_ptr != 0 {
-                // SAFETY: wstatus_ptr 由 check_user_ptr 验证
+                // SAFETY: wstatus_ptr 已通过 check_user_ptr 验证
                 unsafe {
-                    let status: i32 = (exit_code as i32) << 8;
+                    let status: i32 = (info.exit_code as i32) << 8;
                     core::ptr::write_volatile(wstatus_ptr as *mut i32, status);
                 }
             }
-
-            api::process_remove_and_free(child_pid);
-            return i64::from(child_pid);
+            i64::from(info.pid)
         }
-
-        // 子进程未退出, 阻塞当前进程并调度到子进程
-        crate::framework::proc::scheduler_yield();
+        // WNOHANG: 子进程尚未退出
+        WaitOutcome::Running => 0,
+        WaitOutcome::NoChild => {
+            if non_blocking {
+                0 // WNOHANG: 无可等待子进程
+            } else {
+                Errno::ECHILD.as_ret()
+            }
+        }
     }
 }
 
@@ -153,7 +183,12 @@ fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
             return Some(child_pid);
         } else {
             // target_pid < -1: 进程组 ID = |target_pid|
-            // 简化: 暂不实现进程组, 跳过
+            let want_pgid = target_pid.unsigned_abs();
+            let pgid = api::process_with(child_pid, |p| p.pgid.load(Ordering::SeqCst))
+                .unwrap_or(0);
+            if pgid == want_pgid {
+                return Some(child_pid);
+            }
         }
     }
     None

@@ -699,6 +699,9 @@ def main() -> int:
         # 排除 vendored 第三方代码
         if "smoltcp/" in rel_str:
             continue
+        # 排除 cargo 构建产物 (target/ 下第三方 build script 的 probe/生成代码)
+        if "/target/" in rel_str:
+            continue
         # 排除自动生成
         if rel.name == "build.rs":
             continue

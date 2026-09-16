@@ -89,7 +89,7 @@ pub fn sys_clone(
     flags: u64,
     child_stack: u64,
     parent_tidptr: u64,
-    _child_tidptr: u64,
+    child_tidptr: u64,
     tls: u64,
 ) -> i64 {
     let parent_pid = match api::process_get_current_pid() {
@@ -118,6 +118,16 @@ pub fn sys_clone(
             unsafe {
                 core::ptr::write_volatile(parent_tidptr as *mut i32, child_pid as i32);
             }
+        }
+
+        // CLONE_CHILD_CLEARTID: 登记清除地址, 退出时写 0 并 futex 唤醒.
+        // fork 路径不处理 CLONE_CHILD_SETTID (父上下文写入会落在父地址空间,
+        // 子进程 COW 后不可见; Linux 同样仅在子上下文/共享地址空间写).
+        if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
+            let _ = api::process_with_mut(child_pid, |p| {
+                p.clear_child_tid
+                    .store(child_tidptr, core::sync::atomic::Ordering::Release);
+            });
         }
 
         // D1: CLONE_NEW* — 为子进程创建新 namespace
@@ -230,8 +240,9 @@ pub fn sys_clone(
         }
 
         // CLONE_SETTLS: 设置子进程 TLS 基址
-        // x86_64: 写入 Process.tls_base, 上下文切换时恢复到 MSR_FS_BASE
-        // aarch64: 恢复到 tpidr_el0
+        // 当前仅存储于 Process.tls_base, 切换恢复未实装; x86_64 需在切换时写
+        // MSR_FS_BASE、aarch64 写 tpidr_el0 (无用户态依赖, 为 Linux 线程
+        // 兼容面预留, 待用户态线程库出现时实装)
         if tls != 0 {
             child
                 .tls_base
@@ -251,6 +262,21 @@ pub fn sys_clone(
         unsafe {
             core::ptr::write_volatile(parent_tidptr as *mut i32, child_pid as i32);
         }
+    }
+
+    // CLONE_CHILD_SETTID: 写子进程 TID 到 child_tidptr (共享地址空间, 子可直接读到)
+    if flags & CLONE_CHILD_SETTID != 0 && child_tidptr != 0 {
+        // SAFETY: 调用方保证指针/类型有效 (详见上下文); CLONE_VM 下父子共享
+        // 地址空间, 此写入对子进程可见
+        unsafe {
+            core::ptr::write_volatile(child_tidptr as *mut i32, child_pid as i32);
+        }
+    }
+
+    // CLONE_CHILD_CLEARTID: 登记清除地址, 子进程退出时写 0 并 futex 唤醒
+    if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
+        child.clear_child_tid
+            .store(child_tidptr, core::sync::atomic::Ordering::Release);
     }
 
     // 添加到调度器

@@ -60,6 +60,8 @@ pub mod oomd;
 pub mod posix_timer;
 pub mod proc_ops;
 pub mod process;
+/// 进程退出清理 (robust futex / CLEARTID) — 机制层
+pub mod robust;
 pub mod rlimit;
 pub mod sched_ops;
 pub mod sched_trait;

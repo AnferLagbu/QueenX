@@ -383,6 +383,10 @@ pub extern "C" fn process_exit(exit_code: u32) {
         crate::framework::fs::flock_release_pid(current_pid);
         crate::framework::fs::posix_lock_release_pid(current_pid);
 
+        // T1-G2: robust futex 遍历 + CLONE_CHILD_CLEARTID 清零.
+        // 必须在切换内核页表/销毁用户地址空间之前执行 (用户内存仍可访问).
+        crate::framework::proc::robust::exit_cleanup(current_pid);
+
         let kernel_cr3 = get_kernel_pml4();
         if kernel_cr3 != 0 {
             // SAFETY: kernel_cr3 是从 vmm::get_kernel_pml4() 获取的合法页表。

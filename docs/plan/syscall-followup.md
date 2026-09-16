@@ -104,7 +104,7 @@ T7 (预存登记)
 
 - [X] T3：半成品清除 + 用户态调用 audit（2026-09-15 完成，见下方 T3 实施记录）
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
-- [ ] T1：R2 未实装 SYS_* 实装（G1 完成，见下方 T1 实施记录；G2-G7 待做）
+- [ ] T1：R2 未实装 SYS_* 实装（G1/G2/G3 完成，见下方 T1 实施记录；G4-G7 待做）
 - [ ] T4-T7：登记排后（R3 pub mod / R1 445 项 / TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
@@ -234,7 +234,81 @@ T7 (预存登记)
 
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过。
 
+### T1 实施记录（G2 进程/信号）
+
+**实现路径裁定**（AskUserQuestion，用户授权）：tgkill / waitid / set+get_robust_list / prctl(PR_SET_NAME/PR_GET_NAME) = 相对完整设计实装；capget/capset / arch_prctl = **ENOSYS 保留**（无凭证能力模型 / 无 arch 相关用户态需求，登记不实装）。
+
+**实装项**（5 项 + framework 退出路径机制，services 0 unsafe）：
+
+| 项 | services 落点 | 机制/要点 |
+|---|---|---|
+| tgkill | `services/proc/signal.rs`（`tgkill_syscall`） | 校验链：tgid<=0/tid<=0 → EINVAL；sig 范围 0..=63（0=存在性探测）→ EINVAL；目标不存在或 `target.pid != tgid` → ESRCH；委托 `api::sys_kill`。SIMPLIFIED：tgid==tid 等价校验替代"tid ∈ tgid 线程组"判定（当前 tid≡pid 无线程组模型；K-06 引入线程组后改查 tid 所属进程 tgid） |
+| waitid | `services/proc/wait4.rs`（`waitid_syscall`） | idtype P_ALL/P_PID/P_PGID（P_PGID 转负值复用统一收集）；options 合法位校验 + 必须含 WEXITED/WSTOPPED/WCONTINUED 之一；委托 framework `wait_reap`；Reaped 且 infop 非 0 → 组装 128B `SiginfoChld`（si_signo=SIGCHLD、si_code=CLD_EXITED）经 `api::write_struct_to_user` 写回；Running → Ok(0)（WNOHANG）；NoChild → ECHILD。SIMPLIFIED：拒绝 WSTOPPED/WCONTINUED（无 stop/continue 状态跟踪）、si_code 恒 CLD_EXITED、si_uid 恒 0 |
+| set_robust_list | `services/proc/clone.rs`（`set_robust_list_syscall`） | len != 24（`struct robust_list_head` ABI 大小）→ EINVAL；`process_with` 登记 robust_head/robust_len |
+| get_robust_list | 同上（`get_robust_list_syscall`） | pid==0 → 当前进程；head/len 指针非 0 时经 `api::write_struct_to_user` 写回（失败 EFAULT）。SIMPLIFIED：不做 PTRACE_MODE_READ 权限校验（无 ptrace/uid 模型） |
+| prctl(PR_SET_NAME/PR_GET_NAME) | `services/proc/seccomp.rs`（prctl_syscall 补两 arm） | SET_NAME：`copy_string_from_user` 读 16B → truncate(15)+NUL → UTF-8 lossy 写 comm；GET_NAME：comm 16B NUL 结尾写回用户 `[u8;16]` |
+
+**framework 机制扩展**：
+
+- **Process 机制字段**（process.rs）：`clear_child_tid: AtomicU64`（CLONE_CHILD_CLEARTID 清除地址）、`robust_head: AtomicU64` + `robust_len: AtomicU32`（robust list 登记项）。
+- **`framework/proc/robust.rs`（新建，退出清理机制）**：`exit_cleanup(pid)` 退出路径执行——clear_child_tid 非 0 → 写 0 + `futex_wake` + 清字段；robust_head 非 0 → 遍历 robust list（先读 next 再处理当前，防链表破坏；`ROBUST_LIST_LIMIT=2048` 防环形链表），futex 字 `(word & FUTEX_TID_MASK) == pid` 时置 `FUTEX_OWNER_DIED` 并唤醒。SIMPLIFIED：list_op_pending 不区分 get_robust_list 与 set_robust_list 两种 pending 语义（直接按 uaddr 处理）。内核测试：`robust::futex_word_masks` / `robust::robust_head_layout`（24B ABI 验证）。
+- **退出路径挂钩**（proc_ops.rs `process_exit`）：flock 释放之后、切换内核页表/销毁用户地址空间之前调用 `robust::exit_cleanup`（用户内存仍可访问）。
+- **clone.rs 消费**：CLEARTID 登记（fork 与 CLONE_VM 双路径均登记 child_tidptr）；CHILD_SETTID 仅 CLONE_VM 路径写 child tid（fork 路径父上下文写入落父地址空间，COW 后子不可见——Linux 同语义）；`_child_tidptr` 改名 `child_tidptr`。
+- **wait4.rs 统一收集机制重构**：新增 `WaitInfo{pid, exit_code}` + `WaitOutcome{Reaped/Running/NoChild}` + `wait_reap(target_pid, non_blocking, keep_zombie)`，wait4 与 waitid 共用；`keep_zombie` 实现 WNOWAIT；sys_wait4 重写为 `wait_reap` 委托（行为等价）；wait4 的 target_pid < -1（P_PGID 匹配）从 ENOSYS 桩实装（匹配 Process.pgid）。
+- **futex.rs**：`futex_wake` pub 化（robust 退出路径唤醒消费端）。
+
+**ENOSYS 保留登记**：capget/capset（无凭证能力模型）、arch_prctl（无 arch 相关用户态需求）——不实装，保留回退层 ENOSYS 哨兵。
+
+**验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过、QEMU kernel_test 470/470（较前批 +2：robust 两测试）。
+
+### T1 实施记录（G3 网络）
+
+**实现路径裁定**（AskUserQuestion，用户授权）：socketpair / sendmmsg / recvmmsg = **B 相对完整设计实装**——socketpair 支持 AF_UNIX Stream+Dgram 双类型，recvmmsg/sendmmsg 循环复用既有收发原语，recvmmsg 完整 timeout 语义（get_ticks deadline + scheduler_yield 重试），mmsghdr msg_flags 逐条透传。
+
+**实装项**（3 项，services 0 unsafe）：
+
+| 项 | services 落点 | 机制/要点 |
+|---|---|---|
+| socketpair | `services/net/syscall.rs`（`socketpair_syscall`） | sv 缓冲校验（EFAULT）；domain≠AF_UNIX → ENOTSUP、protocol≠0 → EPROTONOSUPPORT、type 非 Stream/Dgram → ENOTSUP；委托 `uds_socketpair`；sv 写回 packed u64（低 32 位 fd0 / 高 32 位 fd1，低 4 字节落 sv[0]），写回失败 close 两端 → EFAULT |
+| sendmmsg | 同上（`sendmmsg_syscall`） | vlen==0 → Ok(0)、vlen>UIO_MAXIOV(1024) → EINVAL；逐 64B mmsghdr entry 校验（EFAULT）；UDS 分流 `sendmmsg_uds_entry`（`gather_entry_iov` 收集 iov；msg_name 非空走路径发送（与 sendto 一致）、空走 `uds_send_connected`，超 UNIX_DGRAM_MAX → EMSGSIZE）/ 非 UDS 委托 `sendmsg_syscall`；msg_len 经 `raw_copy_out(entry+56, 4, …)` 写回（4 字节粒度避免越界下条 entry）；出错且已发送 ≥1 条 → break 返回已发条数（Linux 语义） |
+| recvmmsg | 同上（`recvmmsg_syscall`） | timeout timespec 解析（sec<0 或 nsec 越界 → EINVAL；rel_ms checked_mul/add 溢出饱和 u64::MAX）；blocking = timeout_ptr≠0 且无 MSG_DONTWAIT；EAGAIN 时满足（非 blocking / deadline 已过 / MSG_WAITFORONE 且 received>0）其一 → break（received==0 的 EAGAIN 终态返 EAGAIN），否则 `scheduler_yield()` 重试；成功逐条补写 msg_len（recvmsg_syscall 不写 msg_len，mmsghdr 语义须补）；UDS 分流 `recvmmsg_uds_entry`（`uds_sock_type` 分流 Stream recv / Dgram recvfrom，单缓冲 cap=min(iov 总容量, 类型缓冲上限)，逐段 `copy_out_to_entry_iov` 写回，`cap>0 && n>=cap` → MSG_TRUNC 透传 msg_flags） |
+
+**unix.rs 机制扩展**（services 内纯策略）：
+
+- `uds_socketpair(sock_type)`：双端 `uds_create` + UDS_STATE 互设 peer + 双方 Connected（参照 uds_connect Dgram 双向 peer 模式）；第二端创建失败回滚 close 第一端，槽位关联异常回滚两端。
+- `uds_send_connected(fd, data)`：Stream 委托 `uds_send`；Dgram 校验 Connected/peer/peer_closed（→ NotFound）+ len 超 `UNIX_DGRAM_MAX`（→ Invalid）+ 对端在途数据报（→ Again），写入对端 dgram 缓冲 + passcred 12B 凭据（同 uds_sendto）。SIMPLIFIED：Dgram 已连接发送为单条在途非排队（Linux 为可靠排队缓冲），dgram 缓冲队列化时改写。
+- `uds_sock_type(fd)`：套接字类型查询（recvmmsg 分流接收原语）。
+
+**syscall.rs 常量区**：`MMSGHDR_SIZE=64` + msghdr 字段偏移（msg_name@0 / msg_namelen@8 / msg_iov@16 / msg_iovlen@24 / msg_flags@48 / msg_len@56）+ `UIO_MAXIOV=1024` + MSG_TRUNC=0x20 / MSG_DONTWAIT=0x40 / MSG_WAITFORONE=0x10000 + NSEC_PER_SEC。
+
+**dispatch 接线**（`services/syscall/dispatch.rs` dispatch_net）：SYS_socketpair / SYS_sendmmsg / SYS_recvmmsg 3 分支（sendmmsg 4 参、recvmmsg 5 参含 timeout 指针）。
+
+**kernel_test 扩展**（framework/tests/test_uds.rs，批实施 +3 / 审查处置 +2）：socketpair_stream（双向收发）/ socketpair_dgram（Connected 发送 + 二次发送 Again 断言）/ socketpair_rollback（资源耗尽回滚验证）/ close_releases_bitmap（close 位图回收回归）/ sendto_oversize（超限拒绝回归）——后两项见批审查处置；`release_all_uds_bitmap_bits()` 保留为失败用例兜底清理（位图泄漏修复后正常路径位图应自空）。
+
+**批审查处置**（AskUserQuestion 用户裁决，3 项预存）：
+
+- **uds_close 补 free_fd（本批修复）**：close 回收 fd_alloc 位图位（对齐 pidfd close 释放模式；含 listener 关闭时 pending client 位同步回收）；回归测试 close_releases_bitmap（17 次 create+close 循环，泄漏行为下第 17 次即 NoMem）。
+- **uds_sendto 长度校验（本批修复）**：`data.len() > UNIX_DGRAM_MAX → Invalid`（与 uds_send_connected 同款防护）；回归测试 sendto_oversize（超限拒绝 + 正常路径不受影响）。
+- **recvmsg/sendmsg_syscall UDS 数据面分流缺失（专项登记）**：登记下方预存表，后续工程处置。
+
+**验证**：双架构 check 0w0e、clippy 3 维 0 warning、核心审计通过、build.sh all 5/5、host-tests 全量、QEMU boot（Ring 3/init）通过、QEMU kernel_test 475/475（批实施 +3 / 处置 +2）。
+
 ## 详情
+
+### 预存登记（T1 G2 审查处置，2026-09-16）
+
+| 项 | 裁决 | 说明 |
+|---|---|---|
+| CLONE_SETTLS 切换恢复实装 | 待办（用户态线程库出现时） | `Process.tls_base` 保留不删（POSIX 线程兼容面预留）；x86_64 需在切换时写 MSR_FS_BASE、aarch64 写 tpidr_el0。注释已如实修正（clone.rs / process.rs 字段文档），原"上下文切换时恢复"陈述与事实不符 |
+| sched_ops.rs 整批 FFI 面 0 引用核实 | 待办（后续专项） | scheduler_set_quota/remove_quota/set_proc_limit/proc_get_current_pid_internal/proc_yield_internal 全仓（Rust+C+asm）0 引用；`no_mangle` 屏蔽编译器告警。同批已删 proc_exit_internal（同性质，exit 实际走 proc_ops.rs `SCHEDULER.exit` 直调），整批删除待专项核实确认 |
+
+### 预存登记（T1 G3 批报告，裁决处置）
+
+| 项 | 裁决 | 说明 |
+|---|---|---|
+| uds_close 不释放 fd_alloc 位图 | 已修（本批） | 生产级 FD 泄漏：uds_close 仅清 UDS socket 槽位，从未调用 `fd_alloc::free_fd(Uds, fd)`（对照 pidfd close 释放模式）；UDS 容量 16，累计创建 16 次后位图永久耗尽 → uds_create 恒 NoMem。修复：uds_close 补 free_fd + listener 关闭时 pending client 位同步回收；kernel_test 回归 close_releases_bitmap，socketpair_rollback 显式补偿逻辑随修复移除 |
+| recvmsg/sendmsg_syscall 无 UDS 数据面分流 | 专项登记（后续工程） | 旧 recvmsg/sendmsg_syscall 处理完 cmsg 后直调 fw::recvmsg/sendmsg，fw 层 fd_type 只认 smoltcp 1/2 → UDS fd 返 EBADF（当前仅 cmsg 凭据回传逻辑可达 UDS）。G3 recvmmsg/sendmmsg 新路径已内建 UDS 分流；旧路径分流待单独工程处置（本批 §12.2 未顺手扩大） |
+| uds_sendto 无消息长度校验 | 已修（本批） | `uds_sendto` 未校验 `data.len() > UNIX_DGRAM_MAX`，超限直接 copy_from_slice 写 dgram_buf → 越界 panic 隐患。修复：入口补 `data.len() > UNIX_DGRAM_MAX → Invalid` 防护（与 uds_send_connected 同款）+ kernel_test 回归 sendto_oversize（超限拒绝 + 正常路径不受影响） |
 
 ### 源码核实（2026-09-15）
 
