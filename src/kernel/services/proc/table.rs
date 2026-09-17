@@ -388,14 +388,3 @@ where
 pub fn remove_and_free(pid: crate::framework::proc::Pid) {
     PROCESS_TABLE.remove_and_free(pid);
 }
-
-/// 强制分配 PID (内核线程专用, 0/1/2 等保留 PID)
-///
-/// # Errors
-///
-/// 当进程表已满时返回 `TableError::TableFull`(由 `allocate_pid` 传播).
-pub fn allocate_reserved_pid() -> TableResult<crate::framework::proc::Pid> {
-    // 启动期特殊 PID (0=kthread, 1=init) 由 thread 模块单独分配
-    // 普通进程用 allocate_pid
-    allocate_pid()
-}

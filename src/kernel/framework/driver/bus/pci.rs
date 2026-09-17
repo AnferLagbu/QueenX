@@ -89,11 +89,6 @@ pub fn pci_scan() {
     }
 }
 
-/// 获取已发现的 PCI 设备数量
-pub fn pci_device_count() -> usize {
-    crate::framework::pci::device_count()
-}
-
 // 注意: pci_read_config_word / pci_write_config_word C FFI 符号
 // 由 `kernel::pci::mod` 提供 (`#[no_mangle] pub extern "C"`)。
 // 在此重导出会导致符号重复。

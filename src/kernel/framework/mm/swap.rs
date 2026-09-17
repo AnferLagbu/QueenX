@@ -704,11 +704,6 @@ pub fn is_swap_pte(pte: u64) -> bool {
     SwapEntry::from_pte(pte).is_some()
 }
 
-/// 从 PTE 解析 swap entry
-pub fn pte_to_swap_entry(pte: u64) -> Option<SwapEntry> {
-    SwapEntry::from_pte(pte)
-}
-
 /// 记录页面访问 (添加到 LRU active 链表)
 ///
 /// pml4 必须为该虚拟地址所属进程的 CR3, 用于 swap-out 时写 PTE 为 swap entry.

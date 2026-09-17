@@ -439,15 +439,3 @@ pub fn new_anonymous_inode(inode_id: u32) -> Arc<dyn Inode> {
 pub fn new_ramfs_inode(inode_id: u32, mount_idx: u32) -> Arc<dyn Inode> {
     Arc::new(RamFsInode::new(inode_id, mount_idx))
 }
-
-/// 创建 `LegacyInode` 的 Arc 包装 (过渡期: 从 `FsOpenResult` 创建)
-pub fn new_legacy_inode(
-    handle: u32,
-    mount_idx: u32,
-    file_type: u8,
-    rel_path: &str,
-) -> Arc<dyn Inode> {
-    Arc::new(LegacyInode::from_fs_result(
-        handle, mount_idx, file_type, rel_path,
-    ))
-}

@@ -105,7 +105,9 @@ T7 (预存登记)
 - [X] T3：半成品清除 + 用户态调用 audit（2026-09-15 完成，见下方 T3 实施记录）
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
 - [X] T1：R2 未实装 SYS_* 实装（G1-G7 全部完成，见下方 T1 实施记录）
-- [ ] T4-T7：登记排后（R3 pub mod / R1 445 项 / TODO 33 项 / aarch64 编号）
+- [X] T4：R3 零引用 pub mod 7 项核实（2026-09-18 完成，处置＝删除，见下方 T4 实施记录）
+- [ ] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项**全量四分类扫描已登记**（删 70 / 接线 142 / 预留 205 / 待裁 21），未改代码，待用户与 reviewer 讨论后定处置。见「T5 实施记录」「T5 全量甄别台账」）
+- [ ] T6-T7：登记排后（TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
 
@@ -436,6 +438,288 @@ T7 (预存登记)
 - **附带影响**：`host-tests/tests/plan_b_inode_test.rs::name_to_handle_at_uses_path_resolution` 的源文本断言随 `file_handle.rs` 入径变化同步更新（`VFS_MANAGER.resolve_mount_fs(path)` → `resolve_mount_fs(` + 新增 `resolve_user_path(` 断言，契约强度不降）。
 
 **验证**：双架构 check 0w0e（x86_64/aarch64，含 `kernel_test` 维度）、clippy 3 维（pedantic lib / kernel_test / host-test）0 warning、`./ci/audit.sh quick` 全绿（含注释中文化 100%、services 0 unsafe、边界黑名单、双子树 deadlock 矩阵等；`audit_implicit_deps` 151 → 159，详见下方预存登记）、`./ci/build.sh all` 5/5、host-tests 全量（99 个 test bin 全 `ok` / 0 failed，含 E-04 共享测试集 371 项）、QEMU kernel_test 498/498（0 skipped）。
+
+### T4 实施记录（2026-09-18）
+
+**核实结论**（工具 `scripts/audit_unwired_pub_fn.py` R3，7 项逐一核实）：
+
+| 模块 | trait | 包装器 | 生产引用 | 内联测试 | host-tests 平行实现 |
+|---|---|---|---|---|---|
+| `dmu_trait` | `DmuManager` | `StandardDmu` | 0 | 11 个，门禁中从不编译 | `HostDmuManager` / `StandardHostDmu` |
+| `raidz_trait` | `RaidzEngine` | `StandardRaidz` | 0 | 11 个 | `HostRaidzEngine` / `StandardHostRaidz` |
+| `spa_trait` | `SpaManager` | `StandardSpa` | 0 | 11 个 | `HostSpaManager` / `StandardHostSpa` |
+| `txg_trait` | `TxgManager` | `StandardTxg` | 0 | 9 个 | `HostTxgManager` / `StandardHostTxg` |
+| `zap_trait` | `ZapStore` | `StandardZap` | 0 | 11 个 | `HostZapStore` / `StandardHostZap` |
+| `zil_trait` | `ZilLog` | `StandardZil` | 0 | 13 个 | `HostZilLog` / `StandardHostZil` |
+| `zil_persist_trait` | `ZilPersist` | `StandardZilPersist` | 0 | 11 个 | `HostZilPersist` / `StandardHostZilPersist` |
+
+7 项**全部为纯预留抽象**（零生产引用）。判据：
+
+1. trait 自述目的「便于单元测试注入 mock」未落地——全仓无任何生产/测试调用方依赖该抽象。
+2. 具体实现的测试由 `framework/tests/test_nestfs.rs` 直接针对 `NestZap` / `NestZil` / `NestSpa` / `NestObjSet` / `NestTxgGroup` 等**具体类型**完成，未走 trait。
+3. 7 文件内的 `#[cfg(test)] mod tests` 在 `make test-unit`（构造为 `--features kernel_test`，非 `cargo test`）与 `make test-host`（依赖编译不含 `cfg(test)`）下**均不编译**——从不执行。本仓 `cargo test` 入口仅为 host-tests（Makefile L419 / ci/build.sh L58）。
+4. host-tests 已走「直接引用内核真实源码」的源共享路线（DECISION-052 路线 C），取代 trait 注入式 mock。
+5. 项目既有教训明载：「Trait injection for empty forwarding logic creates unnecessary abstraction overhead」。
+
+**ZFS 归属性判定**：这层 trait 壳**不承载任何 ZFS 语义**——纯方法签名镜像 + 1:1 转发（如 `StandardZap::insert` 仅 `self.0.insert(...)`；`StandardSpa::name()` 是返回 `""` 的 stub）。类 ZFS 关键在具体实现子系统（`spa.rs` / `dmu.rs` / `zap.rs` / `txg.rs` / `zil.rs` / `zil_persist.rs` / `raidz.rs` / `arc.rs` / `vdev.rs` / `metaslab.rs` / `bp.rs` / `dedup.rs` / `snapshot.rs` / `dataset.rs` 等，约 7100 行），与本次删除零交集。
+
+**处置裁定**（AskUserQuestion，用户授权）：**删除 7 模块**。
+
+**改动清单**：
+
+| 文件 | 改动 |
+|---|---|
+| `services/fs/nestfs/{dmu,raidz,spa,txg,zap,zil,zil_persist}_trait.rs` | 删除 7 文件（含从不运行的内联测试） |
+| `services/fs/nestfs/mod.rs` | 删除 7 行 `pub mod` 声明 |
+| `scripts/audit_invariants.py` | I2 检测 docstring 中指向已删文件 `raidz_trait.rs:304` 的历史注释改写为通用表述（本批改动直接导致的 stale 引用，§9.3 本轮修复） |
+
+**验证**：
+
+- `audit_unwired_pub_fn.py` R3：**7 → 0**；
+- `./ci/build.sh all` 5/5（双架构 0w0e + host-tests + link）；
+- `./ci/audit.sh quick` rc=0（双架构 check、clippy 3 维 0 warning、services 0 unsafe、注释中文化 100% 全绿）；
+- `make test-host` 全量 0 failed；
+- 未跑 QEMU（未触及 boot/架构路径）。
+
+**附带观测（归 T5）**：R1 由 438 → 447（+9）——删除包装器后，原先仅被 `Standard*` 一次性转发调用而「看似被引用」的具体方法失去该跨文件引用，真实零引用状态随之暴露。属审计信号变得更诚实（非本批引入的缺陷），纳入 T5 甄别一并处置。
+
+### T5 实施记录（批 1，2026-09-18）
+
+**路径裁定（用户）**：R1 甄别采用**方案 A「分批只删确证无用」**——仅对「**重复能力 / 有等价公共入口 / 确证废弃**」三类施工删除；「**能力预留 / 转正式**」类**不改代码**，仅登记入台账（沿用 DECISION-052 第三层 + 分册 9 D-4 判据）。T5 声明**必须分批**。
+
+**调研发现（关键，改变 T5 预期）**：R1 447 项经逐文件抽查后确认**主体为有意保留的 API 面，而非缺陷**：
+
+| 类别 | 实例 | 为何零调用但保留 |
+|---|---|---|
+| services 的 framework 安全代理壳 | `driver/acpi.rs`（`get_lapic_base`/`get_ioapic_*`/`hpet_info`）、`credo/secure_boot.rs`（8 项）、`credo/crypto.rs`、`driver/char/serial.rs`、`driver/storage/ahci.rs`、`fs/nestfs/dedup.rs` | services 经顶层 re-export 暴露 safe API（F2 边界要求）；「零调用」≠「无用」 |
+| 文件系统 mount/umount API 面 | `fs/{sysfs,cgroupfs,configfs,virtiofs,systree,devpts}.rs` 的 `mount_*`/`umount_*` | 完整实现，待 VFS mount 集成接线 |
+| 调试/统计查询面 | `idt/statistics.rs`、`idt/handlers.rs`、`mm/slab.rs`、`mm/page_fault.rs`、`sync/atomic.rs` 计数、`net/route.rs`、`net/netfilter.rs` | 诊断/可观测能力预留 |
+| 同步/跨架构原语预留 | `sync/{rwlock,seqlock,pi_mutex,atomic}`、`arch/aarch64/{mmu,gic,psci,vmm_aarch64}`、`arch/x86_64/{apic,ioapic}` | D-4 已登记「能力预留」 |
+| 驱动硬件操作 | `driver/{display,xhci,e1000,dma,uefi,power}` | D-4 已登记「部分应接线，部分转正式」 |
+
+→ 结论：**T5 的可删面远小于 R1 计数**；粗暴删除会移除有意保留的 API 面（D-4 明载「转正式比接线更合理，避免为消除而接线」）。
+
+**批 1 删除清单（9 项 R1 项，均为「重复能力 / 等价公共入口 / 废弃兼容壳」）**：
+
+| # | 文件 | 项 | 判据 |
+|---|---|---|---|
+| 1 | `framework/error.rs` | `io_error()` / `out_of_memory()` / `read_only()` | 「向后兼容别名（fs 层旧变体名 → 统一变体名）」块内三项，全仓 0 调用 → 废弃兼容壳 |
+| 1b | 同上 | `not_found()` | 同块第四项，`.not_found()` 全仓 0 调用（审计 `rg -w` 把测试局部变量 `not_found` 计入引用，故未进 R1 计数）→ 连同 #1 整块 impl 删除 |
+| 2 | `framework/config/boot_image.rs` | `read_boot_image()` | doc 自述「供测试/调试」，全仓（含 host-tests）0 引用；同文件 `encoded_len()` 有调用方 |
+| 3 | `framework/driver/bus/pci.rs` | `pci_device_count()` | 纯转发 `crate::framework::pci::device_count()`，后者已被 `pci_get_device_count` FFI 使用 → 等价公共入口 |
+| 4 | `framework/mm/vma.rs` | `mm_struct_new()` | 纯别名 `MmStruct::new()`（测试已在用），且未进 `mm/mod.rs` re-export |
+| 5 | `framework/mm/swap.rs` | `pte_to_swap_entry()` | 薄包装 `SwapEntry::from_pte()`，后者已有调用方；未进 `mm/mod.rs` re-export |
+| 6 | `services/fs/inode.rs` | `new_legacy_inode()` | 与 `LegacyInode::from_fs_result()`（`fs/file_handle.rs:203` 在用）重复的构造入口 |
+| 7 | `services/proc/table.rs` | `allocate_reserved_pid()` | 函数体即 `allocate_pid()`（doc 亦述「普通进程用 allocate_pid」）→ 重复入口且名实不符 |
+
+**批 1 保留（登记「待裁」，非删除）**：
+
+| 项 | 保留理由 | 建议 |
+|---|---|---|
+| `framework/driver/bus/pci.rs::pci_scan()` | 能力与 `pci::scan_all_buses()`（已被 `services/driver/storage/mod.rs:182` 等使用）重叠，但含设备日志输出，属驱动**诊断面** | 待裁（接线 vs 删） |
+| `fs/{sysfs,cgroupfs,configfs,virtiofs}::umount_*` 等占位实现 | `umount_sysfs` 恒 `Ok(())`、`umount_devpts` 误调 `mount_devpts` —— 属 FS API 面**半成品**，删除会移除 API 面 | 登记预存缺陷，待 VFS mount 集成时修实装 |
+| `sync/atomic.rs` `record_*` 四项 | 计数本应被原子操作调用（`dump_stats` 已在用），当前计数恒 0 —— 属**半接线缺陷** | 待裁（接线会增热路径开销 vs 删计数面） |
+
+**R1 台账（批 1 后 438 项，按子系统分类）**：
+
+| 项数 | 子系统 | 类别 |
+|---|---|---|
+| 60 | `framework/` 其他（idt/timer/net/cpu/dma/pci/io/debug/console/chitin/config/ipc/credo/error/vmspace/page_table/irqline） | 预留（查询/诊断/原语） |
+| 58 | `framework/arch/*`（apic/ioapic/gic/mmu/psci/gdt/uart/acpi/timer/shadow_stack） | 预留（跨架构原语，D-4） |
+| 43 | `framework/proc/*`（进程/调度/命名空间/信号/fd_table/rlimit/cgroup/session/cfs） | 预留（策略查询面） |
+| 43 | `services/driver/*`（usb/acpi/char/storage/display/virtio/firmware/uefi） | 预留（safe 代理壳 + 硬件面） |
+| 42 | `framework/driver/*`（display/usb/net/power/uefi/hotplug/pci/input） | 预留（D-4） |
+| 41 | `services/fs/*`（systree/devpts/exfat/ext2/tmpfs/virtiofs/sysfs/cgroupfs/configfs/ramfs/inode） | 预留（mount API 面）+ 少量待裁 |
+| 34 | `services/fs/nestfs/*`（dedup/bp/arc/raidz/txg/spa/zil/dmu…） | 预留（NestFS 子系统） |
+| 30 | `services/` 其他（ipc/proc/mm/net/wasm/barrier/timer/config） | 预留 + 少量待裁 |
+| 22 | `framework/mm/*`（vmm_aarch64/kpti/numa/swap/slab/vma/page_fault/frame） | 预留（D-4） |
+| 21 | `services/credo/*`（identity/secure_boot/crypto） | 预留（D-4） |
+| 17 | `framework/sync/*`（rwlock/seqlock/pi_mutex/atomic/mutex/rcu/spinlock） | 预留（D-4） |
+| 14 | `framework/barrier/*`（domain/recovery/reset/recoverable/snapshot） | 预留（BCB 策略面） |
+| 13 | `framework/fs/vfs/*`（flock/handle/inotify/dcache/vfs） | 预留（VFS 内部） |
+
+**验证**：`audit_unwired_pub_fn.py` R1 **447 → 438**（−9，与删除项精确对应；R3 仍 0）；`./ci/build.sh all` 5/5（双架构 0w0e + host-tests + link）；`./ci/audit.sh quick` rc=0；`make test-host` 全量 0 failed；未跑 QEMU（未触及 boot/架构路径）。
+
+**后续批次判据（沿用批 1）**：先查「是否存在等价公共入口 / 是否有使用者」，再看是否属 D-4 预留类别；仅前者成立才删，后者一律登记入台账。
+
+### T5 全量甄别台账（批 2，2026-09-18）
+
+**性质**：批 2 为**只读扫描 + 登记**，未改任何源码（用户裁定「主项扫，登记后我和审核进行讨论」）。扫描后逐项四分类结果如下，供用户与 reviewer 讨论后决定「删 / 接线 / 预留 / 待裁」的最终处置。
+
+**扫描区间**（批 1 后 R1 余 438 项，按区间切三块）：
+
+| 区间 | 覆盖 | 项数 |
+|---|---|---|
+| g1 | `framework/{arch,mm,sync,barrier}` | 111 |
+| g2 | `framework/` 其余（driver/fs/proc/idt/timer/net/cpu/dma/pci/io/debug/console/chitin/credo/ipc/…） | 158 |
+| g3 | `services/` 全量 | 169 |
+
+**分类语义（登记口径，供讨论统一）**：
+
+| 分类 | 含义 | 处置路径 |
+|---|---|---|
+| 删 | 重复能力 / 有等价公共入口 / 废弃兼容壳（与批 1 判据一致） | 可施工删除，须用户 + reviewer 确认 |
+| 接线 | 实现完整但未进调用链 | ① 现有调用链缺此半（小改即可）；② 所属子系统尚未集成（属 DECISION-052 第三层「未来功能记录」，非立即接线） |
+| 预留 | 能力预留 API 面（与分册 9 D-4 同类） | 不改代码，保留 |
+| 待裁 | 半接线缺陷 / 依赖路线图 / 与在用能力重叠但含额外价值 | 需用户 + reviewer 裁定 |
+
+**分组统计**：
+
+| 区间 | 项数 | 删 | 接线 | 预留 | 待裁 |
+|---|---|---|---|---|---|
+| g1 `framework/{arch,mm,sync,barrier}` | 111 | 59 | 34 | 8 | 10 |
+| g2 `framework/` 其余 | 158 | 7 | 102 | 47 | 2 |
+| g3 `services/` | 169 | 4 | 6 | 150 | 9 |
+| **合计** | **438** | **70** | **142** | **205** | **21** |
+
+#### A. 删候选（70 项，按文件归并）
+
+| 文件 | 项（行号） | 判据 |
+|---|---|---|
+| `framework/arch/aarch64/gic.rs` | `is_ppi`(332) `is_valid_irq`(342) `is_spi_pending`(456) | 校验/状态谓词零消费，与 `is_spi` 及范围校验重复 |
+| `framework/arch/aarch64/mmu.rs` | `allows_el0_access`(350) `diagnose_permission`(384) | 权限谓词 + 调试打印，零消费 |
+| `framework/arch/aarch64/timer.rs` | `read_control`(76) | 控制寄存器内省，零消费 |
+| `framework/arch/shadow_stack.rs` | `is_ssp_valid`(129) | 范围校验谓词零消费 |
+| `framework/arch/x86_64/acpi.rs` | `get_ap`(457) | 索引访问器，与 `get_ap_list` 重复 |
+| `framework/arch/x86_64/apic.rs` | `get_version`(138) `get_timer_count`(209) `is_timer_calibrated`(258) `configure_lint0`(337) `configure_lint1`(344) `apic_read_isr`(380) `apic_read_tmr`(394) `apic_read_irr`(408) `apic_is_in_isr`(417) `apic_is_in_irr`(424) `apic_is_level_triggered`(431) `send_ipi_level`(444) `broadcast_ipi_level`(459) `icr_level`(472) `icr_broadcast`(477) | 内省快照 + 兼容层；`configure_lint0/1` 与 `unmask_lint0/1` 实现逐字相同，电平 IPI 与普通 IPI 重复 |
+| `framework/arch/x86_64/gdt.rs` | `tss_64bit`(173) `get_gdt_table`(701) | 残留构造器（未用于 TSS 描述符）+ 自述调试用途 |
+| `framework/arch/x86_64/ioapic.rs` | `get_max_irq`(123) `set_irq_level`(265) `set_id`(319) `get_arbitration_id`(324) `delivery_lowest`(337) `delivery_init`(349) | 兼容包装（`set_id`/`get_arbitration_id` 已被 `*_on` 覆盖）+ 常量 getter |
+| `framework/barrier/domain.rs` | `consume_quota_tick`(213) `is_quota_exceeded`(307) | 与 `check_quota` 语义重复的废弃配额路径 |
+| `framework/barrier/reset/audit.rs` | `count_by_result`(101) | 审计计数查询零消费 |
+| `framework/mm/kpti.rs` | `pcid_is_enabled`(149) | CR4.PCIDE 状态查询零消费 |
+| `framework/mm/numa.rs` | `contains_cpu`(195) `all_nodes`(334) | 拓扑查询零消费 |
+| `framework/mm/page_fault.rs` | `page_fault_count`(497) | 统计查询零消费 |
+| `framework/mm/slab.rs` | `utilization`(921) | slab 利用率统计零消费 |
+| `framework/mm/vmm_aarch64.rs` | `is_desc_table`(1146) `is_desc_block`(1151) `is_desc_page`(1156) `is_desc_device_memory`(1166) `is_desc_non_cacheable`(1172) `diagnose_descriptor`(1178) | 描述符谓词 + 诊断打印，零消费 |
+| `framework/sync/atomic.rs` | `record_inc`(191) `record_dec`(194) `record_cmpxchg_success`(197) `record_cmpxchg_fail`(200) | `atomic_stats` 特性未启用，整模块死（批 1 列「待裁」→ 本次甄别归「删」） |
+| `framework/sync/pi_mutex.rs` | `get_ceiling`(328) `get_protocol`(333) | 天花板/协议查询零消费 |
+| `framework/sync/rwlock.rs` | `raw_read_unlock`(114) `raw_write_unlock`(160) `read_irqsave`(179) `write_irqsave`(192) `pending_writer_count`(219) | guard Drop 直取 inner；公开入口全仓零引用 |
+| `framework/sync/seqlock.rs` | `current_sequence`(46) `get_valid`(119) | 序列号/校验查询零消费 |
+| `framework/sync/spinlock.rs` | `lock_irq`(263) | 不保存标志的加锁入口，易与 irqsave 误用 |
+| `framework/console/gfx_console.rs` | `write_log_line`(286) | 与在用 `write_str` 逐字节相同 |
+| `framework/fs/vfs/handle.rs` | `vfs_close_safe`(542) `vfs_seek_safe`(547) `vfs_readdir_safe`(556) | 纯包装同名 `extern "C"` 入口（后者已被 services 直接使用） |
+| `framework/fs/vfs/vfs.rs` | `get_fs_name`(75) | 等价于在用 `get_fs_type().as_str()` |
+| `framework/ipc/dynamic.rs` | `pipe_exists`(118) | 可由在用 `get_pipe`/`pipe_count` 等价判定 |
+| `framework/timer/tick.rs` | `format_duration`(355) | 纯格式化工具，`core::fmt` 可等价 |
+| `services/credo/crypto.rs` | `ct_eq_salt`(210) `ct_eq_password`(216) | `ct_eq` 已是等价公共入口，包装无独立实现 |
+| `services/fs/ramfs.rs` | `split_path`(524) `validate_path`(544) | 零调用本地辅助，能力已在 VFS `resolve_user_path` / 路径校验公共入口 |
+
+#### B. 待裁（21 项）
+
+| 文件 | 项（行号） | 待裁点 |
+|---|---|---|
+| `framework/arch/shadow_stack.rs` | `set_ssp`(124) `alloc_kernel_shadow_stack`(302) `configure_user_cet_msr`(394) `configure_interrupt_ssp_table`(445) | 去留取决于 CET 子系统路线图 |
+| `framework/arch/x86_64/acpi.rs` | `get_dmar_drhd_list`(878) `get_dmar_host_addr_width`(883) | 取决于 IOMMU/DMAR 路线图 |
+| `framework/barrier/recoverable.rs` | `lock_fast`(75) | 免 checkpoint 快速路径，属设计决策 |
+| `framework/mm/numa.rs` | `set_distance`(291) `best_alloc_node`(339) `nearest_free_node`(346) | 取决于 NUMA 子系统路线图 |
+| `framework/cpu/cpuid.rs` | `cpuid_checked`(60) | 叶范围校验变体，保留安全变体 vs 删 |
+| `framework/driver/bus/pci.rs` | `pci_scan`(75) | 与在用 `scan_all_buses` 能力重叠且带日志（批 1 已登记） |
+| `services/fs/sysfs.rs` / `cgroupfs.rs` / `configfs.rs` / `virtiofs.rs` / `systree.rs` | `umount_sysfs`(189) `umount_cgroupfs`(389) `umount_configfs`(361) `umount_virtiofs`(314) `umount_systree`(505) | 占位半成品（恒 `Ok(())` / 常量清零）；删则移除 FS API 面 |
+| `services/fs/devpts.rs` | `umount_devpts`(241) | 误调 `mount_devpts` 的半成品 |
+| `services/fs/process_fd_table.rs` | `get_fd`(96) `close_cloexec_fds`(174) `clear_non_cloexec`(186) | Plan B 并行 FD 表整体未采用，删/接线待裁 |
+
+#### C. 接线候选（142 项，按文件归并）
+
+| 文件 | 数 | 项 |
+|---|---|---|
+| `framework/arch/aarch64/mmu.rs` | 6 | `write_ttbr0` `tlbi_vaae1` `tlbi_vmalle1` `make_user_rw_entry` `make_kernel_rw_entry` `make_user_ro_entry` |
+| `framework/arch/aarch64/psci.rs` | 2 | `system_off` `system_reset` |
+| `framework/arch/aarch64/timer.rs` | 1 | `set_timeout_ms` |
+| `framework/arch/aarch64/uart.rs` | 1 | `switch_to_high_half` |
+| `framework/arch/x86_64/apic.rs` | 4 | `mask_lint0` `mask_lint1` `unmask_lint0` `unmask_lint1` |
+| `framework/barrier/domain.rs` | 2 | `check_quota` `check_proc_limit` |
+| `framework/barrier/recovery.rs` | 4 | `recovery_registry_init` `recovery_subdomain_save_checkpoint` `cascade_recover` `hard_reset_domain` |
+| `framework/barrier/{reset/layered,snapshot}.rs` | 4 | `test_recovery_status` `test_snapshot_basic` `test_registry_register` `test_registry_priority_order`（kernel_test 用例未挂测试运行器） |
+| `framework/mm/kpti.rs` | 3 | `invpcid_flush_single` `kpti_kernel_pml4` `kpti_user_pml4_or_kernel` |
+| `framework/mm/kpti_aarch64.rs` | 2 | `kpti_trampoline_ttbr1` `kpti_kernel_ttbr1` |
+| `framework/mm/swap.rs` | 1 | `swap_free` |
+| `framework/mm/vma.rs` | 1 | `with_offset` |
+| `framework/sync/mutex.rs` / `pi_mutex.rs` / `rcu.rs` | 3 | `wait_timeout` / `set_ceiling` / `rcu_process_all_callbacks` |
+| `framework/chitin/user_driver.rs` | 3 | `devtree_map_user_device` `devtree_unmap_user_device` `chitin_forward_irq` |
+| `framework/cpu/tsc.rs` | 1 | `nanoseconds_to_cycles` |
+| `framework/credo/{audit,identity,secure_boot}.rs` | 3 | `get_entries` `find_mut` `add_trust_entry` |
+| `framework/debug/ebpf.rs` | 3 | `prog_run` `get_map` `get_prog` |
+| `framework/dma/engine.rs` | 5 | `unmap_single` `sync_both` `sg_init` `sg_add_entry` `sg_total_length` |
+| `framework/driver/block.rs` | 1 | `mark_removed` |
+| `framework/driver/hotplug.rs` | 1 | `hotplug_poll` |
+| `framework/driver/input/keyboard.rs` | 1 | `get_modifiers` |
+| `framework/driver/net/e1000_io.rs` | 5 | `set_ctrl` `set_rx_ctl` `set_tx_ctl` `set_ipg` `install_rings` |
+| `framework/driver/power.rs` | 4 | `ondemand_check` `register_notifier` `pm_subsystem` `pm_is_initialized` |
+| `framework/driver/usb/mass_storage.rs` | 2 | `build_read_capacity_10_cbw` `build_request_sense_cbw` |
+| `framework/driver/usb/usb_core.rs` | 3 | `register_controller` `find_device_by_class` `find_device_by_vid_pid` |
+| `framework/driver/usb/xhci.rs` | 2 | `init_command_ring` `recover_endpoint` |
+| `framework/frame.rs` | 1 | `set_meta` |
+| `framework/fs/vfs/handle.rs` | 1 | `vfs_get_fd_handle` |
+| `framework/fs/vfs/inotify.rs` | 1 | `inotify_fd_readable` |
+| `framework/fs/vfs/vfs.rs` | 1 | `set_fd` |
+| `framework/idt/idt.rs` | 1 | `set_exception_handler` |
+| `framework/io/iouring.rs` | 2 | `io_uring_destroy` `io_uring_reap` |
+| `framework/irqline.rs` | 1 | `is_registered` |
+| `framework/net/netfilter.rs` | 2 | `hook_count` `list_rules` |
+| `framework/net/route.rs` | 2 | `route_list` `default_route` |
+| `framework/page_table.rs` | 1 | `verify_kernel_code_protection` |
+| `framework/pci/msi.rs` | 5 | `msi_enable` `msi_disable` `msix_disable` `msix_mask_vector` `msix_unmask_vector` |
+| `framework/proc/canary.rs` | 1 | `set_per_proc_seed` |
+| `framework/proc/cfs.rs` | 3 | `get_weighted_load` `steal_highest_vruntime` `get_load` |
+| `framework/proc/cgroup.rs` | 8 | `check_budget` `period_reset` `try_charge` `uncharge` `is_over_limit` `account_read` `account_write` `cgroup_of` |
+| `framework/proc/cpu_queue.rs` | 1 | `register_sched_softirq` |
+| `framework/proc/fd_table.rs` | 4 | `get_handle_id` `is_cloexec` `set_cloexec` `get_cloexec_fds` |
+| `framework/proc/namespace.rs` | 3 | `to_clone_flag` `map_uid` `map_gid` |
+| `framework/proc/posix_timer.rs` | 1 | `posix_timer_release_pid` |
+| `framework/proc/process.rs` | 2 | `kernel_stack_check_canary` `allocate_user_space` |
+| `framework/proc/rlimit.rs` | 5 | `check_nofile_exceeded` `check_as_exceeded` `check_nproc_exceeded` `get_stack_limit` `get_nofile_limit` |
+| `framework/proc/scheduler.rs` | 2 | `set_deadline_params` `get_current_process` |
+| `framework/proc/scheduler_ex.rs` | 3 | `freeze_all` `thaw_all` `exit_thread` |
+| `framework/proc/seccomp.rs` | 2 | `from_linux` `to_linux` |
+| `framework/proc/session.rs` | 3 | `get_session` `sys_tiocsctty` `signal_foreground_pgid` |
+| `framework/proc/signal.rs` | 1 | `has_deliverable_signal` |
+| `framework/proc/thread.rs` | 2 | `create_thread` `get_thread` |
+| `framework/proc/user_proc.rs` | 1 | `create_from_binary` |
+| `framework/syscall/epoll.rs` | 1 | `epoll_destroy` |
+| `framework/timer/hrtimer.rs` | 1 | `hrtimer_ns_to_cycles` |
+| `framework/timer/tick.rs` | 2 | `reset_ticks` `get_uptime_tsc` |
+| `framework/timer/tickless.rs` | 2 | `enter_tickless` `exit_tickless` |
+| `framework/timer/time_sync.rs` | 1 | `client_request` |
+| `framework/vmspace.rs` | 1 | `map_huge` |
+| `services/fs/{sysfs,cgroupfs,configfs,virtiofs,systree}.rs` | 5 | `mount_sysfs` `mount_cgroupfs` `mount_configfs` `mount_virtiofs` `mount_systree`（实现完整，待 VFS mount 集成） |
+| `services/net/unix.rs` | 1 | `uds_recv_with_creds`（recvmsg UDS 凭据分流点缺失） |
+
+#### D. 预留（205 项，按子系统计数）
+
+| 子系统/文件 | 数 | 预留性质 |
+|---|---|---|
+| `framework/arch/aarch64/gic.rs` | 5 | SPI 使能/禁用/pending/触发配置（SPI bring-up 前预留） |
+| `framework/arch/aarch64/mmu.rs` | 1 | `alloc_user_page_table`（Phase 6 每进程独立页表） |
+| `framework/arch/aarch64/timer.rs` | 1 | `set_compare`（oneshot 高精度定时） |
+| `framework/mm/swap.rs` | 1 | `swap_deinit`（host-tests 配对 + 将来热卸载） |
+| `framework/chitin/{composite,devtree}.rs` | 2 | 设备树匹配/属性解析 API 面 |
+| `framework/console/gfx_console.rs` | 2 | `set_margin` `set_colors`（控制台配置面） |
+| `framework/cpu/feature.rs` | 6 | CPU 能力/厂商查询面（D-4） |
+| `framework/dma/engine.rs` | 1 | `submit_transfer_async`（异步 DMA 面） |
+| `framework/driver/display/controller.rs` | 11 | 多显示器管理 API 面（热拔管理未启用） |
+| `framework/driver/display/framebuffer.rs` | 1 | `intersection`（绘制辅助） |
+| `framework/driver/framework.rs` | 2 | `outw` `inw`（16 位 PIO 原语族） |
+| `framework/driver/power.rs` | 2 | `latency_us` `power_saving`（电源约束查询面） |
+| `framework/driver/uefi.rs` | 4 | UEFI 运行期服务 API 面 |
+| `framework/driver/usb/ring.rs` | 2 | 环入队/出队指针访问器 |
+| `framework/fs/vfs/dcache.rs` / `flock.rs` / `inotify.rs` | 6 | VFS 内部诊断面 + flock 子系统查询面 + inotify 统计 |
+| `framework/idt/{handlers,idt,safety,statistics}.rs` | 7 | 诊断计数/历史查询面 + 屏障原语（D-4） |
+| `framework/proc/scheduler_ex.rs` | 1 | `thread_dump_info`（线程信息转储） |
+| `services/credo/{identity,secure_boot,crypto}.rs` | 19 | 身份/凭据/安全启动能力预留（D-4）+ safe 代理壳 |
+| `services/driver/{acpi,char,display,firmware,storage,uefi,usb,virtio}` | 41 | safe 代理壳 + 硬件操作面（D-4） |
+| `services/fs/nestfs/*` | 34 | NestFS 子系统预留（D-4） |
+| `services/fs/{exfat,ext2,tmpfs,devpts,sysfs,systree,ramfs,cgroupfs,configfs}` | 21 | FS 内部访问器 / mount-配套面 / 空间统计面 |
+| `services/ipc/{async_ipc,sem,signal}.rs` | 12 | IPC API/FFI 导出面（待用户态接线） |
+| `services/mm/{memory_pressure,swap}.rs` | 3 | 内存压力策略 + SwapInfo 查询面 |
+| `services/barrier/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
+| `services/proc/{canary,elf,shadow_stack,signal}.rs` / `timer/*` / `net/unix.rs` / `wasm/*` | 12 | 查询面 + safe 代理壳 + wasm 运行时 API 面 |
+
+#### 登记结论（供讨论）
+
+1. **删候选分布集中**：`framework/arch/x86_64/apic.rs`（15）、`framework/sync/*`（14）、`framework/mm/vmm_aarch64.rs`（6）、`framework/arch/x86_64/ioapic.rs`（6）、`framework/arch/aarch64/gic.rs`（3），合计 44/70 —— 特征均为**内省查询 + 兼容包装 + 常量 getter**，删除面清晰；但涉及跨架构原语（D-4 登记类别），建议 reviewer 逐项确认后再施工。
+2. **「接线」142 项需分层看**：其中绝大多数属**所属子系统尚未集成**（cgroup 8 / proc 相关 42 / tickless / MSI / USB / 多显示器 / NUMA / DMAR / eBPF / 线程），实为 DECISION-052 第三层「未来功能记录」；真正属「现有调用链缺此半」（小改即可）的仅 `fs/vfs/{handle,vfs}.rs`、`fs/systree.rs`、`irqline.rs`、`frame.rs`、`proc/fd_table.rs` 等少量，建议单独拆出可施工子清单。
+3. **与分册 9 D-4 的关系**：D-4 已登记「能力预留」的类别（credo / cgroup / framework sync / mm swap+numa / driver xhci+display+apic）在本台账被细化为逐项四分类，**不改变 D-4 结论**，仅补齐可讨论粒度；预留 205 项仍按「不接线、不删除」处理。
+4. **批 1「待裁」收敛**：`sync/atomic.rs` 4 项 `record_*` → 本次归「删」；`pci_scan` 与 `umount_*` 占位 → 仍为「待裁」（见 B 表）。
 
 ## 详情
 

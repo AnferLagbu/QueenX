@@ -1295,10 +1295,6 @@ pub fn get_current_mm() -> Option<&'static MmStruct> {
     }
 }
 
-pub fn mm_struct_new() -> MmStruct {
-    MmStruct::new()
-}
-
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 // 有意窄化: 显式收窄, 调用方保证值域

@@ -64,7 +64,7 @@
 - **B09-06. R1 pub fn 死代码（362 项）**
   - 描述：pub fn 死代码 362 项，高密度文件 Top 5 需优先（vfs/api.rs、syscall/types.rs 等）；已确认 `[X:CFG]` 跨架构项 3 项保留。
   - 方案：按模块分布 Top 10 逐文件清理；跨架构项保留并标注。
-  - 状态：[]
+  - 状态：[]（2026-09-18：T5 批 1 完成，实测 R1 = 447 → 438。**核实结论修正**：R1 主体为有意保留的 API 面（services 安全代理壳 / FS mount API 面 / 调试统计查询面 / 原语预留 / 驱动硬件面），非"死代码"；批 1 仅删确证无用 9 项。余项按 [syscall-followup.md](syscall-followup.md) T5 台账分批判别）
 
 - **B09-07. R3 零引用 pub mod（36 项）**
   - 描述：36 个 pub mod 零引用。
@@ -255,7 +255,7 @@
 - **dmu_trait/raidz_trait/spa_trait/txg_trait/zap_trait/zil_persist_trait/zil_trait**
   - 描述：nestfs 各子系统 trait 抽象模块（[nestfs/mod.rs](../../src/kernel/services/fs/nestfs/mod.rs)）。
   - 处置：**核实后二选一**——架构预留接口（非误报）→ 转正式保留（实现治理）；误报/无用 → 直接删。
-  - 状态：[]
+  - 状态：[X]（2026-09-18 核实：7 项全部为**纯预留抽象**——零生产引用 / 内联测试在门禁中从不编译 / host-tests 已有平行实现；**处置＝直接删**，详见 [syscall-followup.md](syscall-followup.md) 的 T4 实施记录）
 
 ### D-4. R1 甄别"未来功能"类（逐项核实，代表清单）
 
@@ -270,6 +270,12 @@
 - **driver/\*（xhci 14 / display 11 / apic 19 等）**：硬件操作函数（部分应接线，部分转正式）
 
 > 完整 445 项见 B09-18 实测报告；逐项核实后分拣（接线 vs 转正式 vs 删除）。
+
+> 状态（2026-09-18）：**T5 批 1 完成**——实测确认 R1 主体（438 项）为上述**有意保留的 API 面**（services 安全代理壳 / FS mount API 面 / 调试统计查询面 / 原语预留 / 驱动硬件面），粗删会移除 API 面；批 1 仅删「重复能力 / 等价公共入口 / 废弃兼容壳」9 项（R1 447 → 438）。
+>
+> 状态（2026-09-18）：**T5 批 2 完成（只读扫描 + 登记）**——438 项已逐项四分类：**删 70 / 接线 142 / 预留 205 / 待裁 21**，未改任何源码。上述 D-4 类别在本台账中被细化为逐项判据（D-4 结论不变，仅补粒度）；其中「接线」142 项多数实为**子系统未集成**（cgroup / proc / tickless / MSI / USB / 多显示器 / NUMA / DMAR / eBPF / 线程），归 DECISION-052 第三层「未来功能记录」。
+>
+> 逐项台账、分组统计与判据见 [syscall-followup.md](syscall-followup.md) 的「T5 实施记录」+「T5 全量甄别台账」。
 
 ### D-5. TODO → 转正式（33 项，2026-09-11 复核：TRACK- 23 + 普通 10）
 
@@ -306,7 +312,7 @@
 | **mremap TODO(TRACK-90BFB0)**（[syscall/types.rs:72](../../src/kernel/services/syscall/types.rs#L72)）| ✅ 已确认——dispatch 已实装 `mremap_syscall`（[dispatch.rs:228](../../src/kernel/framework/syscall/dispatch.rs#L228)），TODO 过期 | [] |
 | **R4 DomainFlags**（[credo/types.rs:101](../../src/kernel/services/credo/types.rs#L101)）| 零引用，仅定义一处——按"内核需不需要"判据核实：credo domain 体系需要 → 转 D-1/D-4；不需要 → 删 | [] |
 | **R3 trait 误报项**（D-3 核实为无用的）| 非架构预留接口，内核不需要 → 删 | [] |
-| **R1 筛出的无用函数**（D-4 核实为无价值的）| 内核不需要 → 删（如部分 apic/xhci 只读操作）| [] |
+| **R1 筛出的无用函数**（D-4 核实为无价值的）| 内核不需要 → 删（如部分 apic/xhci 只读操作）| []（批 1 完成 2026-09-18：删 9 项「重复能力/等价公共入口/废弃兼容壳」，R1 447 → 438；实测确认其余主体为 API 面预留，不再按"无价值"删——详见 [syscall-followup.md](syscall-followup.md) T5 实施记录）|
 | **F9 豁免残留**（已激活代码上的 allow）| 对应代码已接线 → 删豁免（limits.rs 等）| [] |
 
 > 2026-09-09 判据更新注记：**ext2/exfat/nestfs 时间戳 TODO 3 处经"内核需不需要"判据确认 = 内核需要**（POSIX stat mtime 语义完善项）→ **转 D-5 转正式**（实现治理，低优先级），不再列入直接删待核实。DomainFlags/R3/R1 待核实项按"内核需不需要"判据核实后回填本表。

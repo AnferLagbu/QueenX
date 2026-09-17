@@ -128,11 +128,6 @@ pub fn encode_boot_image() {
     }
 }
 
-/// Read a snapshot of the `boot_image` (供测试/调试).
-pub fn read_boot_image() -> [u8; ENCODED_LEN] {
-    *BOOT_IMAGE.lock()
-}
-
 /// 编码后的镜像占用字节数.
 pub const fn encoded_len() -> usize {
     ENCODED_LEN

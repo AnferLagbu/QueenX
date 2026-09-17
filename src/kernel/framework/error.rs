@@ -117,26 +117,6 @@ impl core::fmt::Display for KernelError {
     }
 }
 
-// 向后兼容别名 (fs 层旧变体名 → 统一变体名)
-impl KernelError {
-    /// fs 层旧名: `NotFound` → `FileNotFound`
-    pub const fn not_found() -> Self {
-        Self::FileNotFound
-    }
-    /// fs 层旧名: `IoError` → Io
-    pub const fn io_error() -> Self {
-        Self::Io
-    }
-    /// fs 层旧名: `OutOfMemory` → `NoMemory`
-    pub const fn out_of_memory() -> Self {
-        Self::NoMemory
-    }
-    /// fs 层旧名: `ReadOnly` → `ReadOnlyFilesystem`
-    pub const fn read_only() -> Self {
-        Self::ReadOnlyFilesystem
-    }
-}
-
 impl KernelError {
     /// POSIX errno 强类型映射.
     pub const fn from_i32(rc: i32) -> Self {
