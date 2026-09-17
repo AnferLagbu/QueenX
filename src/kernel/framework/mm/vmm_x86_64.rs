@@ -620,6 +620,10 @@ impl VirtualMemoryManager {
 
         self.release_lock(&_flags);
 
+        // 符号桩化 (host-test): host 无 _kernel_text_* / USER_CR3_SAVE 链接脚本
+        // 汇编符号且无页表上下文, 进程页表文本区间映射整段跳过.
+        #[cfg(not(feature = "host-test"))]
+        {
         // 关键修复: 在进程页表中恒等映射 trampoline 物理页 (USER+RX)
         // enter_user_asm 在低半区 LMA 地址执行, mov cr3 切换到进程页表后
         // CPU 继续取指执行, 因此 trampoline 代码页必须在进程页表低半区有映射.
@@ -650,6 +654,7 @@ impl VirtualMemoryManager {
                 // mov [USER_CR3_SAVE], rax → #PF (写入不存在的页) → Double Fault → 死锁.
                 crate::framework::mm::kpti::map_kpti_data_pages(pml4_virt.0 as *mut u64);
             }
+        }
         }
 
         // 映射 GDT / IDT / TSS 所在的低半部分页到用户页表.

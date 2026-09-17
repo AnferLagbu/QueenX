@@ -498,9 +498,11 @@ fn alloc_error(layout: alloc::alloc::Layout) -> ! {
 /// Boot 栈 canary 校验失败 (栈溢出至栈底) 时立即 panic, 断言内核状态不可信.
 #[unsafe(no_mangle)]
 // J-01 (2026-09-08): used_underscore_binding expect 仅裸机分支 (not kernel_test) 生效 —
-// kernel_test 分支无 `_xxx` 绑定使用, expect 在 feature 下 unfulfilled
+// kernel_test 分支无 `_xxx` 绑定使用, expect 在 feature 下 unfulfilled.
+// T1 G7 host 符号桩化: 真机门控推广为 not(any(kernel_test, host-test)),
+// 该 expect 的触发代码同属真机分支, 条件同步推广.
 #[cfg_attr(
-    not(feature = "kernel_test"),
+    not(any(feature = "kernel_test", feature = "host-test")),
     expect(
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
@@ -510,9 +512,14 @@ fn alloc_error(layout: alloc::alloc::Layout) -> ! {
     clippy::too_many_lines,
     reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+// 符号桩化 (host-test): 触发 unreadable_literal 的硬件常量位于真机引导块,
+// host-test 维不再触发, expect 须同步收窄.
+#[cfg_attr(
+    not(feature = "host-test"),
+    expect(
+        clippy::unreadable_literal,
+        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+    )
 )]
 pub extern "C" fn kernel_init() {
     // 0. KLog — 自举串口驱动, 必须先于所有子系统
@@ -649,7 +656,9 @@ pub extern "C" fn kernel_init() {
     }
 
     // 1. Boot Info — 获取内存布局
-    #[cfg(not(feature = "kernel_test"))]
+    // 门控语义 (T1 G7 host 符号桩化): 真机路径 = not(any(kernel_test, host-test)),
+    // kt/ht 同属"测试环境" (E-03 约定扩展). host-test 下不编译裸机引导链.
+    #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
     {
         let boot_info = crate::framework::boot::init();
         crate::klog_boot_info!(
@@ -847,7 +856,11 @@ pub extern "C" fn kernel_init() {
         }
 
         // NestFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
-        #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
+        // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).
+        #[cfg(all(
+            not(any(feature = "kernel_test", feature = "host-test")),
+            target_arch = "x86_64"
+        ))]
         {
             let nestfs = crate::services::fs::nestfs::nestfs::get_nestfs();
             // init() 会自动扫描所有块设备, 发现 QueenX 签名的磁盘并挂载

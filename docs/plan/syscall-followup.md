@@ -310,6 +310,132 @@ T7 (预存登记)
 | recvmsg/sendmsg_syscall 无 UDS 数据面分流 | 专项登记（后续工程） | 旧 recvmsg/sendmsg_syscall 处理完 cmsg 后直调 fw::recvmsg/sendmsg，fw 层 fd_type 只认 smoltcp 1/2 → UDS fd 返 EBADF（当前仅 cmsg 凭据回传逻辑可达 UDS）。G3 recvmmsg/sendmmsg 新路径已内建 UDS 分流；旧路径分流待单独工程处置（本批 §12.2 未顺手扩大） |
 | uds_sendto 无消息长度校验 | 已修（本批） | `uds_sendto` 未校验 `data.len() > UNIX_DGRAM_MAX`，超限直接 copy_from_slice 写 dgram_buf → 越界 panic 隐患。修复：入口补 `data.len() > UNIX_DGRAM_MAX → Invalid` 防护（与 uds_send_connected 同款）+ kernel_test 回归 sendto_oversize（超限拒绝 + 正常路径不受影响） |
 
+### 预存登记（host 链接占位符号残留风险，T1 G7 批引入）
+
+描述：T1 G7 批为修复 host 测试链接失败，在 host-only 壳 crate `src/rust/src/lib.rs` 提供 4 个零值占位符号（`_kernel_text_start` / `_kpti_trampoline_end` / `_kernel_text_end` / `USER_CR3_SAVE`）。该修复**不是结构根治**，残留风险登记如下，待与审查讨论处置。
+
+方案（已定，2026-09-17 审查裁定）：**符号使用点级 host 桩化**——沿用 E-04 既有 idiom（`#[cfg(feature = "host-test")]` 桩分支 + `#[cfg(not(feature = "host-test"))]` 真机分支，先例见 `framework/arch/x86_64/mod.rs:49-67` 的 `cpu_id`），把"引用链接脚本/汇编符号的语句"收进 cfg 分支，host 侧取常量中性返回或整段跳过；随后**删除壳 crate 的 4 个占位**。目标是**消灭 undefined symbol 这一类**，并把"违反即链接期硬失败"的响亮守卫交还给链接器——无需新增审计脚本，无需豁免表。
+
+**否决的候选**：① 审计守卫（保留静默零值语义 + 长期维护门槛）；② 模块级 `cfg` 排除（整块排除会牵连 `vmm`/`proc` 的纯逻辑退出 host 编译，且 stub 面积膨胀）；③ 维持现状（保留对 CGU 布局的依赖，本批已实际付出一次逐文件二分排查成本）。原候选对比中"候选 A（framework 内 `cfg(host-test)` 占位）需在 TCB 内混入 host 分支"的排除理由**不成立**——`framework/arch/x86_64/mod.rs` 早有同类 host 桩分支，且这正是"同源双编译"的实现方式。
+
+**可达性矩阵（2026-09-17 调研）**
+
+调研口径：逐个符号访问点向上追溯调用链至入口，判定 host 测试能否到达；旁证为 `host-tests/` 全线零**代码**引用（`boot_install` / `CREDO_DISK_INSTALL` / `create_user_page_table` / `kpti_init` / `boot::init` 无任何命中；`handle_user_page_fault` / `read_user_cr3_asm` 仅命中文档注释，无调用）。
+
+| 簇 | 符号 | 访问点 | 调用链顶端 | host 可达性 |
+|---|---|---|---|---|
+| 1 | `USER_CR3_SAVE` | ① `mm::read_user_cr3_asm`（`framework/mm/mod.rs:26`）② `kpti::map_kpti_data_pages`（`framework/mm/kpti.rs:718-720`） | ① `page_fault.rs:114` `handle_user_page_fault` ← `#PF` 入口 ② `kpti_init`（`kpti.rs:389`）/ `create_user_page_table`（`vmm_x86_64.rs:651`） | **不可达**（①`demand_paging_test.rs:10-13` 已载明"内核 mm 层 host 不可测，已移除 `handle_user_page_fault`/`handle_page_fault` 依赖"；②host 无 MMU，不可构造页表上下文） |
+| 2 | `_kernel_text_start` / `_kernel_text_end` | ① `kpti::kpti_init`（`framework/mm/kpti.rs:366-380` step 4.5）② `vmm::create_user_page_table`（`framework/mm/vmm_x86_64.rs:630-635`） | `vmm_init` / 进程地址空间创建 | **不可达**（host 无 MMU，不可构造页表上下文） |
+| 2b | `_kpti_trampoline_end` | **零引用**（仅 `kpti.rs:161` extern 声明 + `x86_64.ld:51` 定义） | — | 无引用即无 undefined symbol；G7 实际报错清单亦不含它 → **连声明一并删除** |
+| 3 | `_kernel_end` | `boot::init`（`framework/boot/mod.rs:285`） | `kernel_init`（`src/kernel/lib.rs:562` / `:654`） | **不可达**（裸机引导入口） |
+| 4 | `_kernel_start` / `_kernel_end` | `raw::kernel_start_ptr`（`framework/syscall/mod.rs:318`）/ `raw::kernel_end_phys`（`:331`） | `sys_boot_install`（`framework/syscall/dispatch.rs:876`，gate 为 `all(not(kernel_test), x86_64)`） | **不可达**（host-tests 零引用 boot_install / CREDO_DISK_INSTALL） |
+| 5 | `stack_bottom` | ① `proc::check_boot_stack_canary`（`framework/proc/process.rs:50`）② `proc::write_boot_stack_canary`（`framework/proc/process.rs:69`） | `kernel_init`（`src/kernel/lib.rs:528` / `:904`）+ aarch64 引导入口（`boot/aarch64/entry.rs:40` / `:52`） | **不可达**（裸机引导入口） |
+
+**aarch64 侧顺带项**：`_kernel_end` 另有 `framework/boot/aarch64/entry.rs:101` 访问点（该模块受 `target_arch = "aarch64"` 门控，host 构建不编译，不构成 host 链接风险）；列此仅为"符号语义桩化原则在双架构一致"的完整性记录。
+
+**矩阵结论**：5 簇全部 host 不可达 → **全部桩化，无"必须保留占位"的残余项**。存量漏项（`_kernel_start` / `_kernel_end` / `stack_bottom`——G7 未覆盖、但已被 host 编译路径引用，只因 CGU 未共置而未爆）随本方案一并消灭，不需要"补占位"也不需要"豁免表"。净效果：链接脚本/汇编符号契约 **7 → 0**（P2′ 后**声明亦全部收拢**，host 下误引用为**编译期**失败——见裁决表「守卫两级化」条）。
+
+**实施形态与纪律**
+
+> **关键约束（实施前必读）**：cfg 必须落在**符号引用所在的语句/函数体内部**，**不能只 gate 调用点**。rustc 对 crate 内所有可达 item 一律生成代码，即使某函数在 host 构建下已无任何调用者，其函数体内的 `extern` 符号引用仍会进入目标文件并产生 undefined symbol。因此"gate 掉调用方"这种做法对消灭 undefined symbol **无效**（G7 的簇 4 判断即由此而来）。
+
+| 簇 | 改法 | host 桩 |
+|---|---|---|
+| 1 | 两个访问点各自**函数体内** cfg 分叉：`read_user_cr3_asm`、`kpti::map_kpti_data_pages` | `return 0` / 整段跳过 |
+| 2 | 2 处访问点各自把"符号取值 + 页表映射"收进 cfg 块（**函数本体保留编译，签名仍受 host 检查**） | 整段跳过 |
+| 2 补注 | `kpti_init` / `create_user_page_table` 为**体内 cfg 分叉**（符合上表原文）；但其叶子函数 `map_text_region_in_user_pml4` / `map_text_page` 实施为**整函数 cfg**（实施后补注） | 理由：F9 禁 `#[allow(dead_code)]`，host 下调用点已整段 cfg 致**无调用者**，整函数消除是唯一合规路径；两者为 `pub(super)` 叶子、全为符号取值 + 页表操作，**无纯逻辑可分离**（不存在"保留编译有价值"的部分） |
+| 2b | 删除 `kpti.rs` 的 `_kpti_trampoline_end` extern 声明（零引用） | — |
+| 3 | `boot::init` 内符号取值收进 cfg 块 | `kernel_end = 0` |
+| 4 | 两个访问器函数**内** cfg 分叉（`kernel_start_ptr` / `kernel_end_phys`；**调用链零改动**——若改为 gate 函数本体，`sys_boot_install` 与 services 侧 `boot_install_syscall` 的 cfg 需同链上推，且按上条约束仍不解决问题） | `null` / `0` |
+| 5 | 两个访问点各自**函数体内** cfg 分叉：`check_boot_stack_canary`、`write_boot_stack_canary` | `return true` / 整段跳过 |
+
+**纪律（维持"host-test 不平行实现"的关键）**：桩体**只允许两种形态**——常量中性返回、或整段不执行；**禁止**在桩体内出现任何条件分支、状态读写或业务判断。桩内无"实现"即无"两份实现"，平行实现的滋生根被切断。
+
+**门控语义推广**：真机路径门控由 `not(feature = "kernel_test")` 推广为 `not(any(feature = "kernel_test", feature = "host-test"))`（kt/ht 同属"测试环境"，与 `audit_feature_semantics.py` 既有 `any(kernel_test, host_test)` 用法闭合）。属**既有约定表述扩展**，实施时须同步该脚本规则文本并确认无既有用例被推翻。
+
+**验证**
+
+1. 删除壳 4 占位后 `./ci/build.sh all` 5/5（host-tests 99 bin 全链接成功）；
+2. **负向验证（必做，P1 改写版）**：临时去掉一处 host 桩（使 host 可达路径引用真符号），确认构建**硬失败**——P2′ 全声明收拢后报错层级为**编译期** E0425（`cannot find value … in module`）；仅当符号声明未随引用收拢时才为链接期 `undefined symbol`。两级均为「违反即硬失败」守卫（不承诺"编译进对象即报错"：引用不可达时不报错），证明守卫未换处藏问题；
+3. 双架构 check 0w0e + clippy 3 维（pedantic lib / kernel_test / host-test）0 warning；QEMU kernel_test 498/498 + QEMU boot（Ring 3/init）；
+4. `audit_feature_semantics.py` 的 HIGH 清单与 HEAD 基线**逐项一致**（不得新增/推翻；当前 7 项 HIGH 全为预存，与本批文件集零交集，详见实施记录第 6 条）；
+5. **覆盖无损失断言**：门控后 host-tests 通过数不得下降。
+
+状态：[X]
+详情：已于 2026-09-17 按上述方案实施完成（符号使用点级 host 桩化 + 删除壳 4 占位），5 簇全部落地；P1-P4 收尾专项（负向验证 / extern 声明一致性 / 文档同步 / 全门槛回归含 QEMU boot）+ P2′（裁定 2：三处残余声明一并收拢）已全部完成，验证实测见下方「实施记录（2026-09-17）」。符号契约 **7 → 0** 达成（含声明侧），守卫为**两级**（编译期 / 链接期，均 fail-closed，见裁决表条与 P1 条）。
+
+| 项 | 裁决 | 说明 |
+|---|---|---|
+| 占位仅为**当前枚举子集**，新符号会再次炸 | **已裁定：随本方案消灭**（存量漏项 3 个实测确认） | 底层条件（host 编译引用汇编/链接脚本符号）由 5 簇使用点桩化直接消除；G7 未覆盖、已被 host 编译路径引用却因 CGU 未共置而未爆的 3 个存量漏项（`_kernel_start` / `_kernel_end` / `stack_bottom`）同批消灭。**新增符号不会再炸**——host 可达路径一旦引用此类符号即**硬失败**（具体层级见下行），不需要枚举清单与豁免表 |
+| 两侧无同步机制 | **已裁定：守卫两级化（编译期 / 链接期，均硬失败）；原「链接器即为守卫」表述修正** | 删除壳占位 + P2′ 全声明收拢后，「framework 引用的汇编/链接脚本符号 ↔ host 侧定义」这一原本无人校验的映射不再存在。守卫形态取决于该符号的**声明是否随引用一并 cfg 收拢**：**① 编译期**（声明已收拢 → item 在 host 下不存在，本项目现状：`USER_CR3_SAVE_ASM`、`stack_bottom`、syscall 的 `_kernel_start` / `_kernel_end`、`kpti` 的 `_kernel_text_*`、`boot` 的 `_kernel_end`）报 `error[E0425]: cannot find value … in module`；**② 链接期**（声明保留 → 无定义）报 `rust-lld: error: undefined symbol`。两级均为 fail-closed，且**编译期级更强**（更早暴露）。守卫从"需新写审计脚本枚举两侧"降级为"编译器/链接器内建"，无需维护成本 |
+| 语义退化：链接期硬失败 → 运行期静默错值 | **已裁定：消除** | 静默错值的前提是"host 侧存在零值定义"；删除壳 4 占位后该前提不存在，退化路径随之消失，不变量回到"违反即**硬失败**"（编译期优先，层级见上行） |
+| 可选收益（已发生，非风险） | **必要非充分（表述修正）** | 占位仅解除了链接障碍，**不解除**语义障碍（host 无 MMU / 无中断状态 / 无 CR3，不可构造页表上下文）。故 [demand_paging_test.rs](host-tests/tests/demand_paging_test.rs) 与 [td22_sigill_delivery_test.rs](host-tests/tests/td22_sigill_delivery_test.rs) 的源码扫描降级在本质因上仍然成立；本方案后 host 侧不再有 `USER_CR3_SAVE`，两处维持降级。恢复真实链接级覆盖属独立工程，**不据此扩大本方案范围** |
+
+### 实施记录（host 链接占位符号残留，2026-09-17）
+
+**改动清单**（与上方 5 簇改法逐条对应）
+
+| 文件 | 改动 |
+|---|---|
+| [mm/mod.rs](src/kernel/framework/mm/mod.rs) | 簇 1①：`USER_CR3_SAVE_ASM` extern 声明 `all(x86_64, not(host-test))` 门控（连声明排除）；`read_user_cr3_asm` 函数体内三分支（真机 `load` / host `0` / aarch64 回退） |
+| [mm/kpti.rs](src/kernel/framework/mm/kpti.rs) | 簇 1②+2+2b：`map_kpti_data_pages` 函数体内整段 cfg（host 分支消费参数）；`kpti_init` step 4.5 与 `map_text_region_in_user_pml4` / `map_text_page` 一并 `not(host-test)` 门控；删除 `_kpti_trampoline_end` 声明；`KERNEL_BASE` 导入按 host-test 分叉；P2′：`_kernel_text_start` / `_kernel_text_end` 声明补 `not(host-test)` 门控 |
+| [mm/vmm_x86_64.rs](src/kernel/framework/mm/vmm_x86_64.rs) | 簇 2②：`create_user_page_table` 内 KPTI 同步段整段 cfg（该段即 `_kernel_text_*` 的跨模块引用点，P1 第二处负向验证即临时去此 cfg） |
+| [boot/mod.rs](src/kernel/framework/boot/mod.rs) | 簇 3：`boot::init` 的 `kernel_end` 双分支（真机取符号地址 / host `0`）；P2′：`_kernel_end` 声明（块级，块内仅此一项）补 `not(host-test)` 门控 |
+| [syscall/mod.rs](src/kernel/framework/syscall/mod.rs) | 簇 4：`kernel_start_ptr` / `kernel_end_phys` 函数体内分叉（host `null` / `0`），调用链零改动；P2 收尾：`_kernel_start` / `_kernel_end` 声明补 `not(host-test)` 门控（cfg 加在**单个 item** 上，同块 `timer_get_ticks` 不受影响） |
+| [proc/process.rs](src/kernel/framework/proc/process.rs) | 簇 5：`stack_bottom` extern 声明门控；两个 canary 函数体内分叉（host `true` / 整段跳过） |
+| [lib.rs](src/kernel/lib.rs) | 门控语义推广：两处真机引导块 `not(kernel_test)` → `not(any(kernel_test, host-test))`；`kernel_init` 的 `used_underscore_binding` / `unreadable_literal` expect 条件同步推广 |
+| [src/rust/src/lib.rs](src/rust/src/lib.rs) | 删除壳 crate 4 个零值占位符号（回退到原 19 行内容，git diff 归零） |
+| [scripts/audit_feature_semantics.py](scripts/audit_feature_semantics.py) | 规则文本同步（仅 docstring 追加约定推广说明；判定逻辑未动，检查面仍为 services/ + framework/tests/） |
+
+**实施中发现的附带项（本批内一并处置，属桩化的直接后果）**：host-test 维 clippy 报 10 处 error —— 9 处 `unfulfilled_lint_expectations`（被 cfg 排除的代码不再触发 lint，但 item 级 `#[expect]` 仍注册）+ 1 处 `kpti.rs` 的 `KERNEL_BASE` unused import。修复手段与 J-01 先例一致：`#[expect(...)]` 收窄为 `#[cfg_attr(not(feature = "host-test"), expect(...))]`，import 按 host-test 分叉。**未使用任何 `#[allow(dead_code)]` / 豁免表**（F9）。
+
+**验证实测（P1-P4 收尾专项 + P2′ 收拢后复跑）**
+
+1. **P1 负向验证（改写版：全声明收拢后预期为编译期失败，报错逐字留存）**：
+   - 做法：临时移除 [syscall/mod.rs](src/kernel/framework/syscall/mod.rs) `kernel_start_ptr` 的 host 桩分支（真机分支转为无条件），使 host 构建重新引用已收拢的真符号 `_kernel_start`。
+   - 实测：`cargo test --manifest-path host-tests/Cargo.toml --test e04_shared_runner_test --no-run` → **exit=101**，报错逐字：
+     ```
+     error[E0425]: cannot find value `_kernel_start` in this scope
+        --> /home/anfer/Code/QueenX/src/kernel/framework/syscall/mod.rs:338:19
+         |
+     338 |         unsafe { &_kernel_start as *const u8 }
+         |                   ^^^^^^^^^^^^^ not found in this scope
+     ```
+   - **第二处（针对本批新收拢声明的定向验证，证明跨模块引用同样 fail-closed）**：临时移除 [vmm_x86_64.rs](src/kernel/framework/mm/vmm_x86_64.rs) `create_user_page_table` KPTI 同步段的**块级 cfg**，使跨模块引用（`crate::framework::mm::kpti::_kernel_text_*`）在 host 下转 live → **exit=101**，报错逐字（共 3 项，前两项即新收拢符号；rustc 并指认门控位置）：
+     ```
+     error[E0425]: cannot find value `_kernel_text_start` in module `crate::framework::mm::kpti`
+        --> /home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_x86_64.rs:633:69
+     error[E0425]: cannot find value `_kernel_text_end` in module `crate::framework::mm::kpti`
+        --> /home/anfer/Code/QueenX/src/kernel/framework/mm/vmm_x86_64.rs:636:69
+     note: found an item that was configured out
+        --> /home/anfer/Code/QueenX/src/kernel/framework/mm/kpti.rs:516:22
+         |
+     493 | #[cfg(not(feature = "host-test"))]
+         |          ----------------------- the item is gated here
+     ```
+   - **守卫性质（P2′ 后最终表述）**：**两级守卫**——声明随引用收拢的符号在 host 下误引用即**编译期** E0425（早于链接）；仅当存在未收拢声明时才退为链接期 undefined symbol。原 P1 预期（"仅去桩即链接失败"）默认了两个前提（对象必被拉入 + 声明保留），P2′ 后两前提均不成立，故 P1 验收标准同步改写为「**编译期失败**」。**保留的语义精确化**：引用不可达（承载对象未被拉入二进制）时**不报错**——守卫是「违反即硬失败」，不承诺"编译进对象即报错"（该结论来自 P2′ 前的 `nm` 实测：rlib 内 `U _kernel_start` 计 1 处而 e04 二进制零命中）。
+   - 撤销：两处临时改动全部回退（`kernel_start_ptr` 恢复双分支、`vmm_x86_64.rs` 恢复块级 cfg）→ 复跑 e04 `--no-run` **exit=0，恢复绿**；全仓 `P1 临时负向验证` 临时标记零残留。
+2. **P2 择一结论 + P2′（裁定 2）**：**采纳「加 cfg」并一并收拢三处残余** ——
+   - `syscall/mod.rs` 的 `_kernel_start` / `_kernel_end` 声明补 `not(feature = "host-test")` 门控；cfg 加在**单个 item** 上，同块 `timer_get_ticks` 不受影响。
+   - **门控判据：按"符号存在性"而非"引用侧函数 gate"**（收尾复核后修正）——这 6 个符号全部由 `x86_64.ld` / `aarch64.ld` 定义（`_kernel_text_*` 亦两架构皆有；`_kpti_trampoline_end` 为 x86_64 独有且已随声明删除），**唯一不存在这些符号的构建是 host-test**（无 ld 脚本产物），故统一取 `not(feature = "host-test")`。此前一度写的 `all(not(kernel_test), x86_64, not(host-test))`（镜像引用侧函数的 gate）已弃用：它把"引用侧函数恰好被 gate 掉"误当作"符号不存在"，方向是把声明收得比事实更窄——在 aarch64 / kernel_test 维该符号**真实存在**，未来若把引用放宽到这两维会得到一次**误报**。现写法与 `stack_bottom`（仅 `not(host-test)`）、`USER_CR3_SAVE_ASM`（arch 项编码"只此架构存在"的事实）同构，符合裁定 2 理由 1（一致性）与理由 2（语义自洽）。
+   - P2′：`kpti.rs` 的 `_kernel_text_start` / `_kernel_text_end` 与 `boot/mod.rs` 的 `_kernel_end` 声明亦补 `not(feature = "host-test")` 门控（`kpti.rs` 整模块已受 `target_arch = "x86_64"` 门控，不重复 arch 条件；`boot/mod.rs` 唯一引用点在 `init` 真机分支）。
+   - 裁定依据：一致性（与 `mm/mod.rs` / `process.rs` 对齐）+ 语义自洽（声明保留意味着 host 构建仍"宣称"依赖链接脚本符号，与「符号契约 7 → 0」相斥）+ 守卫前移（编译期早于链接期，且条件写错只会是编译期报错，无实质风险）。
+   - 原「残余一致性观察（未改）」一项随之**关闭**：三处声明已全部收拢，本方案符号集合内**不再存在保留声明的链接期守卫样本**（此即 P1 验收标准改写的原因）。
+   - 复跑结果（P2′ 落地 + 判据修正为"存在性"后）：E-04 `--no-run` **exit=0**；`./ci/audit.sh quick` **exit=0**（双架构 check + clippy lib / kernel_test / host-test 三维全 passed，F4 SAFETY 覆盖缺漏 0；**aarch64 / kernel_test 两维的"未引用声明"零告警已实测**）；`./ci/build.sh all` **Passed 5 / Failed 0**（含 aarch64 release 构建）；`make test-unit` **498/498**（kernel_test 维链接正常，未引用声明不引入符号引用）；`qemu_boot_test.sh x86_64` **1/1**。注：x86_64 真机维在两种判据下声明均存在，真机产物等价，故 boot 语义无差异。
+3. **门控语义推广落地**：[lib.rs](src/kernel/lib.rs) **3 处**（`:505` `kernel_init` 的 `used_underscore_binding` cfg_attr 条件、`:661` Boot Info 真机块、`:861` NestFS 挂载块）由 `not(kernel_test)` 推广为 `not(any(kernel_test, host-test))`；[audit_feature_semantics.py](scripts/audit_feature_semantics.py) 仅注释同步，**判定规则未动**（实测 HIGH 清单与基线一致，见第 6 条）。
+4. `./ci/build.sh all` → **Passed 5 / Failed 0**（双架构 0w0e + host-tests + forbidden-patterns + x86_64 link）；`./ci/audit.sh quick` → **exit 0**，含 `framework SAFETY 覆盖 (缺漏 0 ≤ 0 基线)`（F4 100%）、`audit_safety_coverage` 之外全部子审计绿。（**P2′ 收拢后复跑，结果一致**——声明收拢动了 TCB，故全门槛重跑。）
+5. **覆盖无损失断言** → `make test-host` **99 个 test bin 全 ok、755 tests passed / 0 FAILED**（与门控前基线一致，无下降；**P2′ 后复跑同值**）。
+6. **HIGH 清单与 HEAD 基线逐项一致（不得新增/推翻）**：当前基线 **7 项 HIGH**（`services/credo/storage/disk.rs` ×2、`services/fs/io.rs` ×1、`services/net/unix.rs` ×1、`services/syscall/dispatch.rs` ×3）+ 20 项 INFO（`framework/tests/net.rs`、`framework/tests/test_config.rs`、`services/net/mod.rs`）——**与本批桩化文件集（`framework/mm/*`、`framework/boot/mod.rs`、`framework/proc/process.rs`、`framework/syscall/mod.rs`、`src/kernel/lib.rs`）零交集**；实测与 HEAD 影子树基线逐项一致，差异仅 `services/syscall/dispatch.rs` 3 处行号平移（785/898/902 → 826/939/943）。原文「rc=0」系裁定方笔误（未核 HEAD 基线），已按实测修正。
+7. **QEMU 三门槛**：`make test-unit` → **ALL 498 TESTS PASSED (0 skipped)**；`./scripts/qemu_boot_test.sh x86_64` → **1/1 通过**（进入 Ring 3 启动 init）；**真机路径证据（非仅编译通过）**——引导日志实测 `Boot stack canary verified`、`kernel_end=0x3E60000`（非零 → 簇 3 真机分支生效）、`[KPTI] text region: start=0x12B000 end=0x2805E9 (342 pages)`、`[KPTI] map_text_region: …`、`[KPTI] data pages mapped: USER_CR3_SAVE=0x23FD000`、`[KPTI] kpti_init: kernel_pml4=0x102000, user_pml4_phys=0x3e60000` —— 簇 1/2/3/5 的真机分支均**实际执行**，桩化未侵蚀裸机语义。（**P2′ 后复跑同绿**：498/498 + boot 1/1，日志中 `_kernel_text_*` / `_kernel_end` 取值点均正常输出 → 声明收拢未影响真机构建。）
+
+**审核已确认的四项静态/链接证据（裁定方复核结论，本批复核后保持一致）**
+
+- E-04 共享测试集 `e04_shared_runner_test` 链接成功（壳 4 占位删除后仍成功）；
+- 该二进制符号表 `_kernel_text*` / `_kpti_trampoline_end` / `USER_CR3_SAVE` / `stack_bottom` / `_kernel_start` **零命中**；
+- clippy `kernel_test` 维 + `host-test` 维均 **RC=0**（`host-test` 维含本批新增的 10 处 expect 收窄 + `KERNEL_BASE` import 分叉）；
+- **F9**：无 `#[allow(dead_code)]` / 任何死代码豁免；桩体仅三种形态（常量中性返回 / 整段跳过 / 参数消费），无逻辑承载。
+- **P2′（声明收拢）复核**：六处符号声明（`USER_CR3_SAVE_ASM`、`stack_bottom`、syscall 的 `_kernel_start` / `_kernel_end`、`kpti` 的 `_kernel_text_*`、`boot` 的 `_kernel_end`）门控判据统一为**符号存在性**（唯一无 ld 脚本产物的 host-test 维排除；`USER_CR3_SAVE_ASM` 另含 `x86_64` 因为该 asm 符号仅 x86_64 有；`kpti.rs` 模块本身即 x86_64 门控）；收拢后 P1 第二处负向验证在**编译期**即失败（报错逐字见第 1 条），证明"声明随引用收拢"未造成声明/引用条件错位。
+
 ### 源码核实（2026-09-15）
 
 - sendfile 已实装：`services/fs/sendfile.rs:13`（包装 `framework::syscall::sys_sendfile`）→ **D-2 清单含 sendfile 属过时**，实施前重扫。

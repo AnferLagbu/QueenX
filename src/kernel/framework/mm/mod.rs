@@ -13,7 +13,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 // 汇编层定义的用户态 CR3 临时保存 (isr.asm .bss)
 // KPTI 开启时, 中断入口在切换到内核页表前将硬件 CR3 (用户页表) 写入此变量.
-#[cfg(target_arch = "x86_64")]
+// host-test 下 isr.asm 无产物且 read_user_cr3_asm 桩化, 声明一并排除 (符号契约归零).
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
 unsafe extern "C" {
     #[link_name = "USER_CR3_SAVE"]
@@ -24,11 +25,17 @@ unsafe extern "C" {
 // x86_64: 从 isr.asm .bss 中的 USER_CR3_SAVE 读取, 汇编在 KPTI 切换前写入.
 // aarch64: 回退到硬件 CR3 (aarch64 KPTI 实现不同).
 pub fn read_user_cr3_asm() -> u64 {
-    #[cfg(target_arch = "x86_64")]
+    // 符号桩化 (host-test): host 无 isr.asm 的 USER_CR3_SAVE 符号且不执行中断
+    // 上下文读取, 常量中性返回 0 (与 E-04 cpu_id 桩同模式).
+    #[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
     {
         // SAFETY: USER_CR3_SAVE 在 isr.asm .bss 中定义, 汇编入口在切换 CR3 前写入;
         // 读取发生在中断上下文, 无竞争.
         unsafe { USER_CR3_SAVE_ASM.load(Ordering::Acquire) }
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "host-test"))]
+    {
+        0
     }
     #[cfg(target_arch = "aarch64")]
     {

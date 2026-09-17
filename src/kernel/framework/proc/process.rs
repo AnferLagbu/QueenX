@@ -33,14 +33,21 @@ pub const KERNEL_STACK_CANARY: u64 = 0xDEADBEEF_CAFEBABE;
 // boot.asm 中定义的 boot 栈底部地址 (物理地址).
 // 栈从 `stack_top` 向 `stack_bottom` 方向增长.
 // canary 在 boot.asm trampoline 阶段写入 `stack_bottom` 处.
+// host-test 下 boot.asm 无产物且 canary 函数桩化, 声明一并排除 (符号契约归零).
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
+#[cfg(not(feature = "host-test"))]
 unsafe extern "C" {
     static stack_bottom: u8;
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+// 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&stack_bottom as *const u8`
+// 仅存在于真机分支, expect 须同步收窄.
+#[cfg_attr(
+    not(feature = "host-test"),
+    expect(
+        clippy::borrow_as_ptr,
+        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+    )
 )]
 /// 检查 boot 栈 canary 是否完整.
 ///
@@ -48,30 +55,49 @@ unsafe extern "C" {
 /// 通过 `KERNEL_BASE + &stack_bottom as *const u8 as u64` 转换为内核虚拟地址访问.
 /// 返回 true 表示 canary 未被覆盖 (栈未溢出至栈底).
 pub fn check_boot_stack_canary() -> bool {
-    // SAFETY: stack_bottom 是 boot.asm 中定义的静态符号,
-    // 指向 boot 栈底部的 8 字节 canary 区域.
-    // 读取操作是 volatile 的, 无数据竞争 (boot 阶段单核).
-    unsafe {
-        let canary_addr = KERNEL_BASE + &stack_bottom as *const u8 as u64;
-        let value = core::ptr::read_volatile(canary_addr as *const u64);
-        value == KERNEL_STACK_CANARY
+    // 符号桩化 (host-test): host 无 stack_bottom 汇编符号且无 boot 栈,
+    // 常量中性返回 true (canary 完整语义的保守默认).
+    #[cfg(not(feature = "host-test"))]
+    {
+        // SAFETY: stack_bottom 是 boot.asm 中定义的静态符号,
+        // 指向 boot 栈底部的 8 字节 canary 区域.
+        // 读取操作是 volatile 的, 无数据竞争 (boot 阶段单核).
+        unsafe {
+            let canary_addr = KERNEL_BASE + &stack_bottom as *const u8 as u64;
+            let value = core::ptr::read_volatile(canary_addr as *const u64);
+            value == KERNEL_STACK_CANARY
+        }
+    }
+    #[cfg(feature = "host-test")]
+    {
+        true
     }
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+// 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&stack_bottom as *const u8`
+// 仅存在于真机分支, expect 须同步收窄.
+#[cfg_attr(
+    not(feature = "host-test"),
+    expect(
+        clippy::borrow_as_ptr,
+        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+    )
 )]
 /// 写入 boot 栈 canary 到 `stack_bottom`.
 ///
 /// 供 aarch64 入口在 `clear_bss` 之后调用 (`x86_64` 由 boot.asm trampoline 写入).
 /// 必须在 BSS 清零之后调用, 否则 canary 会被清零覆盖.
 pub fn write_boot_stack_canary() {
-    // SAFETY: stack_bottom 是 boot.asm/start.S 中定义的静态符号,
-    // 写入 8 字节 canary 值, boot 阶段单核无竞争.
-    unsafe {
-        let canary_addr = KERNEL_BASE + &stack_bottom as *const u8 as u64;
-        core::ptr::write_volatile(canary_addr as *mut u64, KERNEL_STACK_CANARY);
+    // 符号桩化 (host-test): host 无 stack_bottom 汇编符号, 整段跳过
+    // (host 无 boot 栈 canary 语义).
+    #[cfg(not(feature = "host-test"))]
+    {
+        // SAFETY: stack_bottom 是 boot.asm/start.S 中定义的静态符号,
+        // 写入 8 字节 canary 值, boot 阶段单核无竞争.
+        unsafe {
+            let canary_addr = KERNEL_BASE + &stack_bottom as *const u8 as u64;
+            core::ptr::write_volatile(canary_addr as *mut u64, KERNEL_STACK_CANARY);
+        }
     }
 }
 

@@ -114,8 +114,16 @@ pub(crate) mod raw {
         // 时间
         fn timer_get_ticks() -> u64;
         // smoltcp 网络栈 — 已迁移到 net_socket.rs 路径
-        // 链接器符号
+        // 链接器符号声明按"符号存在性"门控: `_kernel_start` / `_kernel_end` 由
+        // x86_64.ld 与 aarch64.ld 共同定义 (kernel_test 镜像同源链接), 唯一不存在
+        // 该符号的构建是 host-test (无 ld 脚本产物), 故仅排除该维; 与 `stack_bottom`
+        // (仅 not(host-test)) / `USER_CR3_SAVE_ASM` (arch 项编码"只此架构存在") 同构.
+        // host 守卫不受影响: 引用点函数体内为 host 分叉, host 侧不引用该符号,
+        // 误引用即编译期 E0425. 未被引用的维 (kernel_test / aarch64) 声明不产生 lint
+        // 告警, 也不产生符号引用 (实测 audit quick 四维全绿). 块内 timer_get_ticks 不受影响.
+        #[cfg(not(feature = "host-test"))]
         static _kernel_start: u8;
+        #[cfg(not(feature = "host-test"))]
         static _kernel_end: u8;
     }
 
@@ -311,25 +319,56 @@ pub(crate) mod raw {
     /// # Safety
     /// 链接器符号，仅在 boot 后有效。
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+    // 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&_kernel_start as *const u8`
+    // 仅存在于真机分支, expect 须同步收窄.
+    #[cfg_attr(
+        not(feature = "host-test"),
+        expect(
+            clippy::borrow_as_ptr,
+            reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+        )
     )]
     pub fn kernel_start_ptr() -> *const u8 {
-        // SAFETY: _kernel_start 是链接器符号 (extern "C")，是静态地址，
-        // boot 后由 VMM 建立映射可读。
-        unsafe { &_kernel_start as *const u8 }
+        // 符号桩化 (host-test): host 无 _kernel_start 链接脚本符号且不执行
+        // sys_boot_install 内核映像布局查询, 常量中性返回 null.
+        #[cfg(not(feature = "host-test"))]
+        {
+            // SAFETY: _kernel_start 是链接器符号 (extern "C")，是静态地址，
+            // boot 后由 VMM 建立映射可读。
+            unsafe { &_kernel_start as *const u8 }
+        }
+        #[cfg(feature = "host-test")]
+        {
+            core::ptr::null()
+        }
     }
 
     /// 内核映像结束物理地址（已减 `HHDM_OFFSET`）。
     /// # SAFETY: `链接器符号，hhdm_offset` 必须与启动时一致。
     #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-    #[expect(
-        clippy::borrow_as_ptr,
-        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+    // 符号桩化 (host-test): 触发 borrow_as_ptr 的 `&_kernel_end as *const u8`
+    // 仅存在于真机分支, expect 须同步收窄.
+    #[cfg_attr(
+        not(feature = "host-test"),
+        expect(
+            clippy::borrow_as_ptr,
+            reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+        )
     )]
     pub fn kernel_end_phys(hhdm_offset: usize) -> usize {
-        unsafe { (&_kernel_end as *const u8 as usize).wrapping_sub(hhdm_offset) }
+        // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号, 常量中性返回 0.
+        #[cfg(not(feature = "host-test"))]
+        {
+            // SAFETY: _kernel_end 是链接器符号, 地址有效; hhdm_offset 由调用方保证
+            // 与启动时一致.
+            unsafe { (&_kernel_end as *const u8 as usize).wrapping_sub(hhdm_offset) }
+        }
+        #[cfg(feature = "host-test")]
+        {
+            // E-04: host 桩分支消费参数, 保持与裸机分支结构对称
+            let _ = hhdm_offset;
+            0
+        }
     }
 
     // ============= CPU 控制指令集中点 =============

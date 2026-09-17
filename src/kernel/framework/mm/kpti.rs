@@ -35,7 +35,11 @@
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::framework::mm::pmm_alloc_page;
-use crate::framework::mm::{KERNEL_BASE, PAGE_SIZE, PhysAddr};
+// host-test 下 KERNEL_BASE 仅在 map_text_page (整函数门控排除) 中使用,
+// 该符号改由真机分支单独导入 (避免 host-test 维 unused_imports).
+#[cfg(not(feature = "host-test"))]
+use crate::framework::mm::KERNEL_BASE;
+use crate::framework::mm::{PAGE_SIZE, PhysAddr};
 
 // ── PCID 常量 ─────────────────────────────────────────────────────
 // PCID (Process-Context Identifier) 占 CR3 低 12 位, 用于 TLB 标记.
@@ -152,13 +156,17 @@ pub fn pcid_is_enabled() -> bool {
 }
 
 // ── 链接脚本符号 (x86_64.ld) ──────────────────────────────────────
-// KPTI trampoline 代码范围: _kernel_text_start ~ _kpti_trampoline_end
+// KPTI trampoline 代码范围: _kernel_text_start ~ _kernel_text_end
 // 这些页在 USER_PML4 中需要保持可执行 (X), 其余代码页设为 NX.
+// (_kpti_trampoline_end 曾为独立边界符号, 全仓零 Rust 引用, 声明已删除)
 
 // SAFETY: 链接脚本定义的符号, 地址有效 (只读引用).
+// 符号桩化 (host-test): host 无 x86_64.ld 符号, 两处引用点 (本文件 `kpti_init` step 4.5、
+// `vmm_x86_64::create_user_page_table` KPTI 同步段) 均受 not(host-test) 门控; 声明门控与之
+// 严格同构 (本模块已受 target_arch = "x86_64" 门控, 不重复 arch 条件).
+#[cfg(not(feature = "host-test"))]
 unsafe extern "C" {
     pub(super) static _kernel_text_start: u8;
-    pub(super) static _kpti_trampoline_end: u8;
     pub(super) static _kernel_text_end: u8;
 }
 
@@ -362,6 +370,10 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
     // 同时满足 SMEP 要求 (Ring 0 可执行非 USER 页).
     // KPTI 核心保护 (数据页隔离) 不受影响.
     //
+    // 符号桩化 (host-test): host 无 _kernel_text_* 链接脚本符号且无页表上下文,
+    // 文本区间映射整段跳过.
+    #[cfg(not(feature = "host-test"))]
+    {
     // SAFETY: user_pml4_virt 有效, 映射操作只修改 USER_PML4, 不影响 KERNEL_PML4.
     unsafe {
         let text_start = core::ptr::addr_of!(_kernel_text_start) as u64;
@@ -377,6 +389,7 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
 
         // 映射整个 .text 区域到 USER_PML4 (高半区 VMA + 低半区 LMA)
         map_text_region_in_user_pml4(user_pml4_virt.0 as *mut u64, text_start, text_end);
+    }
     }
 
     // 4.6 映射 KPTI 入口数据页 (.data/.bss) 到 USER_PML4
@@ -475,6 +488,9 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
 
 // ── .text 区域映射 ──────────────────────────────────────────────
 
+// 符号桩化 (host-test): 调用点 (kpti_init step 4.5 / create_user_page_table) 已整段
+// cfg, host 下无调用者, 函数整体不编译 (避免 dead_code).
+#[cfg(not(feature = "host-test"))]
 #[expect(
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
@@ -557,6 +573,9 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
 /// 调用方保证: `user_pml4` 有效; `vma` 和 `phys` 对齐;
 /// boot 阶段单线程执行, 无并发修改页表.
 // 有意窄化: 显式收窄, 调用方保证值域
+// 符号桩化 (host-test): 调用点 (map_kpti_data_pages / map_text_region_in_user_pml4)
+// 均已被 cfg 排除, host 下无调用者, 函数整体不编译 (避免 dead_code).
+#[cfg(not(feature = "host-test"))]
 #[expect(clippy::cast_possible_truncation)]
 #[expect(
     clippy::similar_names,
@@ -670,13 +689,22 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
 
 // ── KPTI 入口数据页映射 ──────────────────────────────────────────
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+// 符号桩化 (host-test): 函数体整段被 cfg 排除, 触发下面两个 lint 的代码
+// (相似局部变量 / 长数字常量) 在 host-test 维不存在, expect 须同步收窄
+// (否则 unfulfilled_lint_expectations 阻断 host-test 维 clippy).
+#[cfg_attr(
+    not(feature = "host-test"),
+    expect(
+        clippy::similar_names,
+        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+    )
 )]
-#[expect(
-    clippy::unreadable_literal,
-    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+#[cfg_attr(
+    not(feature = "host-test"),
+    expect(
+        clippy::unreadable_literal,
+        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+    )
 )]
 /// KPTI 中断/系统调用入口代码在 CR3 切换前需要访问的数据页面。
 ///
@@ -703,6 +731,10 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
 /// 调用方保证: `user_pml4` 是有效的 `USER_PML4` 虚拟地址指针;
 /// 在 boot 阶段单线程执行或持 `VMM_LOCK`, 无并发修改页表.
 pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
+    // 符号桩化 (host-test): host 无 USER_CR3_SAVE 汇编符号且无页表上下文,
+    // 整段跳过 (不执行任何映射).
+    #[cfg(not(feature = "host-test"))]
+    {
     // 权限: PRESENT (bit 0) + WRITABLE (bit 1) = 0x3
     //
     // 安全: 不设 USER 位. 访问路径 CPL 全部为 0:
@@ -781,6 +813,12 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
         per_cpu_gdt_lma,
         per_cpu_gdt_vma
     );
+    }
+    #[cfg(feature = "host-test")]
+    {
+        // E-04: host 桩分支消费参数, 保持与裸机分支结构对称
+        let _ = user_pml4;
+    }
 }
 
 // ── 测试辅助 (host-tests) ────────────────────────────────────────

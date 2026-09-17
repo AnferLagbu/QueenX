@@ -109,6 +109,9 @@ static MULTIBOOT_INFO_PTR: IrqSpinLock<MultibootPtr> =
 static MULTIBOOT_MAGIC: IrqSpinLock<u32> = IrqSpinLock::new(0);
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
+// 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号, `init()` 走常量桩取值,
+// 声明一并排除 (符号契约归零); 声明与唯一引用点 (`init` 真机分支) 门控严格同构.
+#[cfg(not(feature = "host-test"))]
 unsafe extern "C" {
     static _kernel_end: u8;
 }
@@ -274,16 +277,26 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
     (mem_size, mmap_entries)
 }
 
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+// 符号桩化 (host-test): kernel_end 取值已分叉, 触发 borrow_as_ptr 的
+// `&_kernel_end as *const u8` 仅存在于真机分支, expect 须同步收窄.
+#[cfg_attr(
+    not(feature = "host-test"),
+    expect(
+        clippy::borrow_as_ptr,
+        reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
+    )
 )]
 pub fn init() -> BootInfo {
-    // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-    // NOTE: &_kernel_end 在本链接脚本中的 VMA 等于物理地址 (0x1CF7000),
-    // 因为链接脚本位置计数器 . 从未跳转到 _kernel_text_vma (0xFFFF8000XXXXXXXX).
-    // 因此不需要减去 KERNEL_BASE, 直接使用即可.
-    let kernel_end = unsafe { &_kernel_end as *const u8 as u64 };
+    // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号且不执行裸机引导,
+    // 常量中性取值 0. 真机分支取链接脚本符号地址.
+    #[cfg(not(feature = "host-test"))]
+    let kernel_end = {
+        // SAFETY: `_kernel_end` 为链接脚本定义的符号, 只读访问; 其 VMA 等于物理
+        // 地址 (链接脚本位置计数器未跳转到 _kernel_text_vma), 无需减去 KERNEL_BASE.
+        unsafe { &_kernel_end as *const u8 as u64 }
+    };
+    #[cfg(feature = "host-test")]
+    let kernel_end = 0u64;
 
     #[cfg(target_arch = "x86_64")]
     let (mem_size, mmap_entries) = {

@@ -10,6 +10,12 @@ E-03 拆分后:
   - 纯逻辑测试辅助 → `#[cfg(any(feature = "kernel_test", feature = "host-test"))]`
   - 硬件路径门控    → `#[cfg(feature = "kernel_test")]`
 
+约定扩展 (T1 G7 host 符号桩化, 2026-09-17):
+  kt/ht 同属"测试环境", 真机路径门控语义 = `not(any(kernel_test, host-test))`.
+  framework 侧真机路径 (如 lib.rs kernel_init 引导链) 由 `not(kernel_test)` 推广为
+  `not(any(kernel_test, host-test))`; 本脚本检查面仍为 services/ + framework/tests/,
+  framework 侧的推广属既有约定表述扩展, 不改变本脚本的判定规则.
+
 本脚本检查:
   (1) services/ 下 kernel_test 门控出现位置 — 纯逻辑门控文件 (A 类已改 any)
       不得残留"仅 kernel_test"门控; B/C 类 (net 桩 smoltcp_impl.rs / net/mod.rs /
