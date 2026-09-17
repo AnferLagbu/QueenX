@@ -56,9 +56,9 @@ def check_i2():
     消除误报. services 层 `#![deny(unsafe_code)]` (B01-09) 编译期保证
     无裸指针, 本检查作为纵深防御 (防未来某天移除 deny).
 
-    注: 原 B01-21 前误报 (services/fs/nestfs/raidz_trait.rs:304 对 `&T`/
-    `Box` safe 解引用误报) 已由当前 pattern 负向前瞻排除方法实参
-    位置解决, 实测 services 0 违规.
+    注: 原 B01-21 前误报 (services 层对 `&T`/`Box` 的 safe 解引用被误判
+    为裸指针解引用) 已由当前 pattern 负向前瞻排除方法实参位置解决,
+    实测 services 0 违规.
     """
     # 真正的违反: services 中对裸指针的解引用 (*ptr).field
     patterns = [
