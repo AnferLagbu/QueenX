@@ -48,8 +48,8 @@ fn test_timerfd_subsystem_in_fd_plan() {
         "FdPlan::TIMER_FD 必须是 (1160, 16) (TD-15)"
     );
     assert!(
-        src.contains("pub const COUNT: usize = 7"),
-        "FdSubsystem::COUNT 必须是 7 (TD-15 + PidFd)"
+        src.contains("pub const COUNT: usize = 8"),
+        "FdSubsystem::COUNT 必须是 8 (TD-15 + PidFd + UserFaultFd)"
     );
     assert!(
         src.contains("FdSubsystem::TimerFd => Self::TIMER_FD"),

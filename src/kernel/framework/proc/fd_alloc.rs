@@ -27,6 +27,9 @@
 //! | EventFd | 1100 | EFD 范围 | 16 | `framework/syscall/eventfd.rs` |
 //! | SignalFd| 1120 | SFD 范围 | 16 | `framework/syscall/signalfd.rs` |
 //! | Inotify | 1140 | INOTIFY 范围 | 16 | `services/fs/inotify.rs` |
+//! | TimerFd | 1160 | `TIMER_FD` 范围 | 16 | `framework/syscall/timerfd.rs` |
+//! | PidFd   | 1180 | `PID_FD` 范围 | 16 | `services/proc/pidfd.rs` |
+//! | UserFaultFd | 1200 | `USERFAULT_FD` 范围 | 16 | `framework/mm/uffd.rs` |
 //!
 //! **不包含** (这些是内部抽象, 不暴露给用户态, 不存在重叠问题):
 //! - `VfsManager::alloc_fd()` — VFS 内部 slot 索引
@@ -84,11 +87,13 @@ pub enum FdSubsystem {
     TimerFd = 5,
     /// pidfd (pidfd_open)
     PidFd = 6,
+    /// userfaultfd (userfaultfd)
+    UserFaultFd = 7,
 }
 
 impl FdSubsystem {
     /// 子系统数量 (用于范围表边界)
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 8;
 
     /// 通过下标获取子系统 (用于 `for i in 0..COUNT { ... }`)
     pub fn from_index(i: usize) -> Option<Self> {
@@ -100,6 +105,7 @@ impl FdSubsystem {
             4 => Some(Self::Inotify),
             5 => Some(Self::TimerFd),
             6 => Some(Self::PidFd),
+            7 => Some(Self::UserFaultFd),
             _ => None,
         }
     }
@@ -164,6 +170,9 @@ impl FdPlan {
     /// `PidFd` FD 空间 (pidfd_open, 2026: 新增)
     pub const PID_FD: FdRange = FdRange::new(1180, 16);
 
+    /// `UserFaultFd` FD 空间 (userfaultfd, 2026: 新增)
+    pub const USERFAULT_FD: FdRange = FdRange::new(1200, 16);
+
     /// 获取指定子系统的 FD 范围
     pub const fn range_for(sub: FdSubsystem) -> FdRange {
         match sub {
@@ -174,6 +183,7 @@ impl FdPlan {
             FdSubsystem::Inotify => Self::INOTIFY,
             FdSubsystem::TimerFd => Self::TIMER_FD,
             FdSubsystem::PidFd => Self::PID_FD,
+            FdSubsystem::UserFaultFd => Self::USERFAULT_FD,
         }
     }
 
@@ -186,6 +196,7 @@ impl FdPlan {
         Self::INOTIFY,
         Self::TIMER_FD,
         Self::PID_FD,
+        Self::USERFAULT_FD,
     ];
 
     /// 启动期不变量: 任意两个范围不重叠

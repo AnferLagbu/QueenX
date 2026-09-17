@@ -54,6 +54,44 @@ impl NumaPolicy {
             _ => Self::Default,
         }
     }
+
+    /// 由 Linux `MPOL_*` ABI 模式值构造
+    ///
+    /// 注意: Linux 模式编码与本枚举判别值**不同** (`MPOL_PREFERRED = 1` 而
+    /// `NumaPolicy::Preferred = 3`), 用户态传入的 mode 必须经本函数映射,
+    /// 禁止直接 `from_u8`. 非法值返回 `None`.
+    pub fn from_linux_mode(mode: u32) -> Option<Self> {
+        match mode {
+            MPOL_DEFAULT => Some(Self::Default),
+            MPOL_PREFERRED => Some(Self::Preferred),
+            MPOL_BIND => Some(Self::Bind),
+            MPOL_INTERLEAVE => Some(Self::Interleave),
+            _ => None,
+        }
+    }
+}
+
+/// Linux `MPOL_*` 内存策略模式编码 (`mbind` / `set_mempolicy` ABI)
+pub const MPOL_DEFAULT: u32 = 0;
+/// 优先节点 (Linux 语义: 单个 preferred 节点)
+pub const MPOL_PREFERRED: u32 = 1;
+/// 绑定节点集 (仅从节点集分配)
+pub const MPOL_BIND: u32 = 2;
+/// 交织节点集 (轮询分配, 带宽优化)
+pub const MPOL_INTERLEAVE: u32 = 3;
+
+/// VMA 级 NUMA 内存策略 (`mbind` 设置)
+///
+/// ## 两级查询
+///
+/// VMA 级 (本类型, 由 `mbind` 写入 VMA) 优先于进程级 (`NumaMempolicy`,
+/// 由 `set_mempolicy` 写入) — 见 `effective_policy_for`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NumaRangePolicy {
+    /// 策略模式
+    pub mode: NumaPolicy,
+    /// 目标节点位掩码 (bit i = node i)
+    pub nodemask: u64,
 }
 
 /// 进程级 NUMA 策略
@@ -411,4 +449,27 @@ pub fn sys_getcpu() -> i64 {
         0
     };
     i64::from(cpu) | (i64::from(node) << 32)
+}
+
+/// 两级 NUMA 策略查询: `addr` 所在 VMA 的 VMA 级策略优先, 回退进程级策略
+///
+/// SIMPLIFIED: 当前无分配侧消费方 — PMM 为单一全局 buddy (无 per-node 分区),
+/// `pmm.rs` 分配路径未消费 NUMA 策略; 本函数仅作为 `mbind` 策略落地的查询入口.
+/// 影响面: 查询结果暂不影响实际页分配节点. 何时需扩展: PMM 引入 per-node 分区后,
+/// 由分配决策路径 (alloc_trait) 消费本函数.
+pub fn effective_policy_for(addr: usize) -> Option<NumaRangePolicy> {
+    if let Some(mm) = crate::framework::mm::vma_get_current_mm() {
+        if let Some(p) = mm.numa_policy_at(addr) {
+            return Some(p);
+        }
+    }
+
+    let pid = crate::framework::proc::process_get_current_pid();
+    crate::framework::proc::PROCESS_TABLE.with_process(pid, |p| {
+        let policy = p.numa_policy.lock();
+        NumaRangePolicy {
+            mode: *policy.mode.lock(),
+            nodemask: *policy.nodemask.lock(),
+        }
+    })
 }

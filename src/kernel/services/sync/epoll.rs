@@ -125,3 +125,27 @@ pub fn epoll_wait_syscall(
         Ok(ret as usize)
     }
 }
+
+/// `epoll_pwait` 安全代理 (T1 G5 实装)
+///
+/// `epoll_wait` + 临时信号屏蔽字 (Linux ABI 第 5/6 参数 `sigmask`/`sigsetsize`):
+/// 等待期间替换屏蔽字, 返回前恢复原值 (见
+/// `services::proc::signal::with_temporary_sigmask`).
+///
+/// # Errors
+///
+/// - 继承 [`epoll_wait_syscall`] 的校验结果 (`maxevents <= 0` → `EINVAL`,
+///   `events` 为空指针 → `EFAULT`)
+/// - `sigsetsize != 8` → `EINVAL`; `sigmask` 用户内存不可读 → `EFAULT`
+pub fn epoll_pwait_syscall(
+    epfd: i64,
+    events: u64, // 原始指针, 委托 framework 处理
+    maxevents: i32,
+    timeout: i32,
+    sigmask_ptr: u64,
+    sigsetsize: u64,
+) -> Result<usize, Errno> {
+    crate::services::proc::signal::with_temporary_sigmask(sigmask_ptr, sigsetsize, || {
+        epoll_wait_syscall(epfd, events, maxevents, timeout)
+    })
+}

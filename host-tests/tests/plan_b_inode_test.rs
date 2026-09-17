@@ -305,8 +305,12 @@ fn vfs_write_checks_append_flag() {
 fn name_to_handle_at_uses_path_resolution() {
     let src = read_file("services/fs/file_handle.rs");
     assert!(
-        src.contains("VFS_MANAGER.resolve_mount_fs(path)"),
+        src.contains("resolve_mount_fs("),
         "name_to_handle_at 必须通过 VFS 路径解析"
+    );
+    assert!(
+        src.contains("resolve_user_path("),
+        "name_to_handle_at 必须先经用户路径归一化 (chroot / pivot_root 根语义)"
     );
     assert!(
         !src.contains("inode_id = 1u32"),

@@ -162,16 +162,34 @@ pub struct VfsManager {
     pub fd_table: Mutex<[VfsFile; VFS_MAX_FDS]>,
     next_fd: AtomicU32,
     cwd: Mutex<[u8; VFS_MAX_PATH]>,
+    /// 根前缀 (`chroot` / `pivot_root` 机制) — 用户视图 "/" 对应的真实路径
+    root: Mutex<[u8; VFS_MAX_PATH]>,
     initialized: Mutex<bool>,
     snapshot: Mutex<Option<VfsSnapshot>>,
 }
+
+/// 默认根前缀 (含义: 用户视图与挂载表真实路径一致)
+const DEFAULT_ROOT: [u8; VFS_MAX_PATH] = {
+    let mut root = [0u8; VFS_MAX_PATH];
+    root[0] = b'/';
+    root
+};
 
 #[derive(Clone)]
 struct VfsSnapshot {
     mounts: [VfsMount; VFS_MAX_MOUNTS],
     fd_table: [VfsFile; VFS_MAX_FDS],
     cwd: [u8; VFS_MAX_PATH],
+    root: [u8; VFS_MAX_PATH],
     next_fd: u32,
+}
+
+/// 返回无尾斜杠路径 `s` 的父路径长度; 根之下统一收敛到 1 ("/")
+fn truncate_to_parent(s: &[u8]) -> usize {
+    match s.iter().rposition(|&b| b == b'/') {
+        Some(0) | None => 1,
+        Some(idx) => idx,
+    }
 }
 
 impl VfsManager {
@@ -223,6 +241,7 @@ impl VfsManager {
             ]),
             next_fd: AtomicU32::new(3),
             cwd: Mutex::new([0; VFS_MAX_PATH]),
+            root: Mutex::new(DEFAULT_ROOT),
             initialized: Mutex::new(false),
             snapshot: Mutex::new(None),
         }
@@ -251,6 +270,11 @@ impl VfsManager {
         let mut cwd = self.cwd.lock();
         cwd[0] = b'/';
         cwd[1] = 0;
+
+        // 根前缀重置为 "/" (chroot/pivot_root 状态不跨初始化存活)
+        let mut root = self.root.lock();
+        root[0] = b'/';
+        root[1] = 0;
 
         self.next_fd.store(3, Ordering::SeqCst);
 
@@ -530,6 +554,161 @@ impl VfsManager {
         String::from(core::str::from_utf8(&cwd[..end]).unwrap_or("/"))
     }
 
+    /// 读取当前根前缀 (真实路径; 默认 "/")
+    pub fn get_root(&self) -> String {
+        let root = self.root.lock();
+        let end = root.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
+        String::from(core::str::from_utf8(&root[..end]).unwrap_or("/"))
+    }
+
+    /// 设置根前缀 (`chroot` / `pivot_root` 机制)
+    ///
+    /// `real_root` 必须是**真实路径** (调用方先经 `resolve_user_path` 归一化).
+    /// 语义与 Linux `chroot` 一致: 切根后当前工作目录重置为视图根 "/".
+    // SIMPLIFIED: 仅切根 + 重置 cwd, 不做挂载表/已打开 fd 的根可达性校验 (Linux
+    // 亦不强制); 影响面: 已打开 fd 仍可访问旧根之外的对象; 何时需扩展: 需要
+    // Linux `pivot_root` 的 "旧根不可达" 强语义时补充 fd 遍历校验.
+    pub fn set_root(&self, real_root: &str) {
+        let bytes = real_root.as_bytes();
+        let mut root = self.root.lock();
+        let len = bytes.len().min(VFS_MAX_PATH - 1);
+        root[..len].copy_from_slice(&bytes[..len]);
+        root[len] = 0;
+        if len == 0 {
+            root[0] = b'/';
+            root[1] = 0;
+        }
+        drop(root);
+        self.set_cwd("/");
+    }
+
+    /// 单一权威路径归一化 (视图路径) — 就地写入 `out`, 返回有效长度
+    ///
+    /// 语义 (`chroot` / `pivot_root` 逃逸防护的关键):
+    /// - 绝对路径以视图根 "/" 为起点; 相对路径以当前视图 cwd 为起点
+    /// - 逐组件处理: `.` 忽略; `..` 上溯一级但**钳制在视图根内** (不可逃逸)
+    /// - 结果恒以 '/' 开头且无尾随 '/' (视图根除外)
+    ///
+    /// 返回 `None` 表示结果超出 `VFS_MAX_PATH` (调用方按 ENAMETOOLONG 处理).
+    fn normalize_view_path_into(
+        &self,
+        path: &str,
+        out: &mut [u8; VFS_MAX_PATH],
+    ) -> Option<usize> {
+        let bytes = path.as_bytes();
+        let absolute = bytes.first() == Some(&b'/');
+
+        // 基准 (视图根 或 视图 cwd) 写入 `out`
+        let mut i = usize::from(absolute);
+        let mut len = if absolute {
+            out[0] = b'/';
+            1
+        } else {
+            let cwd = self.get_cwd();
+            let b = cwd.as_bytes();
+            if b.first() == Some(&b'/') {
+                let mut n = b.len().min(VFS_MAX_PATH - 1);
+                // 去除尾随 '/' ("/home/" → "/home"), 避免拼接出双斜杠
+                if n > 1 && b[n - 1] == b'/' {
+                    n -= 1;
+                }
+                out[..n].copy_from_slice(&b[..n]);
+                n
+            } else {
+                out[0] = b'/';
+                1
+            }
+        };
+
+        // 逐组件归一化
+        while i < bytes.len() {
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'/' {
+                i += 1;
+            }
+            let comp = &bytes[start..i];
+            i += 1;
+            match comp {
+                b"" | b"." => {}
+                b".." => {
+                    // 上溯一级; len == 1 (视图根) 时保持原地, 实现根内钳制
+                    if len > 1 {
+                        len = truncate_to_parent(&out[..len]);
+                    }
+                }
+                _ => {
+                    if len > 1 {
+                        if len + 1 >= VFS_MAX_PATH {
+                            return None;
+                        }
+                        out[len] = b'/';
+                        len += 1;
+                    }
+                    if len + comp.len() >= VFS_MAX_PATH {
+                        return None;
+                    }
+                    out[len..len + comp.len()].copy_from_slice(comp);
+                    len += comp.len();
+                }
+            }
+        }
+        Some(len)
+    }
+
+    /// 用户路径 → 视图路径 (仅归一化, 不加根前缀) — 供 `chdir` 保存 cwd
+    ///
+    /// cwd 语义为视图路径 (根前缀之外的相对基准), 故与 `resolve_user_path` 区分.
+    pub fn resolve_view_path<'a>(
+        &self,
+        path: &str,
+        out: &'a mut [u8; VFS_MAX_PATH],
+    ) -> Option<&'a str> {
+        let len = self.normalize_view_path_into(path, out)?;
+        core::str::from_utf8(&out[..len]).ok()
+    }
+
+    /// 用户路径 → 真实路径 (视图归一化 + 根前缀拼接) — 就地写入 `out`
+    ///
+    /// 所有接受用户路径的 VFS 入口必须经此函数解析 (单一权威入口).
+    /// 默认根 "/" 时返回值与改造前逐字节等价.
+    /// 返回 `None` 表示路径超长或非 UTF-8 边界 (调用方按 ENAMETOOLONG/EINVAL 处理).
+    pub fn resolve_user_path<'a>(
+        &self,
+        path: &str,
+        out: &'a mut [u8; VFS_MAX_PATH],
+    ) -> Option<&'a str> {
+        let mut view = [0u8; VFS_MAX_PATH];
+        let view_len = self.normalize_view_path_into(path, &mut view)?;
+
+        let root = *self.root.lock();
+        let root_len = root.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
+
+        // 默认根: 视图路径即真实路径 (无额外分配/拷贝语义变化)
+        if root_len <= 1 {
+            out[..view_len].copy_from_slice(&view[..view_len]);
+            return core::str::from_utf8(&out[..view_len]).ok();
+        }
+
+        // 拼接: 根前缀 + 视图路径 (视图路径恒以 '/' 开头, 故取 [1..] 作为尾部)
+        let tail = if view_len > 1 {
+            &view[1..view_len]
+        } else {
+            &view[..0]
+        };
+        if root_len + 1 + tail.len() >= VFS_MAX_PATH {
+            return None;
+        }
+        out[..root_len].copy_from_slice(&root[..root_len]);
+        let len = if tail.is_empty() {
+            root_len
+        } else {
+            out[root_len] = b'/';
+            out[root_len + 1..root_len + 1 + tail.len()].copy_from_slice(tail);
+            root_len + 1 + tail.len()
+        };
+        core::str::from_utf8(&out[..len]).ok()
+    }
+
     pub fn capture_snapshot(&self) {
         let mounts_data = {
             let m = self.mounts.lock();
@@ -540,11 +719,13 @@ impl VfsManager {
             f.clone()
         };
         let cwd_data = *self.cwd.lock();
+        let root_data = *self.root.lock();
         let nf = self.next_fd.load(Ordering::SeqCst);
         *self.snapshot.lock() = Some(VfsSnapshot {
             mounts: mounts_data,
             fd_table: fd_data,
             cwd: cwd_data,
+            root: root_data,
             next_fd: nf,
         });
     }
@@ -558,6 +739,7 @@ impl VfsManager {
             *self.mounts.lock() = snap.mounts.clone();
             *self.fd_table.lock() = snap.fd_table.clone();
             *self.cwd.lock() = snap.cwd;
+            *self.root.lock() = snap.root;
             self.next_fd.store(snap.next_fd, Ordering::SeqCst);
         }
     }

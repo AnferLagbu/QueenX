@@ -28,9 +28,16 @@ const TCGETS: u64 = 0x5401;
     reason = "struct_field_names: 字段名前缀相同是为可读性/调试; 当前优先 expect"
 )]
 /// ioctl(fd, request, arg) 策略
-pub fn ioctl_syscall(_fd: i32, request: u64, arg: u64) -> i64 {
+///
+/// fd 路由: userfaultfd (1200 段) → `services::mm::uffd` 的 `UFFDIO_*` 处理;
+/// 其余走终端/设备策略.
+pub fn ioctl_syscall(fd: i32, request: u64, arg: u64) -> i64 {
     if arg == 0 {
         return Errno::EINVAL.as_ret();
+    }
+    // T1 G4: userfaultfd fd 类型路由 (Linux 语义: uffd 的 ioctl 只认 UFFDIO_*)
+    if crate::framework::mm::is_uffd_fd(fd) {
+        return crate::services::mm::uffd::ioctl_uffd(fd, request, arg);
     }
     match request {
         TIOCGWINSZ => {
@@ -122,6 +129,60 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             crate::framework::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
     }
     i64::from(ready)
+}
+
+/// ppoll(fds, nfds, tmo_p, sigmask, sigsetsize) 策略 (T1 G5 实装)
+///
+/// `poll` + `timespec` 超时 + 临时信号屏蔽字 (Linux ABI):
+/// - `tmo_p == NULL` → 无限等待; 非 NULL 时解析 `struct timespec` 并校验
+/// - `sigmask != NULL` → 等待期间临时替换屏蔽字, 结束后恢复
+///   (`services::proc::signal::with_temporary_sigmask`)
+///
+/// SIMPLIFIED: 超时未阻塞 — 复用 [`poll_syscall`] 的"单次扫描"语义 (既有 `SYS_poll`
+/// 现状: 事件就绪即返回, 否则立即返回 0, timeout 不生效), 解析出的毫秒值仅作为
+/// 参数下传. 影响面: 无就绪事件时 ppoll 立即返回 0 而非等到超时/事件, 用户态
+/// 轮询式多路复用仍可用 (与 `epoll_wait` 的 timeout > 0 缺口一致). 何时需扩展:
+/// hrtimer 定时唤醒接入 poll 等待队列后, 由 `poll_syscall` 消费该 timeout 值.
+pub fn ppoll_syscall(
+    fds_ptr: u64,
+    nfds: u32,
+    tmo_p: u64,
+    sigmask_ptr: u64,
+    sigsetsize: u64,
+) -> i64 {
+    /// `struct timespec` 中 `tv_nsec` 合法上界 (半开区间)
+    const NSEC_PER_SEC: i64 = 1_000_000_000;
+
+    let mut timeout_ms: i32 = -1;
+    if tmo_p != 0 {
+        let Some(sec_raw) = crate::framework::syscall::api::read_u64_from_user(tmo_p) else {
+            return Errno::EFAULT.as_ret();
+        };
+        let Some(nsec_raw) = crate::framework::syscall::api::read_u64_from_user(tmo_p + 8) else {
+            return Errno::EFAULT.as_ret();
+        };
+        if sec_raw > i64::MAX as u64 || nsec_raw > i64::MAX as u64 {
+            return Errno::EINVAL.as_ret();
+        }
+        let (sec, nsec) = (sec_raw as i64, nsec_raw as i64);
+        if sec < 0 || !(0..NSEC_PER_SEC).contains(&nsec) {
+            return Errno::EINVAL.as_ret();
+        }
+        // 毫秒向上取整; 超 i32 上限饱和 (Linux 由调用方保证取值范围)
+        let ms = sec
+            .saturating_mul(1000)
+            .saturating_add((nsec + 999_999) / 1_000_000);
+        timeout_ms = ms.min(i64::from(i32::MAX)) as i32;
+    }
+
+    match crate::services::proc::signal::with_temporary_sigmask(
+        sigmask_ptr,
+        sigsetsize,
+        || Ok(poll_syscall(fds_ptr, nfds, timeout_ms)),
+    ) {
+        Ok(ret) => ret,
+        Err(e) => e.as_ret(),
+    }
 }
 
 /// chown(path, uid, gid) 策略

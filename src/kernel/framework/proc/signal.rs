@@ -686,6 +686,24 @@ pub fn has_deliverable_signal(pid: Pid) -> bool {
     (pending & !blocked) != 0
 }
 
+/// `SIGKILL` 信号编号 (不可捕获/不可屏蔽)
+pub const SIGKILL: u8 = 9;
+/// `SIGSTOP` 信号编号 (不可捕获/不可屏蔽)
+pub const SIGSTOP: u8 = 19;
+
+/// 不可屏蔽信号位图 (屏蔽字 bit N = 信号 N)
+const UNCATCHABLE_SIGNAL_BITS: u64 = (1u64 << SIGKILL) | (1u64 << SIGSTOP);
+
+/// 规范化信号屏蔽字: 剔除不可屏蔽信号 (`SIGKILL`/`SIGSTOP`)
+///
+/// `signal_pick_next` 的投递判据是 `pending & !blocked`, 故屏蔽字中保留
+/// `SIGKILL`/`SIGSTOP` 位会导致进程永久不可终止 — 任何写入 `blocked_mask`
+/// 的路径都必须经本函数过滤 (单点权威, `rt_sigprocmask` 与 services 侧
+/// `ppoll`/`epoll_pwait` 的临时掩码替换共用).
+pub fn sanitize_blocked_mask(mask: u64) -> u64 {
+    mask & !UNCATCHABLE_SIGNAL_BITS
+}
+
 #[expect(
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"

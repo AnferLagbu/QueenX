@@ -20,7 +20,7 @@ use crate::framework::syscall::Errno;
 use crate::services::fs::inode::Inode;
 use crate::services::fs::open_file_table::OPEN_FILE_TABLE;
 use crate::services::fs::vfs_manager::VFS_MANAGER;
-use crate::services::fs::vfs_types::OpenFile;
+use crate::services::fs::vfs_types::{OpenFile, VFS_MAX_PATH};
 use alloc::sync::Arc;
 
 /// 文件句柄类型 (与 Linux 兼容)
@@ -84,9 +84,17 @@ pub fn name_to_handle_at_syscall(
         return Err(Errno::ENOENT);
     }
 
-    let (mount_idx, _fs_type, fs_opt) = VFS_MANAGER.resolve_mount_fs(path).ok_or(Errno::ENOENT)?;
+    // 用户路径归一化 (chroot / pivot_root 根语义): 视图路径 + 根前缀
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let real_path = VFS_MANAGER
+        .resolve_user_path(path, &mut pbuf)
+        .ok_or(Errno::ENOENT)?;
+
+    let (mount_idx, _fs_type, fs_opt) = VFS_MANAGER
+        .resolve_mount_fs(real_path)
+        .ok_or(Errno::ENOENT)?;
     let fs = fs_opt.ok_or(Errno::ENOENT)?;
-    let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
+    let rel_path = VFS_MANAGER.get_relative_path(real_path, mount_idx);
 
     // 通过 FileSystem trait 获取 inode_id
     let inode_id = fs.fs_resolve_path(rel_path).ok_or(Errno::ENOENT)?;

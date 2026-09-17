@@ -136,12 +136,14 @@ pub struct UtsNamespace {
     pub domainname: IrqSpinLock<[u8; 65]>,
 }
 
+/// 默认主机名 (新建 UTS namespace 初值 / 无进程上下文时的 `uname` 回退值)
+pub const UTS_DEFAULT_NODENAME: &[u8] = b"QueenX";
+
 impl UtsNamespace {
     /// 创建新的 UTS namespace (默认继承 init 主机名)
     pub fn new() -> Self {
         let mut nodename = [0u8; 65];
-        let default_name = b"QueenX";
-        nodename[..default_name.len()].copy_from_slice(default_name);
+        nodename[..UTS_DEFAULT_NODENAME.len()].copy_from_slice(UTS_DEFAULT_NODENAME);
         Self {
             id: alloc_ns_id(),
             nodename: IrqSpinLock::new(nodename),
@@ -184,6 +186,34 @@ impl UtsNamespace {
         let end = buf.iter().position(|&b| b == 0).unwrap_or(64);
         alloc::string::String::from_utf8_lossy(&buf[..end]).into_owned()
     }
+
+    /// 设置域名 (最长 64 字节, 超出截断)
+    pub fn set_domainname(&self, name: &[u8]) {
+        let mut buf = self.domainname.lock();
+        let len = name.len().min(64);
+        buf[..len].copy_from_slice(&name[..len]);
+        buf[len] = 0;
+    }
+
+    /// 获取域名 (未设置时为空串)
+    pub fn get_domainname(&self) -> alloc::string::String {
+        let buf = self.domainname.lock();
+        let end = buf.iter().position(|&b| b == 0).unwrap_or(64);
+        alloc::string::String::from_utf8_lossy(&buf[..end]).into_owned()
+    }
+}
+
+/// 读取当前进程的 UTS namespace (机制查询: 进程表 → `NamespaceSet` → uts)
+///
+/// 单一权威入口: `uname` / `gethostname` / `sethostname` / `setdomainname`
+/// 全部经本函数读写, 避免各自维护主机名副本 (历史: `sys_uname` 硬编码
+/// `"queenx-node"`, `gethostname` 硬编码 `"localhost"`, `sethostname` 不存储).
+///
+/// 返回 `None` 表示当前无进程上下文 (启动早期 / 无进程的 host 测试).
+pub fn uts_current() -> Option<Arc<UtsNamespace>> {
+    let pid = crate::framework::proc::process_get_current_pid();
+    // 仅暂持 namespaces 锁取出 Arc, UTS 字段锁在调用方按需获取 (避免锁嵌套)
+    crate::framework::proc::process_with(pid, |p| Arc::clone(&p.namespaces.lock().uts))
 }
 
 // ============================================================================

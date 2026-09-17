@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-//! 系统信息策略 — getrusage / sysinfo / getrlimit / setrlimit / gethostname / sethostname / boot_check
+//! 系统信息策略 — getrusage / sysinfo / getrlimit / setrlimit / gethostname / sethostname / setdomainname / boot_check
 //!
 //! 从 framework/syscall/mod.rs 迁移的策略代码:
 //! - getrusage_syscall: 资源使用统计
@@ -8,7 +8,13 @@
 //! - setrlimit_syscall: 资源限制设置 (T2 批 1 自 framework 回退层迁移)
 //! - gethostname_syscall: 获取主机名
 //! - sethostname_syscall: 设置主机名
+//! - setdomainname_syscall: 设置域名
 //! - boot_check_syscall: 启动检查
+//!
+//! ## UTS 收敛 (T1 G7)
+//!
+//! `gethostname` / `sethostname` / `setdomainname` 与 `uname` 的主机名/域名
+//! 全部读写当前进程 framework `UtsNamespace` (单一权威), 不再各自硬编码.
 //!
 //! ## 框内核边界
 //! - 100% safe Rust
@@ -143,35 +149,74 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
     0
 }
 
-/// gethostname(buf, size) 策略
+/// gethostname(buf, size) 策略 — 读取当前进程 UTS namespace 主机名
+///
+/// T1 G7: 原实现恒返回字面量 `"localhost"`, 与 `uname` (硬编码
+/// `"queenx-node"`) / `sethostname` (不存储) 三处各说各话; 现全部收敛到
+/// framework `UtsNamespace` (单一权威).
 pub fn gethostname_syscall(buf_ptr: u64, size: u64) -> i64 {
     if buf_ptr == 0 || size == 0 {
         return Errno::EFAULT.as_ret();
     }
-    if !crate::framework::syscall::api::validate_user_buf(buf_ptr, size) {
-        return Errno::EFAULT.as_ret();
-    }
+    let Some(uts) = crate::framework::proc::namespace::uts_current() else {
+        return Errno::ESRCH.as_ret();
+    };
 
-    let hostname = b"localhost\0";
-    let copy_len = hostname.len().min(size as usize);
-    // 使用 write_struct_to_user 逐字节写入
-    for (i, &byte) in hostname.iter().enumerate().take(copy_len) {
-        if !crate::framework::syscall::api::write_struct_to_user(buf_ptr + i as u64, &byte)
-        {
-            return Errno::EFAULT.as_ret();
-        }
+    let name = uts.get_nodename();
+    let bytes = name.as_bytes();
+    // 出参缓冲: 主机名 (≤64B) + NUL 终止符
+    let mut out = [0u8; 65];
+    let len = bytes.len().min(64);
+    out[..len].copy_from_slice(&bytes[..len]);
+    let n = (len + 1).min(size as usize);
+    match crate::framework::mm::copy_user::copy_to_user(buf_ptr, &out[..n], n) {
+        Ok(_) => 0,
+        Err(()) => Errno::EFAULT.as_ret(),
     }
-    0
 }
 
 /// sethostname(name, len) 策略
+///
+/// T1 G7: 原实现仅校验不存储 (主机名无处可去), 现写入当前进程 UTS namespace.
 pub fn sethostname_syscall(name_ptr: u64, len: u64) -> i64 {
+    set_uts_name_syscall(name_ptr, len, false)
+}
+
+/// setdomainname(name, len) 策略 — 与 `sethostname` 同构 (写入 UTS 域名字段)
+pub fn setdomainname_syscall(name_ptr: u64, len: u64) -> i64 {
+    set_uts_name_syscall(name_ptr, len, true)
+}
+
+/// `sethostname` / `setdomainname` 共用策略: 长度校验 + 特权判定 + 读用户缓冲
+/// + 委托 framework `UtsNamespace` 写入.
+fn set_uts_name_syscall(name_ptr: u64, len: u64, domain: bool) -> i64 {
     if name_ptr == 0 || len == 0 || len > 63 {
         return Errno::EINVAL.as_ret();
     }
+    // 能力位沿用既有的 SYSTEM 域 UTS 名称设置位 (原 sethostname 字面量 9)
     let pwm = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(pwm, 0, 9) {
+    if !crate::framework::credo::pwm_has_capability(
+        pwm,
+        crate::framework::credo::CAP_DOMAIN_SYSTEM,
+        crate::framework::credo::SYSTEM_CAP_UTS_SETNAME,
+    ) {
         return Errno::EACCES.as_ret();
+    }
+    let Ok(n) = usize::try_from(len) else {
+        return Errno::EINVAL.as_ret();
+    };
+    let mut buf = [0u8; 64];
+    if crate::framework::mm::copy_user::copy_from_user(&mut buf[..n], name_ptr, n).is_err() {
+        return Errno::EFAULT.as_ret();
+    }
+
+    let Some(uts) = crate::framework::proc::namespace::uts_current() else {
+        return Errno::ESRCH.as_ret();
+    };
+    if domain {
+        uts.set_domainname(&buf[..n]);
+    } else {
+        uts.set_nodename(&buf[..n]);
     }
     0
 }

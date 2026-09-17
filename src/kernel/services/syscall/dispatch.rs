@@ -100,14 +100,15 @@ impl SyscallDispatch for ServicesSyscallDispatch {
 fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
         QX_SNAPSHOT_CLONE, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK,
-        SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_clock_gettime,
+        SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_chroot, SYS_clock_gettime,
         SYS_close_range, SYS_close, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
         SYS_faccessat, SYS_fallocate, SYS_fchmod, SYS_fchmodat, SYS_fchown, SYS_fchownat,
         SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd, SYS_getdents,
-        SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init1,
-        SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr, SYS_lseek,
-        SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
-        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_preadv, SYS_read,
+        SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init,
+        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
+        SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat,
+        SYS_open, SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_ppoll,
+        SYS_preadv, SYS_pivot_root, SYS_read,
         SYS_readlink, SYS_readlinkat, SYS_readv, SYS_removexattr, SYS_rename, SYS_renameat,
         SYS_rmdir, SYS_select, SYS_sendfile, SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat,
         SYS_statx, SYS_symlink, SYS_symlinkat, SYS_sync, SYS_time, SYS_times, SYS_truncate,
@@ -236,6 +237,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         // 路径
         SYS_getcwd => as_ret(crate::services::fs::path::getcwd_syscall(a0, a1)),
         SYS_chdir => as_ret(crate::services::fs::path::chdir_syscall(a0)),
+        // chroot/pivot_root (T1 G7): 切换视图根, 根前缀经 resolve_user_path 生效
+        SYS_chroot => as_ret(crate::services::fs::path::chroot_syscall(a0)),
+        SYS_pivot_root => as_ret(crate::services::fs::path::pivot_root_syscall(a0, a1)),
 
         // 文件描述符操作
         SYS_pipe => as_ret(crate::services::fs::io::pipe_syscall(a0)),
@@ -256,6 +260,8 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         // 文件操作
         SYS_ioctl => crate::services::fs::file_ops::ioctl_syscall(a0 as i32, a1, a2),
         SYS_poll => crate::services::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
+        // ppoll (T1 G5 实装): poll + timespec 超时 + 临时信号屏蔽字
+        SYS_ppoll => crate::services::fs::file_ops::ppoll_syscall(a0, a1 as u32, a2, a3, a4),
         SYS_select => crate::services::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
         SYS_chown => crate::services::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
         SYS_truncate => crate::services::fs::file_ops::truncate_syscall(a0, a1 as i64),
@@ -274,6 +280,8 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // inotify
         SYS_inotify_init1 => crate::services::fs::inotify::sys_inotify_init1(a0 as i32),
+        // inotify_init (T1 G5 实装): 遗留接口, 等价 inotify_init1(0)
+        SYS_inotify_init => crate::services::fs::inotify::sys_inotify_init1(0),
         SYS_inotify_add_watch => crate::services::fs::inotify::sys_inotify_add_watch(
             a0 as i64, a1 as u32, a2 as u32,
         ),
@@ -388,13 +396,16 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程相关系统调用
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_clone, SYS_clone3, SYS_execve, SYS_exit, SYS_exit_group, SYS_fork, SYS_getpgid,
+        SYS_adjtimex, SYS_clone, SYS_clone3, SYS_clock_nanosleep, SYS_execve, SYS_execveat, SYS_exit,
+        SYS_exit_group, SYS_fork, SYS_getpgid,
         SYS_getpid, SYS_getppid, SYS_getpriority, SYS_get_robust_list, SYS_getrlimit,
         SYS_getrusage, SYS_getsid, SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create,
         SYS_nanosleep, SYS_nice, SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
         SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
-        SYS_sched_yield, SYS_seccomp, SYS_sethostname, SYS_setns, SYS_set_robust_list,
-        SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_sysinfo, SYS_tcgetpgrp,
+        SYS_sched_yield, SYS_seccomp, SYS_setdomainname, SYS_sethostname, SYS_setns,
+        SYS_set_robust_list,
+        SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday, SYS_sysinfo,
+        SYS_tcgetpgrp,
         SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
@@ -460,6 +471,10 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_fork => crate::services::proc::lifecycle::fork_syscall(),
         // execve: 进程替换 (path/argv 为用户指针, envp 当前忽略)
         SYS_execve => as_ret(crate::services::proc::exec::execve_syscall(a0, a1, a2)),
+        // execveat (T1 G7): execve 的目录 fd 相对版本 (仅 AT_FDCWD)
+        SYS_execveat => as_ret(crate::services::proc::exec::execveat_syscall(
+            a0 as i32, a1, a2, a3, a4 as i32,
+        )),
         SYS_exit => crate::services::proc::lifecycle::exit_syscall(a0 as i32),
         // SIMPLIFIED: exit_group 暂等同 exit (B05-43 返工登记); 影响面: 线程组未实现
         // 组级终止, 仅结束当前进程; 何时需扩展: 引入 tgid/线程组基础结构后遍历组内
@@ -475,6 +490,14 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_uname => as_ret(crate::services::proc::info::uname_syscall(a0)),
         SYS_gettimeofday => as_ret(crate::services::timer::clock::gettimeofday_syscall(
             a0,
+        )),
+        // T1 G6: 时间组 — 墙钟设置 / 时钟调整 / 带时钟源的睡眠
+        SYS_settimeofday => as_ret(crate::services::timer::clock::settimeofday_syscall(
+            a0, a1,
+        )),
+        SYS_adjtimex => crate::services::timer::clock::adjtimex_syscall(a0),
+        SYS_clock_nanosleep => as_ret(crate::services::timer::clock::clock_nanosleep_syscall(
+            a0 as i32, a1 as i32, a2, a3,
         )),
 
         // 定时器
@@ -541,6 +564,8 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         // 系统信息
         SYS_reboot => crate::services::proc::sysinfo::reboot_syscall(a0 as i32),
         SYS_sethostname => crate::services::proc::sysinfo::sethostname_syscall(a0, a1),
+        // setdomainname (T1 G7): 与 sethostname 同构, 写入当前进程 UTS namespace
+        SYS_setdomainname => crate::services::proc::sysinfo::setdomainname_syscall(a0, a1),
 
         // memfd
         SYS_memfd_create => as_ret(crate::services::proc::memfd::memfd_create_syscall(
@@ -636,9 +661,9 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 内存管理相关系统调用
 fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_brk, SYS_get_mempolicy, SYS_getcpu, SYS_madvise, SYS_migrate_pages, SYS_mincore,
-        SYS_mlock, SYS_mlockall, SYS_mmap, SYS_mprotect, SYS_mremap, SYS_munlock, SYS_munlockall,
-        SYS_munmap, SYS_set_mempolicy,
+        SYS_brk, SYS_get_mempolicy, SYS_getcpu, SYS_madvise, SYS_mbind, SYS_migrate_pages,
+        SYS_mincore, SYS_mlock, SYS_mlockall, SYS_mmap, SYS_mprotect, SYS_mremap, SYS_munlock,
+        SYS_munlockall, SYS_munmap, SYS_set_mempolicy, SYS_userfaultfd,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -680,10 +705,22 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_mincore => crate::services::mm::madvise_mlock::sys_mincore(a0, a1, a2),
 
         // NUMA
+        // mbind (T1 G4 实装): 地址范围级 NUMA 策略 (VMA 级落地)
+        SYS_mbind => crate::services::mm::numa::mbind_syscall(
+            a0,
+            a1,
+            a2 as u32,
+            a3,
+            a4,
+            a5 as u32,
+        ),
         SYS_get_mempolicy => crate::services::mm::numa::sys_get_mempolicy(a0, a1),
         SYS_set_mempolicy => crate::services::mm::numa::sys_set_mempolicy(a0, a1),
         SYS_migrate_pages => crate::services::mm::numa::sys_migrate_pages(a0),
         SYS_getcpu => crate::services::mm::numa::sys_getcpu(),
+
+        // userfaultfd (T1 G4 实装): 用户态缺页处理 fd (ioctl/read 由 fd 路由分发)
+        SYS_userfaultfd => crate::services::mm::uffd::userfaultfd_syscall(a0 as u32),
 
         _ => return None,
     })
@@ -696,11 +733,11 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 同步原语相关系统调用
 fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_epoll_create, SYS_epoll_create1, SYS_epoll_ctl, SYS_epoll_wait, SYS_eventfd,
-        SYS_eventfd2, SYS_futex, SYS_signalfd, SYS_signalfd4, SYS_timerfd_create,
+        SYS_epoll_create, SYS_epoll_create1, SYS_epoll_ctl, SYS_epoll_pwait, SYS_epoll_wait,
+        SYS_eventfd, SYS_eventfd2, SYS_futex, SYS_signalfd, SYS_signalfd4, SYS_timerfd_create,
         SYS_timerfd_gettime, SYS_timerfd_settime,
     };
-    let [a0, a1, a2, a3, a4, _a5] = args;
+    let [a0, a1, a2, a3, a4, a5] = args;
 
     Some(match num {
         // futex
@@ -732,6 +769,10 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
         SYS_epoll_wait => as_ret(crate::services::sync::epoll::epoll_wait_syscall(
             a0 as i64, a1, a2 as i32, a3 as i32,
+        )),
+        // epoll_pwait (T1 G5 实装): epoll_wait + 临时信号屏蔽字 (a4/a5)
+        SYS_epoll_pwait => as_ret(crate::services::sync::epoll::epoll_pwait_syscall(
+            a0 as i64, a1, a2 as i32, a3 as i32, a4, a5,
         )),
 
         // eventfd

@@ -78,6 +78,8 @@ pub mod slab_trait;
 pub mod swap;
 /// T2-4: Swap 策略决策 trait (LRU 管理/回收决策/kswapd 触发)
 pub mod swap_trait;
+/// T1 G4: userfaultfd 机制 (#PF 拦截 + 事件队列 + 用户态提供页)
+pub mod uffd;
 pub mod vma;
 
 #[cfg(target_arch = "x86_64")]
@@ -146,6 +148,15 @@ pub use page_fault_policy::{
 
 // cow 公共接口 re-export — 避免跨子系统直接访问 mm::cow 内部
 pub use cow::{cow_dec_ref, cow_inc_ref, cow_init, cow_ref_count};
+
+// uffd 公共接口 re-export — T1 G4 userfaultfd 机制 (services 侧 ABI 层消费)
+pub use uffd::{
+    UffdFaultOutcome, UffdIoApi, UffdIoCopy, UffdIoRange, UffdIoRegister, UffdIoZeropage,
+    UffdMsgPagefault, api_negotiate, clear_reader, create as uffd_create, fault_notify,
+    fill_provided_page, is_active as uffd_is_active, is_open as uffd_is_open, is_uffd_fd,
+    pop_event, provide_page, register as uffd_register, release as uffd_release, set_reader,
+    unregister as uffd_unregister, wake as uffd_wake,
+};
 
 // DECOUPL-4: 顶层 re-export NUMA 初始化入口, 避免 framework 内部 3+ 层深度访问
 pub use numa::numa_init;

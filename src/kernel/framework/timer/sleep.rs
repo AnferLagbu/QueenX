@@ -23,6 +23,9 @@
 use super::tick::{get_ticks, is_initialized, ms_to_ticks};
 use crate::framework::cpu::{cycles_to_nanoseconds, read_tsc};
 
+/// 每毫秒的纳秒数 (睡眠机制内 ns↔ms 换算系数)
+const NS_PER_MS: u64 = 1_000_000;
+
 // ============================================================================
 // 忙等待实现 (Busy-wait)
 // ============================================================================
@@ -229,6 +232,36 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
 
 /// 待唤醒的进程 PID (供 hrtimer 回调使用)
 static SLEEP_WAKE_PID: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// 纳秒级睡眠机制 (tsleep 类 syscall 的共享权威实现)
+///
+/// - `< 1ms`: hrtimer 时钟源忙等待 (高精度, 不依赖调度器可阻塞性)
+/// - `>= 1ms`: 委托 [`timer_sleep`] (hrtimer 到期回调唤醒 + 调度器阻塞)
+///
+/// 毫秒换算向上取整, 保证实际睡眠时长不低于请求时长 (POSIX 语义).
+///
+/// 调用方: `framework::syscall::sys_nanosleep` (SYS_nanosleep) 与
+/// `services::timer::clock::clock_nanosleep_syscall` (SYS_clock_nanosleep);
+/// 两者共用本函数以避免睡眠策略出现内核内部并行实现.
+///
+/// # Arguments
+/// * `total_ns` - 睡眠时长 (纳秒); 0 表示立即返回
+pub fn sleep_ns(total_ns: u64) {
+    if total_ns == 0 {
+        return;
+    }
+
+    if total_ns < NS_PER_MS {
+        let start = crate::framework::timer::hrtimer_clock_read();
+        let target = start + total_ns;
+        while crate::framework::timer::hrtimer_clock_read() < target {
+            core::hint::spin_loop();
+        }
+    } else {
+        let sleep_ms = total_ns.div_ceil(NS_PER_MS);
+        let _ = timer_sleep(sleep_ms);
+    }
+}
 
 /// hrtimer 回调: 唤醒被 `timer_sleep` 阻塞的进程
 fn sleep_timer_callback(

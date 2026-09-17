@@ -37,6 +37,11 @@ pub enum PfResult {
     SignalBus = 2,
     Oom = 3,
     Unhandled = 4,
+    /// userfaultfd: 缺页已登记事件并入队, 当前进程需转入阻塞等待用户态提供页
+    ///
+    /// 处理落点见 `idt::handlers::PageFaultHandler`: 仅标记 `Blocked` + 置
+    /// `need_reschedule` 后 iretq (见 `framework::mm::uffd` 模块文档).
+    UffdWait = 5,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -208,6 +213,23 @@ fn handle_vma_fault_with_mm(
 ) -> PfResult {
     let aligned = (info.fault_addr as usize) & !(PAGE_SIZE as usize - 1);
 
+    // ── userfaultfd (T1 G4): 已注册区间的匿名页缺页交由用户态处理 ──
+    // 仅拦截 not-present 的用户态缺页 (MISSING 模式); COW/文件映射不受影响.
+    if info.user && !info.present {
+        let uffd_flags = if info.write {
+            super::uffd::UFFD_PAGEFAULT_FLAG_WRITE
+        } else {
+            0
+        };
+        match super::uffd::fault_notify(aligned as u64, uffd_flags) {
+            super::uffd::UffdFaultOutcome::NotRegistered => {}
+            super::uffd::UffdFaultOutcome::Waiting => return PfResult::UffdWait,
+            super::uffd::UffdFaultOutcome::Ready => {
+                return handle_uffd_provided(vma, aligned, user_cr3);
+            }
+        }
+    }
+
     // ── FileBacked VMA: 从 Page Cache 获取缓存页 ──
     if vma.vma_type == VmaType::FileBacked && vma.inode_id != 0 {
         return handle_file_fault(mm, vma, info, aligned, user_cr3);
@@ -236,6 +258,33 @@ fn handle_vma_fault_with_mm(
     let pml4 = user_cr3;
 
     vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), phys, flags);
+
+    PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
+    PfResult::Fixed
+}
+
+/// userfaultfd: 用户态已提供数据的页 → 分配物理页 + 填充 + 按 VMA 权限映射
+///
+/// 由 `handle_vma_fault_with_mm` 在 `UffdFaultOutcome::Ready` 时调用.
+#[expect(
+    clippy::manual_let_else,
+    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
+)]
+fn handle_uffd_provided(vma: &Vma, aligned: usize, user_cr3: u64) -> PfResult {
+    let pmm_inst = pmm::get_pmm();
+    let phys = match pmm_inst.alloc_page() {
+        Some(p) => p,
+        None => return PfResult::Oom,
+    };
+
+    if !super::uffd::fill_provided_page(aligned as u64, phys) {
+        // 状态在分配与填充之间被改变 (如 UFFDIO_WAKE): 释放物理页并退回等待
+        pmm_inst.free_page(phys);
+        return PfResult::UffdWait;
+    }
+
+    let flags = vma.flags | PageFlags::PRESENT;
+    vmm::get_vmm().map_page_in_table(user_cr3, VirtAddr(aligned as u64), phys, flags);
 
     PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
     PfResult::Fixed

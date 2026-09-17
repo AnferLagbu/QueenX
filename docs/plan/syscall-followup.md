@@ -104,7 +104,7 @@ T7 (预存登记)
 
 - [X] T3：半成品清除 + 用户态调用 audit（2026-09-15 完成，见下方 T3 实施记录）
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
-- [ ] T1：R2 未实装 SYS_* 实装（G1/G2/G3 完成，见下方 T1 实施记录；G4-G7 待做）
+- [X] T1：R2 未实装 SYS_* 实装（G1-G7 全部完成，见下方 T1 实施记录）
 - [ ] T4-T7：登记排后（R3 pub mod / R1 445 项 / TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
@@ -293,6 +293,150 @@ T7 (预存登记)
 
 **验证**：双架构 check 0w0e、clippy 3 维 0 warning、核心审计通过、build.sh all 5/5、host-tests 全量、QEMU boot（Ring 3/init）通过、QEMU kernel_test 475/475（批实施 +3 / 处置 +2）。
 
+### T1 实施记录（G4 内存）
+
+**实现路径裁定**（AskUserQuestion，用户授权）：mbind = **B 路径**（VMA 增策略字段 + 两级查询，不伪造 PMM per-node 分配）；userfaultfd = **B 真阻塞语义**（相对完整），且 #PF 阻塞落点采 **B′ 标记阻塞 + tick 抢占**（#PF 走 IST 栈不能就地切换上下文）。
+
+**实装项**（2 项，services 0 unsafe）：
+
+| 项 | services 落点 | 机制/要点 |
+|---|---|---|
+| mbind | `services/mm/numa.rs`（`mbind_syscall`） | 参数校验：`len == 0` / 非页对齐 → EINVAL；`flags` 保留位（`MPOL_MF_VALID` = 0xF）→ EINVAL；`MPOL_*` → `NumaPolicy` 映射（`from_linux_mode`，ABI 编码与枚举判别值不同）失败 → EINVAL；`addr + len` 溢出 → ENOMEM；`MPOL_DEFAULT` 要求 `nodemask == NULL`、Bind/Interleave 要求非空位掩码；委托 `MmStruct::set_numa_policy_range` 写 VMA 级策略 |
+| userfaultfd | `services/mm/uffd.rs`（`userfaultfd_syscall` / `ioctl_uffd` / `read_event`） | `userfaultfd(flags)`：仅接受 `O_CLOEXEC`/`O_NONBLOCK`，创建实例（失败 EMFILE）；`UFFDIO_*`：结构体 read/write_struct_to_user + 参数校验（COPY 校验 `len == PAGE_SIZE` + `check_user_buf` + `copy_from_user` 到内核暂存；ZEROPAGE 校验页对齐）；`read()`：无事件则 `scheduler_block` + `scheduler_yield_ex` 等待，`fault_notify` 入队后由 framework 唤醒 |
+
+**framework 机制扩展**：
+
+- **`framework/mm/uffd.rs`（新建，ABI 常量 + 实例表 + #PF 拦截 + 页填充）**：Linux 真实 ABI 值（`UFFDIO_API` = 0xC018AA3F / `REGISTER` = 0xC020AA00 / `UNREGISTER` / `WAKE` / `COPY` / `ZEROPAGE`、`UFFD_API` = 0xAA、`UFFD_EVENT_PAGEFAULT` = 0x12、`struct uffd_msg` = 32B）；实例表 `UFFD_TABLE: IrqSpinLock<[UffdInstance; 16]>`（中断安全，`#PF` 路径读取）；`fault_notify(page, flags)` → `NotRegistered` / `Waiting`（入队事件 + 唤醒 `read()` 线程）/ `Ready`；`fill_provided_page` 在 `#PF` 重入路径把暂存数据写入 PMM 新页；`create`/`release`（唤醒等待者）/`api_negotiate`/`register`/`unregister`/`wake`/`provide_page`/`pop_event`/`set_reader`/`clear_reader`/`is_open`/`is_active`。
+- **`framework/mm/page_fault.rs`**：`PfResult` 增 `UffdWait = 5`；`handle_vma_fault_with_mm` 在匿名页缺页前拦截（仅 `user && !present`）——`Waiting` → `PfResult::UffdWait`，`Ready` → 新增 `handle_uffd_provided`（alloc_page → 填充暂存 → 映射）。
+- **`framework/idt/handlers.rs`**：`PageFaultHandler` 对 `UffdWait` 仅 `scheduler_block(WaitingForIo)` + 返回 `Recovered`（iretq 回用户态，由 tick 抢占切走；`#PF` 走 IST=4 专用栈，禁止就地切换上下文）。
+- **`framework/mm/vma.rs`**：`range_is_mapped(start, end)`（注册区间全覆盖校验，允许 VMA 真子集/跨相邻 VMA，无空洞）；`Vma.numa` 字段 + `numa_policy_at` + `set_numa_policy_range`（G4①）。
+- **`framework/mm/numa.rs`**：`MPOL_*` 常量 + `NumaPolicy::from_linux_mode` + `NumaRangePolicy` + `effective_policy_for`（G4①）。
+- **`framework/proc/fd_alloc.rs`**：`FdSubsystem::UserFaultFd = 7`（`COUNT` 7 → 8）+ `FdPlan::USERFAULT_FD`（1200, 16）。
+- **服务侧接线**：`services/fs/file_ops.rs`（ioctl 路由）、`services/fs/io.rs`（read 路由）、`services/fs/open.rs`（close 回收）、`services/syscall/dispatch.rs`（`SYS_mbind` + `SYS_userfaultfd`）。
+- **kernel_test 扩展**（`framework/tests/test_mm.rs`，+3 并注册为 `mm::uffd` 组）：`lifecycle`（创建/握手/版本校验/ioctls 位图/释放）、`arg_validation`（对齐/模式/fd 校验分支）、`fault_flow`（注册 → 缺页入队 → 事件字段 → 提供页 → Ready → 物理页填充校验 → 注销回落 demand paging；临时安装测试地址空间）。
+
+**SIMPLIFIED 清单**：
+
+| 位置 | 简化点 / 影响面 / 扩展时机 |
+|---|---|
+| uffd 单挂起页模型 | 一个实例同时只跟踪一页；COPY/ZEROPAGE 必须命中该页否则 EINVAL；改 per-page 挂起表后可支持多页并发 |
+| uffd 事件队列定长（16）| 队列满则丢弃拦截（`NotRegistered`，交回内核 demand paging），不永久挂起缺页进程；扩容时可改动态队列 |
+| uffd 仅 MISSING 模式 | WP/MINOR 与 fork/remap/remove 事件未实装（`UFFDIO_API.features` 回填 0）|
+| uffd `O_NONBLOCK` | 接受但无行为差异（`read()` 无事件即阻塞）；引入 fd 级状态标志后按 `O_NONBLOCK` 返 EAGAIN |
+| mbind `MPOL_MF_MOVE` | 不迁移已触达页（无页迁移机制），不报错；PMM per-node 分区 + 页迁移后由分配路径消费策略 |
+| mbind 范围粒度 | 要求范围被 VMA 整体对齐覆盖（无 split_vma → 部分生效会被整体拒绝，见 `set_numa_policy_range` 文档）|
+
+**验证**：双架构 check 0w0e、build.sh all 5/5、clippy 3 维 0 warning、11 个核心/扩展审计脚本通过（`audit_comment_language` 修 1 处纯英文段落注释）、host-tests 全量、QEMU kernel_test 480/480（G4 新增 5 项：`mm::numa` 的 `vma_policy`/`linux_mode` + `mm::uffd` 的 `lifecycle`/`arg_validation`/`fault_flow`，475 → 480）。
+
+**批审查处置**（静态契约测试同步，本批修复）：`FdSubsystem::COUNT` 新增 UserFaultFd 后，`td15_fd_idx_of_test::test_timerfd_subsystem_in_fd_plan`（断言 COUNT == 7）与 `fd_allocator_unified_test::test_subsystem_count_is_five`（仅统计 0..4 变体，PidFd 起已过时）同步为 COUNT == 8 / 8 个变体，并对 `test_mm.rs` 早前遗留的未命中 `#[expect(unreadable_literal)]` 清理。
+
+### T1 实施记录（G5 多路复用）
+
+**实装项**（3 项，services 0 unsafe）：
+
+| 项 | 落点 | 机制/要点 |
+|---|---|---|
+| inotify_init | `services/syscall/dispatch.rs`（`SYS_inotify_init` 分支） | Linux 遗留接口 = `inotify_init1(0)`，直接委托既有 `sys_inotify_init1`（无新增实现，仅接线） |
+| ppoll | `services/fs/file_ops.rs`（`ppoll_syscall`） | `struct timespec` 解析（`tv_sec`/`tv_nsec` 范围校验 → EINVAL，越界指针 → EFAULT）+ 临时信号屏蔽字 + 委托 `poll_syscall` |
+| epoll_pwait | `services/sync/epoll.rs`（`epoll_pwait_syscall`） | 临时信号屏蔽字 + 委托 `epoll_wait_syscall`（校验与阻塞语义继承，timeout == -1 真阻塞） |
+
+**framework/services 机制扩展**：
+
+- **`framework/proc/signal.rs`**：新增 `SIGKILL`/`SIGSTOP` 编号常量 + `sanitize_blocked_mask(mask)`（剔除不可屏蔽信号位的**单点权威**实现）。`signal_pick_next` 判据为 `pending & !blocked`，屏蔽字含 SIGKILL/SIGSTOP 位会导致进程永久不可终止 — 任何写 `blocked_mask` 的路径必须过此函数。
+- **`framework/syscall/dispatch.rs`**：`sys_rt_sigprocmask` 原内联位运算 `& !((1u64 << 9) | (1u64 << 19))` 改为调用 `sanitize_blocked_mask`（消除与 services 新调用点的并行实现，符合"内核内部并行实现必须收敛为单一权威"硬约束）。
+- **`services/proc/signal.rs`**：新增 `with_temporary_sigmask(ptr, sigsetsize, f)`（ppoll / epoll_pwait 共用）——`sigmask == NULL` 透传；否则校验 `sigsetsize == 8`（EINVAL）、读用户掩码（EFAULT）、记录旧掩码 → `set_blocked_mask`（经 sanitize）→ 执行闭包 → 恢复旧掩码（错误路径同样恢复）。
+- **`services/syscall/dispatch.rs`**：`SYS_ppoll`/`SYS_inotify_init` 接入 `dispatch_fs`，`SYS_epoll_pwait` 接入 `dispatch_sync`（`dispatch_sync` 形参 `_a5` → `a5` 以取 `sigsetsize`）。
+
+**SIMPLIFIED 清单**：
+
+| 位置 | 简化点 / 影响面 / 扩展时机 |
+|---|---|
+| `ppoll_syscall` 超时 | 复用 `poll_syscall` 的单次扫描语义（既有 `SYS_poll` 现状：事件就绪即返回，否则立即 0，timeout 不生效）；解析出的毫秒仅下传。影响：无事件时不阻塞（与 `epoll_wait` 的 timeout > 0 同缺口）。扩展：hrtimer 定时唤醒接入 poll 等待队列后由 `poll_syscall` 消费 |
+| `with_temporary_sigmask` 原子性 | "设置 → 执行 → 恢复"顺序等效（非 Linux 的原子 `set_user_sigmask`）；等待期间屏蔽字保持替换值，故唤醒判定按新掩码。扩展：引入信号等待队列原子重挂时改为真原子替换 |
+
+**验证**：双架构 check 0w0e（x86_64/aarch64，含 kernel_test 维度）、clippy 3 维 0 warning、11 个核心审计脚本 rc=0（含 `audit_reverse_deps` 生产反向依赖 0/0）、host-tests 全量、`./ci/build.sh all` 5/5、QEMU kernel_test 484/484（G5 新增 `fs::multiplex` 4 项：`inotify_init_legacy`/`temporary_sigmask_swap`/`ppoll_arg_validation`/`epoll_pwait_validation`，480 → 484）。
+
+### T1 实施记录（G6 时间）
+
+**实装项**（3 项，services 0 unsafe）：
+
+| 项 | 落点 | 机制/要点 |
+|---|---|---|
+| settimeofday | `services/timer/clock.rs`（`settimeofday_syscall` + 策略核心 `apply_settimeofday`） | `tv == NULL` 按 Linux 语义返回 0（只设时区，本实装忽略时区）；`tv` 读取失败 / `tz` 非空不可读 → EFAULT；`tv_sec < 0` 或 `tv_usec` 越界 → EINVAL；euid != 0 → EPERM；委托 `framework::timer::TimeSyncSubsystem::set_time` 写墙钟基准 |
+| adjtimex | `services/timer/clock.rs`（`adjtimex_syscall` + 策略核心 `apply_adjtimex`） | 读入 `struct timex`（x86_64 ABI 208B，host gcc 实测 `sizeof`/`offsetof` 定为权威布局）；支持 `ADJ_OFFSET`/`ADJ_FREQUENCY`/`ADJ_SETOFFSET`/`ADJ_NANO`，其余 mode 位 → EINVAL；非特权 → EPERM；恒回填状态快照（`status` 按 `synced` 置 `STA_UNSYNC`）并返回 `TIME_OK` |
+| clock_nanosleep | `services/timer/clock.rs`（`clock_nanosleep_syscall` + 策略核心 `clock_nanosleep_wait_ns`） | `flags` 仅 `TIMER_ABSTIME`（否则 EINVAL）；`req` 为空 → EFAULT；`TIMER_ABSTIME` 下目标已过则等待 0；`rem` 按 Linux 语义不回写；睡眠委托 `framework::timer::sleep_ns` |
+
+**framework/services 机制扩展**：
+
+- **`framework/timer/sleep.rs`**：新增 `sleep_ns(total_ns)` — 睡眠策略的**单点权威**机制（`< 1ms` 走 hrtimer 时钟源忙等；`>= 1ms` 委托 `timer_sleep`，毫秒换算由原截断改为 `div_ceil` 向上取整以符合 POSIX「不低于请求时长」）。`framework/syscall/dispatch.rs::sys_nanosleep` 原内联的忙等/换算分支改为调用本函数（消除与 `SYS_clock_nanosleep` 的并行实现）。
+- **`framework/timer/time_sync.rs`**：`set_time` / `adj_freq` 补 `last_sync_time` 基准重置 — 原实装不更新基准，`get_adjusted_time_ns` 的 `elapsed` 会以启动时刻起算，频率/跳变调整后墙钟按全部 uptime 累积补偿（秒级偏离）。本批使该路径经 `settimeofday`/`adjtimex` 可达，故属必须修复项（回归 `time::clock::freq_baseline` 以 500ppm 上界覆盖）。
+- **`framework/timer/tick.rs`**：`on_timer_interrupt` 末尾接线 `timesync_subsystem().tick_adjust()` — 原 `tick_adjust` 全项目零调用 → `ADJ_OFFSET` 登记的渐进偏移（`offset_remaining`）永不被消耗，`adjtimex` 会是半成品。仅原子操作，无锁/无分配，可在 hardirq 上下文调用。
+- **`framework/syscall/info.rs`**：删除 `sys_gettimeofday` — 墙钟查询改为 services 策略后失去唯一调用方（避免死代码）。
+- **`services/timer/clock.rs`**：读路径统一为「原始 tick + timesync 机制偏移」（偏移初值 0，行为与旧实现一致）；`services/syscall/dispatch.rs` 的 `dispatch_proc` 接入 `SYS_settimeofday` / `SYS_adjtimex` / `SYS_clock_nanosleep` 三个分支。
+
+**SIMPLIFIED 清单**：
+
+| 位置 | 简化点 / 影响面 / 扩展时机 |
+|---|---|
+| `settimeofday_syscall` 的 `tz` | 仅做可读性校验后忽略（Linux 已废弃 timezone 语义，仅首次设置时消费）。影响：依赖时区偏移反推本地时间的旧程序拿不到时区信息。扩展：引入时区表后按 Linux 首次设置语义消费 |
+| `adjtimex_syscall` 字段面 | 不支持 `ADJ_MAXERROR`/`ADJ_ESTERROR`/`ADJ_STATUS`/`ADJ_TIMECONST`/`ADJ_TICK`（→ EINVAL），误差估计类回填字段恒 0，`precision` 固定 1us。影响：ntpd/chronyd 类调优与误差统计不可用。扩展：引入时钟误差估计（PLL/FLL 二阶环路）后按 Linux 语义补齐 |
+| `clock_nanosleep_syscall` 中断语义 | 不支持信号中断提前返回 `EINTR`（与 `SYS_nanosleep` 基线一致）。影响：等待期间收到信号不提前唤醒。扩展：睡眠机制接入可中断等待（信号投递唤醒阻塞队列）后统一补充 |
+| 特权判定 | `has_time_privilege()` 用 `euid == 0` 等价 `CAP_SYS_TIME`（与 `sethostname` 的 PWM 能力判定路径不同）。影响：细粒度 capability 场景下语义偏粗。扩展：PWM capability 全覆盖后改判 `CAP_SYS_TIME` |
+
+**验证**：双架构 check 0w0e（x86_64/aarch64，含 kernel_test 维度）、clippy 3 维 0 warning、13 个核心/扩展审计脚本 rc=0、host-tests 全量（99 个 test bin 全 ok）、`./ci/build.sh all` 5/5、QEMU kernel_test 490/490（G6 新增 `time::clock` 6 项：`gettimeofday_validation`/`settimeofday_apply`/`clock_nanosleep_policy`/`adjtimex_policy`/`freq_baseline`/`gradual_adjust`，484 → 490）。
+
+> 测试策略：kernel_test/host 双端无用户可写内存（低地址为内核恒等映射，真解引用会踩内核数据），故成功路径测**策略核心函数**（`apply_settimeofday`/`apply_adjtimex`/`clock_nanosleep_wait_ns`）+ **机制往返**（`set_time`/`adj_freq`/`adj_time`/`tick_adjust`），用户指针路径以越界地址（`>= USER_ADDR_MAX`）触发确定性 EFAULT。
+
+### T1 实施记录（G7 文件系统）
+
+**实现路径裁定**（AskUserQuestion，用户授权）：
+
+- **chroot / pivot_root = A 完整**——VFS 路径解析引入根前缀 + 单一权威路径归一化；`chroot` 校验目录/特权后设根；`pivot_root` 校验 `new_root`/`put_old` 关系后切根；**默认根 "/" 时行为与改造前逐字节等价**。
+- **setdomainname = 统一路线**——`sethostname` / `gethostname` / `uname` / `setdomainname` 四处主机名/域名全部收敛到 framework `UtsNamespace`（单一权威），不再各自硬编码。
+
+**实装项**（4 项，services 0 unsafe）：
+
+| 项 | services 落点 | 机制/要点 |
+|---|---|---|
+| chroot | `services/fs/path.rs`（`chroot_syscall`） | 指针校验（EFAULT）→ `CAP_SYS_ADMIN`（EACCES，SYSTEM 域 bit0，与 `mount`/`umount2` 先例一致）→ `vfs_stat_safe` 校验存在且为目录（ENOENT/ENOTDIR）→ `resolve_user_path` 归一化（超长 ENAMETOOLONG）→ `VFS_MANAGER.set_root(real_root)`（切根 + cwd 重置为视图根 "/"） |
+| pivot_root | 同上（`pivot_root_syscall` + `pivot_root_plan` 纯逻辑） | 两路径同前置校验；关系校验：`new_root` == 当前根 → EBUSY；`put_old` 非严格位于 `new_root` 之下 → EINVAL（`is_strictly_under` 路径边界感知，`"/"` 情形单独处理）；通过后 `set_root(new_root)`。`pivot_root_plan` 抽为纯函数便于直接验证 |
+| setdomainname | `services/proc/sysinfo.rs`（`setdomainname_syscall` + 共用核心 `set_uts_name_syscall`） | 与 sethostname 同构：`len == 0 || len > 63` → EINVAL；SYSTEM 域 UTS 名称设置位 → EACCES；读入 64B 缓冲（EFAULT）→ `uts_current().set_domainname(...)` |
+| execveat | `services/proc/exec.rs`（`execveat_syscall`） | `flags` 白名单（`AT_EMPTY_PATH` / `AT_SYMLINK_NOFOLLOW`，其余 EINVAL）；`dirfd != AT_FDCWD` → ENOTSUP；`AT_EMPTY_PATH` + 空 pathname → ENOTSUP（`fexecve` 语义未支持）；其余委托 `execve_syscall`（ABI 与执行语义单点复用） |
+
+**framework/services 机制扩展**：
+
+- **`framework/fs/vfs/vfs.rs`**：`VfsManager.root` 根前缀字段（`IrqSpinLock<[u8; VFS_MAX_PATH]>`，默认 "/"）+ `get_root`/`set_root`（切根并重置 cwd）+ **`normalize_view_path_into`（单一权威路径归一化）**——绝对路径以视图根为起点、相对路径以视图 cwd 为起点、`.` 忽略、`..` 上溯一级但**钳制在视图根内**（chroot 逃逸防护关键）、结果恒以 '/' 开头且无尾随 '/'；零堆分配（栈上 `[u8; VFS_MAX_PATH]`）；+ `resolve_view_path`（仅归一化, 供 `chdir` 保存视图路径 cwd）+ `resolve_user_path`（归一化 + 根前缀拼接, 默认根时逐字节等价旧行为）+ `truncate_to_parent`；`VfsSnapshot.root` 纳入快照。
+- **`framework/fs/vfs/path.rs`**：16 个接受用户路径的 VFS 入口统一改经 `resolve_user_path`；`vfs_set_cwd_internal` 改用 `resolve_view_path`（cwd 语义为视图路径——相对解析须以视图为基准, 且 `..` 已在此钳制）。
+- **`framework/fs/vfs/handle.rs`**：`vfs_open_internal` 入口归一化。
+- **`services/fs/file_handle.rs`**：`name_to_handle_at` 先 `resolve_user_path` 归一化再 `resolve_mount_fs`（host 源检查回归 `name_to_handle_at_uses_path_resolution` 同步断言两步入径）。
+- **`framework/proc/namespace.rs`**：`UtsNamespace.set_domainname`/`get_domainname`（65B 缓冲，未设置为空串）+ `UTS_DEFAULT_NODENAME` 常量（与 `UtsNamespace::new` 初值同源）+ `uts_current()`（**单一权威读取入口**：进程表 → `NamespaceSet` → uts；仅暂持 namespaces 锁取 Arc，UTS 字段锁在调用方按需获取以避免锁嵌套）。
+- **`framework/syscall/info.rs`**：`sys_uname` 的 nodename/domainname 改取 `uts_current()`（无进程上下文回退 `default_nodename()`），删除原硬编码 `"queenx-node"` / `"(none)"`。
+- **`services/proc/sysinfo.rs`**：`gethostname_syscall` 由恒返回字面量 `"localhost"` 改为读 UTS nodename（≤64B + NUL，按 `size` 截断）；`sethostname_syscall` 由"仅校验不存储"改为写入 UTS nodename。
+- **`framework/credo/capability.rs`**：新增命名常量 `SYSTEM_CAP_UTS_SETNAME = 1 << 9`（提取自原 sethostname 字面量 `9`）+ `credo::mod` 顶层 re-export；`sysinfo.rs` 特权判定由 `(pwm, 0, 9)` 改为 `(pwm, CAP_DOMAIN_SYSTEM, SYSTEM_CAP_UTS_SETNAME)`。
+- **`services/syscall/dispatch.rs`**：`SYS_chroot` / `SYS_pivot_root`（dispatch_fs）、`SYS_setdomainname` / `SYS_execveat`（dispatch_proc）接线。
+
+**SIMPLIFIED 清单**：
+
+| 位置 | 简化点 / 影响面 / 扩展时机 |
+|---|---|
+| `VfsManager.root` 为全局单例状态（非 per-process root） | 影响面：`chroot` 影响全系统视图（其他进程亦受新根约束）。扩展：引入 per-process root 或 mount namespace 时改进程级根字段 |
+| `pivot_root_syscall` 仅切根前缀 | 影响面：不摘除旧根挂载点（无 per-process mount namespace 可摘），`put_old` 仅参与关系校验、旧根经绝对路径仍可达。扩展：需要 Linux"旧根不可达"强语义时在 `VfsManager` 摘除旧根挂载点 |
+| `vfs_set_cwd_internal` 归一化失败静默保持原 cwd | 影响面：FFI 无返回值可上报，`chdir` 失败（超长/非 UTF-8）对用户不可见。扩展：需要 ENAMETOOLONG 上报时改签名为 `i32` |
+| `execveat_syscall` 不支持目录 fd 相对解析与空路径执行 | 影响面：依赖 `AT_EMPTY_PATH` 的程序（部分动态加载器 / 容器运行时）不可用。扩展：VFS 提供"目录 fd + 相对路径"解析机制后按 Linux 语义补齐 |
+
+**kernel_test 扩展**（+8，490 → 498）：`framework/tests/test_vfs.rs` 4 项（`test_resolve_default_root` / `test_resolve_dot_components` / `test_resolve_relative_to_cwd` / `test_resolve_with_root_prefix`，经 `resolve_is` 辅助断言归一化结果）+ `framework/tests/sys.rs` 4 项（`execveat_validation` / `setdomainname_validation` / `chroot_validation` / `pivot_root_validation`，注册于 `register_fs_tests`）。
+
+**host 链接修复（本批引入，非预存）**：
+
+- **现象**：`host-tests` 的 E-04 共享测试集（`e04_shared_runner_test`，debug 与 release 皆然）链接失败 —— `rust-lld: error: undefined symbol: _kernel_text_start / _kernel_text_end / USER_CR3_SAVE`。
+- **根因定位**：HEAD（88382323）release 链接正常 → 本批引入。逐文件回退二分：`framework/tests/` 三个文件单独回退均正常，回拷 `sys.rs` 即失败。`ar x` + `nm -C` 分析 release rlib 各 CGU：`cgu.05` 定义 `setrlimit_syscall` 且带 `U create_user_page_table` / `U USER_CR3_SAVE` / `U _kernel_text_*`（与 `user_proc::raw::*`、`mm::kpti`、`mm::vmm_x86_64` **CGU 共置**），`cgu.09` 定义 `execveat_syscall` 且引用 `kpti::KPTI_READY`/`kpti_init`。即：新增测试引用 `services::proc::sysinfo` / `services::proc::exec` 处理器 → rustc 把 arch 目标文件合并进同一 CGU → host 测试二进制需解析仅由链接脚本（`x86_64.ld`）与汇编（`isr.asm`）提供的符号。
+- **修复方案（用户裁定「还有更优方案吗」后选定）**：在 host-only 壳 crate `src/rust/src/lib.rs` 以 `#[cfg(feature = "host-test")] #[unsafe(no_mangle)]` 提供 4 个零值占位符号（`_kernel_text_start` / `_kpti_trampoline_end` / `_kernel_text_end`: `u8 = 0`；`USER_CR3_SAVE`: `AtomicU64::new(0)`）。**TCB（framework）零改动**、无需新增构建配置、对全部 host 测试二进制一次性生效，与"壳仅供 host 链接（裸机直接走 kernel crate + 链接脚本）"的既有设计意图一致。
+- **候选对比**：候选 A（framework 内 `#[cfg(feature = "host-test")]` 占位）需在 TCB 内混入 host 分支；候选 B（`host-tests` 用 `--defsym`）需逐测试目标配置链接参数、且 `--defsym` 无法表达 `AtomicU64` 类型的原子变量；候选 C（相关测试降级 QEMU-only）以损失 host 回归覆盖为代价。三者均劣于所选方案。**2026-09-17 审查修正**：对候选 A 的排除理由**不成立**——`framework/arch/x86_64/mod.rs:49-67`（E-04 `cpu_id`）早有同类 host 桩分支，且这正是"同源双编译"的实现方式；本批选占位壳的理由是"TCB 零改动 + 对全部 host 二进制一次生效"的**成本考量**，而非架构约束。
+- **残留风险（非结构根治）**：本方案在**符号级**确定性收敛（不再依赖 CGU 布局），但**类级根因未消除**——host 仍编译引用汇编/链接脚本符号的裸机 arch 模块、两侧无同步守卫、且"链接期硬失败"退化为"运行期静默错值"。三项残留 + 候选处置（审计守卫 / 结构根治 / 维持现状）见下方「预存登记（host 链接占位符号残留风险）」，**2026-09-17 审查裁定：结构根治（符号使用点级 host 桩化），壳占位随之删除**。
+- **附带影响**：`host-tests/tests/plan_b_inode_test.rs::name_to_handle_at_uses_path_resolution` 的源文本断言随 `file_handle.rs` 入径变化同步更新（`VFS_MANAGER.resolve_mount_fs(path)` → `resolve_mount_fs(` + 新增 `resolve_user_path(` 断言，契约强度不降）。
+
+**验证**：双架构 check 0w0e（x86_64/aarch64，含 `kernel_test` 维度）、clippy 3 维（pedantic lib / kernel_test / host-test）0 warning、`./ci/audit.sh quick` 全绿（含注释中文化 100%、services 0 unsafe、边界黑名单、双子树 deadlock 矩阵等；`audit_implicit_deps` 151 → 159，详见下方预存登记）、`./ci/build.sh all` 5/5、host-tests 全量（99 个 test bin 全 `ok` / 0 failed，含 E-04 共享测试集 371 项）、QEMU kernel_test 498/498（0 skipped）。
+
 ## 详情
 
 ### 预存登记（T1 G2 审查处置，2026-09-16）
@@ -309,6 +453,22 @@ T7 (预存登记)
 | uds_close 不释放 fd_alloc 位图 | 已修（本批） | 生产级 FD 泄漏：uds_close 仅清 UDS socket 槽位，从未调用 `fd_alloc::free_fd(Uds, fd)`（对照 pidfd close 释放模式）；UDS 容量 16，累计创建 16 次后位图永久耗尽 → uds_create 恒 NoMem。修复：uds_close 补 free_fd + listener 关闭时 pending client 位同步回收；kernel_test 回归 close_releases_bitmap，socketpair_rollback 显式补偿逻辑随修复移除 |
 | recvmsg/sendmsg_syscall 无 UDS 数据面分流 | 专项登记（后续工程） | 旧 recvmsg/sendmsg_syscall 处理完 cmsg 后直调 fw::recvmsg/sendmsg，fw 层 fd_type 只认 smoltcp 1/2 → UDS fd 返 EBADF（当前仅 cmsg 凭据回传逻辑可达 UDS）。G3 recvmmsg/sendmmsg 新路径已内建 UDS 分流；旧路径分流待单独工程处置（本批 §12.2 未顺手扩大） |
 | uds_sendto 无消息长度校验 | 已修（本批） | `uds_sendto` 未校验 `data.len() > UNIX_DGRAM_MAX`，超限直接 copy_from_slice 写 dgram_buf → 越界 panic 隐患。修复：入口补 `data.len() > UNIX_DGRAM_MAX → Invalid` 防护（与 uds_send_connected 同款）+ kernel_test 回归 sendto_oversize（超限拒绝 + 正常路径不受影响） |
+
+### 预存登记（T1 G4 批报告）
+
+| 项 | 裁决 | 说明 |
+|---|---|---|
+| `sys_set_mempolicy` 直接强转 Linux MPOL 编码 | 登记（后续专项，本批 §12.2 未扩大） | `framework/mm/numa.rs` 的 `sys_set_mempolicy(mode, nodemask)` 用 `NumaPolicy::from_u8(mode as u8)` 直接强转，而 Linux MPOL 编码与枚举判别值**不同**（`MPOL_PREFERRED = 1` vs `NumaPolicy::Bind = 1`、`MPOL_BIND = 2` vs `Interleave = 2`、`MPOL_INTERLEAVE = 3` vs `Preferred = 3`）→ 用户态传 1/2/3 全部错位。同批新增的 mbind 已走 `from_linux_mode` 正确映射（`NumaPolicy::from_u8` 文档已标注"禁止直接 from_u8"），两根路径编码处理不一致。同时 `sys_set_mempolicy` 的 `nodemask` 按值接收（Linux ABI 为指针 + maxnode），且无 `flags` 参数。修复需连同 G4 一词核对该 syscall 的 dispatch 调用形态（当前回退层调用点）。 |
+| `range_is_mapped` 允许 VMA 真子集（本批语义修正） | 已修（本批） | 原实现要求目标区间被**单个** VMA 完整包含（`vma.start > start` 或 `vma.end < end` 即 false）→ uffd 注册落在 VMA 内部的区间被拒（kernel_test `mm::uffd::fault_flow` 实测暴露）。修正为交叠长度累加（允许真子集 / 跨相邻 VMA，仅拒绝空洞），与 `set_numa_policy_range` 的"整 VMA 对齐"要求差异在文档注明（uffd 注册区间不携带 VMA 策略字段，无策略越界问题）。 |
+
+### 预存登记（T1 G7 批报告）
+
+| 项 | 裁决 | 说明 |
+|---|---|---|
+| `uname` 默认 nodename `"queenx-node"` → `"QueenX"`，domainname `"(none)"` → 空串 | 已随本批变更（行为变化登记） | UTS 收敛的直接后果：`uname`（硬编码 `"queenx-node"`）/ `gethostname`（硬编码 `"localhost"`）/ `sethostname`（仅校验不存储）三处各说各话，统一后以 `UtsNamespace` 初值 `UTS_DEFAULT_NODENAME = b"QueenX"` 为准。原 `"(none)"` 为 Linux 未设域名的显示占位，本批按"未设置即空串"处理。回退路径：需对齐 Linux `(none)` 字面量时在 `sys_uname` 回填占位串 |
+| `VfsManager.root` 全局单例根 + `pivot_root` 不摘除旧根 + `vfs_set_cwd_internal` 静默失败 | 登记（本批 SIMPLIFIED，见实施记录 SIMPLIFIED 清单） | 三项均为随 chroot/pivot_root 完整路径解析引入的显式简化，已在代码内以 `// SIMPLIFIED:` 标注具体简化点/影响面/扩展时机；待 per-process root 或 mount namespace 机制出现时统一升级 |
+| `audit_implicit_deps` 151 → 159（+8） | 登记（本批引入，扩展审计维度） | 增量全部来自用户路径归一化的必要调用点：`services/fs/path.rs` +5（chroot/pivot_root 的 `VFS_MANAGER.set_root`/`get_root`/`resolve_user_path`）、`services/fs/file_handle.rs` +2（`name_to_handle_at` 归一化）、`services/fs/file_ops.rs` +1（`resolve_user_path`）。该维度为**扩展审计**（非 CI 硬门槛），HEAD 基线已有 151 处预存 backlog，本批未做清减（§12.2 不顺手扩大） |
+| `audit_unwired_pub_fn` / `public_api_docs` / `implicit_deps` 大额预存 backlog | 登记（预存，非本批引入） | 经 HEAD worktree 对比确认与 T1 G4-G7 批次无关；待专项工程处置 |
 
 ### 预存登记（host 链接占位符号残留风险，T1 G7 批引入）
 

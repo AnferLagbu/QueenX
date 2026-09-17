@@ -33,6 +33,12 @@ pub const CAP_DOMAIN_RESERVED: u16 = 15;
 /// 自行设置自身 PWM (防任意提权).
 pub const SYSTEM_CAP_SET_PWM: u64 = 1 << 1;
 
+/// SYSTEM 域 bit9 — 设置 UTS 主机名/域名 (`sethostname` / `setdomainname`)
+///
+/// T1 G7: 补命名常量以消除 `sethostname_syscall` 中的字面量 `9`, 并供同级
+/// 的 `setdomainname_syscall` 复用 (语义与既有 sethostname 判定完全一致).
+pub const SYSTEM_CAP_UTS_SETNAME: u64 = 1 << 9;
+
 pub const FS_CAP_READ: u64 = 1 << 0;
 pub const FS_CAP_WRITE: u64 = 1 << 1;
 pub const FS_CAP_EXECUTE: u64 = 1 << 2;

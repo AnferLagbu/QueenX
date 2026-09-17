@@ -222,6 +222,16 @@ impl ExceptionHandler for PageFaultHandler {
                 PfResult::Unhandled => {
                     // demand paging 也未识别, 走原本的 SIGKILL 路径
                 }
+                PfResult::UffdWait => {
+                    // userfaultfd (T1 G4): 缺页已登记事件, 当前进程转入阻塞.
+                    // #PF 走 IDT IST=4 专用栈, 不可就地切换上下文 (会覆盖挂起的异常帧),
+                    // 因此仅标记 Blocked + 置 need_reschedule, 由下一次 tick 抢占切走;
+                    // 服务线程 UFFDIO_COPY 后 scheduler_unblock 唤醒本进程重入缺页.
+                    crate::framework::proc::scheduler_block(
+                        crate::framework::proc::BlockReason::WaitingForIo,
+                    );
+                    return RecoveryAction::Recovered;
+                }
             }
             return RecoveryAction::TerminateProcess(pid);
         }

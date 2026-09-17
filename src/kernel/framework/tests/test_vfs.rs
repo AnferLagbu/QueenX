@@ -1,5 +1,7 @@
 use super::check;
-use crate::framework::fs::vfs::types::{FsType, VfsDirEntry, VfsFileType, VfsSeekWhence};
+use crate::framework::fs::vfs::types::{
+    FsType, VFS_MAX_PATH, VfsDirEntry, VfsFileType, VfsSeekWhence,
+};
 use crate::framework::fs::vfs::vfs::VfsManager;
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
@@ -233,6 +235,217 @@ fn test_nestfs_fs_registered() -> TestResult {
     TestResult::Pass
 }
 
+// ============================================================================
+// T1 G5: 多路复用 (inotify_init / ppoll / epoll_pwait)
+// ============================================================================
+
+/// 越界用户指针 (`>= USER_ADDR_MAX`): 被 `check_user_buf` 拒绝而非解引用
+const BAD_USER_PTR: u64 = 0x8000_0000_0000_0000;
+
+/// `inotify_init` 遗留接口等价 `inotify_init1(0)`
+fn test_inotify_init_legacy() -> TestResult {
+    use crate::framework::fs::vfs::inotify::{IN_NONBLOCK, inotify_release, is_inotify_fd,
+        sys_inotify_init1};
+
+    let fd = sys_inotify_init1(0);
+    check!(fd > 0, "inotify_init1(0) 应返回有效 fd");
+    check!(is_inotify_fd(fd as i32), "fd 应为 inotify fd");
+    inotify_release(fd);
+
+    // flags 保留位非零 → EINVAL
+    check!(
+        sys_inotify_init1(IN_NONBLOCK | 0x10) == -22,
+        "非法 flags 应返回 EINVAL"
+    );
+    // IN_NONBLOCK 单独合法
+    let fd2 = sys_inotify_init1(IN_NONBLOCK);
+    check!(fd2 > 0, "IN_NONBLOCK 应为合法 flags");
+    inotify_release(fd2);
+    TestResult::Pass
+}
+
+/// 临时信号屏蔽字替换/恢复 (`ppoll` / `epoll_pwait` 共用策略)
+fn test_temporary_sigmask_swap() -> TestResult {
+    use crate::framework::proc::{
+        get_blocked_mask, process_get_current_pid, sanitize_blocked_mask, set_blocked_mask,
+    };
+    use crate::services::proc::signal::with_temporary_sigmask;
+
+    // sigmask == NULL: 直接执行, sigsetsize 不参与校验
+    check!(
+        with_temporary_sigmask(0, 99, || Ok(7)) == Ok(7),
+        "sigmask=NULL 应透传闭包结果"
+    );
+
+    // 不可屏蔽信号位被剔除
+    check!(
+        sanitize_blocked_mask(u64::MAX) == !((1u64 << 9) | (1u64 << 19)),
+        "SIGKILL/SIGSTOP 位应被剔除"
+    );
+
+    // 有当前进程时: 替换 → 闭包内可见新掩码 → 返回后恢复
+    let pid = process_get_current_pid();
+    if pid != 0 {
+        let original = get_blocked_mask(pid);
+        // sigmask 指针越界 → EFAULT (此处仅验证错误路径不污染原掩码)
+        let err = with_temporary_sigmask(BAD_USER_PTR, 8, || Ok(9));
+        check!(err.is_err(), "非法 sigmask 指针应返回错误");
+        check!(
+            get_blocked_mask(pid) == original,
+            "错误路径不应改变屏蔽字"
+        );
+    }
+    // sigsetsize != 8 → EINVAL (sigmask 非 NULL 时校验)
+    match with_temporary_sigmask(BAD_USER_PTR, 4, || Ok(9)) {
+        Err(crate::framework::syscall::Errno::EINVAL) => {}
+        _ => return TestResult::Fail("sigsetsize != 8 应返回 EINVAL"),
+    }
+    // 恢复现场 (测试自身不留残余屏蔽字)
+    if pid != 0 {
+        set_blocked_mask(pid, 0);
+    }
+    TestResult::Pass
+}
+
+/// `ppoll` 参数校验 (nfds == 0 短路 / sigsetsize 校验)
+fn test_ppoll_arg_validation() -> TestResult {
+    use crate::services::fs::file_ops::ppoll_syscall;
+
+    // nfds == 0 → 0 (无 fd 可扫)
+    check!(ppoll_syscall(0, 0, 0, 0, 0) == 0, "nfds=0 应返回 0");
+    // 非法 sigsetsize → EINVAL
+    check!(
+        ppoll_syscall(0, 0, 0, BAD_USER_PTR, 4) == -22,
+        "sigsetsize != 8 应返回 EINVAL"
+    );
+    // 越界 timespec 指针 → EFAULT
+    check!(
+        ppoll_syscall(0, 0, BAD_USER_PTR, 0, 0) == -14,
+        "非法 timespec 指针应返回 EFAULT"
+    );
+    TestResult::Pass
+}
+
+/// `epoll_pwait` 参数校验与 `epoll_wait` 委托 (sigmask == NULL)
+fn test_epoll_pwait_validation() -> TestResult {
+    use crate::services::sync::epoll::epoll_pwait_syscall;
+
+    // maxevents <= 0 → EINVAL (委托 epoll_wait 校验)
+    match epoll_pwait_syscall(-1, 0x1000, 0, 0, 0, 0) {
+        Err(crate::framework::syscall::Errno::EINVAL) => {}
+        _ => return TestResult::Fail("maxevents=0 应返回 EINVAL"),
+    }
+    // maxevents 合法 + epfd 非法 → EINVAL (framework 层 epfd <= 0)
+    match epoll_pwait_syscall(-1, 0x1000, 1, 0, 0, 0) {
+        Err(crate::framework::syscall::Errno::EINVAL) => {}
+        _ => return TestResult::Fail("epfd<0 应返回 EINVAL"),
+    }
+    // sigmask 越界指针 → 错误先于等待返回
+    check!(
+        epoll_pwait_syscall(-1, 0x1000, 1, 0, BAD_USER_PTR, 8).is_err(),
+        "非法 sigmask 指针应返回错误"
+    );
+    TestResult::Pass
+}
+
+// ============================================================================
+// T1 G7: VFS 根前缀归一化 (chroot / pivot_root 机制)
+// ============================================================================
+
+/// 局部实例归一化比对 (栈上缓冲, 零分配)
+fn resolve_is(mgr: &VfsManager, path: &str, expected: &str) -> bool {
+    let mut buf = [0u8; VFS_MAX_PATH];
+    mgr.resolve_user_path(path, &mut buf) == Some(expected)
+}
+
+/// 默认根: 绝对路径逐字节等价 (无点组件时与改造前一致)
+fn test_resolve_default_root() -> TestResult {
+    let mgr = VfsManager::new();
+    check!(mgr.get_root() == "/", "默认根应为 /");
+    check!(
+        resolve_is(&mgr, "/home/user/file.txt", "/home/user/file.txt"),
+        "默认根下绝对路径应原样返回"
+    );
+    TestResult::Pass
+}
+
+/// `.` / `..` 组件归一化 + 视图根内钳制 (逃逸防护)
+fn test_resolve_dot_components() -> TestResult {
+    let mgr = VfsManager::new();
+    check!(resolve_is(&mgr, "/a/b/../c", "/a/c"), ".. 应上溯一级");
+    check!(
+        resolve_is(&mgr, "/a/./b//c/", "/a/b/c"),
+        ". 与空组件应被忽略, 尾随 / 应去除"
+    );
+    check!(
+        resolve_is(&mgr, "/../../x", "/x"),
+        ".. 应钳制在视图根内 (不可逃逸)"
+    );
+    check!(resolve_is(&mgr, "/..", "/"), "根之上仍为根");
+    check!(resolve_is(&mgr, "/", "/"), "根路径应归一化为 /");
+    TestResult::Pass
+}
+
+/// 相对路径以视图 cwd 为基准
+fn test_resolve_relative_to_cwd() -> TestResult {
+    let mgr = VfsManager::new();
+    mgr.set_cwd("/home/user");
+    check!(
+        resolve_is(&mgr, "file.txt", "/home/user/file.txt"),
+        "相对路径应拼接 cwd"
+    );
+    check!(
+        resolve_is(&mgr, "../other", "/home/other"),
+        "相对路径 .. 应上溯 cwd 一级"
+    );
+
+    // chdir 经 resolve_view_path 存储 (视图路径, 无根前缀)
+    let mut buf = [0u8; VFS_MAX_PATH];
+    let view = mgr.resolve_view_path("/opt/./srv/../app", &mut buf);
+    check!(view == Some("/opt/app"), "resolve_view_path 应归一化视图路径");
+    TestResult::Pass
+}
+
+/// 根前缀: 视图路径 → 真实路径拼接 + 切根后 cwd 重置
+fn test_resolve_with_root_prefix() -> TestResult {
+    let mgr = VfsManager::new();
+    check!(
+        resolve_is(&mgr, "/tmp", "/tmp"),
+        "前置: 默认根下路径不变"
+    );
+
+    mgr.set_root("/jail");
+    check!(mgr.get_root() == "/jail", "切根后 root 应为 /jail");
+    check!(mgr.get_cwd() == "/", "切根后 cwd 应重置为 /");
+    check!(
+        resolve_is(&mgr, "/etc/passwd", "/jail/etc/passwd"),
+        "视图路径应拼接根前缀"
+    );
+    check!(
+        resolve_is(&mgr, "/../..", "/jail"),
+        "根前缀之外的 .. 不应逃逸 (钳制在视图根)"
+    );
+    check!(
+        resolve_is(&mgr, "/", "/jail"),
+        "视图根应映射为根前缀自身"
+    );
+
+    // 相对路径基于视图 cwd (cwd 为视图路径, 与根前缀无关)
+    mgr.set_cwd("/sub");
+    check!(
+        resolve_is(&mgr, "f", "/jail/sub/f"),
+        "切根后相对路径应为 根前缀 + 视图路径"
+    );
+
+    // 快照往返携带 root (barrier 回滚语义)
+    mgr.capture_snapshot();
+    mgr.set_root("/other");
+    check!(mgr.get_root() == "/other", "第二次切根应生效");
+    mgr.restore_from_snapshot();
+    check!(mgr.get_root() == "/jail", "快照恢复应还原根前缀");
+    TestResult::Pass
+}
+
 pub fn register_vfs_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -249,11 +462,21 @@ pub fn register_vfs_tests() {
             "fd_alloc_free": test_vfs_fd_alloc_free,
             "cwd": test_vfs_cwd,
             "snapshot_restore": test_vfs_snapshot_restore,
+            "resolve_default_root": test_resolve_default_root,
+            "resolve_dot_components": test_resolve_dot_components,
+            "resolve_relative_to_cwd": test_resolve_relative_to_cwd,
+            "resolve_with_root_prefix": test_resolve_with_root_prefix,
         },
         "vfs::backend": {
             "fs_backend_registered_make_inode": test_fs_backend_registered_make_inode,
             "ramfs_fs_open_via_backend_hook": test_ramfs_fs_open_via_backend_hook,
             "nestfs_fs_registered": test_nestfs_fs_registered,
+        },
+        "fs::multiplex": {
+            "inotify_init_legacy": test_inotify_init_legacy,
+            "temporary_sigmask_swap": test_temporary_sigmask_swap,
+            "ppoll_arg_validation": test_ppoll_arg_validation,
+            "epoll_pwait_validation": test_epoll_pwait_validation,
         },
     }
 }

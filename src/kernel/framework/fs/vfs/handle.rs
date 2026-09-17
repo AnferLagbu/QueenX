@@ -10,7 +10,8 @@ use super::api::{
 };
 use super::open_file_table::OPEN_FILE_TABLE;
 use super::types::{
-    KernelError, OpenFile, VFS_MAX_FDS, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
+    KernelError, OpenFile, VFS_MAX_FDS, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence,
+    VfsStat,
 };
 use super::vfs::VFS_MANAGER;
 use crate::framework::fd_notify;
@@ -31,6 +32,10 @@ use crate::framework::userptr::{UserReadPtr, UserRefMut, UserWritePtr};
 )]
 pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
 
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,

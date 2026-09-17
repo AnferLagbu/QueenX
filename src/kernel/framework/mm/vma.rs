@@ -15,6 +15,7 @@
 //! `MmStruct` 内部保护由 `spin::Mutex` 提供。
 //! `Vma` 中的物理页映射感知与 PMM 协作。
 
+use super::numa::NumaRangePolicy;
 use super::{PAGE_SIZE, PageFlags, VirtAddr};
 use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
@@ -173,6 +174,9 @@ pub struct Vma {
     pub mount_idx: Option<usize>,
     /// 内核策略标志 (madvice/mlock/fork 行为). 与 `PageFlags` 解耦.
     pub vm_flags: VmFlags,
+    /// VMA 级 NUMA 内存策略 (`mbind` 设置). `None` = 未设置, 回退进程级策略
+    /// (`NumaMempolicy`), 两级查询见 `framework::mm::numa::effective_policy_for`.
+    pub numa: Option<NumaRangePolicy>,
 }
 
 impl Vma {
@@ -188,6 +192,7 @@ impl Vma {
             file_pwm: 0,
             mount_idx: None,
             vm_flags: VmFlags::EMPTY,
+            numa: None,
         }
     }
 
@@ -203,6 +208,7 @@ impl Vma {
             file_pwm: 0,
             mount_idx: None,
             vm_flags: VmFlags::EMPTY,
+            numa: None,
         }
     }
 
@@ -233,6 +239,7 @@ impl Vma {
             file_pwm: pwm,
             mount_idx,
             vm_flags: VmFlags::EMPTY,
+            numa: None,
         }
     }
 
@@ -293,6 +300,87 @@ impl MmStruct {
     pub fn find_vma(&self, addr: usize) -> Option<Vma> {
         let vmas = self.vmas.lock();
         vmas.iter().find(|v| v.contains(addr)).cloned()
+    }
+
+    /// 判断 `[start, end)` 是否被现有 VMA 完整覆盖 (无空洞)
+    ///
+    /// `userfaultfd` 注册区间校验使用: 只有完整映射的范围才允许注册缺页拦截.
+    ///
+    /// 允许区间是某个 VMA 的真子集, 也允许跨多个相邻 VMA (目标区间本身无需对齐到 VMA
+    /// 边界) — 与 [`Self::set_numa_policy_range`] 的"整 VMA 对齐"要求不同: uffd 注册
+    /// 区间独立于 VMA 策略字段, 不存在"策略越界应用到整个 VMA"的问题.
+    pub fn range_is_mapped(&self, start: usize, end: usize) -> bool {
+        if end <= start {
+            return false;
+        }
+        let vmas = self.vmas.lock();
+        let mut covered = 0usize;
+        for vma in vmas.iter() {
+            if vma.end <= start || vma.start >= end {
+                continue;
+            }
+            covered += vma.end.min(end) - vma.start.max(start);
+        }
+        covered == end - start
+    }
+
+    /// 查询 `addr` 所在 VMA 的 VMA 级 NUMA 策略 (两级查询的 VMA 层)
+    ///
+    /// 返回 `None` 表示该 VMA 未设置 `mbind` 策略, 调用方应回退进程级策略
+    /// (`NumaMempolicy`). 两级组合见 `framework::mm::numa::effective_policy_for`.
+    pub fn numa_policy_at(&self, addr: usize) -> Option<NumaRangePolicy> {
+        let vmas = self.vmas.lock();
+        vmas.iter().find(|v| v.contains(addr)).and_then(|v| v.numa)
+    }
+
+    /// 设置 `[start, end)` 覆盖 VMA 的 VMA 级 NUMA 策略 (`mbind` 机制辅助)
+    ///
+    /// `policy` 为 `None` 表示清除 (Linux `MPOL_DEFAULT` 语义, 回退进程级策略).
+    /// 返回被设置的字节数.
+    ///
+    /// SIMPLIFIED: 要求 `[start, end)` 被现有 VMA 完整覆盖且不跨 VMA 边界 (无 split_vma);
+    /// 空洞或部分重叠一律 `EFAULT`, 不做拆分. 影响面: Linux "按 VMA 边界拆分后部分生效"
+    /// 的调用在此被整体拒绝. 何时需扩展: 引入 split_vma 后改为逐 VMA 拆分处理.
+    ///
+    /// # Errors
+    /// 当 `end <= start`, 或范围未被现有 VMA 完整覆盖时返回 `EFAULT`.
+    pub fn set_numa_policy_range(
+        &self,
+        start: usize,
+        end: usize,
+        policy: Option<NumaRangePolicy>,
+    ) -> Result<usize, crate::framework::syscall::Errno> {
+        use crate::framework::errno::Errno;
+
+        if end <= start {
+            return Err(Errno::EFAULT);
+        }
+
+        let mut vmas = self.vmas.lock();
+
+        // 第一遍: 校验完整覆盖 (避免部分 VMA 已改后再返回错误)
+        let mut covered = 0usize;
+        for vma in vmas.iter() {
+            if vma.end <= start || vma.start >= end {
+                continue;
+            }
+            if vma.start < start || vma.end > end {
+                return Err(Errno::EFAULT);
+            }
+            covered += vma.end - vma.start;
+        }
+        if covered != end - start {
+            return Err(Errno::EFAULT);
+        }
+
+        // 第二遍: 写入策略
+        for vma in vmas.iter_mut() {
+            if vma.start >= start && vma.end <= end {
+                vma.numa = policy;
+            }
+        }
+
+        Ok(covered)
     }
 
     /// 添加 VMA (合并相邻同类 VMA)
@@ -512,6 +600,7 @@ impl MmStruct {
                     file_pwm: vma.file_pwm,
                     mount_idx: vma.mount_idx,
                     vm_flags: vma.vm_flags,
+                    numa: vma.numa,
                 });
             }
 
@@ -529,6 +618,7 @@ impl MmStruct {
                 file_pwm: vma.file_pwm,
                 mount_idx: vma.mount_idx,
                 vm_flags: vma.vm_flags,
+                numa: vma.numa,
             });
 
             // 后段: [end, vma.end)
@@ -544,6 +634,7 @@ impl MmStruct {
                     file_pwm: vma.file_pwm,
                     mount_idx: vma.mount_idx,
                     vm_flags: vma.vm_flags,
+                    numa: vma.numa,
                 });
             }
         }
@@ -690,6 +781,7 @@ impl MmStruct {
             file_pwm: old_vma.file_pwm,
             mount_idx: old_vma.mount_idx,
             vm_flags: old_vma.vm_flags,
+            numa: old_vma.numa,
         };
         self.insert_vma(new_vma).map_err(|_| Errno::ENOMEM)?;
         Ok(new_start)
@@ -817,6 +909,7 @@ impl MmStruct {
                     file_pwm: vmas[i].file_pwm,
                     mount_idx: vmas[i].mount_idx,
                     vm_flags: vmas[i].vm_flags,
+                    numa: vmas[i].numa,
                 };
                 let new = Vma {
                     start,
@@ -829,6 +922,7 @@ impl MmStruct {
                     file_pwm: vmas[i].file_pwm,
                     mount_idx: vmas[i].mount_idx,
                     vm_flags: vmas[i].vm_flags.insert(flag),
+                    numa: vmas[i].numa,
                 };
                 vmas[i] = prefix;
                 vmas.insert(i + 1, new);
@@ -850,6 +944,7 @@ impl MmStruct {
                     file_pwm: vmas[i].file_pwm,
                     mount_idx: vmas[i].mount_idx,
                     vm_flags: vmas[i].vm_flags.insert(flag),
+                    numa: vmas[i].numa,
                 };
                 let suffix = Vma {
                     start: end_addr,
@@ -862,6 +957,7 @@ impl MmStruct {
                     file_pwm: vmas[i].file_pwm,
                     mount_idx: vmas[i].mount_idx,
                     vm_flags: vmas[i].vm_flags,
+                    numa: vmas[i].numa,
                 };
                 vmas[i] = new;
                 vmas.insert(i + 1, suffix);

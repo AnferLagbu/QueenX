@@ -13,6 +13,13 @@
 
 use crate::framework::syscall::Errno;
 
+/// `AT_FDCWD` — 相对路径基于当前工作目录 (Linux ABI)
+const AT_FDCWD: i32 = -100;
+/// `execveat` 标志: 空 `pathname` 表示执行 `dirfd` 指向的文件自身
+const AT_EMPTY_PATH: i32 = 0x1000;
+/// `execveat` 标志: 不跟随 `pathname` 末尾的符号链接
+const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
+
 /// execve(path, argv, envp) 系统调用策略
 ///
 /// `path` / `argv` / `envp` 均为用户空间指针 (u64 形式); `envp` 当前忽略
@@ -77,4 +84,47 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     } else {
         Ok(0)
     }
+}
+
+/// `execveat(dirfd, pathname, argv, envp, flags)` — `execve` 的目录 fd 相对版本
+///
+/// 仅支持 `dirfd == AT_FDCWD` (与 `utimensat` / `fchownat` 的 AT_FDCWD-only
+/// 现状一致); 参数与执行语义委托 [`execve_syscall`].
+///
+/// # Errors
+///
+/// - `flags` 含 `AT_EMPTY_PATH` / `AT_SYMLINK_NOFOLLOW` 之外的位 → `EINVAL`
+/// - `dirfd` 非 `AT_FDCWD` → `ENOTSUP`
+/// - `AT_EMPTY_PATH` 置位且 `pathname` 为空串 → `ENOTSUP`
+/// - 其余错误与 [`execve_syscall`] 一致 (`EFAULT` / `ENOENT`)
+///
+/// SIMPLIFIED: 不支持目录 fd 相对路径解析与空路径执行 (`fexecve` 语义);
+/// 影响面: 依赖 `AT_EMPTY_PATH` 的程序 (部分动态加载器 / 容器运行时) 不可用;
+/// 何时需扩展: VFS 提供"目录 fd + 相对路径"解析机制后按 Linux 语义补齐.
+pub fn execveat_syscall(
+    dirfd: i32,
+    pathname: u64,
+    argv: u64,
+    envp: u64,
+    flags: i32,
+) -> Result<usize, Errno> {
+    if flags & !(AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) != 0 {
+        return Err(Errno::EINVAL);
+    }
+    if dirfd != AT_FDCWD {
+        return Err(Errno::ENOTSUP);
+    }
+
+    // AT_EMPTY_PATH: 空 pathname 表示执行 dirfd 指向的文件自身 (本实装不支持)
+    if flags & AT_EMPTY_PATH != 0 {
+        let mut first_byte = 0u8;
+        if !crate::framework::syscall::api::read_struct_from_user(pathname, &mut first_byte) {
+            return Err(Errno::EFAULT);
+        }
+        if first_byte == 0 {
+            return Err(Errno::ENOTSUP);
+        }
+    }
+
+    execve_syscall(pathname, argv, envp)
 }

@@ -152,6 +152,14 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
         }
         return Err(Errno::EBADF);
     }
+    // T1 G4: userfaultfd 不经过 VFS fd_table, 由 uffd 机制自行回收
+    // (并唤醒阻塞在该 fd 上的缺页进程 / read() 线程).
+    if crate::framework::mm::is_uffd_fd(fd) {
+        if crate::framework::mm::uffd_release(fd) {
+            return Ok(0);
+        }
+        return Err(Errno::EBADF);
+    }
     let r = fw::vfs_close(fd as u32);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))

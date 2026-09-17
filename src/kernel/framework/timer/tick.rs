@@ -182,6 +182,10 @@ pub fn on_timer_interrupt() {
 
     // I-50: 统一入口 — tick 与 hrtimer 合并处理, 调用方不再需要单独调 hrtimer_run_queues.
     super::hrtimer::hrtimer_run_queues();
+
+    // D9: 时钟渐进调整 — 消耗 adjtimex(ADJ_OFFSET) 登记的待调整偏移 (斜率推进).
+    // 仅原子操作, 无锁/无分配, 因此可在 hardirq 上下文安全调用.
+    super::time_sync::timesync_subsystem().tick_adjust();
 }
 
 /// 获取当前 tick 数

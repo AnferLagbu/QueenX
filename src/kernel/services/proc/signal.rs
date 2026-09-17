@@ -570,6 +570,55 @@ pub fn rt_sigprocmask_syscall(
     }
 }
 
+/// 临时替换信号屏蔽字执行等待 (`ppoll` / `epoll_pwait` 共用策略, T1 G5)
+///
+/// Linux 语义: `sigmask` 非 NULL 时以原子方式替换当前屏蔽字, 等待结束后恢复
+/// 原值. 本实现以"设置 → 执行 → 恢复"的顺序等效实现: 等待期间屏蔽字保持替换
+/// 后的值, 故等待中被唤醒的信号按替换后的屏蔽字判定是否投递.
+///
+/// 不可屏蔽信号 (`SIGKILL`/`SIGSTOP`) 经
+/// `framework::proc::sanitize_blocked_mask` 剔除, 与 `rt_sigprocmask` 同款.
+///
+/// # Errors
+///
+/// - `sigsetsize != 8` (u64 尺寸的 `sigset_t`) → `EINVAL`
+/// - `sigmask` 指向的用户内存不可读 → `EFAULT`
+/// - 无当前进程 → `ESRCH`
+pub fn with_temporary_sigmask<T, F>(
+    sigmask_ptr: u64,
+    sigsetsize: u64,
+    f: F,
+) -> Result<T, crate::framework::syscall::Errno>
+where
+    F: FnOnce() -> Result<T, crate::framework::syscall::Errno>,
+{
+    use crate::framework::syscall::Errno;
+
+    // sigmask == NULL: 不替换屏蔽字 (sigsetsize 按 Linux 语义忽略)
+    if sigmask_ptr == 0 {
+        return f();
+    }
+    if sigsetsize != core::mem::size_of::<u64>() as u64 {
+        return Err(Errno::EINVAL);
+    }
+    let Some(new_mask) = crate::framework::syscall::api::read_u64_from_user(sigmask_ptr) else {
+        return Err(Errno::EFAULT);
+    };
+    let pid = crate::framework::proc::process_get_current_pid();
+    if pid == 0 {
+        return Err(Errno::ESRCH);
+    }
+
+    let old_mask = crate::framework::proc::get_blocked_mask(pid);
+    crate::framework::proc::set_blocked_mask(
+        pid,
+        crate::framework::proc::sanitize_blocked_mask(new_mask),
+    );
+    let result = f();
+    crate::framework::proc::set_blocked_mask(pid, old_mask);
+    result
+}
+
 /// P1-I-45: sigaltstack 系统调用安全代理
 ///
 /// 验证: 调用方身份 (current pid 必然存在) + 委托到 framework `sys_sigaltstack`.

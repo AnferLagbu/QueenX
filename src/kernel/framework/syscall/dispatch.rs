@@ -403,10 +403,6 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
 // 时间
 // ============================================================================
 
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
     if req == 0 || !raw::check_user_ptr(req) {
         return Errno::EINVAL.as_ret();
@@ -431,16 +427,8 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
         return 0;
     }
 
-    if total_ns < 1_000_000 {
-        let start = crate::framework::timer::hrtimer_clock_read();
-        let target = start + total_ns;
-        while crate::framework::timer::hrtimer_clock_read() < target {
-            core::hint::spin_loop();
-        }
-    } else {
-        let total_ms = total_ns / 1_000_000;
-        let _ = crate::framework::timer::sleep::timer_sleep(total_ms);
-    }
+    // 睡眠策略统一由 timer 机制持有 (sleep_ns), 与 SYS_clock_nanosleep 共用
+    crate::framework::timer::sleep_ns(total_ns);
 
     let _ = rem;
     0
@@ -531,8 +519,10 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
             SIG_SETMASK => new_set,
             _ => return Errno::EINVAL.as_ret(),
         };
-        let updated = updated & !((1u64 << 9) | (1u64 << 19));
-        crate::framework::proc::set_blocked_mask(pid, updated);
+        crate::framework::proc::set_blocked_mask(
+            pid,
+            crate::framework::proc::sanitize_blocked_mask(updated),
+        );
     }
 
     0

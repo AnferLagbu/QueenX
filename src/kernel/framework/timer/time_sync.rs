@@ -386,6 +386,12 @@ impl TimeSyncSubsystem {
         let clamped = ppb.clamp(-MAX_FREQ_ADJUST_PPM * 1000, MAX_FREQ_ADJUST_PPM * 1000);
         self.adj.freq_adj_ppb.store(clamped, Ordering::Release);
         self.adj.total_freq_adj.store(clamped, Ordering::Relaxed);
+        // 频率补偿以"本次调整时刻"为基准重算 (get_adjusted_time_ns 用
+        // last_sync_time 计算 elapsed); 不更新基准会把启动以来的全部 elapsed
+        // 都按新频率补偿, 导致读出的墙钟时间持续偏离.
+        self.adj
+            .last_sync_time
+            .store(Self::read_clock_ns(), Ordering::Release);
         true
     }
 
@@ -406,6 +412,8 @@ impl TimeSyncSubsystem {
         };
         self.adj.total_offset_adj.store(diff, Ordering::Release);
         self.adj.offset_remaining.store(0, Ordering::Release);
+        // 跳变后重置频率补偿基准 (同 adj_freq: 避免旧 elapsed 被重复补偿)
+        self.adj.last_sync_time.store(current, Ordering::Release);
         self.adj.synced.store(true, Ordering::Release);
         true
     }

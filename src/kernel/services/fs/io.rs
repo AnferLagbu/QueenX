@@ -76,6 +76,10 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             count as usize,
         ));
     }
+    // T1 G4: userfaultfd 事件读取 (无事件时阻塞等待缺页通知)
+    if crate::framework::mm::is_uffd_fd(fd) {
+        return crate::services::mm::uffd::read_event(fd, buf, count);
+    }
     // 常规 VFS 读 (vfs_read 将数据写入调用方地址空间的 buf)
     ret_to_result(i64::from(crate::framework::fs::api::vfs_read(
         fd as u32,

@@ -52,7 +52,7 @@ fn test_fd_plan_constants_match_td01() {
 
 #[test]
 fn test_subsystem_count_is_five() {
-    // 5 个子系统: Smoltcp/Uds/EventFd/SignalFd/Inotify
+    // 8 个子系统: Smoltcp/Uds/EventFd/SignalFd/Inotify/TimerFd/PidFd/UserFaultFd
     let src = read_fd_alloc();
     // 提取 FdSubsystem 枚举的变体数
     let enum_start = src.find("pub enum FdSubsystem").expect("FdSubsystem 定义");
@@ -61,12 +61,14 @@ fn test_subsystem_count_is_five() {
     let body = &src[enum_start..enum_end];
     let variants: Vec<&str> = body
         .lines()
-        .filter(|l| l.trim().ends_with("= 0,") || l.trim().ends_with("= 1,")
-            || l.trim().ends_with("= 2,") || l.trim().ends_with("= 3,")
-            || l.trim().ends_with("= 4,"))
+        .filter(|l| {
+            let t = l.trim();
+            t.ends_with(',') && t.contains(" = ") && t.split(" = ").nth(1)
+                .is_some_and(|v| v.trim_end_matches(',').parse::<u8>().is_ok())
+        })
         .collect();
-    assert_eq!(variants.len(), 5,
-        "FdSubsystem 应有 5 个变体 (Smoltcp/Uds/EventFd/SignalFd/Inotify), 实为 {}",
+    assert_eq!(variants.len(), 8,
+        "FdSubsystem 应有 8 个变体 (Smoltcp/Uds/EventFd/SignalFd/Inotify/TimerFd/PidFd/UserFaultFd), 实为 {}",
         variants.len());
 }
 

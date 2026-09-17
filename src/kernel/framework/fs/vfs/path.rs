@@ -6,9 +6,16 @@
 //! (`#[no_mangle]` 全局符号不受模块位置影响).
 
 use super::api::{ptr_to_str, split_parent_name, with_cstr};
-use super::types::VfsStat;
+use super::types::{VFS_MAX_PATH, VfsStat};
 use super::vfs::VFS_MANAGER;
 use crate::framework::userptr::{UserRefMut, UserWritePtr};
+
+// ============================================================================
+// 用户路径归一化 (chroot / pivot_root 根语义的统一入口)
+//
+// 所有接受用户路径的 VFS 入口先经 `resolve_user_path` 转真实路径, 再做
+// 挂载解析. 归一化失败按各入口既有失败码返回 (不引入新错误语义).
+// ============================================================================
 
 // ============================================================================
 // VFS 核心接口 (内部)
@@ -22,6 +29,10 @@ use crate::framework::userptr::{UserRefMut, UserWritePtr};
 )]
 pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -1,
@@ -65,6 +76,10 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
 )]
 pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
 
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
@@ -96,6 +111,10 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
 )]
 pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -1,
@@ -125,6 +144,10 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
     if st.is_null() {
         return -1;
     }
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     let mut st_ref = unsafe { UserRefMut::new(st) };
 
@@ -159,7 +182,15 @@ pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64)
 #[unsafe(no_mangle)]
 pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
     let path = ptr_to_str(path);
-    VFS_MANAGER.set_cwd(path);
+    // cwd 保存视图路径 (归一化但不加根前缀): 相对路径解析须以视图为基准,
+    // 且 `..` 已在此钳制在视图根内.
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    // SIMPLIFIED: 归一化失败 (超长/非 UTF-8) 时静默保持原 cwd — FFI 无返回值
+    // 可上报; 影响面: `chdir` 失败对用户不可见; 何时需扩展: 需要 ENAMETOOLONG
+    // 上报时改签名为 i32.
+    if let Some(view) = VFS_MANAGER.resolve_view_path(path, &mut pbuf) {
+        VFS_MANAGER.set_cwd(view);
+    }
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
@@ -268,6 +299,10 @@ pub extern "C" fn vfs_mkdir(path: *const u8, pwm: u64) -> i32 {
 )]
 pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -1,
@@ -295,6 +330,10 @@ pub extern "C" fn vfs_chown(path: *const u8, owner_pwm: u64, pwm: u64) -> i32 {
 )]
 pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -1,
@@ -324,6 +363,10 @@ pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64,
 )]
 pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -1;
+    };
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -1,
@@ -358,6 +401,14 @@ pub extern "C" fn vfs_link(oldpath: *const u8, newpath: *const u8, pwm: u64) -> 
     if old_path.is_empty() || new_path.is_empty() {
         return -22;
     }
+    let mut old_buf = [0u8; VFS_MAX_PATH];
+    let mut new_buf = [0u8; VFS_MAX_PATH];
+    let (Some(old_path), Some(new_path)) = (
+        VFS_MANAGER.resolve_user_path(old_path, &mut old_buf),
+        VFS_MANAGER.resolve_user_path(new_path, &mut new_buf),
+    ) else {
+        return -2;
+    };
     let pwm_eff = pwm;
 
     let (_, _, fs_opt) = match VFS_MANAGER.resolve_mount_fs(old_path) {
@@ -384,6 +435,11 @@ pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) 
     if tgt.is_empty() || link_path.is_empty() || tgt.len() >= 128 {
         return -22;
     }
+    // 仅 linkpath 是路径 (target 是链接内容, 不参与解析)
+    let mut link_buf = [0u8; VFS_MAX_PATH];
+    let Some(link_path) = VFS_MANAGER.resolve_user_path(link_path, &mut link_buf) else {
+        return -2;
+    };
     let pwm_eff = pwm;
 
     let (_, _, fs_opt) = match VFS_MANAGER.resolve_mount_fs(link_path) {
@@ -415,6 +471,10 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
     if buf.is_null() || bufsiz == 0 {
         return -22;
     }
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(p) = VFS_MANAGER.resolve_user_path(p, &mut pbuf) else {
+        return -2;
+    };
 
     let (_, _, fs_opt) = match VFS_MANAGER.resolve_mount_fs(p) {
         Some(r) => r,
@@ -439,6 +499,14 @@ pub extern "C" fn vfs_readlink(path: *const u8, buf: *mut u8, bufsiz: u64, pwm: 
 pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
     let old_path = ptr_to_str(old);
     let new_path = ptr_to_str(new);
+    let mut old_buf = [0u8; VFS_MAX_PATH];
+    let mut new_buf = [0u8; VFS_MAX_PATH];
+    let (Some(old_path), Some(new_path)) = (
+        VFS_MANAGER.resolve_user_path(old_path, &mut old_buf),
+        VFS_MANAGER.resolve_user_path(new_path, &mut new_buf),
+    ) else {
+        return -1;
+    };
 
     let (old_mount_idx, _old_fs_type, old_fs_opt) = match VFS_MANAGER.resolve_mount_fs(old_path) {
         Some(r) => r,
@@ -508,6 +576,10 @@ pub extern "C" fn vfs_setxattr_internal(
     } else {
         &[]
     };
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -2;
+    };
 
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
@@ -547,6 +619,11 @@ pub extern "C" fn vfs_getxattr_internal(
     // SAFETY: 调用方保证 value 指向有效的 size 字节缓冲区
     let buf = unsafe { core::slice::from_raw_parts_mut(value, size as usize) };
 
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -2;
+    };
+
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -2, // ENOENT
@@ -583,6 +660,11 @@ pub extern "C" fn vfs_listxattr_internal(
     // SAFETY: 调用方保证 list 指向有效的 size 字节缓冲区
     let buf = unsafe { core::slice::from_raw_parts_mut(list, size as usize) };
 
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -2;
+    };
+
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
         None => return -2, // ENOENT
@@ -605,6 +687,11 @@ pub extern "C" fn vfs_listxattr_internal(
 pub extern "C" fn vfs_removexattr_internal(path: *const u8, name: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let name = ptr_to_str(name);
+
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+        return -2;
+    };
 
     let (mount_idx, _fs_type, fs_opt) = match VFS_MANAGER.resolve_mount_fs(path) {
         Some(r) => r,
