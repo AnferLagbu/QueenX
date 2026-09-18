@@ -800,6 +800,18 @@ T7 (预存登记)
 
 > **本批唯一挂起项**：B-4 是 A-2 之外唯一的"待 T3"项——与 C-1 接线子清单联动（若定型为缺陷，C-1 新增 1 项「ramfs 路径入口补 `validate_path` 调用」；若定型为冗余，则 C-1 不动、本项转为可删候选）。
 
+> **裁定七已解（本轮实读证据链；reviewer 第四轮「先解」要求）**：逐条核对 `validate_path` 的三项检查在**下层**是否已等价提供：
+>
+> | `validate_path` 检查项 | 下层实测 | 是否等价 |
+> |---|---|---|
+> | **空** | framework [`RamFsData::open`](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/ramfs/ramfs_data.rs#L481-L484)（L482 `if path.is_empty() { return None }`）＋ [`resolve_path`](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/ramfs/ramfs_data.rs#L354-L365)（去前导 `/`、跳过空段） | ✅ **等价** |
+> | **长度**（`VFS_MAX_PATH`） | 路径以 `[u8; VFS_MAX_PATH]`（[vfs/types.rs:16](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/types.rs#L16) ＝ 128）承载，转换处 `bytes.len().min(VFS_MAX_PATH - 1)`（[vfs.rs:53](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/vfs.rs#L53)/137/546/574）**按构造截断** | ⚠️ **不等价**（截断 vs `NameTooLong` 报错；语义差异） |
+> | **NUL** | 路径以 **NUL 结尾语义**承载（`position(\|&b\| b == 0)`，[vfs.rs:553](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/vfs.rs#L553)）⇒ 嵌入式 NUL 在边界被截断 | ✅ 等效处理（非显式报错） |
+>
+> **调用面实测**：services `SafeRamFs`（`GLOBAL_RAMFS` / `global()`）**在 `src/` 下无生产调用者**（全仓仅 host-tests [td18_fs_kernel_error_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/td18_fs_kernel_error_test.rs) 对该文件做**源文本断言**，非调用）；`split_path` / `validate_path` 自身更是全仓零引用 ⇒ 其形态是「**未被调用的辅助**」，**不是**「被调用却缺失校验」。
+>
+> **结论**：**非安全缺陷**（活路径的空校验由 framework 提供；长度由 VFS 缓冲区按构造约束；NUL 由缓冲区语义处理）⇒ 上轮「阻塞一个可能的安全缺陷判定」**已解除**。定型**倾向「冗余」**（附两条保留：① 长度校验**语义不等价**（截断 vs 报错）⇒ 将来若接线 services 代理入口须补长度校验并登记契约；② 删除属**安全面**，按**裁定六**「必须上报」⇒ **不自主删**，**待 reviewer 授权**）。本项保留在待裁（三态＝安全面待 T3），**三字段见 B-5**。
+
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
 **C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**
