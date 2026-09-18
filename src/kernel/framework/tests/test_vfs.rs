@@ -267,6 +267,54 @@ fn test_open_populates_fd_metadata() -> TestResult {
     TestResult::Pass
 }
 
+/// T5 乙批（C-1 证据补齐）: `set_fd` 接线的**下游链路**验证 —— 证明修的是下游
+/// 行为, 而非只把元数据填进了表。
+///
+/// 下游消费者: `services::mm::mmap::fd_to_inode_id` 是 `mmap_syscall` 文件映射
+/// 的**唯一** inode 来源, 取 0 时直接返回 `EBADF` (mmap.rs:134-137);
+/// `fd_to_mount_idx` 为其挂载点来源。二者均经 `VFS_MANAGER.get_fd_info` /
+/// `get_fd_mount_idx` 读本接线填充的同一行 fd 表条目。
+fn test_fd_to_inode_id_downstream() -> TestResult {
+    use crate::framework::fs::ramfs::{RAMFS_DATA, init as ramfs_init};
+    use crate::framework::fs::{VFS_MANAGER, api};
+    use crate::services::mm::mmap::{fd_to_inode_id, fd_to_mount_idx};
+
+    crate::services::fs::init();
+    ramfs_init();
+    // 真实挂载入口 (挂 trait object); 已挂载时返回负值, 忽略.
+    let _ = api::vfs_mount_safe("/", "ramfs");
+
+    let created = {
+        let mut ramfs = RAMFS_DATA.lock();
+        ramfs.create_file("/", "fd_down_t", 0)
+    };
+    let Some(node_id) = created else {
+        return TestResult::Fail("create_file 失败");
+    };
+    check!(node_id != 0, "inode 编号不应为 0");
+
+    let fd = api::vfs_open_safe("/fd_down_t", 0, 0);
+    check!(fd >= 0, "open /fd_down_t 应成功");
+
+    // 下游消费者 1: mmap 文件映射的 inode 来源 — 未接线时恒 0 ⇒ mmap 恒 EBADF
+    check!(
+        fd_to_inode_id(fd) == node_id,
+        "fd_to_inode_id 应为真实 inode (未接线时恒 0 ⇒ mmap 文件映射恒 EBADF)"
+    );
+    // 下游消费者 2: mmap 的挂载点反查 — 未接线时 path 为空 ⇒ None
+    check!(
+        fd_to_mount_idx(fd).is_some(),
+        "fd_to_mount_idx 应可反查挂载点 (未接线时为 None)"
+    );
+    check!(
+        VFS_MANAGER.get_fd_info(fd as usize).is_some(),
+        "fd 表条目应存在"
+    );
+
+    check!(api::vfs_close_safe(fd as u32) == 0, "close 应成功");
+    TestResult::Pass
+}
+
 fn test_nestfs_fs_registered() -> TestResult {
     crate::services::fs::init();
     let Some(fs) = crate::framework::fs::vfs::backend_trait::nestfs_fs() else {
@@ -514,6 +562,7 @@ pub fn register_vfs_tests() {
             "fs_backend_registered_make_inode": test_fs_backend_registered_make_inode,
             "ramfs_fs_open_via_backend_hook": test_ramfs_fs_open_via_backend_hook,
             "open_populates_fd_metadata": test_open_populates_fd_metadata,
+            "fd_to_inode_id_downstream": test_fd_to_inode_id_downstream,
             "nestfs_fs_registered": test_nestfs_fs_registered,
         },
         "fs::multiplex": {
