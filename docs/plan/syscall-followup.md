@@ -106,7 +106,7 @@ T7 (预存登记)
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
 - [X] T1：R2 未实装 SYS_* 实装（G1-G7 全部完成，见下方 T1 实施记录）
 - [X] T4：R3 零引用 pub mod 7 项核实（2026-09-18 完成，处置＝删除，见下方 T4 实施记录）
-- [ ] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项全量扫描已登记，**经 reviewer 四轮复核后按修订口径重划**（**T5 内**：删候选 **0** / 硬件原语完整性保留 **43**（仅登记）/ 待裁 **47**，T5 内合计 **90** ＝ 438 − 1（`write_log_line` 已试删删除）− 8 − 339；**接线 8 与未来功能 339 已按第四轮裁定一移出 T5**），未改代码；**A-2 已退回重做并重新定型**（判据升格三合一；原 23 项＝11 留 + 4 安全面 + 8 退桶；**第三轮**：`ct_eq_salt`/`ct_eq_password` ⇒ 族残缺入完整性保留 41→43，ramfs `split_path`/`validate_path` ⇒ 挂起待 T3 结论入 B-4 待裁 35→37，安全面桶清零），**施工方式＝逐项试删 + 既有五条门槛（不立项新工具）**，任一维硬失败即回退；**A-2 11 项试删已由 reviewer 第三轮授予开工**（解锁五条 ①②③④⑤ 已逐条核销），执行约束＝逐项独立提交 / 每项跑五门槛全量 / **QEMU boot 硬闸门** / ramfs 2 项不入本批；**第四轮开出后逐项复核实测发现 9 项判据不成立**（6 项「同族兄弟在用」＝**族残缺**形态、2 项台账 ② 判据事实错误、1 项无等价公共入口）⇒ 按裁定**退桶 9 项入待裁**（删候选 11 → **2**，待裁 37 → **46**），本轮仅 `write_log_line` / `format_duration` 2 项进入试删——`write_log_line` 五门槛 **5/5 全过** ⇒ **已删除**（commit `23681a14`；R1 438 → **437**），`format_duration` 判据待补 ⇒ **退桶**（A-6）⇒ **删候选清零（裁定四.1 达成）**；**T5-B 待裁 47 归零已完成**（B-5 归零表：13 等路线图 ⇒ 未来功能 / 32 判据待补 ⇒ 完整性保留 / 2 安全面待 T3 留待裁 ⇒ 桶数六次修订＝删候选 **0** / 完整性保留 **75** / 待裁 **2**，T5 内合计 **77**；裁定四.2、四.3 达成）；**T5-C 五条关闭验收（全部达成 ⇒ 本项置 `[X]`）**：① 删候选清零 ✅（`write_log_line` 已删；`format_duration` 判据待补退桶、ramfs 2 项试删门槛失败退桶）、② 待裁带三字段 ✅、③ 桶数闭合（**437**）+ 转移可追 ✅、④ **审计噪音治理已落地**（B09-21：台账 **B-6** 机器可读区块 437 项 + 脚本 fail-closed 降噪，实测 HIGH=0 / INFO=437）✅、⑤ 双向引用 ✅。见「T5 实施记录」「T5 全量甄别台账」）
+- [X] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项全量扫描已登记，**经 reviewer 四轮复核后按修订口径重划**（**T5 内**：删候选 **0** / 硬件原语完整性保留 **43**（仅登记）/ 待裁 **47**，T5 内合计 **90** ＝ 438 − 1（`write_log_line` 已试删删除）− 8 − 339；**接线 8 与未来功能 339 已按第四轮裁定一移出 T5**），未改代码；**A-2 已退回重做并重新定型**（判据升格三合一；原 23 项＝11 留 + 4 安全面 + 8 退桶；**第三轮**：`ct_eq_salt`/`ct_eq_password` ⇒ 族残缺入完整性保留 41→43，ramfs `split_path`/`validate_path` ⇒ 挂起待 T3 结论入 B-4 待裁 35→37，安全面桶清零），**施工方式＝逐项试删 + 既有五条门槛（不立项新工具）**，任一维硬失败即回退；**A-2 11 项试删已由 reviewer 第三轮授予开工**（解锁五条 ①②③④⑤ 已逐条核销），执行约束＝逐项独立提交 / 每项跑五门槛全量 / **QEMU boot 硬闸门** / ramfs 2 项不入本批；**第四轮开出后逐项复核实测发现 9 项判据不成立**（6 项「同族兄弟在用」＝**族残缺**形态、2 项台账 ② 判据事实错误、1 项无等价公共入口）⇒ 按裁定**退桶 9 项入待裁**（删候选 11 → **2**，待裁 37 → **46**），本轮仅 `write_log_line` / `format_duration` 2 项进入试删——`write_log_line` 五门槛 **5/5 全过** ⇒ **已删除**（commit `23681a14`；R1 438 → **437**），`format_duration` 判据待补 ⇒ **退桶**（A-6）⇒ **删候选清零（裁定四.1 达成）**；**T5-B 待裁 47 归零已完成**（B-5 归零表：13 等路线图 ⇒ 未来功能 / 32 判据待补 ⇒ 完整性保留 / 2 安全面待 T3 留待裁 ⇒ 桶数六次修订＝删候选 **0** / 完整性保留 **75** / 待裁 **2**，T5 内合计 **77**；裁定四.2、四.3 达成）；**T5-C 五条关闭验收（全部达成 ⇒ 本项置 `[X]`）**：① 删候选清零 ✅（`write_log_line` 已删；`format_duration` 判据待补退桶、ramfs 2 项试删门槛失败退桶）、② 待裁带三字段 ✅、③ 桶数闭合（**436**）+ 转移可追 ✅、④ **审计噪音治理已落地**（B09-21：台账 **B-6** 机器可读区块 **436** 项 + 脚本 fail-closed 降噪，实测 HIGH=0 / INFO=**436**）✅、⑤ 双向引用 ✅；**甲批 C-1（接线批次）**：8 项处置完毕（1 接线落地 + 7 退未来功能，见 **B-8**），R1 **437 → 436**。见「T5 实施记录」「T5 全量甄别台账」）
 - [ ] T6-T7：登记排后（TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
@@ -629,9 +629,9 @@ T7 (预存登记)
 | 删候选 | **0** | 四次修订 2 − 试删删除 1（`write_log_line`）− 判据待补退桶 1（`format_duration`，A-6）⇒ **清零（裁定四.1 达成）** | ✅ 是 |
 | 完整性保留（原「硬件原语完整性保留」） | **75** | 43（41 硬件原语＝x86_64 侧 31 + aarch64 侧 10，优先级裁定见 A-1；+ 安全面「族残缺」档 2 `ct_eq_salt`/`ct_eq_password`）+ **32**（**六次修订**：B-5.2 判据待补补齐后定桶，G1-G8 明细见 B-5.2） | ✅ 是（**仅登记**，不施工） |
 | 待裁 | **2** | **六次修订**：47 − 13（B-5.1 等路线图 ⇒ 未来功能）− 32（B-5.2 ⇒ 完整性保留）= **2**（`split_path`/`validate_path`，**安全面待 T3**）；**三字段齐备，无裸待裁（裁定四.2 达成）** | ✅ 是（**裁定四.2 验收**） |
-| **T5 内合计** | **77** | **算术闭合**：0 + 75 + 2 = 77 ＝ 437 − 8（接线移出）− 352（未来功能移出）；六次修订前为 90（＝438−1−8−339） | — |
-| — 接线 | 8 | `fs/vfs/handle.rs` 1 + `fs/vfs/vfs.rs` 1 + `irqline.rs` 1 + `frame.rs` 1 + `proc/fd_table.rs` 4（逐项独立判定） | ❌ **否**——移出，另立「**功能接线批次**」（与 T3 联动） |
-| — 未来功能（DECISION-052 第三层） | **352** | 339（来源合成：原「接线」剩余 134 ＝142−8，排除法所得，非实测 + 原「预留」205）+ **13**（**六次修订**：B-5.1 等路线图转入——CET 5 / NUMA 5 / PCID 1 / IOMMU-DMAR 2） | ❌ **否**——移出，归 **DECISION-052 第三层** |
+| **T5 内合计** | **77** | **算术闭合**：0 + 75 + 2 = 77 ＝ 436 − 0（接线已清零）− 359（未来功能）；六次修订前为 90（＝438−1−8−339）；**甲批 C-1 后为 436 − 0 − 359**（见 B-8） | — |
+| — 接线 | **0** | 8 项**已全部处置**（**甲批 C-1**，见 B-8）：1 项接线落地（`set_fd`）+ 7 项「仅缺此半」判据不成立 ⇒ 转「未来功能」 | ❌ **否**——已完结（原「功能接线批次」，与 T3 联动） |
+| — 未来功能（DECISION-052 第三层） | **359** | 339（来源合成：原「接线」剩余 134 ＝142−8，排除法所得，非实测 + 原「预留」205）+ **13**（**六次修订**：B-5.1 等路线图转入——CET 5 / NUMA 5 / PCID 1 / IOMMU-DMAR 2）+ **7**（**甲批 C-1**：判据不成立退桶，见 B-8.2） | ❌ **否**——移出，归 **DECISION-052 第三层** |
 
 > **裁定一（reviewer 第四轮，T5 范围）**：删候选＝逐项试删（**仅冗余档**）+ 五门槛全量 + 独立提交可回退；完整性保留＝**不施工**，登记为「已分类」供审计引用；待裁＝逐项补「等待原因 + 解锁条件 + 责任方」，**禁裸待裁**；**接线 / 未来功能移出 T5**（接线是「加功能」、甄别是「清死代码」，混桶会让 T5 永远无法关闭且归因困难；339 项属未集成子系统，本不属甄别范畴）。
 
@@ -868,16 +868,16 @@ T7 (预存登记)
 | 删候选 | **0** | ✅ 是 | 无变化（A-2 已清零，裁定四.1 达成） |
 | 完整性保留（原「硬件原语完整性保留」） | **75** | ✅ 是（**仅登记**，不施工） | 43（A-1：41 硬件原语 + 2 族残缺）+ **32**（B-5.2 判据待补定桶，G1-G8 明细见上） |
 | 待裁 | **2** | ✅ 是 | 47 − **13**（B-5.1 等路线图 ⇒ 未来功能）− **32**（B-5.2 ⇒ 完整性保留）= **2**（B-5.3 ramfs，**三字段齐备，无裸待裁**） |
-| **T5 内合计** | **77** | — | 0 + 75 + 2 ＝ 90 − 13；且 ＝ 437 − 8 − 352 |
-| — 接线 | 8 | ❌ 否（移出，另立「功能接线批次」，与 T3 联动） | 无变化 |
-| — 未来功能（DECISION-052 第三层） | **352** | ❌ 否（移出） | 339 + **13**（B-5.1 CET 5 / NUMA 5 / PCID 1 / IOMMU-DMAR 2，逐项见 B-5.1） |
-| 合计 | **437** | — | ＝ 0 + 75 + 2 + 8 + 352（**算术闭合**；438 − 1（`write_log_line` 已删除）） |
+| **T5 内合计** | **77** | — | 0 + 75 + 2 ＝ 436 − 0（**甲批 C-1 后接线清零**）− 359（未来功能，352 + 甲批退桶 7）；六次修订前为 90 ＝ 437 − 8 − 352 |
+| — 接线 | **0** | ❌ 否（**甲批 C-1 处置完毕**，见 B-8） | 8 → **0**（1 接线落地 `set_fd` + 7 判据不成立退未来功能） |
+| — 未来功能（DECISION-052 第三层） | **359** | ❌ 否（移出） | 352 + **7**（甲批 C-1 判据不成立退桶，B-8.2） |
+| 合计 | **436** | — | ＝ 0 + 75 + 2 + 0 + 359（**算术闭合**；438 − 1（`write_log_line` 已删除）− 1（`set_fd` 已接线 ⇒ 不再零引用）） |
 
 > **B-5 结论**：**待裁 47 已全部归零为三态**（13 等路线图 / 32 判据待补已定桶 / 2 安全面待 T3）⇒ **裁定四.2「无裸待裁」达成**、**裁定四.3「桶数算术闭合 + 转移可逐项追」达成**。**剩余阻塞（不改判据、只待授权 / 排期）**：① ramfs 2 项**待 reviewer 授权**方可进删候选（裁定六安全面）；② 潜在新增删候选（`pci_scan` / aarch64 诊断 2 项 / `format_duration` 若 `core::fmt` 判等价）**已按裁定六上报，未自主处置**；③ `umount_devpts` 误调 `mount_devpts` 缺陷已登记（G5），修正随 VFS mount 集成。
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为 T5 甄别**已分类**的零引用 pub fn 全集（＝ R1 实测输出，**437 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为 T5 甄别**已分类**的零引用 pub fn 全集（＝ R1 实测输出，**436 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
 > 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。
 
@@ -1036,7 +1036,6 @@ src/kernel/framework/fs/vfs/handle.rs::vfs_seek_safe
 src/kernel/framework/fs/vfs/inotify.rs::inotify_fd_readable
 src/kernel/framework/fs/vfs/inotify.rs::inotify_stats
 src/kernel/framework/fs/vfs/vfs.rs::get_fs_name
-src/kernel/framework/fs/vfs/vfs.rs::set_fd
 src/kernel/framework/idt/handlers.rs::category_count
 src/kernel/framework/idt/idt.rs::set_exception_handler
 src/kernel/framework/idt/idt.rs::spurious_irq_count
@@ -1321,17 +1320,110 @@ src/kernel/services/wasm/interpreter.rs::register_host_function
 src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 <!-- audit-classified-end -->
 
+#### B-7. T5-C 关闭记录（裁定四「五条验收」核销）
+
+> 本段为 [audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) B09-06 / B09-21 所引 **B-7** / **B-7.2** 的落点（此前该锚点缺失 ⇒ 已就地补建）。
+
+| # | 验收条 | 状态 | 证据 |
+|---|---|---|---|
+| ① | 删候选桶清零 | ✅ | `write_log_line` 已试删删除（commit `23681a14`）；`format_duration` 判据待补退桶；ramfs 2 项试删**门槛失败**退桶 |
+| ② | 待裁 47 项全部带三字段、无裸待裁 | ✅ | **B-5** 归零表（13 等路线图 / 32 判据待补定桶 / 2 安全面待 T3） |
+| ③ | 桶数算术闭合 + 转移可逐项追 | ✅ | 6 次修订后 **437**（见 B-5）；**甲批 C-1 后 436**（见 **B-8.4**） |
+| ④ | 审计噪音治理落地 | ✅ | 见 **B-7.2** |
+| ⑤ | 文档同步：R1 状态行 + 与 audit-fix-09 **D-4** 双向引用 | ✅ | 本台账状态行 + **B-6** / **B-8** 与 [audit-fix-09](audit-fix-09-hard-rules-deadcode.md) B09-06 / B09-21 互引 |
+
+**B-7.1 T5 置 `[X]`**：五条全部达成 ⇒ 状态行 `- [X] T5`。**QEMU boot 通过**为该判定的硬闸门（本项改动为文档 + `set_fd` 接线，QEMU boot 与 kernel_test 均须实跑，见 B-8.5）。
+
+**B-7.2 审计噪音治理（B09-21）落地**：`scripts/audit_unwired_pub_fn.py` 新增 `load_classified_set()` —— 读本台账 **B-6** 区块作「已知分类」集合，**未分类 ⇒ HIGH / 已分类 ⇒ INFO**（零引用**事实**保留），退出码仅计未分类；**fail-closed 六条失败路径**（区块缺失 / 标记缺失 / 解析失败等）实测**全部回落空集 ⇒ 全量报 HIGH**。正向实测（甲批后）：**HIGH = 0 / INFO = 436（＝ R1 435 + R4 1）/ CRITICAL = 7（R2 预存未接线 syscall，与本批无关）**。
+
+#### B-8. 甲批 C-1 接线批次记录（8 项：1 落地 + 7 退桶）
+
+> 来源：reviewer **甲批开工单｜C-1 接线 8 项**（委托批次内自主执行，只报批次结果）。
+> 核心约束：每项须**指明具体调用点**——「仅缺此半」是**待验证断言**；**找不到调用点即退「未来功能」，禁止为接线造无意义调用**。
+
+**B-8.1 接线落地（1 项）**
+
+| 项 | 调用点（函数 / 路径） | 改动 | 生效证据（测试） |
+|---|---|---|---|
+| `framework/fs/vfs/vfs.rs::set_fd` | `vfs_open_internal` **两分支**（`fs_open` 命中 / `CREAT` 命中）；live 路径 `open_syscall` / `openat_syscall` → `vfs_open_safe` → `vfs_open_internal` | [handle.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L70-L76)：`set_fd_handle` 之后补 `VFS_MANAGER.set_fd(fd_idx, node_id, 0, flags, pwm, file_type, path)`；CREAT 分支同款（[L101-L103](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L101-L103)） | kernel_test `vfs::backend::open_populates_fd_metadata`（[test_vfs.rs](file:///home/anfer/Code/QueenX/src/kernel/framework/tests/test_vfs.rs#L227-L266)） |
+
+**「缺此半」的具体后果（逐条可在源码定位，故调用点成立）**：
+
+| 受害调用点 | 未接线时的行为 |
+|---|---|
+| [file_ops.rs:298-305](file:///home/anfer/Code/QueenX/src/kernel/services/fs/file_ops.rs#L298-L305) `flock_syscall`（以 `fd_table[fd].node_id` 作 ino） | 所有 fd 的 ino 恒 **0** ⇒ flock 全部落到同一 ino |
+| [mmap.rs:44-51](file:///home/anfer/Code/QueenX/src/kernel/services/mm/mmap.rs#L44-L51) `fd_to_inode_id` | 恒得 **0** ⇒ 文件映射分支恒 `EBADF` |
+| [mmap.rs:54-59](file:///home/anfer/Code/QueenX/src/kernel/services/mm/mmap.rs#L54-L59) `fd_to_mount_idx` | `path` 为空 ⇒ `find_mount` 反查失败 ⇒ VMA 无 `mount_idx` |
+| [handle.rs:143-180](file:///home/anfer/Code/QueenX/src/kernel/framework/fs/vfs/handle.rs#L143-L180) `vfs_close_internal` | pcache 失效按 `node_id = 0` 执行 ⇒ 关联 inode 缓存页不释放 |
+
+**B-8.2 判据不成立 ⇒ 转「未来功能」（7 项；三字段）**
+
+| 文件 / 项 | 等待原因（判据不成立的事实） | 解锁条件 | 责任方 |
+|---|---|---|---|
+| `framework/fs/vfs/handle.rs::vfs_get_fd_handle` | 同能力 `VFS_MANAGER.get_fd_handle` 的调用点**全在同模块内直呼 manager**，无独立调用点；非 FFI 面（无 `no_mangle`） | 出现**跨模块** FD→句柄访问需求（如 services 侧 fd 查询代理） | reviewer 排期 |
+| `framework/irqline.rs::is_registered` | `IrqLine` 类型全库 **0 构造点**（在用者仅 `idt.rs::dispatch_irq`）⇒ 无对象可查 | 中断处理切到 `IrqLine` 抽象（`services/driver/mod.rs:21` 已登记的路线图项） | 路线图（driver 中断抽象） |
+| `framework/frame.rs::set_meta` | 读侧 `Frame::meta()` 同样**零引用**，无消费方；文档自述「预留元数据槽位」 | services 侧需给页帧挂自定义状态（回写 / 迁移标记） | reviewer 排期 |
+| `framework/proc/fd_table.rs::get_handle_id` | `Process::fd_table` **从未被填充**（`FdTable::alloc_fd` 全库零引用；在用者仅 `proc.fd_table.init()` + procfs `get_all_fds()`）⇒ 恒 `None` | per-process fd 表落地（登记分册 9 **B09-10**；现为全局 fd 命名空间） | 路线图 B09-10 |
+| 同上 `::is_cloexec` | 同上 ⇒ `cloexec[]` 恒 `false` | 同上 + FD_CLOEXEC 语义落地（见 B-8.3） | 路线图 B09-10 |
+| 同上 `::set_cloexec` | 同上 ⇒ 写入**无任何消费方**的死结构 | 同上 | 路线图 B09-10 |
+| 同上 `::get_cloexec_fds` | 同上 ⇒ 恒空集 | 同上 | 路线图 B09-10 |
+
+> 结论：本组若「补调用」＝**往死结构写值**（写入的 `cloexec[]` 无消费方、`get_cloexec_fds()` 无读者），按批次规则退桶，**不硬接线**。
+
+**B-8.3 安全面单列：FD_CLOEXEC 全链路缺失（fd 跨 exec 可见性）**
+
+> reviewer 第二节要求：先判定 `execve` 路径的**实际行为**，再决定是「补接线」还是「缺陷修复」。**实测结论＝「没接于是不生效」，且不是单点漏接，而是整条语义链缺失**。
+
+| 链路环节 | 实测（源码定位） | 缺口后果 |
+|---|---|---|
+| 标记来源 `fcntl(F_SETFD, FD_CLOEXEC)` | [framework/syscall/io.rs:108-124](file:///home/anfer/Code/QueenX/src/kernel/framework/syscall/io.rs#L108-L124)：`F_GETFD => 0`、`F_SETFD => 0` **静默返回成功** | 用户设 CLOEXEC **无任何存储**，且**不报错**（虚假成功） |
+| 打开时携带 `O_CLOEXEC` | `services/fs/open.rs:44 pub const O_CLOEXEC` 全库**零引用** | open 无法携带 cloexec |
+| 存储位 | live fd 表 `VFS_MANAGER.fd_table: [VfsFile; VFS_MAX_FDS]` 的 `VfsFile` **无 cloexec 字段** | 无处存放标记 |
+| exec 时关闭 | `services/proc/exec.rs` `execve_syscall` / `execveat_syscall` → `proc_ops.rs::proc_exec_replace`（transactional：加载 ELF → `replace_user_space` → argv → 信号复位）**全程不触碰 fd 表** | exec 后**所有 fd 原样保留** |
+| fd 命名空间 | fd 表为**全局**（`VFS_MANAGER` 单例 + 全局 `next_fd` 计数器） | fd 跨进程可见（POSIX per-process fd 语义未隔离） |
+
+**判定**：⇒ **不是「C-1 少接一项」，而是 FD_CLOEXEC / per-process fd 语义整体未落地**（安全面）。
+**为何不由本批修复**：修复须先有 per-process fd 表（B09-10）+ `fcntl` F_SETFD 真实实现 + `VfsFile` 增字段 + exec 关闭遍历 —— **跨 4 个模块的架构改动**，属 **TCB / VFS 核心面**，**超出批次授权**；且此处亦**无「能力等价的公共入口」**可依（三合一判据不成立）。
+**回归测试说明（如实登记）**：reviewer 要求「exec 后 cloexec fd 不可见」的回归测试 —— 因标记**当前无处可设**（`F_SETFD` 不存储、无 `cloexec` 字段），该测试**在现有结构上无法构造**（无 API 能产生一个「已标记 CLOEXEC 的 fd」）；若强行写「未标记 fd 仍可见」的断言，通过也不构成对缺陷的覆盖。故本项**按缺陷单列上报，不附伪测试**。
+**上报**：按批次「涉安全面」条款单列于此，**未自主施工**。
+**解锁条件**：per-process fd 表（B09-10）落地后，`FdTable` 的 cloexec 4 项即为该表的**自然消费方**（届时从「未来功能」转「接线」），并可在该结构上补 exec 关闭回归测试。
+**责任方**：reviewer（是否立项 per-process fd 表 + FD_CLOEXEC 语义）。
+
+**B-8.4 R1 清单数与算术闭合**
+
+- `set_fd` 接线后**不再零引用** ⇒ 从 **B-6** 区块移除 1 行 ⇒ **R1 437 → 436**（N = 1）。
+- 实测 `python3 scripts/audit_unwired_pub_fn.py`：`已分类清单 436 项` / `[HIGH] R1 未分类零引用 pub fn: 0 项` / 汇总 `CRITICAL=7（R2 预存未接线 syscall，与本批无关）/ HIGH=0 / WARN=0 / INFO=436`。
+- 桶数：`0 + 75 + 2 = 77 ＝ 436 − 0（接线清零）− 359（未来功能 352 + 甲批退桶 7）`（**算术闭合**）。
+
+**B-8.5 门槛（五条全量）**
+
+| # | 门槛 | 命令 | 结果 |
+|---|---|---|---|
+| 1 | 双架构构建 + host-tests + link | `./ci/build.sh all` | ✅ `x86_64: build passed` / `aarch64: build passed` / `Host tests: passed` / `x86_64: link passed` |
+| 2 | 三审计（含 clippy 三维） | `./ci/audit.sh quick` | ✅ 全绿 — `TCB 边界: services/ 零 unsafe` / `I1-I6` 全 PASS / `SAFETY 注释覆盖 1924/1924 (100%)` 缺漏 0 / `I-43` ✓ / `I-16` ✓ / `I-07 PASSED: 0 C 风格残留` / `TD-22 注释中文化 100% (0 违规)` / 双架构 check passed / `clippy pedantic (lib)` + `kernel_test 维` + `host-test 维` 三维 passed / `━━━ audit (quick) 完成 ━━━` |
+| 3 | host-tests | `make test-host` | ✅ `RESULT: ALL 364 TESTS PASSED (8 skipped)`（E-04 共享运行器；含新增 `vfs::backend::open_populates_fd_metadata`） |
+| 4 | QEMU `kernel_test` | `make test-unit` | ✅ `ALL TESTS PASSED (QEMU exit: 33)` |
+| 5 | QEMU boot（硬闸门） | `./scripts/qemu_boot_test.sh x86_64` | ✅ `找到里程碑: 'VFS ready'` / `完整启动成功! 进入 Ring 3 启动 init 进程` / `QEMU 真实启动测试: 1/1 通过` |
+
+> 日志：`build/log/jia_batch_c1_gates_final.log`（**最终树全量**，`RC=0`；mtime 20:53 晚于全部改动文件 20:41）。
+
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
 **C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**
 
-| 文件 | 项 | 缺的半 |
-|---|---|---|
-| `framework/fs/vfs/handle.rs` | `vfs_get_fd_handle` | FD→句柄访问器，同文件 `vfs_*` 入口已在用 |
-| `framework/fs/vfs/vfs.rs` | `set_fd` | FD 表写入口，与在用 `get_fd` 成对 |
-| `framework/irqline.rs` | `is_registered` | IRQ 线注册状态查询，与 `register_irq` 成对 |
-| `framework/frame.rs` | `set_meta` | 页帧元数据写入口，与 `get_meta` 成对 |
-| `framework/proc/fd_table.rs` | `get_handle_id` `is_cloexec` `set_cloexec` `get_cloexec_fds`（4） | FD 表 cloexec 面，exec 路径需用 |
+> **甲批 C-1 施工结果（逐项见 **B-8**）**：8 项**全部处置完毕 ⇒ 接线桶清零**（1 项接线落地 + 7 项转「未来功能」）。
+> 判据「仅缺此半」经源码复核，**7 项不成立**：同族入口本身也未接线（`IrqLine` 全库 0 构造点）/ 读侧同样零引用（`Frame::meta`）/ 底层结构从未被填充（`Process::fd_table`）/ 无独立调用点（同模块内直呼 manager）。
+> 按批次规则「**找不到调用点 ⇒ 退未来功能，禁止为接线造无意义调用**」处置。
+
+| 文件 | 项 | 缺的半 | 甲批评定（调用点核定） | 去向 |
+|---|---|---|---|---|
+| `framework/fs/vfs/vfs.rs` | `set_fd` | FD 表写入口，与在用 `get_fd` 成对 | **成立**：调用点＝`vfs_open_internal` 两分支（live 路径 `open/openat_syscall → vfs_open → vfs_open_internal`）。缺它则 `get_fd_info`（flock 的 ino 识别 / `fd_to_inode_id` mmap-by-fd）恒得 node_id 0，`get_fd_mount_idx` 因 path 空而反查失败，close 时 pcache 按 node 0 失效 | ✅ **已接线**（B-8.1） |
+| `framework/fs/vfs/handle.rs` | `vfs_get_fd_handle` | FD→句柄访问器，同文件 `vfs_*` 入口已在用 | 不成立：同能力（`VFS_MANAGER.get_fd_handle`）全部调用点在同模块内直呼 manager，无独立调用点；非 FFI 面（无 `no_mangle`） | 未来功能（B-8.2） |
+| `framework/irqline.rs` | `is_registered` | IRQ 线注册状态查询，与 `register_irq` 成对 | 不成立：`IrqLine` 类型全库 **0 构造点**（在用者仅 `dispatch_irq`），查询状态无对象可查 | 未来功能（B-8.2） |
+| `framework/frame.rs` | `set_meta` | 页帧元数据写入口，与 `get_meta` 成对 | 不成立：读侧 `Frame::meta()` 同样**零引用**，无消费方；文档自述为「预留元数据槽位」 | 未来功能（B-8.2） |
+| `framework/proc/fd_table.rs` | `get_handle_id` `is_cloexec` `set_cloexec` `get_cloexec_fds`（4） | FD 表 cloexec 面，exec 路径需用 | 不成立：`Process::fd_table` **从未被填充**（`alloc_fd` 零引用，全库仅 `init()` + procfs `get_all_fds()`）⇒ `cloexec[]` 恒 false、`get_cloexec_fds()` 恒空集；且 live fd 表（`VFS_MANAGER.fd_table`）无 cloexec 字段。接线＝往死结构写值 | 未来功能 + **安全面单列**（B-8.3） |
+
+**C-1 施工记录（甲批）**：见 **B-8**。
 
 **C-2 原 142 项全量（逐项保留可追溯；除 C-1 外均归「未来功能」）**
 
@@ -1429,7 +1521,7 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 | `services/barrier/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
 | `services/proc/{canary,elf,shadow_stack,signal}.rs` / `timer/*` / `net/unix.rs` / `wasm/*` | 12 | 查询面 + safe 代理壳 + wasm 运行时 API 面 |
 
-#### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定；**第 13 条为六次修订最新口径**）
+#### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定 + 甲批；**第 14 条为甲批 C-1 最新口径**）
 
 1. **元信息已补（E.1）**：① 判定工具＝`scripts/audit_unwired_pub_fn.py` R1（`rg -c -w` 文本并集，声明侧无 cfg 感知）；② 判定构建维＝**无单一构建维**，未做逐维交集 ⇒ 原「零引用」口径不可复核。③④⑤ 见上「方法与限制」。
 2. **桶边界已重划并重算（E.2 + 三处核对① + 第二轮二次修订 + 第三轮三次修订 + 第四轮四次修订，暂定值）**：删候选 70 → 23 → **11** → **2**（二次修订：安全面 4 转 A-3、判据不成立 8 退桶入 B-3；**四次修订：试删前逐项复核退桶 9 入待裁，见 A-5 / 12**）；**硬件原语完整性保留 41 → 43**（x86_64 侧 31 + aarch64 侧 10，优先级＝**硬件原语保留 > aarch64 门控 > 删候选**；三次修订并入安全面**族残缺**档 2 ＝`ct_eq_salt`/`ct_eq_password`）；接线 142 → **8**（逐项独立判定）；未来功能 **339**（**来源合成，非实测**：原接线剩余 134 ＝142−8 排除法 + 原预留 205）；待裁 21 → 27 → 35 → **37** → **46**（三次修订并入安全面**待 T3 结论**档 2 ＝`split_path`/`validate_path`，B-4；**四次修订并入 A-5 退桶 9**）。**原「安全面待确认 4」桶三次修订后清零**（三档分流完毕）。合计 438（算术已核对闭合：2+43+8+339+46）。三处核对 ②③ 的来源标记已就地标注。**五次修订（删候选清零）与六次修订（B-5 待裁归零）为最新口径，见 12 / 13**：删候选 **0** / 完整性保留 **75** / 待裁 **2** / 接线 8 / 未来功能 **352**，合计 **437**（`write_log_line` 已删除）——**以 13 为准，本条保留历次修订轨迹**。
@@ -1454,6 +1546,12 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
     - **判据待补 32 项 ⇒ 补齐后定桶「完整性保留」**（G1-G8 八组，判据 + 三字段见 B-5.2）：G1 aarch64 门控诊断 2 / G2 feature 门控 4（`atomic_stats`）/ G3 机制·安全·TCB 3 / G4 驱动·统计·诊断 API 面 4 / G5 FS mount-unmount 面 + Plan B FD 表 9 / G6 族残缺 6 / G7 无等价入口 3 / G8 无等价格式化入口 1。**两条新事实**：① `pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`）但**差异能力＝逐设备 `klog_info!`** ⇒ 「能力重叠 ≠ 能力等价」，同 A-6 `format_duration` 判据；② `umount_devpts`（`devpts.rs:237-243`）**实现体误调 `mount_devpts`**（注释自述恒返回 `Ok(())`）⇒ 已登记为**已知缺陷**（缺陷档形态，无调用链且非安全面 ⇒ 不删），修正随 VFS mount 集成。
     - **安全面待 T3 2 项 ⇒ 留待裁**（B-5.3）：`services/fs/ramfs.rs::split_path`/`validate_path`——裁定七证据链（commit `3173b5b9`）已判**非安全缺陷**、倾向「冗余」，**剩余唯一阻塞＝删除涉安全面须 reviewer 授权**（裁定六）。
     - **桶效应（六次修订）**：完整性保留 43 → **75**（+32）；待裁 47 → **2**；未来功能 339 → **352**（+13）；**T5 内合计 90 → 77**；合计 **437**（0 + 75 + 2 + 8 + 352，算术闭合）。**裁定四.2 / 四.3 达成**；**四.1 已于五次修订达成**；**四.4（审计噪音治理）未达成** ⇒ T5 关闭挂起（见 T5-C）。**已按裁定六上报、未自主处置的潜在新增删候选**：`pci_scan`、aarch64 诊断 2 项、`format_duration`（若 reviewer 认定 `core::fmt` 等价成立）。
+
+14. **甲批 C-1 接线批次（reviewer 甲批开工单，8 项；最新口径）**：核心约束＝**每项须指明具体调用点**，「仅缺此半」是待验证断言，**找不到调用点即退「未来功能」，禁止为接线造无意义调用**。逐项核定结果（明细见 **B-8**）：
+    - **接线落地 1 项**：`framework/fs/vfs/vfs.rs::set_fd`——调用点＝`vfs_open_internal` 两分支（live 路径 `open_syscall` → `vfs_open_safe` → `vfs_open_internal`）；补调用后 `get_fd_info`（flock 的 ino / mmap-by-fd 的 `fd_to_inode_id`）、`get_fd_mount_idx`、close 时 pcache 失效才按真实 inode 生效。生效证据＝kernel_test `vfs::backend::open_populates_fd_metadata`（断言 fd 表 `node_id` ＝真实 inode、path 可反查挂载点）。
+    - **判据不成立 7 项 ⇒ 转「未来功能」**（三字段见 B-8.2）：`vfs_get_fd_handle`（同能力调用点全在同模块直呼 manager，无独立调用点）/ `irqline.rs::is_registered`（`IrqLine` 全库 0 构造点）/ `frame.rs::set_meta`（读侧 `meta()` 同样零引用）/ `fd_table.rs` cloexec 4 项（`Process::fd_table` 从未被填充 ⇒ `cloexec[]` 恒 false，接线＝往死结构写值）。
+    - **安全面单列（B-8.3）**：`fd_table.rs` cloexec 4 项的「exec 路径需用」判据经实测**不是「漏接一项」而是整条语义链缺失**——`fcntl` F_SETFD **静默返回 0 且无存储**、`O_CLOEXEC` 常量全库零引用、live fd 表 `VfsFile` **无 cloexec 字段**、`execve`/`execveat` → `proc_exec_replace` **全程不触碰 fd 表**、fd 表为**全局命名空间**。⇒ 修需 per-process fd 表 + `fcntl` 真实实现 + `VfsFile` 增字段 + exec 关闭遍历（跨 4 模块架构改动，属 TCB/VFS 核心面），**超出批次授权，未自主施工**；解锁＝B09-10 per-process fd 表；责任方＝reviewer。
+    - **桶效应（甲批）**：接线 8 → **0**；未来功能 352 → **359**（+7）；**R1 437 → 436**（`set_fd` 不再零引用）；合计 **436**（0 + 75 + 2 + 0 + 359，算术闭合）。**五门槛全量见 B-8.5**。
 
 ## 详情
 
