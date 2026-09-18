@@ -224,6 +224,49 @@ fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
     TestResult::Pass
 }
 
+/// T5 甲批 C-1 接线证据: 真实 open 路径 (`open_syscall` → `vfs_open` →
+/// `vfs_open_internal`) 必须把 fd 表元数据写全, 否则 `get_fd_info`
+/// (flock 的 ino / mmap-by-fd 的 `fd_to_inode_id`) 恒得 0,
+/// `get_fd_mount_idx` 因 path 为空反查失败。
+fn test_open_populates_fd_metadata() -> TestResult {
+    use crate::framework::fs::ramfs::{RAMFS_DATA, init as ramfs_init};
+    use crate::framework::fs::{VFS_MANAGER, api};
+
+    crate::services::fs::init();
+    ramfs_init();
+    // 必须走真实挂载入口 (挂 trait object): `VFS_MANAGER.mount` 只登记 fs_type,
+    // `resolve_mount_fs` 的 `fs` 仍为 None, vfs_open_internal 直接返回 NotSupported.
+    // boot / host 均已挂载 "/" 时返回负值, 忽略即可.
+    let _ = api::vfs_mount_safe("/", "ramfs");
+
+    let created = {
+        let mut ramfs = RAMFS_DATA.lock();
+        ramfs.create_file("/", "fd_meta_t", 0)
+    };
+    let Some(node_id) = created else {
+        return TestResult::Fail("create_file 失败");
+    };
+    check!(node_id != 0, "inode 编号不应为 0 (0 是未填充哨兵)");
+
+    let fd = api::vfs_open_safe("/fd_meta_t", 0, 0);
+    check!(fd >= 0, "open /fd_meta_t 应成功");
+
+    let Some((fd_node_id, _offset, _pwm)) = VFS_MANAGER.get_fd_info(fd as usize) else {
+        return TestResult::Fail("fd 表应含该 fd 条目");
+    };
+    check!(
+        fd_node_id == node_id,
+        "fd 表 node_id 应为真实 inode (元数据未接线时恒为 0)"
+    );
+    check!(
+        VFS_MANAGER.get_fd_mount_idx(fd as usize).is_some(),
+        "fd 表 path 应已填充, 可反查挂载点 (mmap-by-fd 依赖)"
+    );
+
+    check!(api::vfs_close_safe(fd as u32) == 0, "close 应成功");
+    TestResult::Pass
+}
+
 fn test_nestfs_fs_registered() -> TestResult {
     crate::services::fs::init();
     let Some(fs) = crate::framework::fs::vfs::backend_trait::nestfs_fs() else {
@@ -470,6 +513,7 @@ pub fn register_vfs_tests() {
         "vfs::backend": {
             "fs_backend_registered_make_inode": test_fs_backend_registered_make_inode,
             "ramfs_fs_open_via_backend_hook": test_ramfs_fs_open_via_backend_hook,
+            "open_populates_fd_metadata": test_open_populates_fd_metadata,
             "nestfs_fs_registered": test_nestfs_fs_registered,
         },
         "fs::multiplex": {

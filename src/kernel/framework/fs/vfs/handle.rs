@@ -48,6 +48,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
         match fs.fs_open(rel_path, flags, pwm) {
             Ok(inode) => {
                 // Plan B: fs_open 直接返回 Inode trait object
+                let node_id = inode.node_id();
                 let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);
                 let open_file = OpenFile::new(inode, flags, pwm, file_type);
 
@@ -68,6 +69,11 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
 
                 // 存储 handle_id 到 fd 表
                 VFS_MANAGER.set_fd_handle(fd_idx, handle_id);
+                // T5 甲批 C-1: 填充 fd 表元数据。缺此半则 `get_fd_info`
+                // (flock 的 ino 识别 / mmap-by-fd 的 fd_to_inode_id) 恒得 0,
+                // `get_fd_mount_idx` 因 path 为空而反查失败, close 时
+                // pcache 失效也按 node 0 执行。
+                VFS_MANAGER.set_fd(fd_idx, node_id, 0, flags, pwm, file_type, path);
 
                 fd_idx as i32
             }
@@ -93,6 +99,8 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                         };
 
                         VFS_MANAGER.set_fd_handle(fd_idx, handle_id);
+                        // T5 甲批 C-1: 同 fs_open 分支, 填充 fd 表元数据
+                        VFS_MANAGER.set_fd(fd_idx, inode_id, 0, flags, pwm, file_type, path);
 
                         // inotify: 父目录 IN_CREATE + 新文件 IN_OPEN
                         let parent_ino = fs.fs_resolve_path(parent_path).unwrap_or(0);
