@@ -106,7 +106,7 @@ T7 (预存登记)
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
 - [X] T1：R2 未实装 SYS_* 实装（G1-G7 全部完成，见下方 T1 实施记录）
 - [X] T4：R3 零引用 pub mod 7 项核实（2026-09-18 完成，处置＝删除，见下方 T4 实施记录）
-- [ ] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项**全量四分类扫描已登记**（删 70 / 接线 142 / 预留 205 / 待裁 21），未改代码，待用户与 reviewer 讨论后定处置。见「T5 实施记录」「T5 全量甄别台账」）
+- [ ] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项全量扫描已登记，**经 reviewer 两轮复核后按修订口径重划**（删候选 **11** / 安全面待确认 **4** / 硬件原语完整性保留 41 / 接线 8 / 未来功能 339 / 待裁 **35**，**均为暂定值**），未改代码；**A-2 已退回重做**（判据升格三合一；原 23 项＝11 留 + 4 转安全面 + 8 退桶），**施工方式＝逐项试删 + 既有五条门槛（不立项新工具）**，任一维硬失败即回退；**A-2 开工须先满足 ⑧ 五条解锁条件（含 T1 收尾完成这一串行闸门）**。见「T5 实施记录」「T5 全量甄别台账」）
 - [ ] T6-T7：登记排后（TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
@@ -554,16 +554,56 @@ T7 (预存登记)
 | g2 | `framework/` 其余（driver/fs/proc/idt/timer/net/cpu/dma/pci/io/debug/console/chitin/credo/ipc/…） | 158 |
 | g3 | `services/` 全量 | 169 |
 
-**分类语义（登记口径，供讨论统一）**：
+**方法与限制（复核前置，reviewer 反馈后补）**：
 
-| 分类 | 含义 | 处置路径 |
+**① 判定工具**：`scripts/audit_unwired_pub_fn.py` 的 **R1 规则**（`pub fn` 跨文件零引用 WARN）。引用计数实现为 `rg -c -w <name> src/ host-tests/`（[脚本 L247-255](file:///home/anfer/Code/QueenX/scripts/audit_unwired_pub_fn.py#L247-L255)），**纯文本词边界计数**；脚本自述「基于 .rs 文件源码 AST 分析, **不依赖 cargo build**」（[L69](file:///home/anfer/Code/QueenX/scripts/audit_unwired_pub_fn.py#L69)）。**声明侧无 cfg 感知**——`EXEMPT_CFG_ATTR` 只豁免「引用侧被 cfg 门控的引用」，不识别「声明本身被 cfg 门控」。
+
+**② 判定构建维**：**不存在单一构建维**。名义上是「`src/` + `host-tests/` 文本并集」，既非某一构建维，也未做「逐维取交集」。⇒ 台账中的「零引用」**不等于**「任何构建维下都无调用者」。
+
+**③ 已知系统性误判源**（计数由此失真，非个案）：
+
+| 误判源 | 实例 | 后果 |
 |---|---|---|
-| 删 | 重复能力 / 有等价公共入口 / 废弃兼容壳（与批 1 判据一致） | 可施工删除，须用户 + reviewer 确认 |
-| 接线 | 实现完整但未进调用链 | ① 现有调用链缺此半（小改即可）；② 所属子系统尚未集成（属 DECISION-052 第三层「未来功能记录」，非立即接线） |
-| 预留 | 能力预留 API 面（与分册 9 D-4 同类） | 不改代码，保留 |
-| 待裁 | 半接线缺陷 / 依赖路线图 / 与在用能力重叠但含额外价值 | 需用户 + reviewer 裁定 |
+| 声明侧 `#[cfg(target_arch = "…")]` | [mm/mod.rs:51-53](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/mod.rs#L51-L53) 以 `#[path = "vmm_aarch64.rs"]` 门控 `pub mod vmm`；`arch/aarch64/**` 同理 | 非本维编译的模块被判「无调用者」= **构造性结果**，非死代码证据 |
+| 声明侧 `#[cfg(feature = "…")]` | [sync/atomic.rs:182](file:///home/anfer/Code/QueenX/src/kernel/framework/sync/atomic.rs#L182) `#[cfg(feature = "atomic_stats")] mod stats` | feature 门控代码被判「死」，实为「默认维未启用」 |
+| `#[cfg(feature = "kernel_test")]` 测试模块 | `barrier/snapshot.rs` / `barrier/reset/layered.rs` 的 `pub mod tests` | 测试用例被判「未接线」 |
 
-**分组统计**：
+③ 表补充：**单维甄别的结果仅在该维有效**，跨维完备性需逐维复核（遗留 1 裁定：属**漏项风险**，非误删风险——甄别所在维中 x86_64 专属项*有*引用，不会被误列删候选；误删方向已由「aarch64 门控」属性隔离）。
+
+**④ 复核判据（正确口径）**：**逐构建维取交集**——x86_64 裸机 / aarch64 裸机 / kernel_test / host-test **四维皆零引用**，才可判「真无引用」；且**无调用者 ≠ 死代码**（F9 要求「硬件规范常量须通过实现使用路径消除」，但其**反向不成立**：汇编/外部调用、硬件规范要求、跨架构对称性都会使「无 Rust 调用者」合法）。**删候选判据进一步升格为三合一**（reviewer 第二轮）：零引用 ＋ 等价公共入口 ＋ 非 API/FFI/feature/硬件原语面，见「分类语义」。
+
+**⑤ 本台账定位**：以下全部计数为**暂定值**，**不得作为施工依据**（§12.4）；处置路径见 ⑥（试删流程），不另造静态分析器。
+
+**⑥ 施工落地方式（遗留 2 裁定：不立项新工具）**：删候选**不用静态分析器**，直接**逐项试删 → 跑既有五条门槛 → 任一维硬失败即回退并归入「硬件原语保留 / 待裁」**。四维判据由既有门槛原地覆盖，零新增基础设施：
+
+| 维 | 既有门槛 |
+|---|---|
+| x86_64 裸机 | `./ci/build.sh x86_64`（`./ci/build.sh all` 第一阶段） |
+| aarch64 裸机 | `./ci/build.sh all` 第二阶段 |
+| `kernel_test` | clippy `kernel_test` 维 + QEMU `kernel_test` |
+| `host-test` | clippy `host-test` 维 + `make test-host` + QEMU boot |
+
+> 理由：**编译/链接器即权威判据**（工具是近似、编译器是真相）；且与上一轮「host 链接守卫交还链接器、否决审计守卫脚本」的裁定同构——近似的静态分析恰是「黑名单不全 → 虚假信心」那类危险机制（§12.3 简约准则）。低风险项可批量，`kernel_test` 与 QEMU boot 为硬闸门。若日后仍要立项该工具，应**单开任务且低优先级**，并明确**不是 T5 的前置**。
+
+**⑦ 试删的原理性盲区（reviewer 第二轮，必须记住）**：`试删 + 五条门槛` **在原理上发现不了「安全校验被移除」**——删掉一个零调用的校验函数后，编译/链接全过；测试若未覆盖该路径，也全绿，但校验已经没了。⇒ 安全敏感项（**路径校验 / 常数时间比较 / CET-SSP / CR4 权限谓词**）**不能靠试删兜底**，必须先经安全面确认（见 A-3 与「分类语义」安全面行）。
+
+**⑧ 顺序约束与解锁条件（reviewer 第二轮裁定）**：
+
+- **不得并行 T1 收尾与 T5 施工**：两批都动 `framework`，QEMU 一旦挂掉无法归因。**文件级冲突已确认**：`pcid_is_enabled` 位于 `mm/kpti.rs`，正是 T1 P2′ 声明收拢所改文件。T5 的**文档修订**不占代码，可与 T1 收尾并行。
+- **A-2 开工解锁条件（五条，缺一不可）**：① 7 项「零消费」判据补齐证据或退桶；② 安全敏感 4 项完成安全面二次分桶；③ `gdt.rs` 注释原文核实；④ 两组同文件分裂按路线图统一；⑤ **T1 收尾完成（串行闸门）**。
+
+**分类语义（修订版，登记口径）**：
+
+| 分类 | 含义（可复核标准） | 处置路径 |
+|---|---|---|
+| 删候选 | **收窄为三合一判据（reviewer 第二轮升格）**：① **该构建维零引用** ＋ ② **存在能力等价的公共入口**（或重复实现）＋ ③ **非 API/FFI/feature/硬件原语面**。三者**同时成立**方可判删——「有等价入口」单独不成立（该函数可能正属 API 面 / FFI 面 / feature 面，判删后即删掉对外能力） | 须先过「硬件原语完整性」二次分类 + **安全面确认** + ⑥ 试删 |
+| 安全面待确认 | 安全敏感面：路径校验 / 常数时间比较 / CET-SSP / CR4 权限谓词 等。**试删在原理上发现不了「安全校验被移除」**（删掉零调用校验函数后编译链接全过、测试若无该路径覆盖亦全绿） | **不走试删**；须先经安全面逐项确认（T3 联动） |
+| 硬件原语完整性保留 | 硬件原语/规范常量（内省、兼容包装、常量 getter 属其典型形态）；「无 Rust 调用者」可由汇编/规范/对称性解释 | 记预留，**不删** |
+| 接线 | **仅限**「现有调用链缺此半」（小改即可挂上） | 可施工子清单 |
+| 未来功能 | 所属**子系统未集成** + 原「预留」API 面（DECISION-052 第三层） | 记录，不接线、不删除 |
+| 待裁 | 半接线缺陷 / 依赖路线图 / 受构建维或 feature 门控影响 | 需用户 + reviewer 裁定 |
+
+**分组统计（原始扫描输出，保留可追溯；口径已作废）**：
 
 | 区间 | 项数 | 删 | 接线 | 预留 | 待裁 |
 |---|---|---|---|---|---|
@@ -572,39 +612,83 @@ T7 (预存登记)
 | g3 `services/` | 169 | 4 | 6 | 150 | 9 |
 | **合计** | **438** | **70** | **142** | **205** | **21** |
 
-#### A. 删候选（70 项，按文件归并）
+**修订后桶数（二次修订，按 ④ + 三合一判据重划；不得作为施工依据）**：
 
-| 文件 | 项（行号） | 判据 |
+| 桶 | 项数 | 构成（含来源标记） |
 |---|---|---|
-| `framework/arch/aarch64/gic.rs` | `is_ppi`(332) `is_valid_irq`(342) `is_spi_pending`(456) | 校验/状态谓词零消费，与 `is_spi` 及范围校验重复 |
-| `framework/arch/aarch64/mmu.rs` | `allows_el0_access`(350) `diagnose_permission`(384) | 权限谓词 + 调试打印，零消费 |
-| `framework/arch/aarch64/timer.rs` | `read_control`(76) | 控制寄存器内省，零消费 |
-| `framework/arch/shadow_stack.rs` | `is_ssp_valid`(129) | 范围校验谓词零消费 |
-| `framework/arch/x86_64/acpi.rs` | `get_ap`(457) | 索引访问器，与 `get_ap_list` 重复 |
-| `framework/arch/x86_64/apic.rs` | `get_version`(138) `get_timer_count`(209) `is_timer_calibrated`(258) `configure_lint0`(337) `configure_lint1`(344) `apic_read_isr`(380) `apic_read_tmr`(394) `apic_read_irr`(408) `apic_is_in_isr`(417) `apic_is_in_irr`(424) `apic_is_level_triggered`(431) `send_ipi_level`(444) `broadcast_ipi_level`(459) `icr_level`(472) `icr_broadcast`(477) | 内省快照 + 兼容层；`configure_lint0/1` 与 `unmask_lint0/1` 实现逐字相同，电平 IPI 与普通 IPI 重复 |
-| `framework/arch/x86_64/gdt.rs` | `tss_64bit`(173) `get_gdt_table`(701) | 残留构造器（未用于 TSS 描述符）+ 自述调试用途 |
-| `framework/arch/x86_64/ioapic.rs` | `get_max_irq`(123) `set_irq_level`(265) `set_id`(319) `get_arbitration_id`(324) `delivery_lowest`(337) `delivery_init`(349) | 兼容包装（`set_id`/`get_arbitration_id` 已被 `*_on` 覆盖）+ 常量 getter |
-| `framework/barrier/domain.rs` | `consume_quota_tick`(213) `is_quota_exceeded`(307) | 与 `check_quota` 语义重复的废弃配额路径 |
-| `framework/barrier/reset/audit.rs` | `count_by_result`(101) | 审计计数查询零消费 |
-| `framework/mm/kpti.rs` | `pcid_is_enabled`(149) | CR4.PCIDE 状态查询零消费 |
-| `framework/mm/numa.rs` | `contains_cpu`(195) `all_nodes`(334) | 拓扑查询零消费 |
-| `framework/mm/page_fault.rs` | `page_fault_count`(497) | 统计查询零消费 |
-| `framework/mm/slab.rs` | `utilization`(921) | slab 利用率统计零消费 |
-| `framework/mm/vmm_aarch64.rs` | `is_desc_table`(1146) `is_desc_block`(1151) `is_desc_page`(1156) `is_desc_device_memory`(1166) `is_desc_non_cacheable`(1172) `diagnose_descriptor`(1178) | 描述符谓词 + 诊断打印，零消费 |
-| `framework/sync/atomic.rs` | `record_inc`(191) `record_dec`(194) `record_cmpxchg_success`(197) `record_cmpxchg_fail`(200) | `atomic_stats` 特性未启用，整模块死（批 1 列「待裁」→ 本次甄别归「删」） |
-| `framework/sync/pi_mutex.rs` | `get_ceiling`(328) `get_protocol`(333) | 天花板/协议查询零消费 |
-| `framework/sync/rwlock.rs` | `raw_read_unlock`(114) `raw_write_unlock`(160) `read_irqsave`(179) `write_irqsave`(192) `pending_writer_count`(219) | guard Drop 直取 inner；公开入口全仓零引用 |
-| `framework/sync/seqlock.rs` | `current_sequence`(46) `get_valid`(119) | 序列号/校验查询零消费 |
-| `framework/sync/spinlock.rs` | `lock_irq`(263) | 不保存标志的加锁入口，易与 irqsave 误用 |
-| `framework/console/gfx_console.rs` | `write_log_line`(286) | 与在用 `write_str` 逐字节相同 |
-| `framework/fs/vfs/handle.rs` | `vfs_close_safe`(542) `vfs_seek_safe`(547) `vfs_readdir_safe`(556) | 纯包装同名 `extern "C"` 入口（后者已被 services 直接使用） |
-| `framework/fs/vfs/vfs.rs` | `get_fs_name`(75) | 等价于在用 `get_fs_type().as_str()` |
-| `framework/ipc/dynamic.rs` | `pipe_exists`(118) | 可由在用 `get_pipe`/`pipe_count` 等价判定 |
-| `framework/timer/tick.rs` | `format_duration`(355) | 纯格式化工具，`core::fmt` 可等价 |
-| `services/credo/crypto.rs` | `ct_eq_salt`(210) `ct_eq_password`(216) | `ct_eq` 已是等价公共入口，包装无独立实现 |
-| `services/fs/ramfs.rs` | `split_path`(524) `validate_path`(544) | 零调用本地辅助，能力已在 VFS `resolve_user_path` / 路径校验公共入口 |
+| 删候选 | **11** | 二次修订：原 23 − 安全面 4（转 A-3）− 退桶 8（A-4）。**逐项判据（三合一）成立者** |
+| 安全面待确认 | **4** | `services/fs/ramfs.rs` 2（`split_path` `validate_path`，路径穿越防护）+ `services/credo/crypto.rs` 2（`ct_eq_salt` `ct_eq_password`，常数时间比较）——**不走试删**，待安全面逐项确认 |
+| 硬件原语完整性保留 | 41 | x86_64 侧 31（`apic.rs` 15 + `ioapic.rs` 6 + `sync/{pi_mutex,rwlock,seqlock,spinlock}` 10）+ aarch64 侧 10（优先级裁定见 A-1） |
+| 接线 | 8 | `fs/vfs/handle.rs` 1 + `fs/vfs/vfs.rs` 1 + `irqline.rs` 1 + `frame.rs` 1 + `proc/fd_table.rs` 4（**逐项独立判定**） |
+| 未来功能（DECISION-052 第三层） | 339 | **来源合成**：原「接线」剩余 134（**＝142−8，排除法所得，非实测**）+ 原「预留」205 |
+| 待裁 | **35** | 原 21 + `atomic_stats` 4 + aarch64 诊断类 2 + **A-4 退桶 8** |
+| **合计** | **438** | 算术闭合已核对（11 + 4 + 41 + 8 + 339 + 35 = 438） |
 
-#### B. 待裁（21 项）
+> 已识别 **aarch64 专属 31 项**（`arch/aarch64/**` 8+9+3+2+1 与 `mm/vmm_aarch64.rs` 6、`mm/kpti_aarch64.rs` 2），**x86_64 专属项面未量化**（`arch/x86_64/**`、`mm/kpti.rs`、`idt/**`、`cpu/**`、`arch/shadow_stack.rs` 等），两者均须按 ⑥ 试删复核。
+
+#### A. 删候选（二次修订：70 → 11）+ 硬件原语完整性保留（41）
+
+**A-1 硬件原语完整性保留（41 项；记预留，不删）**
+
+| 文件 | 项 | 理由 |
+|---|---|---|
+| `framework/arch/x86_64/apic.rs` | 15：`get_version` `get_timer_count` `is_timer_calibrated` `configure_lint0` `configure_lint1` `apic_read_isr` `apic_read_tmr` `apic_read_irr` `apic_is_in_isr` `apic_is_in_irr` `apic_is_level_triggered` `send_ipi_level` `broadcast_ipi_level` `icr_level` `icr_broadcast` | APIC 原语完整性；须在**裸机 + kernel_test 维**逐一验证是否被中断/启动路径调用——**误删直接破坏真机中断** |
+| `framework/arch/x86_64/ioapic.rs` | 6：`get_max_irq` `set_irq_level` `set_id` `get_arbitration_id` `delivery_lowest` `delivery_init` | IOAPIC 原语完整性，同上 |
+| `framework/sync/pi_mutex.rs` | 2：`get_ceiling` `get_protocol` | 同步原语族完整性（PI 协议查询属规范形态） |
+| `framework/sync/rwlock.rs` | 5：`raw_read_unlock` `raw_write_unlock` `read_irqsave` `write_irqsave` `pending_writer_count` | 原语层入口完整性 |
+| `framework/sync/seqlock.rs` | 2：`current_sequence` `get_valid` | 原语层入口完整性 |
+| `framework/sync/spinlock.rs` | 1：`lock_irq` | 规范要求的原语形态 |
+| `framework/arch/aarch64/gic.rs` | 3：`is_ppi` `is_valid_irq` `is_spi_pending` | 架构规范范围谓词 + GIC 寄存器状态查询（aarch64 原语面） |
+| `framework/arch/aarch64/mmu.rs` | 1：`allows_el0_access` | 页表描述符权限谓词（硬件内省） |
+| `framework/arch/aarch64/timer.rs` | 1：`read_control` | 定时器控制寄存器读取（硬件内省） |
+| `framework/mm/vmm_aarch64.rs` | 5：`is_desc_table` `is_desc_block` `is_desc_page` `is_desc_device_memory` `is_desc_non_cacheable` | 页表描述符类型谓词（硬件内省） |
+
+> **桶间优先级裁定（三处核对 ①）**：aarch64 12 项中 **10 项**同时符合「硬件原语」与「aarch64 门控」两种属性 ⇒ 按 **硬件原语保留 > aarch64 门控 > 删候选** 归入本桶（本桶 31 → **41**）；余 **2 项**（`arch/aarch64/mmu.rs::diagnose_permission`、`mm/vmm_aarch64.rs::diagnose_descriptor`）为**诊断输出**非原语，留「待裁」并保留 aarch64 门控标记。
+
+**A-2 删候选（11 项；三合一判据逐项成立，须过 ⑥ 试删验证后方可施工）**
+
+| 文件 | 项（行号） | 判据（① 零引用 / ② 等价公共入口 / ③ 非 API-FFI-feature-原语面） |
+|---|---|---|
+| `framework/arch/x86_64/acpi.rs` | `get_ap`(457) | ② 与 `get_ap_list` 重复实现；③ 内部索引访问器 |
+| `framework/arch/x86_64/gdt.rs` | `tss_64bit`(173) | ② 残留构造器，未用于 TSS 描述符（在用路径另有构造） |
+| `framework/barrier/domain.rs` | `consume_quota_tick`(213) `is_quota_exceeded`(307) | ② 与在用 `check_quota` 语义重复的废弃配额路径 |
+| `framework/console/gfx_console.rs` | `write_log_line`(286) | ② 与在用 `write_str` 逐字节相同 |
+| `framework/fs/vfs/handle.rs` | `vfs_close_safe`(542) `vfs_seek_safe`(547) `vfs_readdir_safe`(556) | ② 纯包装同名 `extern "C"` 入口（后者已被 services 直接使用） |
+| `framework/fs/vfs/vfs.rs` | `get_fs_name`(75) | ② 等价于在用 `get_fs_type().as_str()` |
+| `framework/ipc/dynamic.rs` | `pipe_exists`(118) | ② 可由在用 `get_pipe` / `pipe_count` 等价判定 |
+| `framework/timer/tick.rs` | `format_duration`(355) | ② 纯格式化工具，`core::fmt` 可等价；③ 非对外 API 面 |
+
+**A-3 安全面待确认（4 项；reviewer 第二轮裁定——不走试删）**
+
+| 文件 | 项（行号） | 安全面 |
+|---|---|---|
+| `services/fs/ramfs.rs` | `split_path`(524) `validate_path`(544) | 路径穿越防护。② 能力虽已在 VFS `resolve_user_path` 等公共入口，但**「校验被移除」在试删判据下不可见**（删后编译链接全过、无覆盖即全绿）⇒ 须先经安全面确认，T3 联动 |
+| `services/credo/crypto.rs` | `ct_eq_salt`(210) `ct_eq_password`(216) | 常数时间比较。② `ct_eq` 为等价入口，但同上——安全敏感面不适用试删兜底 |
+
+**A-4 退桶（8 项；判据不成立 ⇒ 并入「待裁」桶）**
+
+| 文件 | 项（行号） | 判据不成立之处 |
+|---|---|---|
+| `framework/arch/shadow_stack.rs` | `is_ssp_valid`(129) | **同文件整组统一**（`set_ssp` 等 4 项在待裁，取决于 CET 路线图）；且属安全敏感面（CET/SSP）。② 未取得等价入口证据 |
+| `framework/mm/numa.rs` | `contains_cpu`(195) `all_nodes`(334) | **同文件整组统一**（`set_distance` 等 3 项在待裁，取决于 NUMA 路线图）。② 未取得等价入口证据 |
+| `framework/mm/kpti.rs` | `pcid_is_enabled`(149) | **已登记的未完成路线图项**：文件头 doc（`kpti.rs:23-31`）明载「未完成 … **PCID/INVPCID 优化**：当前每次切换 CR3 都 TLB 全清，高频 syscall 性能损失 5-15%」⇒ 该函数是这条已登记项的地基，删它＝删掉登记过的路线图基础设施 |
+| `framework/barrier/reset/audit.rs` | `count_by_result`(101) | ② 未取得等价入口（同文件 `count_by_layer` 是另一维度，非等价）；③ 属诊断查询 API 面 |
+| `framework/mm/page_fault.rs` | `page_fault_count`(497) | ② 未取得等价**封装**入口（`PAGE_FAULT_COUNT` 为 `pub static`，是并行读法而非等价替代）；③ 属统计 API 面 |
+| `framework/mm/slab.rs` | `utilization`(921) | ② 仅部分等价（`get_stats() -> CacheStats{total_objects, active_objects}` 可推导，但为使能等价能力需调用方自行除法）；③ 属统计 API 面 ⇒ 证据不足以支撑删除 |
+| `framework/arch/x86_64/gdt.rs` | `get_gdt_table`(701) | **注释原文核对**：`/// 获取 GDT 表的引用 (调试用途)` ⇒ 自述调试用途，**非死代码**，退桶 |
+
+> **退 A-1 还是 B**：上表 8 项**均非硬件原语 / 规范常量**（A-1 的准入条件），故按 reviewer「补不出即退 A-1 或 B」统一退 **B（待裁）**，不走 A-1。
+
+#### B. 待裁（二次修订：21 → 35）
+
+**B-1 新增（构建维 / feature 门控，reviewer 反馈）**
+
+| 文件 | 项 | 待裁点 |
+|---|---|---|
+| `framework/arch/aarch64/mmu.rs` + `framework/mm/vmm_aarch64.rs` | 2：`diagnose_permission` / `diagnose_descriptor` | **aarch64 专属 + 诊断类**（[mm/mod.rs:51-53](file:///home/anfer/Code/QueenX/src/kernel/framework/mm/mod.rs#L51-L53) 门控）⇒ x86_64 维下整模块不编译，「零引用」为**构造性结果**；另 10 项 aarch64 项因「硬件原语」优先级已归 A-1（见该桶优先级裁定） |
+| `framework/sync/atomic.rs` | 4：`record_inc` `record_dec` `record_cmpxchg_success` `record_cmpxchg_fail` | 位于 `#[cfg(feature = "atomic_stats")]`（[atomic.rs:182](file:///home/anfer/Code/QueenX/src/kernel/framework/sync/atomic.rs#L182)），**feature 门控代码非死代码**；既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」⇒ 处置＝**修 feature 或删 feature（用户决策）** |
+
+**B-2 原有（21 项）**
 
 | 文件 | 项（行号） | 待裁点 |
 |---|---|---|
@@ -618,7 +702,33 @@ T7 (预存登记)
 | `services/fs/devpts.rs` | `umount_devpts`(241) | 误调 `mount_devpts` 的半成品 |
 | `services/fs/process_fd_table.rs` | `get_fd`(96) `close_cloexec_fds`(174) `clear_non_cloexec`(186) | Plan B 并行 FD 表整体未采用，删/接线待裁 |
 
-#### C. 接线候选（142 项，按文件归并）
+**B-3 由 A-2 退桶并入（8 项；reviewer 第二轮裁定）**
+
+| 文件 | 项 | 待裁点 |
+|---|---|---|
+| `framework/arch/shadow_stack.rs` | `is_ssp_valid`(129) | 与同文件 4 项（`set_ssp` 等）**整组统一**，取决于 CET 路线图；安全敏感（CET/SSP） |
+| `framework/mm/numa.rs` | `contains_cpu`(195) `all_nodes`(334) | 与同文件 3 项（`set_distance` 等）**整组统一**，取决于 NUMA 路线图 |
+| `framework/mm/kpti.rs` | `pcid_is_enabled`(149) | 已登记路线图项（`kpti.rs:23-31` PCID/INVPCID 优化）的地基 |
+| `framework/barrier/reset/audit.rs` | `count_by_result`(101) | 诊断查询 API 面；② 未取得等价入口 |
+| `framework/mm/page_fault.rs` | `page_fault_count`(497) | 统计 API 面；② 未取得等价封装入口 |
+| `framework/mm/slab.rs` | `utilization`(921) | 统计 API 面；② 仅部分等价（`CacheStats` 可推导） |
+| `framework/arch/x86_64/gdt.rs` | `get_gdt_table`(701) | 注释自述调试用途 ⇒ 非死代码 |
+
+> **同文件分裂已收敛（reviewer 第二轮结构性问题 1）**：`shadow_stack.rs` / `numa.rs` 两处「同文件内部分裂成两桶」已按**路线图整组统一**处理——判删理由（零消费）对同文件「待裁」项同样成立，反证「零消费」不足以作为删的判据。故该 3 项随同文件整组归入待裁，不再单列删候选。
+
+#### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
+
+**C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**
+
+| 文件 | 项 | 缺的半 |
+|---|---|---|
+| `framework/fs/vfs/handle.rs` | `vfs_get_fd_handle` | FD→句柄访问器，同文件 `vfs_*` 入口已在用 |
+| `framework/fs/vfs/vfs.rs` | `set_fd` | FD 表写入口，与在用 `get_fd` 成对 |
+| `framework/irqline.rs` | `is_registered` | IRQ 线注册状态查询，与 `register_irq` 成对 |
+| `framework/frame.rs` | `set_meta` | 页帧元数据写入口，与 `get_meta` 成对 |
+| `framework/proc/fd_table.rs` | `get_handle_id` `is_cloexec` `set_cloexec` `get_cloexec_fds`（4） | FD 表 cloexec 面，exec 路径需用 |
+
+**C-2 原 142 项全量（逐项保留可追溯；除 C-1 外均归「未来功能」）**
 
 | 文件 | 数 | 项 |
 |---|---|---|
@@ -684,7 +794,7 @@ T7 (预存登记)
 | `services/fs/{sysfs,cgroupfs,configfs,virtiofs,systree}.rs` | 5 | `mount_sysfs` `mount_cgroupfs` `mount_configfs` `mount_virtiofs` `mount_systree`（实现完整，待 VFS mount 集成） |
 | `services/net/unix.rs` | 1 | `uds_recv_with_creds`（recvmsg UDS 凭据分流点缺失） |
 
-#### D. 预留（205 项，按子系统计数）
+#### D. 原「预留」205 项（按子系统计数；已并入「未来功能」桶）
 
 | 子系统/文件 | 数 | 预留性质 |
 |---|---|---|
@@ -714,12 +824,16 @@ T7 (预存登记)
 | `services/barrier/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
 | `services/proc/{canary,elf,shadow_stack,signal}.rs` / `timer/*` / `net/unix.rs` / `wasm/*` | 12 | 查询面 + safe 代理壳 + wasm 运行时 API 面 |
 
-#### 登记结论（供讨论）
+#### 登记结论（修订版：E.1-E.4 + 第二轮裁定）
 
-1. **删候选分布集中**：`framework/arch/x86_64/apic.rs`（15）、`framework/sync/*`（14）、`framework/mm/vmm_aarch64.rs`（6）、`framework/arch/x86_64/ioapic.rs`（6）、`framework/arch/aarch64/gic.rs`（3），合计 44/70 —— 特征均为**内省查询 + 兼容包装 + 常量 getter**，删除面清晰；但涉及跨架构原语（D-4 登记类别），建议 reviewer 逐项确认后再施工。
-2. **「接线」142 项需分层看**：其中绝大多数属**所属子系统尚未集成**（cgroup 8 / proc 相关 42 / tickless / MSI / USB / 多显示器 / NUMA / DMAR / eBPF / 线程），实为 DECISION-052 第三层「未来功能记录」；真正属「现有调用链缺此半」（小改即可）的仅 `fs/vfs/{handle,vfs}.rs`、`fs/systree.rs`、`irqline.rs`、`frame.rs`、`proc/fd_table.rs` 等少量，建议单独拆出可施工子清单。
-3. **与分册 9 D-4 的关系**：D-4 已登记「能力预留」的类别（credo / cgroup / framework sync / mm swap+numa / driver xhci+display+apic）在本台账被细化为逐项四分类，**不改变 D-4 结论**，仅补齐可讨论粒度；预留 205 项仍按「不接线、不删除」处理。
-4. **批 1「待裁」收敛**：`sync/atomic.rs` 4 项 `record_*` → 本次归「删」；`pci_scan` 与 `umount_*` 占位 → 仍为「待裁」（见 B 表）。
+1. **元信息已补（E.1）**：① 判定工具＝`scripts/audit_unwired_pub_fn.py` R1（`rg -c -w` 文本并集，声明侧无 cfg 感知）；② 判定构建维＝**无单一构建维**，未做逐维交集 ⇒ 原「零引用」口径不可复核。③④⑤ 见上「方法与限制」。
+2. **桶边界已重划并重算（E.2 + 三处核对① + 第二轮二次修订，暂定值）**：删候选 70 → 23 → **11**（二次修订：安全面 4 转 A-3、判据不成立 8 退桶入 B-3）；**安全面待确认 4**（新桶，不走试删）；**硬件原语完整性保留 41**（x86_64 侧 31 + aarch64 侧 10；优先级＝**硬件原语保留 > aarch64 门控 > 删候选**）；接线 142 → **8**（逐项独立判定）；未来功能 **339**（**来源合成，非实测**：原接线剩余 134 ＝142−8 排除法 + 原预留 205）；待裁 21 → 27 → **35**。合计 438（算术已核对闭合：11+4+41+8+339+35）。三处核对 ②③ 的来源标记已就地标注。
+3. **`atomic_stats` 已退回待裁（E.3）**：`sync/atomic.rs` 4 项 `record_*` 属 `#[cfg(feature = "atomic_stats")]` 门控，**非死代码**；援引既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)。
+4. **删候选施工＝试删（E.4 + 遗留 2 裁定，不立项新工具）**：二次分类已移出 41 项硬件原语、**且已移出安全面 4 项（不走试删）**；余 **11 项**（A-2）按 ⑥「**逐项试删 → 跑既有五条门槛 → 任一维硬失败即回退**」推进（`build.sh all` / clippy `kernel_test` 维 / clippy `host-test` 维 / `make test-host` / QEMU `kernel_test`+boot），**编译/链接器即权威判据**，不新建调用图分析器。
+5. **遗留 1 已降级为方法学注释（不专项量化）**：x86_64 专属项面未量化属**漏项风险（完备性）而非误删风险（正确性）**——已在 ③ 补注「单维甄别的结果仅在该维有效，跨维完备性需逐维复核」。
+6. **第二轮复核：A-2 已退回重做（reviewer，12/23 项判据站不住）**——原 23 项按四档处置，逐档有据：① **判据仅「零消费」7 项** → 补齐证据或退桶，结果 **7 项全退**（3 项同文件整组统一、1 项已登记路线图项、3 项属统计/诊断 API 面且未取得等价入口证据）；② **安全敏感 4 项** → 转 A-3 安全面二次分桶，**不走试删**；③ **注释待核 1 项**（`get_gdt_table`）→ 引注释原文核对＝`/// 获取 GDT 表的引用 (调试用途)`，**非死代码**，退桶；④ **判据较强 11 项** → 保留为 A-2。算术：23 − 4 − 8 = **11**。
+7. **判据升格为三合一（reviewer 第二轮，根本性修正）**：「存在等价公共入口」**单独不成立**——有等价入口 ≠ 该函数无人用（可能正属 API 面 / FFI 面 / feature 面）。删候选判据＝**该构建维零引用 ＋ 存在能力等价的公共入口 ＋ 非 API/FFI/feature/硬件原语面**，三者须同时成立。
+8. **试删的原理性盲区 + 顺序约束（reviewer 第二轮）**：`试删 + 五条门槛`**在原理上发现不了「安全校验被移除」**（删零调用校验后编译链接全过、无覆盖即全绿）⇒ 安全敏感项必须先经安全面确认；**不得并行 T1 收尾与 T5 施工**（同动 `framework`，且 `pcid_is_enabled` 与 T1 P2′ 所改 `kpti.rs` **文件级冲突**），T5 文档修订可并行。A-2 开工解锁条件五条见 ⑧。
 
 ## 详情
 
