@@ -2031,3 +2031,72 @@ pub fn get_current_pml4() -> u64 {
         KERNEL_PML4.load(Ordering::Acquire)
     }
 }
+
+/// 统计进程页表中已映射的用户页数 (4 KiB 粒度, RSS 近似).
+///
+/// 只读遍历 PML4 用户半区 (`0..256`), **不取 VMM 锁** — 供 OOMD 在内存紧急时
+/// 粗略挑选占用最大的进程. 与并发 unmap 的竞态允许近似 (仅用于启发式选择).
+///
+/// # Arguments
+/// * `cr3` — 进程页表根物理地址 (`Process::cr3`); 0 表示无用户页表.
+///
+/// # Returns
+/// 该地址空间映射的 4 KiB 当量页数 (大页按其覆盖的 4 KiB 页数折算).
+#[expect(
+    clippy::similar_names,
+    reason = "变量名相似表达同族概念 (pdpt/pd/pt 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+)]
+pub fn count_present_user_pages(cr3: u64) -> u64 {
+    if cr3 == 0 {
+        return 0;
+    }
+
+    let mut pages = 0u64;
+    let pml4_ptr = PhysAddr(cr3).to_virt().0 as *const PageTableEntry;
+
+    // SAFETY: cr3 为进程有效 PML4 物理地址, 经直接映射转为可读虚拟地址;
+    // 仅读取 4 级页表结构不做修改; 各层索引均限制在 4 KiB 表内 (< 256 / < 512).
+    unsafe {
+        for i in 0..256usize {
+            let pml4e = &*pml4_ptr.add(i);
+            if !pml4e.is_present() {
+                continue;
+            }
+            let pdpt_ptr = pml4e.frame().to_virt().0 as *const PageTableEntry;
+
+            for j in 0..512usize {
+                let pdpte = &*pdpt_ptr.add(j);
+                if !pdpte.is_present() {
+                    continue;
+                }
+                if pdpte.is_huge() {
+                    // PDPTE 级大页 = 1 GiB = 512 × 512 个 4 KiB 页
+                    pages += 512 * 512;
+                    continue;
+                }
+                let pd_ptr = pdpte.frame().to_virt().0 as *const PageTableEntry;
+
+                for k in 0..512usize {
+                    let pde = &*pd_ptr.add(k);
+                    if !pde.is_present() {
+                        continue;
+                    }
+                    if pde.is_huge() {
+                        // PDE 级大页 = 2 MiB = 512 个 4 KiB 页
+                        pages += 512;
+                        continue;
+                    }
+                    let pt_ptr = pde.frame().to_virt().0 as *const PageTableEntry;
+
+                    for l in 0..512usize {
+                        if (&*pt_ptr.add(l)).is_present() {
+                            pages += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pages
+}

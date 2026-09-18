@@ -103,6 +103,54 @@ fn framework_oomd_uses_framework_pressure() {
     );
 }
 
+/// C1 (T6 治理): OOMD Emergency 宽限期后必须**真实**发送 SIGKILL 至 RSS 最大进程
+///
+/// 回归保护: 治理前仅 `terminated_count += 1` + 打日志 (未真正 kill);
+/// 若后续任何改动退回到"仅计数", 本用例失败.
+#[test]
+fn oomd_emergency_actually_sends_sigkill() {
+    let src = framework_oomd_rs();
+    assert!(
+        src.contains("do_signal_send(victim, super::SIGKILL)"),
+        "C1: OOMD Emergency 必须真实发送 SIGKILL (不可仅计数)"
+    );
+    assert!(
+        src.contains("count_present_user_pages"),
+        "C1: OOMD 必须经页表用户页计数选择 RSS 最大进程"
+    );
+    assert!(
+        !src.contains("SIGKILL 发送至最大 RSS 进程待实现"),
+        "C1: 待实现标记必须随治理移除"
+    );
+}
+
+/// 顺序不变量: `do_signal_send` 不得在 `process_for_each` 闭包内调用
+///
+/// `do_signal_send` 内部会再次获取进程表锁, 而 `process_for_each` 已在闭包
+/// 存续期间持有该锁 — 闭包内调用将自锁死. 该路径运行在 scheduler tick
+/// (中断上下文, 关中断), 一旦自锁无法恢复, 属系统级死锁.
+#[test]
+fn oomd_sigkill_sent_outside_process_table_iteration() {
+    let src = framework_oomd_rs();
+    let start = src
+        .find("process_for_each(")
+        .expect("C1: OOMD 必须遍历进程表选择 victim");
+    let end = src[start..]
+        .find("});")
+        .map(|i| start + i)
+        .expect("C1: process_for_each 调用必须以 }); 结束");
+
+    let iter_body = &src[start..end];
+    assert!(
+        !iter_body.contains("do_signal_send"),
+        "C1: do_signal_send 不得在 process_for_each 闭包内调用 (会自锁进程表)"
+    );
+    assert!(
+        src[end..].contains("do_signal_send"),
+        "C1: do_signal_send 必须在 process_for_each 迭代结束之后调用"
+    );
+}
+
 #[test]
 fn memory_pressure_services_keeps_policy() {
     // DECISION-O ② 验收: 阈值/分级算法/set_thresholds 必留 services (策略)

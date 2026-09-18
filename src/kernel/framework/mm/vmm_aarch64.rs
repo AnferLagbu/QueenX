@@ -1128,6 +1128,70 @@ pub fn get_current_pml4() -> u64 {
     }
 }
 
+/// 统计进程页表中已映射的用户页数 (4 KiB 粒度, RSS 近似).
+///
+/// 只读遍历 L0 用户半区 (`0..256`), **不取 VMM 锁** — 供 OOMD 在内存紧急时
+/// 粗略挑选占用最大的进程. 与并发 unmap 的竞态允许近似 (仅用于启发式选择).
+///
+/// # Arguments
+/// * `root_paddr` — 进程页表根 (TTBR0) 物理地址; 0 表示无用户页表.
+///
+/// # Returns
+/// 该地址空间映射的 4 KiB 当量页数 (2 MiB block 按其覆盖的 4 KiB 页数折算).
+#[expect(
+    clippy::similar_names,
+    reason = "变量名相似表达同族概念 (l0/l1/l2/l3 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+)]
+pub fn count_present_user_pages(root_paddr: u64) -> u64 {
+    if root_paddr == 0 {
+        return 0;
+    }
+
+    let mut pages = 0u64;
+    let l0_ptr = phys_to_virt(root_paddr) as *const u64;
+
+    // SAFETY: root_paddr 为进程有效 L0 表物理地址, 经 phys_to_virt 转为可读虚拟地址;
+    // 仅读取 4 级页表结构不做修改; 各层索引均限制在 4 KiB 表内 (< 256 / < 512).
+    unsafe {
+        for i in 0..256usize {
+            let l0e = ptr::read_volatile(l0_ptr.add(i));
+            if l0e & 0b11 != 0b11 {
+                continue;
+            }
+            let l1_ptr = phys_to_virt(l0e & 0x0000_FFFF_FFFF_F000) as *const u64;
+
+            for j in 0..512usize {
+                let l1e = ptr::read_volatile(l1_ptr.add(j));
+                if l1e & 0b11 != 0b11 {
+                    continue;
+                }
+                let l2_ptr = phys_to_virt(l1e & 0x0000_FFFF_FFFF_F000) as *const u64;
+
+                for k in 0..512usize {
+                    let l2e = ptr::read_volatile(l2_ptr.add(k));
+                    if l2e & 0b11 == 0b01 {
+                        // L2 block descriptor = 2 MiB = 512 个 4 KiB 页
+                        pages += 512;
+                        continue;
+                    }
+                    if l2e & 0b11 != 0b11 {
+                        continue;
+                    }
+                    let l3_ptr = phys_to_virt(l2e & 0x0000_FFFF_FFFF_F000) as *const u64;
+
+                    for l in 0..512usize {
+                        if ptr::read_volatile(l3_ptr.add(l)) & 0b11 == 0b11 {
+                            pages += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pages
+}
+
 // ============================================================================
 // 诊断和页表查询 API
 // ============================================================================

@@ -100,13 +100,42 @@ impl OomDaemon {
                         "[OOMD] Memory pressure EMERGENCY: will terminate largest RSS process if not released"
                     );
                 } else if tick.saturating_sub(es) > OOMD_KILL_GRACE_TICKS {
-                    // SIGKILL 发送至最大 RSS 进程待实现 (登记分册 9 B09-10)
-                    // 当前仅计数，未真正 kill 进程
+                    // 宽限期已过: 选出 RSS 最大的用户进程并发送 SIGKILL.
+                    //
+                    // 顺序约束: 页表遍历在 `process_for_each` 闭包内完成 (只读, 且
+                    // 持进程表锁可保证页表根在遍历期间不被释放), 而信号发送必须在
+                    // 闭包**之外** — `do_signal_send` 内部会再次获取进程表锁,
+                    // 在闭包内调用将自锁死.
+                    let mut victim: u32 = 0;
+                    let mut victim_rss: u64 = 0;
+                    super::process_for_each(|p| {
+                        let pid = p.pid.0;
+                        // 跳过 idle/内核线程 (pid 0) 与无用户页表的进程
+                        if pid == 0 {
+                            return true;
+                        }
+                        let cr3 = p.cr3.load(Ordering::Relaxed);
+                        if cr3 == 0 {
+                            return true;
+                        }
+                        let rss = mm_api::count_present_user_pages(cr3);
+                        if rss > victim_rss {
+                            victim_rss = rss;
+                            victim = pid;
+                        }
+                        true
+                    });
+                    if victim != 0 {
+                        // 失败 (进程刚退出/Zombie) 不阻塞 OOMD: 下一轮重新选择
+                        let _ = super::do_signal_send(victim, super::SIGKILL);
+                    }
                     self.terminated_count.fetch_add(1, Ordering::Relaxed);
                     self.emergency_since.store(0, Ordering::Relaxed);
                     slog_err!(
                         Memory,
-                        "[OOMD] Emergency timeout: killing largest RSS process (total killed: {})",
+                        "[OOMD] Emergency timeout: SIGKILL sent to pid {} (rss {} pages, total killed: {})",
+                        victim,
+                        victim_rss,
                         self.terminated_count.load(Ordering::Relaxed)
                     );
                 }

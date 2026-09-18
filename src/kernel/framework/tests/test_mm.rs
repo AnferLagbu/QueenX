@@ -499,6 +499,56 @@ fn uffd_flow_body(fd: i32) -> TestResult {
     TestResult::Pass
 }
 
+/// host-test 无 PMM 初始化且无页表物理内存 → 跳过 (依赖裸机页表分配)
+#[cfg(feature = "host-test")]
+fn test_count_present_user_pages() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// OOMD RSS 近似 (页表用户页计数) 的行为验证
+///
+/// 覆盖 `count_present_user_pages` 的三个关键性质:
+/// 1. 空根 (`cr3 == 0`, 内核线程/无地址空间) → 0, 不触碰任何内存
+/// 2. 新建用户页表已含内核为进入用户态预置的低半区页 (GDT/IDT/TSS), 计数取为基线
+/// 3. 低半区新增映射 N 个 4 KiB 页 → 计数恰好增加 N (不多不少)
+#[cfg(not(feature = "host-test"))]
+fn test_count_present_user_pages() -> TestResult {
+    use crate::framework::mm::count_present_user_pages;
+    use crate::framework::mm::mechanism::{
+        pmm_alloc_page_phys, vmm_create_user_page_table, vmm_destroy_page_table,
+        vmm_map_page_in_table,
+    };
+
+    const BASE: u64 = 0x40_0000;
+
+    check!(count_present_user_pages(0) == 0, "null root must count 0");
+
+    let pml4 = vmm_create_user_page_table();
+    check!(pml4 != 0, "create_user_page_table failed");
+
+    // 基线非零: 新建用户页表已映射 GDT/IDT/TSS 等低半区页 (ring3 iretq/中断所需).
+    // 计数正确性因此由"增量恰好等于新增映射数"判定, 而非绝对值.
+    let baseline = count_present_user_pages(pml4);
+
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    for i in 0..3u64 {
+        let Some(phys) = pmm_alloc_page_phys() else {
+            vmm_destroy_page_table(pml4);
+            return TestResult::Fail("pmm_alloc_page_phys failed");
+        };
+        vmm_map_page_in_table(pml4, BASE + i * PAGE_SIZE, phys.as_u64(), flags.bits());
+    }
+
+    let counted = count_present_user_pages(pml4);
+    vmm_destroy_page_table(pml4);
+    check!(
+        counted == baseline + 3,
+        "3 newly mapped 4K pages must increase count by exactly 3"
+    );
+
+    TestResult::Pass
+}
+
 pub fn register_mm_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -527,6 +577,9 @@ pub fn register_mm_tests() {
         "mm::numa": {
             "vma_policy": test_vma_numa_policy,
             "linux_mode": test_numa_policy_linux_mode,
+        },
+        "mm::vmm": {
+            "count_present_user_pages": test_count_present_user_pages,
         },
         "mm::uffd": {
             "lifecycle": test_uffd_instance_lifecycle,
