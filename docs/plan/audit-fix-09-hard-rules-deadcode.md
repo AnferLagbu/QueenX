@@ -92,6 +92,7 @@
     - **16 处转 plan**（简化实现 + 完整实装待办，代码删 TODO 标记保留简化实现）：tickless hrtimer 集成、uefi EFI_SYSTEM_TABLE 解析 + SetTime、power 调频压 + S3 挂起、shadow_stack PMM 物理页 + CR4 #GP 检测、signal 处理注册/blocked 位图/分发 ×4、idt CPUID 完整解析、iouring VFS fd 表/网络异步/超时/缓冲区注册 ×4。
     - **2 处 host-tests 注释引用更新**：td11_12_13（历史清理描述）、mmap_pwm_test（TRACK-5B3EBC 失同步引用，内核 TRACK- 已清零）。
     - **10 处普通 TODO 转 plan**（去 TODO 标记，保留描述 + 登记引用）：xhci Event Ring、oomd SIGKILL、memfd per-process fd 表 + CLOEXEC、pidfd Task 4、handle.rs per-process fd 表、ext2/exfat/overlayfs/nestfs 时间戳更新 ×4。
+    - **2026-09-18 乙批（引用错配澄清）**：**本项（B09-10）＝ TODO 治理任务，不是 per-process fd 表工程**；但 [syscall-followup.md](syscall-followup.md) **B-8.3 / B-9.5** 与 `framework/fs/vfs/handle.rs:61` 注释均把「per-process fd 表」路线图挂在本编号下 ⇒ **标签错配**，待 reviewer 分配新编号后统一改指。per-process fd 表／FD_CLOEXEC 的独立登记条目 + 成本线索（Plan B 表已实装）见该文件 **B-9.5**。
 
 - **B09-17. QX_* 私有编号归位 SYS_*（2026-09-09 新增，R2 syscall 编号空间治理）**
   - 描述：实测 2026-09-09 `audit_unwired_pub_fn.py` 扫描（分册 1 修复版）：R2 未接线 syscall 157 项 = **SYS_* 38 项 + QX_* 119 项**；另有 dispatch 已接线的 QX_* 46 项。经 Linux x86_64 syscall 表对照，**大量基础 syscall 错误挂在 QX_* 私有区（500+）**，违背编号空间设计（DECISION-037：0-299 直接用 Linux 标准编号、500+ 留给 QX 独有功能）。

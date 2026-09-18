@@ -1407,6 +1407,74 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 
 > 日志：`build/log/jia_batch_c1_gates_final.log`（**最终树全量**，`RC=0`；mtime 20:53 晚于全部改动文件 20:41）。
 
+#### B-9. 乙批收尾记录（5 项：证据补齐 + 命题定性）
+
+**B-9.1 `handle.rs` diff 澄清（结论：非误改，不回退）**
+
+- `b34d6b9b` 改 `handle.rs` 的**唯一原因**＝C-1 **第 2 组**（`vfs.rs::set_fd`）的**调用点在该文件内**：`vfs_open_internal` 的两个分支（`fs_open` 成功 / `CREAT` 创建）。
+- 实读 `git show b34d6b9b -- src/kernel/framework/fs/vfs/handle.rs`：diff 中**不含一行 `vfs_get_fd_handle`** —— 第 1 组判「判据不成立 ⇒ 代码一行未动」，与该文件被改**不矛盾**（同文件、不同函数）。两处改动仅为新增 `let node_id = inode.node_id();` + 两处 `VFS_MANAGER.set_fd(...)`。
+- 处置：**保留现状，不回退**。
+
+**B-9.2 `node_id` 端到端下游验证（新增 1 条链路测试）**
+
+- 测试名：`vfs::backend::fd_to_inode_id_downstream`（[test_vfs.rs](../../src/kernel/framework/tests/test_vfs.rs)）。真实 open 后经**下游消费者**取值，而非只读元数据：
+  - `services::mm::mmap::fd_to_inode_id(fd)` ＝真实 inode —— 它是 `mmap_syscall` 文件映射的**唯一** inode 来源，取 0 即**直接返回 `EBADF`**（[mmap.rs:134-137](../../src/kernel/services/mm/mmap.rs#L134-L137)）；
+  - `services::mm::mmap::fd_to_mount_idx(fd)` 为 `Some` —— 同一 `mmap_syscall` 的挂载点来源。
+- 结果：**PASS**。⇒ 证明 `set_fd` 接线修的是**下游行为**（mmap 文件映射不再因 `inode_id` 恒 0 而恒 `EBADF`），**非仅元数据填充**。
+- host 共享运行器计数：`ALL 365 TESTS PASSED (8 skipped)`（甲批 364 → 乙批 **+1**）。
+
+**B-9.3 fail-closed 负向实证（由「声明」补为「实证」）**
+
+脚本 `scripts/audit_unwired_pub_fn.py` 的降噪依赖台账 **B-6** 区块；此前台账仅陈述「fail-closed」逻辑，无负向输出。本轮实做（临时破坏 → 实测 → 复原）：
+
+| # | 台账状态 | 脚本实测 `HIGH` | `INFO` | 清单 | fail-closed |
+|---|---|---|---|---|---|
+| ① | 基线（正常） | **0** | 435 | 436 | — |
+| ② | 结束标记改名（缺失） | **435** | 0 | 区块未加载 | ✅ 回落「全部未分类」 |
+| ③ | 区块内插入非法行 | **435** | 0 | 区块未加载 | ✅ 同上 |
+| ④ | 区块清空 | **435** | 0 | 区块未加载 | ✅ 同上 |
+| ⑤ | 复原后 | **0** | 435 | 436 | — |
+
+- 复原校验：`sha256` 与破坏前**逐字节一致**（`True`）。
+- 结论：**fail-closed 三态（标记缺失 / 行格式非法 / 区块为空）全部实证触发全量 HIGH**，降噪**不可被「静默失效」** ⇒ 上一轮 T5 的「降噪落地」证据缺口**已补齐**。
+- 附注：四次运行的 `rc=1` 均来自预存 `CRITICAL=7`（R2 未接线 syscall），与 fail-closed 无关。
+
+**B-9.4 ramfs 2 项定型：冗余（但删除受双重阻塞）**
+
+自读证据（活路径＝`vfs_open_internal` → `RamFsData`，services `SafeRamFs` 无生产调用者）逐条核对 `validate_path` 三项检查：
+
+| 检查项 | 下层等价实测 | 判定 |
+|---|---|---|
+| **空** | `resolve_user_path` 把 `""` 归一为 cwd/`/`（[vfs.rs:593-655](../../src/kernel/framework/fs/vfs/vfs.rs#L593-L655)）⇒ ramfs 侧**收不到空串**；且 framework [`RamFsData::open`](../../src/kernel/framework/fs/ramfs/ramfs_data.rs#L481-L484) L482 `if path.is_empty() { return None }` | ✅ **等价（双重）** |
+| **长度** | [`normalize_view_path_into`](../../src/kernel/framework/fs/vfs/vfs.rs#L641-L648) 溢出即 `return None`（L641/L647）⇒ `resolve_user_path` None ⇒ `vfs_open_internal` 返回 -1，**失败语义**；另 VFS_MAX_PATH ＝128（[types.rs:16](../../src/kernel/framework/fs/vfs/types.rs#L16)） | ✅ **等价**（且为**报错**，强于 `NameTooLong`） |
+| **NUL** | FFI 入口 `ptr_to_str` → [`as_kstr()`](../../src/kernel/framework/lib/cstr.rs#L92-L110) 按 NUL 终止扫描（`while n < MAX_CSTR_LEN && *ptr.add(n) != 0`）⇒ 用户路径**按构造不含内嵌 NUL** | ✅ **等价（不可达）** |
+
+- **定型**：**冗余**（`split_path`/`validate_path` 自身全库零引用，且 `SafeRamFs`/`GLOBAL_RAMFS` 在 `src/` 无生产调用者）⇒ 形态是「**未被调用的辅助**」，**不是**「被调用却缺失校验」。
+- **删除的双重阻塞（⇒ 不自主删）**：
+  1. **涉安全面**（裁定六「必须上报」）；
+  2. **会破坏 host-tests 源文本断言**：[td18 `usages_all_use_kernel_wrapper`](../../host-tests/tests/td18_fs_kernel_error_test.rs#L147-L164) 断言 `min("FsError::Kernel(", "KernelError::") >= 10`，而这两个函数正文恰含 3 处 `KernelError::`（`InvalidArgument`×2 + `NameTooLong`）⇒ 删除后计数跌破下界 10。**与 B-7 记录的「试删门槛失败」同源**。
+- ⇒ 本项由「待裁」转为**可删候选 + 需同步调整 host-tests 断言**，**待 reviewer 授权**（不并入本批）。
+- **桶数影响（授权后生效，本批不自行变更）**：若 reviewer 批准转删候选，则 `删候选 0 → 2`、`待裁 2 → 0`，合计仍 **436**（`2 + 75 + 0 + 0 + 359`）。本批**不改桶数**——「新增删候选」属四类上报事项。
+
+**B-9.5 cloexec 独立项登记确认（发现引用错配 + 能力冗余线索）**
+
+- **现状核实**：**未**存在以 per-process fd 表／FD_CLOEXEC 为题的**独立工程项**。仅有两处登记：
+  - [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 的 `ISSUE-SRC-024`（memfd per-process fd 表）与 `ISSUE-SRC-028`（vfs/api.rs per-process fd 表）——**2026-08-09 快照 backlog**，非活看板；
+  - 本台账 **B-8.3** 的「解锁条件 / 责任方」段。
+- **引用错配（须 reviewer 裁定）**：B-8.3 与本文件多处以「**B09-10（per-process fd 表）**」指代该路线图，但 [audit-fix-09](./audit-fix-09-hard-rules-deadcode.md) 的 **B09-10 实为「28 处 TODO(TRACK-...) 注释」治理任务（已 `[X]`）**，非 per-process fd 表工程；`handle.rs:61` 注释同样挂在 B09-10 名下 ⇒ **标签错配**，三项引用需统一改指新编号。
+- **能力冗余线索（影响成本评估）**：[`services/fs/process_fd_table.rs`](../../src/kernel/services/fs/process_fd_table.rs) **已完整实装** Plan B per-process fd 表（`FdEntry.cloexec` 字段 + `alloc_fd` / `alloc_fd_at` / [`close_cloexec_fds`](../../src/kernel/services/fs/process_fd_table.rs#L174-L183) / [`clear_non_cloexec`](../../src/kernel/services/fs/process_fd_table.rs#L186-L195)），全库**零引用**（台账 B-5 记「Plan B 并行 FD 表整体未采用，删/接线待裁」）⇒ 解锁路径可能是「**启用既有 Plan B 表 + 接线**」而非「从零新建」，B-8.3 的修复成本评估应据此下修。
+- **本条即本项的独立登记条目**（编号待 reviewer 分配，命名建议「per-process fd 表 + FD_CLOEXEC 语义」；绑定关系＝B-8.3 解锁条件）。**未自行在 audit-fix-09 新增 B09-xx 编号**（属已登记路线图地基，按四类上报）。
+
+**B-9.6 门槛（五条全量；日志 `build/log/yi_batch_c1_gates.log`，`RC=0`）**
+
+| # | 门槛 | 结果 |
+|---|---|---|
+| 1 | `./ci/build.sh all` | ✅ `x86_64: build passed` / `aarch64: build passed` / `Host tests: passed` / `x86_64: link passed` |
+| 2 | `./ci/audit.sh quick`（三审计） | ✅ 全绿 — `services/ 零 unsafe` / `I1-I6` 全 PASS / `SAFETY 1924/1924 (100%)` 缺漏 0 / `I-43` ✓ / `I-16` ✓ / `I-07: 0 C 风格残留` / `TD-22: 0 违规` / 双架构 check passed / clippy `lib + kernel_test 维 + host-test 维` passed |
+| 3 | `make test-host` | ✅ `RESULT: ALL 365 TESTS PASSED (8 skipped)` |
+| 4 | `make test-unit`（QEMU `kernel_test`） | ✅ `ALL TESTS PASSED (QEMU exit: 33)` |
+| 5 | `./scripts/qemu_boot_test.sh x86_64`（硬闸门） | ✅ `找到里程碑: 'VFS ready'` / `完整启动成功! 进入 Ring 3 启动 init 进程` / `QEMU 真实启动测试: 1/1 通过` |
+
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
 **C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**
