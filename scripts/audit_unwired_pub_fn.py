@@ -9,10 +9,18 @@ audit_unwired_pub_fn.py — 检测「已实现但未接线」的 pub fn / pub co
   - 排除 src/user/ (独立 ELF, 不调用 queenx 内部 pub fn)
 
 检测项:
-  R1 (WARN):  pub fn 全仓库零调用 (除声明文件自身)
+  R1 (HIGH):  pub fn 全仓库零调用 (除声明文件自身) 且**未被 T5 甄别分类**
+  R1 (INFO):  同上但**已在台账「已分类清单」区块中** (降噪, 零引用事实保留)
   R2 (CRITICAL): pub const SYS_*/QX_* 在 syscall/types.rs 声明但 dispatch.rs 未分发
   R3 (WARN):  pub mod 子模块 0 引用
   R4 (INFO):  pub struct/enum 全仓库零引用 (核心类型)
+
+「已分类清单」数据源 (裁定五 / B09-21):
+  台账 docs/plan/syscall-followup.md 内的机器可读区块
+  `<!-- audit-classified-begin -->` … `<!-- audit-classified-end -->`
+  每行一项, 格式 `<repo-relative path>::<pub fn 名>`.
+  - 命中 ⇒ R1 分级降为 INFO (只降噪, **不豁免**: 零引用事实判定不变, 仍列出)
+  - fail-closed: 区块缺失 / 标记不唯一 / 行格式非法 ⇒ 视同全部未分类 (仍报 HIGH)
 
 豁免列表 (避免误报, 严格):
   EXEMPT_NO_MANGLE: #[no_mangle] / #[unsafe(no_mangle)] 函数 (FFI 边界)
@@ -65,9 +73,49 @@ EXEMPT_FILENAMES = {
     "lib.rs",          # crate 入口
 }
 
+# 「已分类清单」数据源 (裁定五 / B09-21): 台账内机器可读区块
+CLASSIFIED_DOC = ROOT / "docs" / "plan" / "syscall-followup.md"
+CLASSIFIED_BEGIN = "<!-- audit-classified-begin -->"
+CLASSIFIED_END = "<!-- audit-classified-end -->"
+# 区块行格式: <repo-relative path>::<pub fn 名>
+CLASSIFIED_KEY_RE = re.compile(r"^src/[^\s:]+\.rs::\w+$")
+
 # ────────────────────────────────────────────────────────────────────────
 # 数据收集 (基于 .rs 文件源码 AST 分析, 不依赖 cargo build)
 # ────────────────────────────────────────────────────────────────────────
+
+def load_classified_set() -> tuple[set[str], str]:
+    """读取台账内「已分类清单」区块 (裁定五 / B09-21)
+
+    返回 (已分类键集合, 状态说明).
+
+    **fail-closed**: 台账不可读 / 区块标记缺失或重复 / 区块为空 /
+    行格式非法 ⇒ 一律返回空集, 调用方视同「全部未分类」(仍报 HIGH).
+    **只降噪不豁免**: 命中仅改变报告分级, 不改变「零引用」这一事实判定.
+    """
+    try:
+        content = CLASSIFIED_DOC.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set(), f"台账不可读 ({CLASSIFIED_DOC.name}) ⇒ 全部按未分类处理"
+
+    lines = content.split("\n")
+    begins = [i for i, line in enumerate(lines) if line.strip() == CLASSIFIED_BEGIN]
+    ends = [i for i, line in enumerate(lines) if line.strip() == CLASSIFIED_END]
+    if len(begins) != 1 or len(ends) != 1 or begins[0] >= ends[0]:
+        return set(), "区块标记缺失或重复 ⇒ 全部按未分类处理"
+
+    classified: set[str] = set()
+    for raw in lines[begins[0] + 1:ends[0]]:
+        entry = raw.strip()
+        if not entry:
+            continue
+        if not CLASSIFIED_KEY_RE.match(entry):
+            return set(), f"区块行格式非法 ({entry[:40]}) ⇒ 全部按未分类处理"
+        classified.add(entry)
+    if not classified:
+        return set(), "区块为空 ⇒ 全部按未分类处理"
+    return classified, f"{len(classified)} 项 (台账 B-6 区块)"
+
 
 def is_vendored(path: Path) -> bool:
     """检测 vendored 子目录（递归检查祖先）"""
@@ -405,8 +453,17 @@ def scan_tree() -> dict:
     }
     stats = defaultdict(int)
 
+    # 裁定五 / B09-21: 「已分类清单」数据源 (fail-closed ⇒ 失败即空集)
+    classified_set, classified_status = load_classified_set()
+    stats["r1_classified_downgraded"] = 0
+
     if not KERNEL_DIR.exists():
-        return {"issues": issues, "stats": stats, "error": f"{KERNEL_DIR} 不存在"}
+        return {
+            "issues": issues,
+            "stats": stats,
+            "classified_status": classified_status,
+            "error": f"{KERNEL_DIR} 不存在",
+        }
 
     for root, _, files in os.walk(KERNEL_DIR):
         root_path = Path(root)
@@ -440,10 +497,17 @@ def scan_tree() -> dict:
                 # 包括同文件内的 proc.set_pid() 和跨文件的 fn()
                 # total == 1 表示只有声明本身, 没有任何调用
                 if refs["actual_callers"] == 0:
+                    rel_file = str(path.relative_to(ROOT))
+                    is_classified = f"{rel_file}::{fn['name']}" in classified_set
+                    if is_classified:
+                        stats["r1_classified_downgraded"] += 1
                     issues["R1_unwired_pub_fn"].append({
-                        "severity": "WARN",
+                        # 裁定五: 已分类 ⇒ 降噪为 INFO (零引用事实保留);
+                        # 未分类 ⇒ HIGH (新代码引入的零引用 pub fn)
+                        "severity": "INFO" if is_classified else "HIGH",
+                        "classified": is_classified,
                         "name": fn["name"],
-                        "file": str(path.relative_to(ROOT)),
+                        "file": rel_file,
                         "line": fn["line"],
                         "refs_total": refs["total"],
                         "refs_in_decl_file": refs["in_decl_file"],
@@ -500,7 +564,11 @@ def scan_tree() -> dict:
                             "refs_total": refs["total"],
                         })
 
-    return {"issues": issues, "stats": dict(stats)}
+    return {
+        "issues": issues,
+        "stats": dict(stats),
+        "classified_status": classified_status,
+    }
 
 
 def format_report(result: dict) -> str:
@@ -519,6 +587,7 @@ def format_report(result: dict) -> str:
     lines.append(f"  └─ 已 dispatch: {stats.get('syscall_consts_dispatched', 0)}")
     lines.append(f"扫描 pub mod:  {stats.get('pub_mods_scanned', 0)}")
     lines.append(f"扫描 pub type: {stats.get('pub_types_scanned', 0)}")
+    lines.append(f"已分类清单 (B09-21 数据源): {result.get('classified_status', '未知')}")
     lines.append("")
 
     issues = result.get("issues", {})
@@ -539,13 +608,15 @@ def format_report(result: dict) -> str:
                 lines.append(f"    ... (共 {len(names)} 个, 仅显示前 30)")
     lines.append("")
 
-    # R1
+    # R1 (裁定五: 未分类 ⇒ HIGH 出明细; 已分类 ⇒ INFO 仅计数, 降噪不豁免)
     r1 = issues.get("R1_unwired_pub_fn", [])
-    lines.append(f"[WARN] R1 pub fn 零跨文件引用: {len(r1)} 项")
-    if r1:
+    r1_high = [it for it in r1 if not it.get("classified")]
+    r1_classified = [it for it in r1 if it.get("classified")]
+    lines.append(f"[HIGH] R1 未分类零引用 pub fn: {len(r1_high)} 项")
+    if r1_high:
         # 按文件分组
         by_file = defaultdict(list)
-        for it in r1:
+        for it in r1_high:
             by_file[it["file"]].append(it)
         for f, items in sorted(by_file.items(), key=lambda x: -len(x[1])):
             lines.append(f"  {f}: {len(items)} 个")
@@ -554,6 +625,7 @@ def format_report(result: dict) -> str:
                              f"(refs: total={it['refs_total']}, decl={it['refs_in_decl_file']}, cross={it['refs_cross_file']})")
             if len(items) > 5:
                 lines.append(f"    ... (共 {len(items)} 个, 仅显示前 5)")
+    lines.append(f"[INFO] R1 已分类 (零引用事实保留, 明细见台账 B-6 区块): {len(r1_classified)} 项")
     lines.append("")
 
     # R3
@@ -575,9 +647,10 @@ def format_report(result: dict) -> str:
     lines.append("")
     lines.append("=" * 78)
     critical = len(r2)
-    warn = len(r1) + len(r3)
-    info = len(r4)
-    lines.append(f"汇总: CRITICAL={critical} / WARN={warn} / INFO={info}")
+    high = len(r1_high)
+    warn = len(r3)
+    info = len(r4) + len(r1_classified)
+    lines.append(f"汇总: CRITICAL={critical} / HIGH={high} / WARN={warn} / INFO={info}")
     lines.append("=" * 78)
     return "\n".join(lines)
 
@@ -585,7 +658,7 @@ def format_report(result: dict) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="QueenX 死代码 / 未接线审计")
     parser.add_argument("--strict", action="store_true",
-                        help="WARN 也退出 1 (默认仅 CRITICAL 退出 1)")
+                        help="HIGH/WARN 也退出 1 (默认仅 CRITICAL 退出 1)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 报告")
     args = parser.parse_args()
 
@@ -599,8 +672,10 @@ def main() -> int:
     # 退出码
     issues = result.get("issues", {})
     critical = len(issues.get("R2_unwired_syscall", []))
-    warn = (len(issues.get("R1_unwired_pub_fn", [])) +
-            len(issues.get("R3_unused_module", [])))
+    # 裁定五: 仅**未分类**的 R1 计入门禁 (已分类项降噪为 INFO, 零引用事实仍列出)
+    r1_unclassified = len([it for it in issues.get("R1_unwired_pub_fn", [])
+                           if not it.get("classified")])
+    warn = r1_unclassified + len(issues.get("R3_unused_module", []))
 
     if critical > 0:
         return 1
