@@ -97,10 +97,22 @@ impl Inode for Ext2Inode {
         false
     }
 
-    fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
-        // ext2: 时间戳更新需修改磁盘 inode
-        // 未来可接入 ext2 inode 时间戳更新 (登记分册 9 B09-10)
-        Ok(())
+    /// ext2 磁盘 inode 时间戳写回
+    ///
+    /// `atime` / `mtime` 为 `u64::MAX` 时表示该字段不修改 (utimensat 的
+    /// `UTIME_OMIT` 语义). ext2 磁盘格式存 32 位秒, 超出范围按 `u32::MAX` 截顶.
+    fn set_times(&self, atime: u64, mtime: u64, _pwm: u64) -> KernelResult<()> {
+        let mut fs_guard = EXT2_FS.lock();
+        let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
+        let mut inode = fs.read_inode(self.inode_num)?;
+        if atime != u64::MAX {
+            inode.i_atime = u32::try_from(atime).unwrap_or(u32::MAX);
+        }
+        if mtime != u64::MAX {
+            inode.i_mtime = u32::try_from(mtime).unwrap_or(u32::MAX);
+            inode.i_ctime = inode.i_mtime;
+        }
+        fs.save_inode(self.inode_num, &inode)
     }
 
     fn node_id(&self) -> u32 {
@@ -188,6 +200,22 @@ impl FileSystem for Ext2FileSystem {
             file_type: inode.file_type(),
             sensitivity: 0,
         })
+    }
+
+    // POSIX utimensat 通路: 路径 → inode → 磁盘写回 (供 syscall 层 `vfs_utimensat`)
+    fn fs_utimensat(
+        &self,
+        rel_path: &str,
+        atime: u64,
+        mtime: u64,
+        pwm: u64,
+    ) -> KernelResult<()> {
+        let inode_num = {
+            let mut fs_guard = EXT2_FS.lock();
+            let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
+            fs.lookup_path(rel_path)?
+        };
+        Ext2Inode::new(inode_num, 0).set_times(atime, mtime, pwm)
     }
 
     fn fs_chmod(&self, _rel_path: &str, _mode: u16, _pwm: u64) -> KernelResult<()> {

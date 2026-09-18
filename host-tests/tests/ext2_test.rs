@@ -54,3 +54,49 @@ fn test_ext2_block_count() {
     ]);
     assert!(block_count > 0, "块数量为 0");
 }
+
+/// 提取 `src` 中 `sig` 起始的函数体 (至下一个同级 `fn` 定义前)
+fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
+    let start = src
+        .find(sig)
+        .unwrap_or_else(|| panic!("未找到函数签名: {sig}"));
+    let rest = &src[start + sig.len()..];
+    let end = rest.find("\n    fn ").unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// C1/T6-② 时间戳写回接线证据 (ext2 需块设备, host 无 mock 无法行为验证)
+///
+/// 断言 syscall 通路 `fs_utimensat` 真实存在, 且 `set_times` 真实写回磁盘 inode
+/// 时间戳字段并经 `save_inode` 落盘 (而非只填内存元数据).
+#[test]
+fn test_ext2_utimensat_wires_to_disk_inode() {
+    let src = fs::read_to_string("../src/kernel/services/fs/ext2/mount.rs").unwrap();
+
+    let utimensat = fn_body(&src, "fn fs_utimensat(");
+    assert!(
+        utimensat.contains("lookup_path"),
+        "fs_utimensat 必须按路径解析 inode 号"
+    );
+    assert!(
+        utimensat.contains("set_times"),
+        "fs_utimensat 必须委托 set_times 落盘"
+    );
+
+    let set_times = fn_body(&src, "fn set_times(");
+    assert!(set_times.contains("i_atime"), "set_times 必须写 i_atime");
+    assert!(set_times.contains("i_mtime"), "set_times 必须写 i_mtime");
+    assert!(set_times.contains("i_ctime"), "set_times 必须写 i_ctime");
+    assert!(
+        set_times.contains("save_inode"),
+        "set_times 必须经 save_inode 落盘"
+    );
+    assert!(
+        set_times.contains("u64::MAX"),
+        "set_times 必须实现 UTIME_OMIT (u64::MAX) 语义"
+    );
+    assert!(
+        !set_times.contains("Err(KernelError::NotSupported)"),
+        "set_times 不得停留于 NotSupported 空实现"
+    );
+}

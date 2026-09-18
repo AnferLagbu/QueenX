@@ -56,6 +56,9 @@ impl Inode for NestfsInode {
                     group_pwm: obj.group_pwm,
                     perm: obj.pwm_perm,
                     sensitivity: obj.sensitivity,
+                    atime: obj.atime,
+                    mtime: obj.mtime,
+                    ctime: obj.ctime,
                     file_type: if obj.is_dir() {
                         VfsFileType::Dir.as_u8()
                     } else {
@@ -106,10 +109,10 @@ impl Inode for NestfsInode {
         }
     }
 
-    fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
-        // NestFS: ZFS-like 文件系统, 时间戳由内部管理
-        // 未来可接入 NestFS 时间戳更新 (登记分册 9 B09-10)
-        Ok(())
+    // B06-08 同源: 委托底层 NestfsData (按路径定位 DMU 对象并落盘)
+    fn set_times(&self, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
+        let nestfs = get_nestfs();
+        nestfs.set_times(&self.rel_path, atime, mtime, pwm)
     }
 
     fn node_id(&self) -> u32 {
@@ -233,6 +236,9 @@ impl crate::framework::fs::FileSystem for NestfsData {
                     group_pwm: obj.group_pwm,
                     perm: obj.pwm_perm,
                     sensitivity: obj.sensitivity,
+                    atime: obj.atime,
+                    mtime: obj.mtime,
+                    ctime: obj.ctime,
                     file_type: if obj.is_dir() {
                         crate::framework::fs::VfsFileType::Dir.as_u8()
                     } else {
@@ -241,6 +247,17 @@ impl crate::framework::fs::FileSystem for NestfsData {
                     ..Default::default()
                 })
             })
+    }
+
+    // POSIX utimensat 通路: 委托 NestfsData::set_times (按路径定位 DMU 对象)
+    fn fs_utimensat(
+        &self,
+        rel_path: &str,
+        atime: u64,
+        mtime: u64,
+        pwm: u64,
+    ) -> crate::framework::fs::KernelResult<()> {
+        self.set_times(rel_path, atime, mtime, pwm)
     }
 
     fn fs_chmod(

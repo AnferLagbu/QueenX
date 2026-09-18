@@ -944,6 +944,59 @@ impl NestfsData {
         KernelError::Io.as_i32()
     }
 
+    /// 设置文件时间戳 (utimensat, POSIX 语义)
+    ///
+    /// `atime` / `mtime` 为 `u64::MAX` 时表示该字段不修改 (对应 utimensat 的
+    /// `UTIME_OMIT` 语义). 权限判据与 `chmod` 一致 (属主或特权级 0).
+    ///
+    /// # Errors
+    /// 未初始化时返回 `NotInitialized`; 路径不存在返回 `FileNotFound`;
+    /// 非属主且无特权返回 `PermissionDenied`; 元数据落盘失败返回 `Io`.
+    pub fn set_times(
+        &self,
+        path: &str,
+        atime: u64,
+        mtime: u64,
+        pwm: u64,
+    ) -> Result<(), KernelError> {
+        if !self.is_initialized() {
+            return Err(KernelError::NotInitialized);
+        }
+        let name = path.trim_start_matches('/');
+
+        let mut datasets = self.datasets.lock();
+        let ds = &mut datasets[0];
+        let Some(obj_id) = ds.lookup(name) else {
+            return Err(KernelError::FileNotFound);
+        };
+
+        let Some(mut obj) = ds.objset.get_obj(obj_id) else {
+            return Err(KernelError::FileNotFound);
+        };
+
+        if obj.owner_pwm != pwm {
+            let level = pwm_api::pwm_get_privilege_level(pwm);
+            if level != 0 {
+                return Err(KernelError::PermissionDenied);
+            }
+        }
+
+        if atime != u64::MAX {
+            obj.atime = atime;
+        }
+        if mtime != u64::MAX {
+            obj.mtime = mtime;
+        }
+        obj.ctime = crate::arch!(timestamp());
+        obj.dirty = true;
+
+        if ds.objset.update_obj(&obj) {
+            Ok(())
+        } else {
+            Err(KernelError::Io)
+        }
+    }
+
     pub fn rename(&self, old_path: &str, new_path: &str, pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();

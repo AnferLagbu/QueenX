@@ -675,3 +675,47 @@ fn nestfs_fd_management() {
 
     println!("\n=== NestFS FD Management Tests Passed ===\n");
 }
+
+/// C1/T6-④ 时间戳写回: `FileSystem::fs_utimensat` → DMU 对象落库 → `fs_stat` 可观测
+///
+/// 验收 (utimensat POSIX 语义):
+///   1. 显式 atime/mtime → fs_stat 读回同一值 (证明确实写回, 而非只填元数据)
+///   2. `u64::MAX` (= UTIME_OMIT) → 该字段保持原值
+///   3. 路径不存在 → 返回错误
+#[test]
+fn nestfs_utimensat_writes_back_times() {
+    use queenx::kernel::framework::fs::FileSystem;
+
+    let _guard = NESTFS_TEST_LOCK.lock().unwrap();
+    ensure_nestfs_init();
+    let nestfs = get_nestfs();
+    let pwm = test_pwm();
+
+    const PATH: &str = "/times_utimensat.txt";
+    const ATIME: u64 = 1_700_000_000;
+    const MTIME: u64 = 1_700_000_123;
+
+    let fd = nestfs.open(PATH, 0x0102, pwm).unwrap();
+    nestfs.close(fd as u32);
+
+    nestfs
+        .fs_utimensat(PATH, ATIME, MTIME, pwm)
+        .expect("fs_utimensat on existing file must succeed");
+
+    let st = nestfs.fs_stat(PATH, pwm).expect("fs_stat must find file");
+    assert_eq!(st.atime, ATIME, "atime 必须写回");
+    assert_eq!(st.mtime, MTIME, "mtime 必须写回");
+
+    // UTIME_OMIT: atime 保持不变, mtime 更新
+    nestfs
+        .fs_utimensat(PATH, u64::MAX, MTIME + 5, pwm)
+        .expect("UTIME_OMIT for atime must succeed");
+    let st = nestfs.fs_stat(PATH, pwm).expect("fs_stat must find file");
+    assert_eq!(st.atime, ATIME, "UTIME_OMIT 必须保持 atime 原值");
+    assert_eq!(st.mtime, MTIME + 5, "mtime 必须更新");
+
+    assert!(
+        nestfs.fs_utimensat("/no_such_file_utimensat.txt", 1, 1, pwm).is_err(),
+        "不存在的路径必须报错"
+    );
+}

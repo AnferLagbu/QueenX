@@ -75,8 +75,15 @@ impl Inode for ExfatInode {
     }
 
     fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
-        // exFAT: 时间戳更新需修改目录项
-        // 未来可接入 exFAT 目录项时间戳更新 (登记分册 9 B09-10)
+        // C1/T6-③ 分类: 需转正式任务 (既非"过期可删", 也非本批可交付的实装).
+        // 三项前置基础设施均缺失, 不属本批授权范围:
+        //   1. 无目录项定位 — `ExfatFs::lookup_path` 只返回首簇号, 丢弃目录项
+        //      所在扇区偏移, 无法回写条目 (exfat/read.rs);
+        //   2. 无时间戳编解码 — `ExfatDirEntry` 未解析 exFAT 时间戳 (2 秒精度
+        //      + 10ms + UTC 偏移) 且无 SetChecksum 重算 (exfat/dir.rs);
+        //   3. 无验证载体 — `ExfatFileSystem` 未注册到任何文件系统表, 且无
+        //      exFAT 镜像/块设备 mock; 写错目录项/校验和会破坏文件系统却不可测.
+        // 登记: docs/plan/audit-fix-09-hard-rules-deadcode.md D-5.
         Ok(())
     }
 
