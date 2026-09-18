@@ -321,12 +321,24 @@
 - oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:607（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义）/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
 
 > 已确认无价值/随手的 TODO 不入清单，直接删除。
+>
+> 状态（2026-09-18，**丙批/T6 首轮 C1 无阻塞切片 5 项已兑现**）：**4 实装 + 1 转正式任务**，五门槛 **5/5 全过**。
+>
+> ① **OOMD 真实发送 SIGKILL**（`TODO(TRACK-...)` oomd.rs，安全关键）——commit `da367a28`：`framework/proc/oomd.rs` Emergency 宽限期后遍历进程表选 RSS 最大用户进程并 `do_signal_send(victim, SIGKILL)`；配套新增 TCB 原语 `framework/mm/{vmm_x86_64,vmm_aarch64}.rs::count_present_user_pages`（页表 4 KiB 当量用户页计数，RSS 近似）。**锁序约束**：页表遍历置于 `process_for_each` 闭包内（只读，进程表锁保护页表根不被释放），信号发送置于闭包**之外**（`do_signal_send` 内部再次取进程表锁，闭包内调用自锁死；该路径运行于 scheduler tick 关中断上下文，不可恢复）⇒ 已由 `oomd_sigkill_sent_outside_process_table_iteration` 固化为回归不变量。
+> ② **ext2 时间戳写回**——commit `97c03f52`：`Ext2Inode::set_times` 写 `i_atime`/`i_mtime`/`i_ctime` 并经 `save_inode` 落盘；`Ext2FileSystem::fs_utimensat` 按路径解析 inode 号后委托。
+> ③ **exfat 时间戳写回 ⇒ 分类「需转正式任务」**（commit `97c03f52`，注释落盘）：三项前置基础设施均缺失，不属本批授权范围——无目录项定位（`lookup_path` 只返回首簇号，丢弃目录项扇区偏移）/ 无时间戳编解码（`ExfatDirEntry` 未解析 exFAT 时间戳与 SetChecksum）/ 无验证载体（`ExfatFileSystem` 全仓零实例化、无镜像 mock，写错目录项会破坏 FS 却不可测）。
+> ④ **nestfs 时间戳写回**——commit `97c03f52`：新增 `NestfsData::set_times`，接线 `Inode::set_times` / `fs_utimensat` / `fs_stat`（stat 增补 `atime`/`mtime`/`ctime`），支持 `u64::MAX` = UTIME_OMIT。
+> ⑤ **`idt/safety.rs::CpuFeatures::detect` CPUID 完整解析**——commit `d055ab58`：x86_64 经 CPUID leaf 0 取最大叶号、leaf 1 的 EDX bit9（APIC）/ ECX bit21（x2APIC）真实解析；aarch64 返回架构中性缺省值（GIC，无 APIC）；原无效断言（`has_apic || !has_apic`）改为双架构真实不变量。
+>
+> **测试**：`mm::vmm::count_present_user_pages`（QEMU 行为验证：空根=0 / 基线增量恒等）/ `oomd_emergency_actually_sends_sigkill` / `oomd_sigkill_sent_outside_process_table_iteration` / `nestfs_utimensat_writes_back_times`（端到端，含 UTIME_OMIT 与不存在路径）/ `test_ext2_utimensat_wires_to_disk_inode`（接线证据，ext2 需块设备）/ `idt::cpu_features_no_panic`（重写）。
+>
+> **上报项（按裁定六）**：① 新增 TCB 内存面原语 `count_present_user_pages`（`framework/mm`，含裸机页表遍历 `unsafe` + SAFETY 注释）；② exfat 偏离——本批未实装，转正式任务；③ **覆盖缺口**：OOMD 端到端不可行为测试（`register_pressure_classifier` 为 OnceLock 一次性注册，无法在测试注入 Emergency），故以「新原语行为测试 + 接线/锁序源码证据 + 明确标注缺口」替代；④ 观察项：`framework/idt/safety.rs:7` `#[allow(unused_imports)]` 属**预存** F9 豁免残留（非本批引入，未擅自处置，§12.2）。
 
 ### D-6. 兑现路径与验证
 
 - 本清单条目按优先级渐进实装（POSIX 兼容 → 安全 → 驱动 → QX 独有）。
 - 每批兑现后：双架构 0w0e + clippy 三线 + host-tests + QEMU + `audit_unwired_pub_fn.py` R2/R1 下降 + grep `TODO(TRACK` 复核 0。
-- 状态：[D-1~D-5 全 []，兑现后逐条标记 [X]]
+- 状态：[D-5 丙批 C1 5 项已兑现（4 实装 + 1 转正式任务，2026-09-18）；其余 D-1~D-4 / D-5 余项仍为 []，兑现后逐条标记 [X]]
 
 ### D-7. "直接删"清单（2026-09-09 补充，集中登记）
 
