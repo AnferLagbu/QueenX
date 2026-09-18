@@ -20,12 +20,34 @@ pub struct CpuFeatures {
 
 impl CpuFeatures {
     /// 检测当前 CPU 的特性
+    ///
+    /// x86_64: 经 CPUID leaf 0 取最大叶号, 再按 leaf 1 的
+    /// EDX bit 9 (APIC) / ECX bit 21 (x2APIC) 解析真实硬件特性.
+    /// aarch64: 无 CPUID 指令 (中断控制器为 GIC 而非 APIC), 返回架构中性缺省值.
     pub fn detect() -> Self {
-        // 简化版 CPU 特性检测 (Phase 1)
-        Self {
-            has_apic: true,    // 假设现代 CPU 都有 APIC
-            has_x2apic: false, // Phase 3 再检测
-            max_cpuid_leaf: 0,
+        #[cfg(target_arch = "x86_64")]
+        {
+            let (max_cpuid_leaf, _, _, _) = crate::framework::cpu::cpuid::cpuid(0, 0);
+            // leaf 1 仅在 max_cpuid_leaf >= 1 时有效 (超范围读数在部分 CPU 上未定义)
+            let (has_apic, has_x2apic) = if max_cpuid_leaf >= 1 {
+                let (_, _, ecx, edx) = crate::framework::cpu::cpuid::cpuid(1, 0);
+                (edx & (1 << 9) != 0, ecx & (1 << 21) != 0)
+            } else {
+                (false, false)
+            };
+            Self {
+                has_apic,
+                has_x2apic,
+                max_cpuid_leaf,
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self {
+                has_apic: false,
+                has_x2apic: false,
+                max_cpuid_leaf: 0,
+            }
         }
     }
 

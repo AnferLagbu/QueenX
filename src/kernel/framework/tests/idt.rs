@@ -326,9 +326,24 @@ fn address_validation() -> TestResult {
 
 fn cpu_features_no_panic() -> TestResult {
     let features = CpuFeatures::detect();
-    let _ = features.has_apic;
-    let _ = features.has_x2apic;
-    let _ = features.max_cpuid_leaf;
+    // x86_64: detect() 经 CPUID leaf 0/1 真实解析 — 须满足最低硬件不变量
+    #[cfg(target_arch = "x86_64")]
+    {
+        check!(features.max_cpuid_leaf >= 1, "max_cpuid_leaf must be >= 1");
+        check!(features.has_apic, "leaf1 EDX bit9 (APIC) must be set");
+        // x2APIC 为可选特性 (QEMU 默认 CPU 不暴露); 架构上 x2APIC 蕴含 APIC
+        check!(
+            !features.has_x2apic || features.has_apic,
+            "x2APIC must imply APIC"
+        );
+    }
+    // aarch64: 中断控制器为 GIC, 无 APIC/x2APIC (detect 返回架构中性缺省值)
+    #[cfg(target_arch = "aarch64")]
+    {
+        check!(!features.has_apic, "aarch64 must not report APIC");
+        check!(!features.has_x2apic, "aarch64 must not report x2APIC");
+        check!(features.max_cpuid_leaf == 0, "aarch64 max_cpuid_leaf default");
+    }
     TestResult::Pass
 }
 
