@@ -871,6 +871,16 @@ T7 (预存登记)
 5. **覆盖无损失断言** → `make test-host` **99 个 test bin 全 ok、755 tests passed / 0 FAILED**（与门控前基线一致，无下降；**P2′ 后复跑同值**）。
 6. **HIGH 清单与 HEAD 基线逐项一致（不得新增/推翻）**：当前基线 **7 项 HIGH**（`services/credo/storage/disk.rs` ×2、`services/fs/io.rs` ×1、`services/net/unix.rs` ×1、`services/syscall/dispatch.rs` ×3）+ 20 项 INFO（`framework/tests/net.rs`、`framework/tests/test_config.rs`、`services/net/mod.rs`）——**与本批桩化文件集（`framework/mm/*`、`framework/boot/mod.rs`、`framework/proc/process.rs`、`framework/syscall/mod.rs`、`src/kernel/lib.rs`）零交集**；实测与 HEAD 影子树基线逐项一致，差异仅 `services/syscall/dispatch.rs` 3 处行号平移（785/898/902 → 826/939/943）。原文「rc=0」系裁定方笔误（未核 HEAD 基线），已按实测修正。
 7. **QEMU 三门槛**：`make test-unit` → **ALL 498 TESTS PASSED (0 skipped)**；`./scripts/qemu_boot_test.sh x86_64` → **1/1 通过**（进入 Ring 3 启动 init）；**真机路径证据（非仅编译通过）**——引导日志实测 `Boot stack canary verified`、`kernel_end=0x3E60000`（非零 → 簇 3 真机分支生效）、`[KPTI] text region: start=0x12B000 end=0x2805E9 (342 pages)`、`[KPTI] map_text_region: …`、`[KPTI] data pages mapped: USER_CR3_SAVE=0x23FD000`、`[KPTI] kpti_init: kernel_pml4=0x102000, user_pml4_phys=0x3e60000` —— 簇 1/2/3/5 的真机分支均**实际执行**，桩化未侵蚀裸机语义。（**P2′ 后复跑同绿**：498/498 + boot 1/1，日志中 `_kernel_text_*` / `_kernel_end` 取值点均正常输出 → 声明收拢未影响真机构建。）
+8. **本轮复核复跑（T1 收尾复核：纯复核，未改任何代码）**：
+   - **P2′ 现状核实**：三处残余声明收拢在源码中在位——[mm/kpti.rs](src/kernel/framework/mm/kpti.rs#L167-L171)（`_kernel_text_start` / `_kernel_text_end`，`not(feature = "host-test")`，模块已受 `target_arch = "x86_64"` 门控）、[boot/mod.rs](src/kernel/framework/boot/mod.rs#L114-L117)（`_kernel_end`，块级）、[syscall/mod.rs](src/kernel/framework/syscall/mod.rs#L124-L127)（`_kernel_start` / `_kernel_end`，单 item 级）；判据与 [mm/mod.rs](src/kernel/framework/mm/mod.rs#L17-L22) / [proc/process.rs](src/kernel/framework/proc/process.rs#L38-L41) 同构（符号存在性）。
+   - **P1 负向验证复跑**：临时将 `syscall/mod.rs` 的 `kernel_start_ptr` 真机分支转为无条件（去掉 host 桩分支）→ `cargo test --manifest-path host-tests/Cargo.toml --test e04_shared_runner_test --no-run` **exit=101**，逐字报错：
+     ```
+     error[E0425]: cannot find value `_kernel_start` in this scope
+        --> /home/anfer/Code/QueenX/src/kernel/framework/syscall/mod.rs:336:23
+     ```
+     ⇒ **编译期**失败（非链接期 `undefined symbol`），与改写后的验收标准一致；改动已回退（`git diff --stat` 仅两份文档、临时标记全仓零残留）。
+   - **P4 全门槛回归（本轮实测）**：`./ci/build.sh all` → **Passed 5 / Failed 0**（RC=0）；`./ci/audit.sh quick` → **RC=0**（**F4 SAFETY 覆盖 1924 / 1924 = 100%，缺 SAFETY 0**；clippy lib / `kernel_test` / `host-test` **三维全 passed**）；`make test-host` → **RC=0**（101 个测试二进制全 `ok`、合计 **766 passed / 0 FAILED**，对基线 755 **无下降**）；`make test-unit` → **RC=0**（QEMU `kernel_test` **ALL 498 TESTS PASSED**）；`./scripts/qemu_boot_test.sh x86_64` → **RC=0，1/1 通过**（串口 240 行，命中里程碑 `VFS ready`，进入 Ring 3 启动 init）。
+   - **P3 文档同步**：本条即同步结果；「守卫两级化（编译期 / 链接期，均 fail-closed）」表述与本轮复跑实测一致，无待改项。
 
 **审核已确认的四项静态/链接证据（裁定方复核结论，本批复核后保持一致）**
 
