@@ -106,7 +106,7 @@ T7 (预存登记)
 - [X] T2：回退层保留项 → services 迁移（批 1-5 全部完成，见下方 T2 实施记录）
 - [X] T1：R2 未实装 SYS_* 实装（G1-G7 全部完成，见下方 T1 实施记录）
 - [X] T4：R3 零引用 pub mod 7 项核实（2026-09-18 完成，处置＝删除，见下方 T4 实施记录）
-- [ ] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项全量扫描已登记，**经 reviewer 四轮复核后按修订口径重划**（**T5 内**：删候选 **0** / 硬件原语完整性保留 **43**（仅登记）/ 待裁 **47**，T5 内合计 **90** ＝ 438 − 1（`write_log_line` 已试删删除）− 8 − 339；**接线 8 与未来功能 339 已按第四轮裁定一移出 T5**），未改代码；**A-2 已退回重做并重新定型**（判据升格三合一；原 23 项＝11 留 + 4 安全面 + 8 退桶；**第三轮**：`ct_eq_salt`/`ct_eq_password` ⇒ 族残缺入完整性保留 41→43，ramfs `split_path`/`validate_path` ⇒ 挂起待 T3 结论入 B-4 待裁 35→37，安全面桶清零），**施工方式＝逐项试删 + 既有五条门槛（不立项新工具）**，任一维硬失败即回退；**A-2 11 项试删已由 reviewer 第三轮授予开工**（解锁五条 ①②③④⑤ 已逐条核销），执行约束＝逐项独立提交 / 每项跑五门槛全量 / **QEMU boot 硬闸门** / ramfs 2 项不入本批；**第四轮开出后逐项复核实测发现 9 项判据不成立**（6 项「同族兄弟在用」＝**族残缺**形态、2 项台账 ② 判据事实错误、1 项无等价公共入口）⇒ 按裁定**退桶 9 项入待裁**（删候选 11 → **2**，待裁 37 → **46**），本轮仅 `write_log_line` / `format_duration` 2 项进入试删——`write_log_line` 五门槛 **5/5 全过** ⇒ **已删除**（commit `23681a14`；R1 438 → **437**），`format_duration` 判据待补 ⇒ **退桶**（A-6）⇒ **删候选清零（裁定四.1 达成）**；**T5 剩余工作＝T5-B 待裁 47 归零 + T5-C 五条关闭验收**。见「T5 实施记录」「T5 全量甄别台账」）
+- [ ] T5：R1 甄别（批 1 完成：R1 447 → **438**，处置＝只删确证无用 9 项；批 2 完成：438 项全量扫描已登记，**经 reviewer 四轮复核后按修订口径重划**（**T5 内**：删候选 **0** / 硬件原语完整性保留 **43**（仅登记）/ 待裁 **47**，T5 内合计 **90** ＝ 438 − 1（`write_log_line` 已试删删除）− 8 − 339；**接线 8 与未来功能 339 已按第四轮裁定一移出 T5**），未改代码；**A-2 已退回重做并重新定型**（判据升格三合一；原 23 项＝11 留 + 4 安全面 + 8 退桶；**第三轮**：`ct_eq_salt`/`ct_eq_password` ⇒ 族残缺入完整性保留 41→43，ramfs `split_path`/`validate_path` ⇒ 挂起待 T3 结论入 B-4 待裁 35→37，安全面桶清零），**施工方式＝逐项试删 + 既有五条门槛（不立项新工具）**，任一维硬失败即回退；**A-2 11 项试删已由 reviewer 第三轮授予开工**（解锁五条 ①②③④⑤ 已逐条核销），执行约束＝逐项独立提交 / 每项跑五门槛全量 / **QEMU boot 硬闸门** / ramfs 2 项不入本批；**第四轮开出后逐项复核实测发现 9 项判据不成立**（6 项「同族兄弟在用」＝**族残缺**形态、2 项台账 ② 判据事实错误、1 项无等价公共入口）⇒ 按裁定**退桶 9 项入待裁**（删候选 11 → **2**，待裁 37 → **46**），本轮仅 `write_log_line` / `format_duration` 2 项进入试删——`write_log_line` 五门槛 **5/5 全过** ⇒ **已删除**（commit `23681a14`；R1 438 → **437**），`format_duration` 判据待补 ⇒ **退桶**（A-6）⇒ **删候选清零（裁定四.1 达成）**；**T5-B 待裁 47 归零已完成**（B-5 归零表：13 等路线图 ⇒ 未来功能 / 32 判据待补 ⇒ 完整性保留 / 2 安全面待 T3 留待裁 ⇒ 桶数六次修订＝删候选 **0** / 完整性保留 **75** / 待裁 **2**，T5 内合计 **77**；裁定四.2、四.3 达成）；**T5-C 五条关闭验收**：①④⑤ 之外——① 删候选清零 ✅、② 待裁带三字段 ✅、③ 桶数闭合 + 转移可追 ✅、⑤ 双向引用 ✅、**④ 审计噪音治理（裁定五，单开任务）未落地** ⇒ **T5 状态暂不置 `[X]`**（关闭挂起于裁定五）。见「T5 实施记录」「T5 全量甄别台账」）
 - [ ] T6-T7：登记排后（TODO 33 项 / aarch64 编号）
 
 ### T3 实施记录（2026-09-15）
@@ -622,16 +622,16 @@ T7 (预存登记)
 | g3 `services/` | 169 | 4 | 6 | 150 | 9 |
 | **合计** | **438** | **70** | **142** | **205** | **21** |
 
-**修订后桶数（五次修订 + reviewer 第四轮**范围裁定**：接线 / 未来功能移出 T5；不得作为施工依据）**：
+**修订后桶数（六次修订 + reviewer 第四轮**范围裁定**：接线 / 未来功能移出 T5；不得作为施工依据）**：
 
 | 桶 | 项数 | 包含 | 是否在 T5 内 |
 |---|---|---|---|
 | 删候选 | **0** | 四次修订 2 − 试删删除 1（`write_log_line`）− 判据待补退桶 1（`format_duration`，A-6）⇒ **清零（裁定四.1 达成）** | ✅ 是 |
-| 硬件原语完整性保留 | **43** | 41（x86_64 侧 31 + aarch64 侧 10，优先级裁定见 A-1）+ 安全面「族残缺」档 2（`ct_eq_salt` `ct_eq_password`，第三轮裁定一） | ✅ 是（**仅登记**，不施工） |
-| 待裁 | **47** | 四次修订 46 + `format_duration` 退桶 1（A-6）；**须按裁定二逐项落三态 + 补三字段，禁裸待裁** | ✅ 是（**裁定四.2 验收**） |
-| **T5 内合计** | **90** | **算术闭合**：0 + 43 + 47 = 90 ＝ 438 − 1（`write_log_line` 已删除）− 8（接线移出）− 339（未来功能移出） | — |
+| 完整性保留（原「硬件原语完整性保留」） | **75** | 43（41 硬件原语＝x86_64 侧 31 + aarch64 侧 10，优先级裁定见 A-1；+ 安全面「族残缺」档 2 `ct_eq_salt`/`ct_eq_password`）+ **32**（**六次修订**：B-5.2 判据待补补齐后定桶，G1-G8 明细见 B-5.2） | ✅ 是（**仅登记**，不施工） |
+| 待裁 | **2** | **六次修订**：47 − 13（B-5.1 等路线图 ⇒ 未来功能）− 32（B-5.2 ⇒ 完整性保留）= **2**（`split_path`/`validate_path`，**安全面待 T3**）；**三字段齐备，无裸待裁（裁定四.2 达成）** | ✅ 是（**裁定四.2 验收**） |
+| **T5 内合计** | **77** | **算术闭合**：0 + 75 + 2 = 77 ＝ 437 − 8（接线移出）− 352（未来功能移出）；六次修订前为 90（＝438−1−8−339） | — |
 | — 接线 | 8 | `fs/vfs/handle.rs` 1 + `fs/vfs/vfs.rs` 1 + `irqline.rs` 1 + `frame.rs` 1 + `proc/fd_table.rs` 4（逐项独立判定） | ❌ **否**——移出，另立「**功能接线批次**」（与 T3 联动） |
-| — 未来功能（DECISION-052 第三层） | 339 | 来源合成：原「接线」剩余 134（＝142−8，排除法所得，非实测）+ 原「预留」205 | ❌ **否**——移出，归 **DECISION-052 第三层** |
+| — 未来功能（DECISION-052 第三层） | **352** | 339（来源合成：原「接线」剩余 134 ＝142−8，排除法所得，非实测 + 原「预留」205）+ **13**（**六次修订**：B-5.1 等路线图转入——CET 5 / NUMA 5 / PCID 1 / IOMMU-DMAR 2） | ❌ **否**——移出，归 **DECISION-052 第三层** |
 
 > **裁定一（reviewer 第四轮，T5 范围）**：删候选＝逐项试删（**仅冗余档**）+ 五门槛全量 + 独立提交可回退；完整性保留＝**不施工**，登记为「已分类」供审计引用；待裁＝逐项补「等待原因 + 解锁条件 + 责任方」，**禁裸待裁**；**接线 / 未来功能移出 T5**（接线是「加功能」、甄别是「清死代码」，混桶会让 T5 永远无法关闭且归因困难；339 项属未集成子系统，本不属甄别范畴）。
 
@@ -643,7 +643,7 @@ T7 (预存登记)
 | **判据待补** | 族残缺 / 事实待核 | **补齐后定桶**；补不出即转「**完整性保留**」 |
 | **安全面待 T3** | 路径校验 / 常数时间比较等 | **留在待裁**，挂 T3 依赖并标注 |
 
-> **裁定四（T5 关闭验收标准，五条缺一不可）**：① **删候选桶清零**（试删通过提交 / 失败退桶）——**本轮已达成**；② **待裁 47 项全部带三字段，无裸待裁**（T5-B）；③ **桶数算术闭合且桶间转移路径可在台账明细逐项追**（438 → **437**；本轮 11 → 2 的 −9 逐项列于 A-5、2 → 0 的 −2 列于 A-2 / A-6）；④ **审计噪音治理落地**（裁定五，单开任务）；⑤ **文档同步**：R1 状态行 + 与 [audit-fix-09 D-4](audit-fix-09-hard-rules-deadcode.md) 的**双向引用**。
+> **裁定四（T5 关闭验收标准，五条缺一不可）**：① **删候选桶清零**（试删通过提交 / 失败退桶）——**已达成**；② **待裁 47 项全部带三字段，无裸待裁**（**T5-B 已达成**：B-5 归零表，47 → 13 等路线图 + 32 判据待补定桶 + 2 安全面待 T3，逐项三字段齐备）；③ **桶数算术闭合且桶间转移路径可在台账明细逐项追**（438 → **437**；本轮 11 → 2 的 −9 逐项列于 A-5、2 → 0 的 −2 列于 A-2 / A-6、**47 → 2 的 −45 逐项列于 B-5.1 / B-5.2 / B-5.3**，桶效应见 B-5「桶数六次修订」）；④ **审计噪音治理落地**（裁定五，单开任务，**当前未落地** ⇒ 见 T5-C）；⑤ **文档同步**：R1 状态行 + 与 [audit-fix-09 D-4](audit-fix-09-hard-rules-deadcode.md) 的**双向引用**（**已达成**，见两处六次修订状态注）。
 
 > **裁定五（审计噪音治理——单开任务，最小形态）**：`scripts/audit_unwired_pub_fn.py`（R1）在 CI 反复报零引用 pub fn，T5 关闭后若不治理则**成果无法固化、清单必漂移**。裁定：给 R1 增加「已分类清单」数据源，**不新建独立文件**，清单以**台账内机器可读区块**承载——`<!-- audit-classified-begin -->…<!-- audit-classified-end -->`；审计脚本读该区块作为「已知分类」集合，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败视同未分类（仍报）；**只降噪不豁免**＝不改变「零引用」事实判定，只改变报告分级。定位＝**单开任务**，**不作为 T5 前置**（T5 可先完成甄别），但**是 T5 关闭条件之一**。
 
@@ -743,7 +743,7 @@ T7 (预存登记)
 
 > **负债如实登记**：上表 2 处错误系「二次修订」时未经全仓实测即写入 ② 判据所致——已于本轮就地订正，并据此退桶。
 
-#### B. 待裁（四次修订：21 → 37 → 46）
+#### B. 待裁（四次修订：21 → 37 → 46 → 47；**六次修订后归零为 2 项**——13 等路线图 + 32 判据待补定桶 + 2 安全面待 T3，逐项见 **B-5 归零表**）
 
 **B-0 二次分桶产出规格（三档形态；reviewer 第三轮裁定三，本桶的定型口径）**
 
@@ -811,6 +811,69 @@ T7 (预存登记)
 > **调用面实测**：services `SafeRamFs`（`GLOBAL_RAMFS` / `global()`）**在 `src/` 下无生产调用者**（全仓仅 host-tests [td18_fs_kernel_error_test.rs](file:///home/anfer/Code/QueenX/host-tests/tests/td18_fs_kernel_error_test.rs) 对该文件做**源文本断言**，非调用）；`split_path` / `validate_path` 自身更是全仓零引用 ⇒ 其形态是「**未被调用的辅助**」，**不是**「被调用却缺失校验」。
 >
 > **结论**：**非安全缺陷**（活路径的空校验由 framework 提供；长度由 VFS 缓冲区按构造约束；NUL 由缓冲区语义处理）⇒ 上轮「阻塞一个可能的安全缺陷判定」**已解除**。定型**倾向「冗余」**（附两条保留：① 长度校验**语义不等价**（截断 vs 报错）⇒ 将来若接线 services 代理入口须补长度校验并登记契约；② 删除属**安全面**，按**裁定六**「必须上报」⇒ **不自主删**，**待 reviewer 授权**）。本项保留在待裁（三态＝安全面待 T3），**三字段见 B-5**。
+
+#### B-5. 待裁 47 归零表（六次修订：裁定二逐项落三态 + 三字段，禁裸待裁）
+
+> **口径**：三态定义与去向按**裁定二**（等路线图 ⇒ 转「未来功能」并注明路线图名 + 登记处；判据待补 ⇒ 补齐后定桶，补不出即转「完整性保留」；安全面待 T3 ⇒ 留待裁并挂 T3 依赖）。**三字段＝等待原因 + 解锁条件 + 责任方**，本节 47 项逐项具备（同组同因者组内共享，组表逐项列出成员，**无裸待裁**）。
+>
+> **裁定四.3 转移可追**：47 ＝ **13**（等路线图 ⇒ 未来功能）+ **32**（判据待补 ⇒ 完整性保留）+ **2**（安全面待 T3 ⇒ 留待裁）；桶效应见本节末「桶数六次修订」。
+
+**B-5.1 等路线图（13 项 ⇒ 转「未来功能」）**
+
+| 路线图 | 登记处（核实结论） | 项（文件::符号） | 等待原因 | 解锁条件 | 责任方 |
+|---|---|---|---|---|---|
+| **CET 子系统**（Shadow Stack / IBT / PAC-BTI） | ① `src/kernel/framework/arch/shadow_stack.rs:26-31`——文件头「当前实现状态」自述未完成面（IBT 仅定义未启用、PAC/BTI 仅定义未启用）；② [audit-fix-09](audit-fix-09-hard-rules-deadcode.md) B09-10「16 处转 plan」含 shadow_stack PMM 物理页（TRACK-4C9A12）+ CR4 #GP 检测（TRACK-6E7C34）；③ [unresolved-issues-2026-08-09.md](unresolved-issues-2026-08-09.md) ISSUE-SRC-001 / ISSUE-SRC-018 | `arch/shadow_stack.rs::set_ssp` / `alloc_kernel_shadow_stack` / `configure_user_cet_msr` / `configure_interrupt_ssp_table` / `is_ssp_valid`（**5 项整组统一**） | CET 硬件面未完成：影子栈物理页分配、#GP 安全检测、中断 SSP 表 IDT 集成都未落地（函数族存在但无消费链路） | CET 路线图排期（ISSUE-SRC-001 + ISSUE-SRC-018 实装并接入 `cet_init`/IDT） | 用户（路线图排期） |
+| **NUMA 子系统** | ① `src/kernel/framework/mm/numa.rs:1-10`——DECISION-J 归属反转记录（`NumaMempolicy` 被 framework proc/process 持有、`numa_init` 被 framework mm 调用 ⇒ 机制已实装）；② [archive/subsystem-bootstrap-sequence-2026-06.md](archive/subsystem-bootstrap-sequence-2026-06.md) D3（NumaNode/NumaTopology + 距离矩阵，**已归档快照**）；③ 本台账 T1 G4 记录（`mbind` / `set_mempolicy` 已接线 + `NumaPolicy::from_linux_mode`） | `mm/numa.rs::set_distance` / `best_alloc_node` / `nearest_free_node` / `contains_cpu` / `all_nodes`（**5 项整组统一**） | 拓扑/距离矩阵与跨节点分配策略**未接入 PMM 分配路径**（策略面已实装，消费面缺） | NUMA 分配策略集成排期（PMM 按节点分配 + SLIT 距离矩阵消费） | 用户（路线图排期） |
+| **PCID / INVPCID 优化** | ① `src/kernel/framework/mm/kpti.rs:23-31`——文件头「未完成」清单明载「**PCID/INVPCID 优化**：当前每次切换 CR3 都 TLB 全清，高频 syscall 性能损失 5-15%」；② [kpti-complete-project.md](kpti-complete-project.md)（活跃 KPTI 完整化工程 Phase 0-3） | `mm/kpti.rs::pcid_is_enabled`（1） | KPTI 完整化工程 Phase 2/3 未启动（PCID 化须待 `.text` 收窄与 USER_PML4 高半区复制移除后实施） | KPTI 完整化工程 Phase 2 排期（KPTI-07/KPTI-08） | 用户（工程排期） |
+| **IOMMU / VT-d（DMAR 消费）** | ① `AGENTS.md` §4.2 **I6**「外设 DMA 不可写入内核内存」＝全项目硬不变式（未落地即为欠账）；② [archive/framekernel-compliance.md](archive/framekernel-compliance.md) E8「IOMMU 不变式强制」；③ `src/kernel/framework/arch/x86_64/acpi.rs:783-884`——DMAR 表**已解析**入 `DMAR_DRHD_LIST` / `DMAR_HOST_ADDR_WIDTH`，**无任何消费方** | `arch/x86_64/acpi.rs::get_dmar_drhd_list` / `get_dmar_host_addr_width`（2） | DMAR 已解析但 IOMMU 重映射未实装 ⇒ DRHD 数据无消费链路（I6 强制未落地） | IOMMU/VT-d 集成排期（DRHD 消费 + DMA 重映射域，落地 I6） | 用户（路线图排期） |
+
+> **台账事实订正（裁定六授权范围内；本项核实结论）**：`kpti.rs:23` 所引「在 `engineering-progress.md` §五 + roadmap Backlog 登记」**已失效**——`docs/plan/engineering-progress.md` **不存在**（全仓仅历史文档引用该文件名，`src/` 内唯一命中即 `kpti.rs:23` 自身），`kernel-roadmap.md` 亦已归档至 `archive/2026-07-08-kernel-roadmap.md` 且**无 PCID 条目**。故本项「登记处」**改以 `kpti.rs:23-31` 现状清单 + 活跃的 [kpti-complete-project.md](kpti-complete-project.md) 为准**，路线图成立性不受影响。另：按**裁定六**，`pcid_is_enabled` 属「已登记路线图的地基」⇒ **不得删**（本表已剔除出任何删候选路径）。
+
+**B-5.2 判据待补（32 项 ⇒ 补齐后定桶「完整性保留」）**
+
+| 定型组 | 项（文件::符号） | 补齐判据（② 等价入口 / ③ 面属性 / 族） | 定桶 |
+|---|---|---|---|
+| **G1 aarch64 门控诊断**（2） | `arch/aarch64/mmu.rs::diagnose_permission`、`mm/vmm_aarch64.rs::diagnose_descriptor` | ② **不成立**——aarch64 专属诊断输出（非原语），x86_64 维下 `mm/mod.rs:51-53` 整模块门控，**「零引用」为构造性结果**；③ aarch64 架构门控诊断面；族（aarch64 诊断/内省族）完整 | 完整性保留（aarch64 门控诊断面） |
+| **G2 feature 门控**（4） | `sync/atomic.rs::record_inc` / `record_dec` / `record_cmpxchg_success` / `record_cmpxchg_fail` | ② **不适用**（feature 门控代码非死代码，`atomic.rs:182` `#[cfg(feature = "atomic_stats")]`）；③ feature 面 | 完整性保留（feature 门控面） |
+| **G3 机制原语 / 安全加固 / TCB**（3） | `barrier/recoverable.rs::lock_fast`、`cpu/cpuid.rs::cpuid_checked`、`arch/x86_64/gdt.rs::get_gdt_table` | ② **不成立**——`lock_fast` 为免 checkpoint 快速路径（与常规 `lock` 路径能力不同）；`cpuid_checked` 为**叶范围校验安全变体**（裸 `cpuid` 无校验，非等价）；`get_gdt_table` 注释自述 `/// 获取 GDT 表的引用 (调试用途)`（退桶时已引原文核对）；③ 机制原语 / 安全加固 / **TCB 核心**（GDT，裁定六）面 | 完整性保留 |
+| **G4 驱动 / 统计 / 诊断 API 面**（4） | `driver/bus/pci.rs::pci_scan`、`barrier/reset/audit.rs::count_by_result`、`mm/page_fault.rs::page_fault_count`、`mm/slab.rs::utilization` | ② **不成立（能力重叠但非等价）**——`pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`，3 处在用），**差异能力＝逐设备 `klog_info!` 输出**（与 A-6 `format_duration` 的「`core::fmt` 非等价」同款判据）；`count_by_result` 与同文件 `count_by_layer` 为**不同维度**；`page_fault_count` 的 `PAGE_FAULT_COUNT` 为 `pub static`（并行读法非等价封装）；`utilization` 需调用方自行除法（部分等价）；③ 驱动 / 统计 / 诊断 API 面 | 完整性保留 |
+| **G5 FS mount-unmount 面 + Plan B FD 表**（9） | `services/fs/{sysfs,cgroupfs,configfs,virtiofs,systree}.rs::umount_*`（5）、`services/fs/devpts.rs::umount_devpts`、`services/fs/process_fd_table.rs::get_fd` / `close_cloexec_fds` / `clear_non_cloexec`（3） | ② **不成立**——各 FS 的 unmount 面唯一（无等价入口），与 C-2 `mount_*` 5 项为同批「待 VFS mount 集成」；`umount_devpts`（`devpts.rs:237-243`）实现体**误调 `mount_devpts`**、注释自述「当前实现恒返回 `Ok(())`」⇒ **已知缺陷形态（缺陷档）**，但**无调用链且非安全面** ⇒ 不删；`process_fd_table.rs` 3 项属**未采用的 Plan B 并行 FD 表**（`services/fs/mod.rs:43` 模块已注册）；③ FS / 进程 API 面 | 完整性保留 |
+| **G6 族残缺**（6） | `arch/x86_64/gdt.rs::tss_64bit`、`fs/vfs/handle.rs::vfs_close_safe` / `vfs_seek_safe` / `vfs_readdir_safe`、`arch/x86_64/acpi.rs::get_ap`、`fs/vfs/vfs.rs::get_fs_name` | ② **不成立**；**族残缺**（实测引用计数：`Granularity` 构造器族 `code_64bit` 4 / `data_32bit` 4 / `tss_64bit` 0；`vfs_*_safe` 全族 17 员 / 14 员在用；AP 访问器族 `get_ap_list` 1 / `get_ap_count` 3 / `has_madt` 6 / `parse_madt` 5 在用；VFS 元信息访问器族 `get_fs_type` 2 / `get_fs` 13 / `set_fs` 1 在用）⇒ 删则**族残缺且不对称**、诱导调用方绕过类型包装 | 完整性保留（**B-0 三档规定：族残缺 ⇒ 并入 A-1 完整性保留**） |
+| **G7 无等价入口（计数 / IPC 查询）**（3） | `barrier/domain.rs::consume_quota_tick` / `is_quota_exceeded`、`ipc/dynamic.rs::pipe_exists` | ② **不成立**（实测订正：`check_quota` 自身零引用且已列 B-2 ⇒ 原「与在用 `check_quota` 重复」不成立；全仓**无 `get_pipe` 符号**、`pipe_count()` 不判定指定 `IpcId` 是否存在）；③ 计数 / IPC 查询 API 面 | 完整性保留 |
+| **G8 无等价格式化入口**（1） | `timer/tick.rs::format_duration` | ② **不成立**（全仓无等价时长格式化公共入口；`core::fmt` 为通用设施，**不能产出 `1h23m45s678ms`** ⇒ 非能力等价）；族（`tick.rs` 的 tick↔单位换算族）**外**成员；③ `#[cfg(feature = "alloc")]` feature 面 | 完整性保留 |
+
+**B-5.2 三字段（组内同因同责，逐组登记）**
+
+| 定型组 | 等待原因 | 解锁条件 | 责任方 |
+|---|---|---|---|
+| G1 aarch64 门控诊断 | x86_64 维零引用为**构造性结果**，不可作为删据；且未取得等价入口证据 | aarch64 专项复核（若裁定 aarch64 诊断面无保留价值 ⇒ **新增删候选，按裁定六须授权**） | 用户（aarch64 面裁定） |
+| G2 feature 门控 | `atomic_stats` feature **自身待处置**——既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)「`atomic_stats` 引用 `println!` — no_std 不支持」 | 用户裁定 `atomic_stats` feature 去留（**修 feature** 或 **删 feature**）；feature 未决则本 4 项随 feature 保留 | 用户（feature 决策） |
+| G3 机制 / 安全 / TCB | 属机制设计决策（`lock_fast` 优化路径）与安全加固变体（`cpuid_checked` 叶范围校验）；`get_gdt_table` 属 **TCB 核心**（GDT）⇒ 裁定六 | 若 reviewer 判非保留 ⇒ 须**先经安全面 / TCB 复核**并授权（不得走试删兜底，见 ⑦ 原理性盲区） | 用户 |
+| G4 驱动 / 统计 / 诊断面 | ② 仅「能力重叠」而非「能力等价」（差异能力＝日志/维度/封装层级），零引用不构成删据 | reviewer 复核 `pci_scan` 是否属冗余档（**若判冗余 ⇒ 新增删候选，须授权**）；其余 3 项保留无附加依赖 | 用户 |
+| G5 FS 面 + Plan B FD 表 | unmount 面待 **VFS mount 集成**（与 C-2 `mount_*` 同批）；`umount_devpts` 的误调缺陷待该集成统一修正；Plan B FD 表属**「消除并行实现」议程**（项目规则：内核内并行实现须归一到唯一权威实现），**非 T5 甄别范畴** | VFS mount/unmount 集成排期（`umount_devpts` 修正随该集成）；Plan B FD 表归属由 [eliminate-parallel-implementations.md](eliminate-parallel-implementations.md) 工程裁定 | 用户（VFS 集成排期 + 并行实现议程） |
+| G6 族残缺 | 族残缺（删则不对称且诱导绕过类型/构造器族） | reviewer 复核 `vfs_*_safe` 3 项**档位**——实测 `services/fs/dir_ops.rs:14-28` 已直接调用裸 `extern "C"` `vfs_seek`/`vfs_readdir`（不经 `_safe` 壳）⇒ 该族**本就不是封装边界**，档位**弱于** `tss_64bit`（最终档位由 reviewer 定） | 用户（档位复核） |
+| G7 无等价入口 | 三合一判据第 ② 条**落空**（无能力等价公共入口）⇒ 结构上**不构成删候选**；零引用亦未证明属「冗余」 | 若后续接入调用链则为**接线项**，归「功能接线批次」（与 T3 联动），不再回 T5 | 用户（接线批次排期） |
+| G8 无等价格式化入口 | 同上（② 落空）；另 `#[cfg(feature = "alloc")]` 门控须经 feature 维复核 | reviewer 若认定 `core::fmt` 等价成立 ⇒ 须先复核 feature 维并授权（**新增删候选须上报**） | 用户 |
+
+**B-5.3 安全面待 T3（2 项 ⇒ 留待裁，挂 T3 依赖并标注）**
+
+| 项（文件::符号） | 三态 | 定桶 | 等待原因 | 解锁条件 | 责任方 |
+|---|---|---|---|---|---|
+| `services/fs/ramfs.rs::split_path`(524) / `validate_path`(544) | **安全面待 T3** | **倾向「冗余」**（附两条保留：① 长度校验**语义不等价**——VFS 侧为缓冲区按构造截断 vs `NameTooLong` 报错 ⇒ 将来若接线 services 代理入口须补长度校验并**登记契约**；② 删除属**安全面**） | **裁定七已解**（commit `3173b5b9` 证据链）：空校验由 framework `RamFsData::open`（`ramfs_data.rs:481-484` `path.is_empty()`）等价提供 / 长度由 VFS `[u8; VFS_MAX_PATH]`（`vfs/types.rs:16` ＝ 128）转换处 `min(VFS_MAX_PATH-1)` 构造截断 / NUL 由缓冲区 NUL 结尾语义（`vfs.rs:553`）处理；`SafeRamFs`/`GLOBAL_RAMFS` 在 `src/` **无生产调用者** ⇒ **非安全缺陷**。**剩余唯一阻塞＝删除涉及安全面（路径校验），按裁定六必须上报** | **reviewer 授权**（授权后走删候选流程：试删 → 五门槛全量 → 独立提交可回退） | 用户（reviewer 授权） |
+
+> **裁定四.3 桶数六次修订（本轮，B-5 归零后定型）**
+
+| 桶 | 项数 | 是否在 T5 内 | 本轮变化与追溯 |
+|---|---|---|---|
+| 删候选 | **0** | ✅ 是 | 无变化（A-2 已清零，裁定四.1 达成） |
+| 完整性保留（原「硬件原语完整性保留」） | **75** | ✅ 是（**仅登记**，不施工） | 43（A-1：41 硬件原语 + 2 族残缺）+ **32**（B-5.2 判据待补定桶，G1-G8 明细见上） |
+| 待裁 | **2** | ✅ 是 | 47 − **13**（B-5.1 等路线图 ⇒ 未来功能）− **32**（B-5.2 ⇒ 完整性保留）= **2**（B-5.3 ramfs，**三字段齐备，无裸待裁**） |
+| **T5 内合计** | **77** | — | 0 + 75 + 2 ＝ 90 − 13；且 ＝ 437 − 8 − 352 |
+| — 接线 | 8 | ❌ 否（移出，另立「功能接线批次」，与 T3 联动） | 无变化 |
+| — 未来功能（DECISION-052 第三层） | **352** | ❌ 否（移出） | 339 + **13**（B-5.1 CET 5 / NUMA 5 / PCID 1 / IOMMU-DMAR 2，逐项见 B-5.1） |
+| 合计 | **437** | — | ＝ 0 + 75 + 2 + 8 + 352（**算术闭合**；438 − 1（`write_log_line` 已删除）） |
+
+> **B-5 结论**：**待裁 47 已全部归零为三态**（13 等路线图 / 32 判据待补已定桶 / 2 安全面待 T3）⇒ **裁定四.2「无裸待裁」达成**、**裁定四.3「桶数算术闭合 + 转移可逐项追」达成**。**剩余阻塞（不改判据、只待授权 / 排期）**：① ramfs 2 项**待 reviewer 授权**方可进删候选（裁定六安全面）；② 潜在新增删候选（`pci_scan` / aarch64 诊断 2 项 / `format_duration` 若 `core::fmt` 判等价）**已按裁定六上报，未自主处置**；③ `umount_devpts` 误调 `mount_devpts` 缺陷已登记（G5），修正随 VFS mount 集成。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
@@ -920,10 +983,10 @@ T7 (预存登记)
 | `services/barrier/audit_export.rs` / `config/sysctl.rs` | 3 | 审计导出统计 + sysctl 序列化面 |
 | `services/proc/{canary,elf,shadow_stack,signal}.rs` / `timer/*` / `net/unix.rs` / `wasm/*` | 12 | 查询面 + safe 代理壳 + wasm 运行时 API 面 |
 
-#### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定）
+#### 登记结论（修订版：E.1-E.4 + 第二 / 三 / 四轮裁定；**第 13 条为六次修订最新口径**）
 
 1. **元信息已补（E.1）**：① 判定工具＝`scripts/audit_unwired_pub_fn.py` R1（`rg -c -w` 文本并集，声明侧无 cfg 感知）；② 判定构建维＝**无单一构建维**，未做逐维交集 ⇒ 原「零引用」口径不可复核。③④⑤ 见上「方法与限制」。
-2. **桶边界已重划并重算（E.2 + 三处核对① + 第二轮二次修订 + 第三轮三次修订 + 第四轮四次修订，暂定值）**：删候选 70 → 23 → **11** → **2**（二次修订：安全面 4 转 A-3、判据不成立 8 退桶入 B-3；**四次修订：试删前逐项复核退桶 9 入待裁，见 A-5 / 12**）；**硬件原语完整性保留 41 → 43**（x86_64 侧 31 + aarch64 侧 10，优先级＝**硬件原语保留 > aarch64 门控 > 删候选**；三次修订并入安全面**族残缺**档 2 ＝`ct_eq_salt`/`ct_eq_password`）；接线 142 → **8**（逐项独立判定）；未来功能 **339**（**来源合成，非实测**：原接线剩余 134 ＝142−8 排除法 + 原预留 205）；待裁 21 → 27 → 35 → **37** → **46**（三次修订并入安全面**待 T3 结论**档 2 ＝`split_path`/`validate_path`，B-4；**四次修订并入 A-5 退桶 9**）。**原「安全面待确认 4」桶三次修订后清零**（三档分流完毕）。合计 438（算术已核对闭合：2+43+8+339+46）。三处核对 ②③ 的来源标记已就地标注。
+2. **桶边界已重划并重算（E.2 + 三处核对① + 第二轮二次修订 + 第三轮三次修订 + 第四轮四次修订，暂定值）**：删候选 70 → 23 → **11** → **2**（二次修订：安全面 4 转 A-3、判据不成立 8 退桶入 B-3；**四次修订：试删前逐项复核退桶 9 入待裁，见 A-5 / 12**）；**硬件原语完整性保留 41 → 43**（x86_64 侧 31 + aarch64 侧 10，优先级＝**硬件原语保留 > aarch64 门控 > 删候选**；三次修订并入安全面**族残缺**档 2 ＝`ct_eq_salt`/`ct_eq_password`）；接线 142 → **8**（逐项独立判定）；未来功能 **339**（**来源合成，非实测**：原接线剩余 134 ＝142−8 排除法 + 原预留 205）；待裁 21 → 27 → 35 → **37** → **46**（三次修订并入安全面**待 T3 结论**档 2 ＝`split_path`/`validate_path`，B-4；**四次修订并入 A-5 退桶 9**）。**原「安全面待确认 4」桶三次修订后清零**（三档分流完毕）。合计 438（算术已核对闭合：2+43+8+339+46）。三处核对 ②③ 的来源标记已就地标注。**五次修订（删候选清零）与六次修订（B-5 待裁归零）为最新口径，见 12 / 13**：删候选 **0** / 完整性保留 **75** / 待裁 **2** / 接线 8 / 未来功能 **352**，合计 **437**（`write_log_line` 已删除）——**以 13 为准，本条保留历次修订轨迹**。
 3. **`atomic_stats` 已退回待裁（E.3）**：`sync/atomic.rs` 4 项 `record_*` 属 `#[cfg(feature = "atomic_stats")]` 门控，**非死代码**；援引既有登记 [subsystem-sync.md §9.3 [P2]](archive/audit-2026-08-14/subsystem-sync.md#L1075-L1092)。
 4. **删候选施工＝试删（E.4 + 遗留 2 裁定，不立项新工具）**：二次分类已移出 43 项硬件原语（含族残缺 2）、**且已移出安全面 4 项（不走试删）**；余 **11 项**（A-2；**四次修订后为 2 项**，见 12）按 ⑥「**逐项试删 → 跑既有五条门槛 → 任一维硬失败即回退**」推进（`build.sh all` / clippy `kernel_test` 维 / clippy `host-test` 维 / `make test-host` / QEMU `kernel_test`+boot），**编译/链接器即权威判据**，不新建调用图分析器。**第三轮已授予开工**（解锁五条逐条核销见 ⑧），执行约束：逐项独立提交 / 每项全量五门槛 / QEMU boot 硬闸门 / ramfs 2 项不入本批。
 5. **遗留 1 已降级为方法学注释（不专项量化）**：x86_64 专属项面未量化属**漏项风险（完备性）而非误删风险（正确性）**——已在 ③ 补注「单维甄别的结果仅在该维有效，跨维完备性需逐维复核」。
@@ -939,6 +1002,12 @@ T7 (预存登记)
     - **新增原理性证据（重要）**：`get_ap` 试删后五门槛 **5/5 全过**（含 QEMU boot 硬闸门）却仍被判族残缺退回 ⇒ **试删 + 五条门槛在原理上无法识别族残缺**，与 ⑧「发现不了安全校验被移除」**同源**——**门槛通过 ≠ 判据成立**，试删只证「无构建/链接/回归破坏」，不证「零调用属冗余」。
     - **档位争议如实登记**：`vfs_*_safe` 三项**弱于** `tss_64bit`——实测 [dir_ops.rs:14-28](file:///home/anfer/Code/QueenX/src/kernel/services/fs/dir_ops.rs#L14-L28) 已直接调用裸 `extern "C"` `vfs_seek` / `vfs_readdir`（不经 `_safe` 壳）⇒ 该族**本就不是封装边界**，删 3 员不改变抽象层级。仍按「同族部分在用 ⇒ 保对称」退桶，最终档位由 reviewer 复核确定。
     - **桶效应**：删候选 11 → **2**（仅 `write_log_line` / `format_duration`，为**唯一进入试删者**）；待裁 37 → **46**。合计 438（算术已核对闭合：2+43+8+339+46）。
+
+13. **六次修订（B-5 待裁 47 归零；裁定二 / 裁定四.2）**：每项均按**裁定二**落**三态**并补**三字段**（等待原因 + 解锁条件 + 责任方），**47 项逐项可追**：
+    - **等路线图 13 项 ⇒ 转「未来功能」**（路线图 + 登记处均经核实，见 B-5.1）：CET 5（`set_ssp`/`alloc_kernel_shadow_stack`/`configure_user_cet_msr`/`configure_interrupt_ssp_table`/`is_ssp_valid`）、NUMA 5（`set_distance`/`best_alloc_node`/`nearest_free_node`/`contains_cpu`/`all_nodes`）、PCID 1（`pcid_is_enabled`）、IOMMU-DMAR 2（`get_dmar_drhd_list`/`get_dmar_host_addr_width`）。**台账事实订正**：`kpti.rs:23` 所引 `engineering-progress.md` §五 **已失效**（该文件在现行 `docs/plan/` 不存在；`kernel-roadmap.md` 已归档且无 PCID 条目）⇒ PCID 登记处改以 `kpti.rs:23-31` 现状清单 + [kpti-complete-project.md](kpti-complete-project.md) 为准。
+    - **判据待补 32 项 ⇒ 补齐后定桶「完整性保留」**（G1-G8 八组，判据 + 三字段见 B-5.2）：G1 aarch64 门控诊断 2 / G2 feature 门控 4（`atomic_stats`）/ G3 机制·安全·TCB 3 / G4 驱动·统计·诊断 API 面 4 / G5 FS mount-unmount 面 + Plan B FD 表 9 / G6 族残缺 6 / G7 无等价入口 3 / G8 无等价格式化入口 1。**两条新事实**：① `pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`）但**差异能力＝逐设备 `klog_info!`** ⇒ 「能力重叠 ≠ 能力等价」，同 A-6 `format_duration` 判据；② `umount_devpts`（`devpts.rs:237-243`）**实现体误调 `mount_devpts`**（注释自述恒返回 `Ok(())`）⇒ 已登记为**已知缺陷**（缺陷档形态，无调用链且非安全面 ⇒ 不删），修正随 VFS mount 集成。
+    - **安全面待 T3 2 项 ⇒ 留待裁**（B-5.3）：`services/fs/ramfs.rs::split_path`/`validate_path`——裁定七证据链（commit `3173b5b9`）已判**非安全缺陷**、倾向「冗余」，**剩余唯一阻塞＝删除涉安全面须 reviewer 授权**（裁定六）。
+    - **桶效应（六次修订）**：完整性保留 43 → **75**（+32）；待裁 47 → **2**；未来功能 339 → **352**（+13）；**T5 内合计 90 → 77**；合计 **437**（0 + 75 + 2 + 8 + 352，算术闭合）。**裁定四.2 / 四.3 达成**；**四.1 已于五次修订达成**；**四.4（审计噪音治理）未达成** ⇒ T5 关闭挂起（见 T5-C）。**已按裁定六上报、未自主处置的潜在新增删候选**：`pci_scan`、aarch64 诊断 2 项、`format_duration`（若 reviewer 认定 `core::fmt` 等价成立）。
 
 ## 详情
 
