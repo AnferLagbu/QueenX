@@ -282,12 +282,6 @@ impl GfxConsole {
             self.putchar(ch);
         }
     }
-
-    pub fn write_log_line(&mut self, s: &str) {
-        for ch in s.chars() {
-            self.putchar(ch);
-        }
-    }
 }
 
 impl core::fmt::Write for GfxConsole {
