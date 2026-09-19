@@ -204,6 +204,35 @@ fn test_oomd_victim_filter() -> TestResult {
     TestResult::Pass
 }
 
+/// A4: OOMD `terminated_count` 仅在信号真实送达时累加 (丙批审查整改)
+///
+/// 两个分支都覆盖, 并验证「这一轮没得杀」时 `stats()` 不涨:
+/// - `delivered == false` (无合格候选 / 发送失败) → `terminated_count` 不变
+/// - `delivered == true` (信号送达) → `terminated_count` +1
+fn test_oomd_terminated_count_only_on_delivery() -> TestResult {
+    use crate::framework::proc::oomd::OomDaemon;
+
+    let daemon = OomDaemon::new();
+    check!(
+        daemon.stats().1 == 0,
+        "fresh daemon must report 0 terminations"
+    );
+
+    daemon.record_termination(false);
+    check!(
+        daemon.stats().1 == 0,
+        "no delivery (no victim / send failed) must not increase terminated_count"
+    );
+
+    daemon.record_termination(true);
+    check!(
+        daemon.stats().1 == 1,
+        "delivery must increase terminated_count by exactly 1"
+    );
+
+    TestResult::Pass
+}
+
 pub fn register_proc_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -217,6 +246,7 @@ pub fn register_proc_tests() {
             "state_lifecycle": test_process_state_lifecycle,
             "stack_canary": test_stack_canary,
             "oomd_victim_filter": test_oomd_victim_filter,
+            "oomd_terminated_count_only_on_delivery": test_oomd_terminated_count_only_on_delivery,
         },
     }
 }

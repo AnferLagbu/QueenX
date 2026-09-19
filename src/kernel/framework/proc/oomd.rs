@@ -122,19 +122,34 @@ impl OomDaemon {
                         }
                         true
                     });
-                    if victim != 0 {
-                        // 失败 (进程刚退出/Zombie) 不阻塞 OOMD: 下一轮重新选择
-                        let _ = super::do_signal_send(victim, super::SIGKILL);
-                    }
-                    self.terminated_count.fetch_add(1, Ordering::Relaxed);
+                    // 仅信号真实送达才计入 terminated_count: 无合格候选 (victim == 0)
+                    // 或发送失败 (进程已退出) 不计, 使 stats() 反映实际终止数而非尝试轮数.
+                    let delivered =
+                        victim != 0 && super::do_signal_send(victim, super::SIGKILL).is_ok();
+                    let total = self.record_termination(delivered);
                     self.emergency_since.store(0, Ordering::Relaxed);
-                    slog_err!(
-                        Memory,
-                        "[OOMD] Emergency timeout: SIGKILL sent to pid {} (rss {} pages, total killed: {})",
-                        victim,
-                        victim_rss,
-                        self.terminated_count.load(Ordering::Relaxed)
-                    );
+                    if delivered {
+                        slog_err!(
+                            Memory,
+                            "[OOMD] Emergency timeout: SIGKILL delivered to pid {} (rss {} pages, total terminated: {})",
+                            victim,
+                            victim_rss,
+                            total
+                        );
+                    } else if victim != 0 {
+                        slog_warn!(
+                            Memory,
+                            "[OOMD] Emergency timeout: SIGKILL to pid {} failed (process already gone), total terminated: {}",
+                            victim,
+                            total
+                        );
+                    } else {
+                        slog_warn!(
+                            Memory,
+                            "[OOMD] Emergency timeout: no killable user process found, total terminated: {}",
+                            total
+                        );
+                    }
                 }
             }
         }
@@ -145,6 +160,18 @@ impl OomDaemon {
             self.warned_count.load(Ordering::Relaxed),
             self.terminated_count.load(Ordering::Relaxed),
         )
+    }
+
+    /// 记录一次 Emergency 终止结果 — **仅信号真实送达才累加** `terminated_count`.
+    ///
+    /// 无合格候选 (`delivered == false`) 或发送失败均不计, 使 `stats()` 反映
+    /// "实际终止的进程数"而非"进入终止分支的轮次数".
+    /// 返回累加后的计数值 (供日志输出).
+    pub(crate) fn record_termination(&self, delivered: bool) -> u64 {
+        if delivered {
+            self.terminated_count.fetch_add(1, Ordering::Relaxed);
+        }
+        self.terminated_count.load(Ordering::Relaxed)
     }
 
     pub fn disable(&self) {
