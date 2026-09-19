@@ -3,6 +3,7 @@
 //! ext2 `FileSystem` trait 实现
 
 use super::read::Ext2Fs;
+use crate::framework::credo::api as pwm_api;
 use crate::framework::fs::KernelError;
 use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::services::fs::vfs_types::{
@@ -101,10 +102,22 @@ impl Inode for Ext2Inode {
     ///
     /// `atime` / `mtime` 为 `u64::MAX` 时表示该字段不修改 (utimensat 的
     /// `UTIME_OMIT` 语义). ext2 磁盘格式存 32 位秒, 超出范围按 `u32::MAX` 截顶.
-    fn set_times(&self, atime: u64, mtime: u64, _pwm: u64) -> KernelResult<()> {
+    ///
+    /// ## 属主判据 (丙批审查 B1 整改)
+    ///
+    /// 与 `NestfsData::set_times` 同判据 (属主或特权级 0). ext2 磁盘 inode 无
+    /// `owner_pwm` 字段, 属主身份改由 `i_uid` 与该 pwm 映射的 uid 比对; 判据与
+    /// `save_inode` 同处 `EXT2_FS` 锁域, 不引入二次路径解析 (无 TOCTOU 窗口).
+    /// `pwm` 未注册时 `pwm_get_uid` 返回 `u32::MAX` 且特权级为 `0xFF`, 判为拒绝.
+    fn set_times(&self, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
         let mut fs_guard = EXT2_FS.lock();
         let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
         let mut inode = fs.read_inode(self.inode_num)?;
+        if u32::from(inode.i_uid) != pwm_api::pwm_get_uid(pwm)
+            && pwm_api::pwm_get_privilege_level(pwm) != 0
+        {
+            return Err(KernelError::PermissionDenied);
+        }
         if atime != u64::MAX {
             inode.i_atime = u32::try_from(atime).unwrap_or(u32::MAX);
         }

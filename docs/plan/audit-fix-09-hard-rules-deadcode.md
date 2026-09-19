@@ -353,3 +353,10 @@
 | **F9 豁免残留**（已激活代码上的 allow）| 对应代码已接线 → 删豁免（limits.rs 等）| [] |
 
 > 2026-09-09 判据更新注记：**ext2/exfat/nestfs 时间戳 TODO 3 处经"内核需不需要"判据确认 = 内核需要**（POSIX stat mtime 语义完善项）→ **转 D-5 转正式**（实现治理，低优先级），不再列入直接删待核实。DomainFlags/R3/R1 待核实项按"内核需不需要"判据核实后回填本表。
+
+### D-8. 丙批审查整改：时间戳写回属主判据（B1）
+
+- 描述：丙批 `97c03f52` 的 ext2 时间戳写回只写字段不判权限，与 nestfs 同层实装（判据＝属主或特权级 0）分歧 —— 任意 pwm 可改他人文件时间戳。
+- 方案：判据**留在 FS 实现层并与写回同锁域**（`Ext2Inode::set_times` 在 `EXT2_FS` 锁内比对磁盘 `i_uid` ↔ `pwm_get_uid(pwm)`，非属主且特权级非 0 ⇒ `PermissionDenied`）；一致性由**测试面收口**（`host-tests/tests/fs_permissions_regression_test.rs::set_times_of_persistent_fs_checks_owner_or_privilege` 扫描 framework/services 两侧 fs 源码，凡 `set_times` 函数体含落盘动作 `save_inode`/`update_obj` 者，必须同体出现判据谓词）。**否决「上提到 VFS 统一收口」**：① VFS 分发层（`vfs_utimensat`）无 owner 模型 —— ext2 的 `VfsStat.owner_pwm` 恒 `0`、uid 与 pwm 无映射 ⇒ 对 ext2 只会是空判据（不修本缺陷）；② 判据与写回会被拆成两次路径解析 ⇒ 引入 TOCTOU 窗口；③ 判据是纯策略（应落 services），上提到 framework VFS 属 §4.1 归属错位，且与 trait 契约文档「无权限…由实现者决定」冲突。
+- 状态：[X]
+- 详情：负向验证——临时移除 ext2 判据 ⇒ 门槛测试 FAILED（`set_times 落盘前必须判属主/特权级`），恢复后 PASS，证明门槛非空过；五门槛 5/5 全过（build.sh all 5/5、audit.sh quick 0 违规、host-tests 99 bin 0 failed、QEMU kernel_test exit 33、qemu_boot_test 1/1）。行为复查：`pwm == 0`（bootstrap/内核内部/WASI 调用）特权级为 0 ⇒ 行为不变；`pwm` 未注册时 `pwm_get_uid` 返 `u32::MAX` 且特权级 `0xFF` ⇒ fail-closed 拒绝。丙批审查其余整改项（A1 页表遍历竞态 / A3 victim 状态过滤 / A4 `terminated_count` / B2 ext2 `i_ctime` / B4 换行 / exfat 撤覆写 / F9 豁免残留）另批处置。

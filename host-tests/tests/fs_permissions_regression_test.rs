@@ -21,6 +21,8 @@
 //! 追踪: B06-02 / B06-03 / B06-07
 //! SPDX-License-Identifier: MPL-2.0
 
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use queenx::kernel::framework::credo::identity;
@@ -143,4 +145,94 @@ fn open_by_handle_grant_sys_admin_allows() {
 #[test]
 fn poll_vfs_max_fds_is_32() {
     assert_eq!(VFS_MAX_FDS, 32, "B06-07: fd 上限必须为 VFS_MAX_FDS=32, 而非 256");
+}
+
+// ============================================================================
+// 丙批审查 B1: 时间戳写回属主判据覆盖门槛
+// ============================================================================
+
+/// 递归收集 `dir` 下所有 `.rs` 源码路径 (目录不存在时静默跳过, 由调用方断言非空)
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// 提取 `src` 中 `sig` 起始的函数体 (至下一个同级 4 空格缩进的 `fn` 定义前)
+fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
+    let start = src
+        .find(sig)
+        .unwrap_or_else(|| panic!("未找到函数签名: {sig}"));
+    let rest = &src[start..];
+    let mut end = rest.len();
+    let mut cursor = 0usize;
+    for (idx, line) in rest.split('\n').enumerate() {
+        if idx > 0
+            && (line.starts_with("    fn ")
+                || line.starts_with("    pub fn ")
+                || line.starts_with("    pub(crate) fn "))
+        {
+            end = cursor;
+            break;
+        }
+        cursor += line.len() + 1;
+    }
+    &rest[..end]
+}
+
+/// 丙批审查 B1 门槛: 凡真实落盘时间戳的 `set_times` 必须含属主/特权判据.
+///
+/// 背景: ext2 `set_times` 曾只写回不判权限 (任意 pwm 可改他人文件时间戳), 与
+/// nestfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
+/// 且会把判据与写回拆成两次路径解析 (TOCTOU) — 故一致性由本测试面收口:
+/// 扫描 framework/services 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作
+/// (`save_inode`/`update_obj`) 者, 必须同体出现 `pwm_get_privilege_level` 与
+/// `PermissionDenied`. 纯内存 FS 的 `Ok(())` 桩与默认 `NotSupported` 不在门槛内.
+///
+/// 维护提示: 若判据日后被抽取为共享谓词 (不再内联 `pwm_get_privilege_level`),
+/// 请同步更新本测试的谓词断言, 勿直接删除门槛.
+#[test]
+fn set_times_of_persistent_fs_checks_owner_or_privilege() {
+    let roots = [
+        Path::new("../src/kernel/services/fs"),
+        Path::new("../src/kernel/framework/fs"),
+    ];
+    let mut files = Vec::new();
+    for root in roots {
+        collect_rs_files(root, &mut files);
+    }
+    assert!(!files.is_empty(), "fs 源码扫描路径失效, B1 门槛未生效");
+
+    let mut checked = Vec::new();
+    for file in &files {
+        let src = fs::read_to_string(file).unwrap_or_else(|e| panic!("读取 {file:?} 失败: {e}"));
+        if !src.contains("fn set_times(") {
+            continue;
+        }
+        let body = fn_body(&src, "fn set_times(");
+        if !body.contains("save_inode") && !body.contains("update_obj") {
+            continue;
+        }
+        checked.push(file.display().to_string());
+        assert!(
+            body.contains("pwm_get_privilege_level"),
+            "{file:?} 的 set_times 落盘前必须判属主/特权级 (丙批 B1)",
+        );
+        assert!(
+            body.contains("PermissionDenied"),
+            "{file:?} 的 set_times 无权限必须返回 PermissionDenied (丙批 B1)",
+        );
+    }
+    assert!(
+        checked.len() >= 2,
+        "B1 门槛应至少覆盖 ext2 与 nestfs 两条落盘路径, 实得 {checked:?}",
+    );
 }
