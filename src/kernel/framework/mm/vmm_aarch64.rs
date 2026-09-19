@@ -227,6 +227,15 @@ impl Aarch64Vmm {
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]
+    /// 获取 VMM 锁 (关中断 + CAS 自旋).
+    ///
+    /// 本锁是**非重入**自旋锁: 调用方不得在持锁期间进入任何会再次获取 `VMM_LOCK`
+    /// 的路径. 语义与 x86_64 `VirtualMemoryManager::acquire_lock` 保持一致
+    /// (两者均为关中断 + CAS 自旋, 均无"单核可重入短路").
+    ///
+    /// # Panics
+    /// 在 `debug_assertions` 构建下, 若检测到 `VMM_LOCK` 被递归获取 (死锁), 触发 `assert!`
+    /// panic, 错误信息为 "`VMM_LOCK`: recursive acquisition detected (deadlock)".
     pub fn acquire_lock(&self) -> IrqSaveFlags {
         let flags = disable_interrupts();
         while VMM_LOCK
@@ -237,10 +246,11 @@ impl Aarch64Vmm {
         }
         #[cfg(debug_assertions)]
         {
-            if VMM_LOCK_RECURSIVE.swap(true, Ordering::Relaxed) {
-                // 不可恢复: VMM_LOCK 递归获取意味着死锁, 继续执行只会挂起系统
-                panic!("VMM_LOCK: recursive acquisition detected (deadlock)");
-            }
+            // 不可恢复: VMM_LOCK 递归获取意味着死锁, 继续执行只会挂起系统
+            assert!(
+                !VMM_LOCK_RECURSIVE.swap(true, Ordering::Relaxed),
+                "VMM_LOCK: recursive acquisition detected (deadlock)"
+            );
         }
         flags
     }
@@ -260,7 +270,6 @@ impl Aarch64Vmm {
             VMM_LOCK_RECURSIVE.store(false, Ordering::Relaxed);
         }
         VMM_LOCK.store(false, Ordering::Release);
-
         restore_interrupts(flags);
     }
 

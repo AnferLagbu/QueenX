@@ -67,6 +67,34 @@ fn fn_at_root<'a>(src: &'a str, sig: &str) -> &'a str {
     &rest[..end]
 }
 
+/// 提取 `src` 中 `sig` 起始的**方法体** (按花括号配对定位结束, 不越界).
+///
+/// 与 `fn_at_root` 不同: 位于 `impl` 块内的方法, 其闭合花括号带缩进而非行首,
+/// `fn_at_root` 会越过方法边界吞入后续方法, 故此处按花括号配对精确截取.
+fn method_body<'a>(src: &'a str, sig: &str) -> &'a str {
+    let start = src
+        .find(sig)
+        .unwrap_or_else(|| panic!("未找到函数签名: {sig}"));
+    let rest = &src[start..];
+    let open = rest
+        .find('{')
+        .unwrap_or_else(|| panic!("函数签名无函数体: {sig}"));
+    let mut depth = 0usize;
+    for (i, ch) in rest[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &rest[..open + i + 1];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("函数花括号未配对: {sig}")
+}
+
 #[test]
 fn memory_pressure_mechanism_in_framework() {
     // DECISION-O ② 验收: 类型/状态/update_pressure 包装必在 framework (机制权威)
@@ -348,4 +376,50 @@ fn count_present_user_pages_returns_none_when_vmm_lock_held() {
         held, None,
         "VMM_LOCK 被占用时 count_present_user_pages 必须返回 None 且不做遍历"
     );
+}
+
+/// P3-C 回归保护: `VMM_LOCK` 的 `acquire_lock` 必须保持**非重入自旋**语义, 且双架构不得发散.
+///
+/// 背景 (方案 C): x86_64 `acquire_lock` 曾含"单核可重入短路" — 已持锁时
+/// `if VMM_LOCK.load(..) { return flags; }` 直接返回. 该短路在多核下既非跨核互斥
+/// (他核持锁时本核被误判为获取成功而直接进临界区), 其配套的 `release_lock` 又会
+/// 无条件 `store(false)` 释放他人持有的锁, 故定案移除; 已核实全部临界区区内不访问
+/// 用户地址、也不嵌套取锁, 无同核递归路径. 本用例 fail-closed 拦两类回退:
+/// - 防"短路回退": 两架构 `acquire_lock` 方法体**不得**再现 `VMM_LOCK.load(` 形式的中途返回;
+/// - 防"双架构再次发散": 两者方法体**必须**以 `compare_exchange` 自旋获取, 且
+///   `try_acquire_lock` 必须仍在且仍以一次 `compare_exchange` 实现 (非阻塞契约).
+#[test]
+fn vmm_lock_acquire_stays_non_reentrant_spinlock() {
+    for file in [
+        "src/kernel/framework/mm/vmm_x86_64.rs",
+        "src/kernel/framework/mm/vmm_aarch64.rs",
+    ] {
+        let src =
+            fs::read_to_string(repo_root().join(file)).unwrap_or_else(|e| panic!("read {file}: {e}"));
+
+        // 方法体内剔除注释行后再判定, 避免注释文本造成假通过.
+        let code: String = method_body(&src, "pub fn acquire_lock(")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // 负: 不得回退"单核可重入短路" (持锁即 VMM_LOCK.load 中途返回).
+        assert!(
+            !code.contains("VMM_LOCK.load("),
+            "P3-C: {file} acquire_lock 不得含单核可重入短路 (VMM_LOCK.load 中途返回)"
+        );
+        // 正: 必须以 CAS 自旋获取锁.
+        assert!(
+            code.contains("compare_exchange"),
+            "P3-C: {file} acquire_lock 必须以 compare_exchange 自旋获取"
+        );
+
+        // 双架构不得再次发散: 非阻塞助手仍在且仍以一次 compare_exchange 实现.
+        let helper = method_body(&src, "fn try_acquire_lock(");
+        assert!(
+            helper.contains("compare_exchange"),
+            "P3-C: {file} try_acquire_lock 必须以一次 compare_exchange 实现 (非阻塞)"
+        );
+    }
 }

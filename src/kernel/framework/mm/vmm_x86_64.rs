@@ -1909,18 +1909,22 @@ impl VirtualMemoryManager {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
-    /// 获取 VMM 锁 (关中断 + 自旋), 支持单核可重入.
+    /// 获取 VMM 锁 (关中断 + CAS 自旋).
+    ///
+    /// 本锁是**非重入**自旋锁: 调用方不得在持锁期间进入任何会再次获取 `VMM_LOCK`
+    /// 的路径. 经核实全部 21 处临界区 (x86_64 13 + aarch64 7 + cow.rs 1) 区内都不访问
+    /// 用户地址、也不嵌套调用任何会再次取 `VMM_LOCK` 的公有方法, 故不存在同核递归路径.
+    ///
+    /// 此前存在的"单核可重入短路" (`if VMM_LOCK.load(..) { return flags; }`) 已移除:
+    /// 该短路在多核下既非跨核互斥 (他核持锁时本核被误判为获取成功而直接进临界区),
+    /// 其配套的 `release_lock` 又会无条件 `store(false)` 释放他人持有的锁; 运行时插桩
+    /// 亦证实该短路在单核全测试套/单核完整启动/2 核启动下命中均为 0, 无保留必要.
     ///
     /// # Panics
     /// 在 `debug_assertions` 构建下, 若检测到 `VMM_LOCK` 被递归获取 (死锁), 触发 `assert!`
     /// panic, 错误信息为 "`VMM_LOCK`: recursive acquisition detected (deadlock)".
     pub fn acquire_lock(&self) -> IrqSaveFlags {
         let flags = disable_interrupts();
-        // 单核可重入: 如果锁已被当前线程持有 (中断禁用时无其他线程),
-        // 直接返回避免死锁 (page fault handler 在 COW 持锁期间触发)
-        if VMM_LOCK.load(Ordering::Acquire) {
-            return flags;
-        }
         while VMM_LOCK
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
