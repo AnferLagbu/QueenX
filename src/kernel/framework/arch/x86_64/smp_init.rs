@@ -37,7 +37,7 @@ struct ApStartupInfo {
     lapic_id: u32,
     ready: u32,
     cpu_index: u32,
-    /// AP 初始化完成标志: AP 在 `gdt_init_ap` 完成后置 1
+    /// AP 初始化完成标志: AP 在 `register_cpu` / per-CPU 队列 / per-CPU 调度器初始化完成后置 1
     done: u32,
     _pad: u32,
 }
@@ -59,7 +59,7 @@ const READY_OFFSET: usize = core::mem::offset_of!(ApStartupInfo, ready);
 
 /// `done` 字段在 `ApStartupInfo` 中的字节偏移.
 ///
-/// AP 完成 `gdt_init_ap` 后写 1; BSP 等待此位 (DECISION-050).
+/// AP 完成 `register_cpu` 与 per-CPU 初始化后写 1; BSP 等待此位成功即代表 AP 已注册上线 (DECISION-050).
 const DONE_OFFSET: usize = core::mem::offset_of!(ApStartupInfo, done);
 
 static SMP_FULLY_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -143,6 +143,9 @@ pub fn init() {
         }
         cpu_index += 1;
     }
+
+    // 汇总在线 CPU 数; `make test-smp` 以 "[SMP] online CPUs: 2" 作为 2 核启动成功判据.
+    crate::klog_info!(Kernel, "[SMP] online CPUs: {}", crate::framework::smp::get_cpu_count());
 
     AP_STARTED_COUNT.store(cpu_index, Ordering::Release);
     SMP_FULLY_INITIALIZED.store(true, Ordering::Release);
@@ -295,12 +298,13 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
 
     super::gdt::gdt_init_ap(cpu_index);
 
-    // SAFETY: TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET 是 AP 握手内存布局中
-    // 预留的 done 标志位, BSP 已映射该物理页, 写入对齐 u32 安全.
-    // DONE_OFFSET 由 Rust 端 offset_of! 计算, 与 BSP 等待逻辑共享同一来源 (DECISION-050).
+    // AP 必须在本核加载 IDT 之后才能开中断: gdt_init_ap 只装 GDT+TSS,
+    // 而 BSP 的 idt_init() 里的 lidt 只对 BSP 本核生效. 若 AP 在 IDTR.BASE=0
+    // 状态下开中断, 首个定时器中断 (向量 0x20) 即触发 #GP → #DF → triple fault.
+    // SAFETY: `IdtManager::init()` 已在 BSP 上完成, IDT 表全局共享; 本核在
+    // ap_entry 入口已 cli, 且 sti 在其后, 故加载期间中断处于屏蔽状态.
     unsafe {
-        let done_ptr = (TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET as u64) as *mut u32;
-        core::ptr::write_volatile(done_ptr, 1);
+        crate::framework::idt::load_idt_on_current_cpu();
     }
 
     crate::framework::smp::register_cpu(lapic_id);
@@ -308,6 +312,16 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     crate::framework::proc::init_cpu_queue(cpu_index, 0);
 
     crate::framework::proc::init_per_cpu_sched(cpu_index);
+
+    // SAFETY: TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET 是 AP 握手内存布局中
+    // 预留的 done 标志位, BSP 已映射该物理页, 写入对齐 u32 安全.
+    // DONE_OFFSET 由 Rust 端 offset_of! 计算, 与 BSP 等待逻辑共享同一来源 (DECISION-050).
+    // 此时本核 GDT/TSS/IDT 与运行队列/调度器均已就绪, BSP 的 done 等待成功
+    // 即代表 AP 完成注册上线.
+    unsafe {
+        let done_ptr = (TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET as u64) as *mut u32;
+        core::ptr::write_volatile(done_ptr, 1);
+    }
 
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {

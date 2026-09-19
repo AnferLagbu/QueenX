@@ -84,6 +84,25 @@ pub use safety::{
 
 pub use idt::IdtManager;
 
+/// 将已初始化的 IDT 加载到当前 CPU (`lidt`).
+///
+/// BSP 在 `idt_init()` 内完成 IDT 表构建后加载; AP 在自身 `ap_entry` 中于
+/// `gdt_init_ap` 之后、`sti` 之前调用本函数. 若 AP 在 `IDTR.BASE = 0` 状态下
+/// 开中断, 首个中断 (定时器向量 0x20) 即触发 #GP → #DF → triple fault.
+///
+/// # Safety
+/// 调用方必须保证:
+/// - `IdtManager::init()` 已完成 (IDT 表已填充, 各 CPU 共享同一张表);
+/// - 当前 CPU 的中断处于屏蔽状态.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn load_idt_on_current_cpu() {
+    // SAFETY: 由调用方保证 IDT 表已由 `IdtManager::init()` 初始化完成,
+    // 且当前 CPU 中断已屏蔽 (见本函数 # Safety 契约).
+    unsafe {
+        IdtManager::instance().load_idt();
+    }
+}
+
 // Phase 3: 异常处理器导出
 pub use handlers::{
     DefaultHandler, DivisionByZeroHandler, DoubleFaultHandler, ExceptionCategory, ExceptionHandler,

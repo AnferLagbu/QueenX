@@ -654,6 +654,13 @@ pub fn gdt_init_ap(cpu_index: u32) {
         gdt_flush(&ap.ptr);
         tss_flush(SELECTOR_TSS);
 
+        // AP 由 trampoline 以 CS=0x18 进入长模式, 而内核 per-CPU GDT 的
+        // entry[3] (0x18) 是 user_data 数据段. lgdt 只换 GDTR 不重载 CS,
+        // CPU 仍缓存 trampoline GDT 的 0x18 代码段描述符. 若不显式重载
+        // CS=0x08, 首个中断返回路径的 iretq 会以陈旧 CS=0x18 在当前 GDT
+        // 中重载 → #GP(0x18) → #DF → triple fault.
+        reload_cs();
+
         ap.syscall.kernel_rsp = ap.syscall_stack.as_ptr() as u64 + ap.syscall_stack.len() as u64;
 
         // 读取当前 CR3 作为 PML4 初始值
@@ -803,6 +810,37 @@ unsafe fn tss_flush(selector: u16) {
             "ltr {0:x}",
             in(reg) selector,
             options(nostack, preserves_flags),
+        );
+    }
+}
+
+/// 将 CS 重载为内核代码段选择子 (0x08)
+///
+/// lgdt 仅更新 GDTR, 不重载 CS; CPU 会继续使用 CS 缓存的旧描述符, 直到
+/// 下一次 CS 装载才按新 GDT 校验. AP 经 trampoline 进入长模式时 CS=0x18,
+/// 该值在 trampoline GDT 中是 64-bit 代码段, 但在内核 per-CPU GDT 中
+/// entry[3] (0x18) 是 user_data 数据段, 故装载内核 GDT 后必须重载 CS.
+///
+/// 实现: far return 重载 CS — 依次压入选择子与返回 RIP, `retfq` 先弹 RIP
+/// 再弹 CS. 返回 RIP 用 `lea [rip + 2f]` 取运行时地址 (AP 经 trampoline
+/// 运行时 RIP 位于低地址别名, 写死 link-time 地址会跳错).
+///
+/// # Safety
+/// 调用方保证当前 GDTR 已加载, 且 `SELECTOR_KERNEL_CODE` 在其中是合法的
+/// 64-bit 代码段; 本函数用 far return 改写 CS, 不改变栈深度.
+unsafe fn reload_cs() {
+    // SAFETY: 压入的 0x08 在当前 GDTR 中为合法 64-bit 代码段, 返回地址由
+    // `lea [rip + 2f]` 取运行时地址并指向本汇编块内紧随其后的标签 `2`;
+    // 栈上净效果为 push/push + retfq 弹两次, 深度不变.
+    unsafe {
+        core::arch::asm!(
+            "push {sel}",
+            "lea {tmp}, [rip + 2f]",
+            "push {tmp}",
+            "retfq",
+            "2:",
+            sel = in(reg) u64::from(SELECTOR_KERNEL_CODE),
+            tmp = lateout(reg) _,
         );
     }
 }

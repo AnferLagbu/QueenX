@@ -558,18 +558,25 @@ test-smp: all user $(KERNEL_IMAGE)
 	@echo "╚══════════════════════════════════════════════════════════╝"
 	@mkdir -p tests/reports
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
+	smp_log=tests/reports/smp_test_$${timestamp}.log; \
 	timeout 60 $(QEMU) $(QEMU_FLAGS) \
 		-m 512 -smp 2 \
 		$(QEMU_KERNEL_FLAG) $(KERNEL_IMAGE) \
-		-serial file:tests/reports/smp_test_$${timestamp}.log \
+		-serial file:$${smp_log} \
 		-display none \
-		-d cpu_reset 2>tests/reports/qemu_smp_stderr_$${timestamp}.log || true
-	@echo ""
-	@smp_log=$$(ls -t tests/reports/smp_test_*.log 2>/dev/null | head -1); \
-	if [ -n "$$smp_log" ]; then \
-		echo "--- SMP Test Output (last 60 lines) ---"; \
-		tail -60 "$$smp_log"; \
-	fi
+		-d cpu_reset 2>tests/reports/qemu_smp_stderr_$${timestamp}.log || true; \
+	echo ""; \
+	echo "--- SMP Test Output (last 60 lines) ---"; \
+	tail -60 "$${smp_log}"; \
+	if ! grep -q "\[SMP\] online CPUs: 2" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] online CPUs: 2' (2 核未全部上线)"; \
+		exit 1; \
+	fi; \
+	if ! grep -q "Entering Ring 3" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 'Entering Ring 3' (用户态未进入)"; \
+		exit 1; \
+	fi; \
+	echo "SMP TEST PASSED: online CPUs = 2, 且已进入 Ring 3"
 
 # ============================================================================
 # QEMU 调试脚本支持 (QEMU Debug Script Support)
