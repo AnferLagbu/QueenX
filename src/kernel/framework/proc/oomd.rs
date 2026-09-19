@@ -24,6 +24,7 @@
 
 use crate::framework::mm::{self as mm_api};
 use crate::framework::proc::scheduler::TICK_COUNT;
+use crate::framework::proc::types::ProcessState;
 // DECISION-O ②: 压力类型/状态/update_pressure 包装归 framework::mm::pressure
 // (机制持有, OOMD 是调度器 tick 直接驱动的机制组件); 分级算法经
 // register_pressure_classifier 由 services::mm::init 注入 — 消除反向依赖
@@ -110,17 +111,13 @@ impl OomDaemon {
                     let mut victim_rss: u64 = 0;
                     super::process_for_each(|p| {
                         let pid = p.pid.0;
-                        // 跳过 idle/内核线程 (pid 0) 与无用户页表的进程
-                        if pid == 0 {
-                            return true;
-                        }
                         let cr3 = p.cr3.load(Ordering::Relaxed);
-                        if cr3 == 0 {
-                            return true;
-                        }
-                        let rss = mm_api::count_present_user_pages(cr3);
-                        if rss > victim_rss {
-                            victim_rss = rss;
+                        let mut candidate_rss = 0u64;
+                        if better_oom_victim(pid, p.get_state(), cr3, victim_rss, || {
+                            candidate_rss = mm_api::count_present_user_pages(cr3);
+                            candidate_rss
+                        }) {
+                            victim_rss = candidate_rss;
                             victim = pid;
                         }
                         true
@@ -156,3 +153,24 @@ impl OomDaemon {
 }
 
 pub static OOMD: OomDaemon = OomDaemon::new();
+
+/// Emergency 牺牲者择优判据 — 判定候选进程是否应取代当前 victim.
+///
+/// 三步合一, 使「僵尸即便 RSS 最大也不被选中」成为可单测的不变量:
+/// ① 廉价筛选先行: idle/内核线程 (`pid == 0`)、无用户页表 (`cr3 == 0`)、
+///    僵尸 (`Zombie`, 已退出待父进程 `wait()`, 地址空间已释放且信号无法送达 —
+///    选中即"杀空") 三类直接排除;
+/// ② 通过筛选才求值 RSS — `rss` 为**延迟闭包**, 不合格进程不触发页表遍历;
+/// ③ 严格大于当前最优才取代 (相等不换, 保证选择对遍历顺序稳定).
+pub(crate) fn better_oom_victim(
+    pid: u32,
+    state: ProcessState,
+    cr3: u64,
+    current_best_rss: u64,
+    rss: impl FnOnce() -> u64,
+) -> bool {
+    if pid == 0 || cr3 == 0 || state == ProcessState::Zombie {
+        return false;
+    }
+    rss() > current_best_rss
+}

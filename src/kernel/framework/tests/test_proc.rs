@@ -157,6 +157,53 @@ fn test_stack_canary() -> TestResult {
     TestResult::Pass
 }
 
+/// A3: OOMD 牺牲者择优须排除僵尸进程 (丙批审查整改)
+///
+/// 双向验证:
+/// - 僵尸**即便 RSS 最大**也不得选中, 且不得触发页表遍历 (延迟闭包不被调用)
+/// - 非僵尸同条件仍可被选中
+/// - idle/内核线程 (`pid == 0`) 与无用户页表 (`cr3 == 0`) 一并排除
+fn test_oomd_victim_filter() -> TestResult {
+    use crate::framework::proc::oomd::better_oom_victim;
+    use core::cell::Cell;
+
+    let walked = Cell::new(false);
+    check!(
+        !better_oom_victim(42, ProcessState::Zombie, 0x1000, 0, || {
+            walked.set(true);
+            9999
+        }),
+        "zombie must not be selected even with the largest RSS"
+    );
+    check!(
+        !walked.get(),
+        "zombie must not trigger the page table walk"
+    );
+
+    check!(
+        better_oom_victim(42, ProcessState::Running, 0x1000, 0, || 9999),
+        "live process with larger RSS must be selectable"
+    );
+    check!(
+        better_oom_victim(42, ProcessState::Blocked, 0x1000, 5, || 6),
+        "blocked live process must be selectable"
+    );
+    check!(
+        !better_oom_victim(42, ProcessState::Ready, 0x1000, 9999, || 9999),
+        "equal RSS must not replace the current victim"
+    );
+    check!(
+        !better_oom_victim(0, ProcessState::Running, 0x1000, 0, || 9999),
+        "pid 0 (idle/kernel thread) must be excluded"
+    );
+    check!(
+        !better_oom_victim(42, ProcessState::Running, 0, 0, || 9999),
+        "process without user page table must be excluded"
+    );
+
+    TestResult::Pass
+}
+
 pub fn register_proc_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -169,6 +216,7 @@ pub fn register_proc_tests() {
             "thread_id": test_thread_id,
             "state_lifecycle": test_process_state_lifecycle,
             "stack_canary": test_stack_canary,
+            "oomd_victim_filter": test_oomd_victim_filter,
         },
     }
 }
