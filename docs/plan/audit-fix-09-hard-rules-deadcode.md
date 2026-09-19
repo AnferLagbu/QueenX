@@ -359,4 +359,20 @@
 - 描述：丙批 `97c03f52` 的 ext2 时间戳写回只写字段不判权限，与 nestfs 同层实装（判据＝属主或特权级 0）分歧 —— 任意 pwm 可改他人文件时间戳。
 - 方案：判据**留在 FS 实现层并与写回同锁域**（`Ext2Inode::set_times` 在 `EXT2_FS` 锁内比对磁盘 `i_uid` ↔ `pwm_get_uid(pwm)`，非属主且特权级非 0 ⇒ `PermissionDenied`）；一致性由**测试面收口**（`host-tests/tests/fs_permissions_regression_test.rs::set_times_of_persistent_fs_checks_owner_or_privilege` 扫描 framework/services 两侧 fs 源码，凡 `set_times` 函数体含落盘动作 `save_inode`/`update_obj` 者，必须同体出现判据谓词）。**否决「上提到 VFS 统一收口」**：① VFS 分发层（`vfs_utimensat`）无 owner 模型 —— ext2 的 `VfsStat.owner_pwm` 恒 `0`、uid 与 pwm 无映射 ⇒ 对 ext2 只会是空判据（不修本缺陷）；② 判据与写回会被拆成两次路径解析 ⇒ 引入 TOCTOU 窗口；③ 判据是纯策略（应落 services），上提到 framework VFS 属 §4.1 归属错位，且与 trait 契约文档「无权限…由实现者决定」冲突。
 - 状态：[X]
-- 详情：负向验证——临时移除 ext2 判据 ⇒ 门槛测试 FAILED（`set_times 落盘前必须判属主/特权级`），恢复后 PASS，证明门槛非空过；五门槛 5/5 全过（build.sh all 5/5、audit.sh quick 0 违规、host-tests 99 bin 0 failed、QEMU kernel_test exit 33、qemu_boot_test 1/1）。行为复查：`pwm == 0`（bootstrap/内核内部/WASI 调用）特权级为 0 ⇒ 行为不变；`pwm` 未注册时 `pwm_get_uid` 返 `u32::MAX` 且特权级 `0xFF` ⇒ fail-closed 拒绝。丙批审查其余整改项（A1 页表遍历竞态 / A3 victim 状态过滤 / A4 `terminated_count` / B2 ext2 `i_ctime` / B4 换行 / exfat 撤覆写 / F9 豁免残留）另批处置。
+- 详情：负向验证——临时移除 ext2 判据 ⇒ 门槛测试 FAILED（`set_times 落盘前必须判属主/特权级`），恢复后 PASS，证明门槛非空过；五门槛 5/5 全过（build.sh all 5/5、audit.sh quick 0 违规、host-tests 99 bin 0 failed、QEMU kernel_test exit 33、qemu_boot_test 1/1）。行为复查：`pwm == 0`（bootstrap/内核内部/WASI 调用）特权级为 0 ⇒ 行为不变；`pwm` 未注册时 `pwm_get_uid` 返 `u32::MAX` 且特权级 `0xFF` ⇒ fail-closed 拒绝。B1 本身提交 `e854398a`。丙批审查其余整改项（A1 页表遍历竞态 / A3 victim 状态过滤 / A4 `terminated_count` / B2 ext2 `i_ctime` / B4 换行 / exfat 撤覆写 / F9 豁免残留）另批处置，逐项状态见下。
+
+- 余项状态（丙批审查其余 7 项，本批实施；每项独立提交、可独立回退）：
+
+| # | 项 | 处置 | 提交 | 状态 |
+|---|---|---|---|---|
+| 1 | A1 页表遍历竞态根治 | 见「A1 前置闸门结论」 | — | [] |
+| 2 | A3 OOMD victim 未过滤僵尸 | 抽出可单测判据 `better_oom_victim`（僵尸/`pid==0`/`cr3==0` 三类排除 + RSS 严格择优 + 延迟闭包） | `93568c05` | [X] |
+| 3 | A4 `terminated_count` 无条件加一 | 改 `record_termination(delivered)`，仅 `do_signal_send` 返 `Ok` 才累加，三向日志分流 | `4614e707` | [X] |
+| 4 | B2 ext2 `i_ctime` 直接抄 `i_mtime` | 改取当前秒值（`get_ticks()/get_frequency()`，与 `utimensat_syscall` 同源）；结构门槛 `test_ext2_ctime_source_independent_of_mtime` | `1b852e5d` | [X] |
+| 5 | B4 `ext2_test.rs` 文件尾缺换行 | 仅补末行换行（1 行 diff） | `3541b63c` | [X] |
+| 6 | exfat `set_times` 静默成功 | 删覆写，落回 trait 默认 `Err(KernelError::NotSupported)`，零新增代码；正式任务编号（C1/T6-③）保留于注释 | `7079a94e` | [X] |
+| 7 | F9 `idt/safety.rs` 豁免残留 | `KERNEL_BASE` 单独按 `#[cfg(target_arch = "x86_64")]` 分组，删 `#[allow(unused_imports)]` | `29bee0a5` | [X] |
+
+> 2/3/4/7 项的负向验证（临时拆判据看测试是否真红）均已实测：A3 删僵尸过滤 ⇒ `Proc::oomd_victim_filter` FAIL；A4 改无条件 `fetch_add` ⇒ `Proc::oomd_terminated_count_only_on_delivery` FAIL；B2 恢复 `i_ctime = inode.i_mtime` ⇒ `test_ext2_ctime_source_independent_of_mtime` FAIL；F9 直测双架构强制重编 0 warning 行。各项五道门槛 5/5 全过（build.sh all `Passed: 5 Failed: 0`、audit.sh quick 全 passed、`audit_services_boundary.py` 通过、`make test-host` `RESULT: ALL 367 TESTS PASSED (9 skipped)`、`make test-unit` `QEMU exit: 33`、`qemu_boot_test.sh x86_64` 1/1）。
+
+- A1 前置闸门结论（2026-09-19）：**闸门未过，未开工**。简报三要素已产出（记账点全集定位 / 口径草案 / 六处不能挂的理由），但核出**阻断性事实**：`MmStruct` 无 per-process 归属——`Process`（`proc/process.rs:133`）仅持 `cr3: AtomicU64`（L145）无 mm 字段；全仓无 `Arc<MmStruct>` / pid→mm 注册表；`CURRENT_MM`（`mm/vma.rs:1271`）为全局单例，唯一生产设置点是 exec（`proc/elf/mod.rs:297`）。故 OOMD 在 scheduler tick 遍历全部进程时**只能取到 `cr3`，取不到任何被遍历进程的 `&MmStruct`** ⇒ 原案「OOMD 改读 `MmStruct.rss_pages`」按现结构不可达。已按 §9.1 / §12.1 停手上报，待用户裁定替代路径（候选：① 保留 cr3 遍历但持 `VMM_LOCK` 消竞态并重新评估锁序；② 先补 per-process mm 归属再落计数器，属碰 TCB 核心/进程结构，需显式授权）。
