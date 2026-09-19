@@ -56,6 +56,36 @@ static VMM_LOCK: AtomicBool = AtomicBool::new(false);
 #[cfg(debug_assertions)]
 static VMM_LOCK_RECURSIVE: AtomicBool = AtomicBool::new(false);
 
+/// 非阻塞获取 `VMM_LOCK`: 锁已被占用时立即返回 `None`, 绝不重试或自旋.
+///
+/// 与 `VirtualMemoryManager::acquire_lock` 不同, 本函数只走一次
+/// `compare_exchange` 即返回, **不复用** acquire 的单核可重入短路 — 该短路
+/// 在多核下既非跨核互斥, 也会把"他人持锁"误判为获取成功.
+/// 页表只读遍历 (`count_present_user_pages`) 用它避免与并发 map/unmap 争锁:
+/// 拿不到即放弃本轮, 不阻塞调用者 (OOMD 运行在 scheduler tick 中断上下文).
+///
+/// 成功时关中断, 并在调试构建中置 `VMM_LOCK_RECURSIVE` (与 acquire 的 debug 语义一致).
+fn try_acquire_lock() -> Option<IrqSaveFlags> {
+    let flags = disable_interrupts();
+    if VMM_LOCK
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        // 未取得锁: 恢复进入时的中断状态, 不留副作用.
+        restore_interrupts(&flags);
+        return None;
+    }
+    #[cfg(debug_assertions)]
+    {
+        // 成功获取时 VMM_LOCK_RECURSIVE 必为 false; 为 true 说明锁状态不一致 (死锁)
+        assert!(
+            !VMM_LOCK_RECURSIVE.swap(true, Ordering::Relaxed),
+            "VMM_LOCK: recursive acquisition detected (deadlock)"
+        );
+    }
+    Some(flags)
+}
+
 const MAX_USER_PAGE_TABLES: usize = 256;
 
 #[derive(Clone, Copy)]
@@ -2032,29 +2062,39 @@ pub fn get_current_pml4() -> u64 {
     }
 }
 
-/// 统计进程页表中已映射的用户页数 (4 KiB 粒度, RSS 近似).
+/// 统计进程页表中已映射的用户页数 (4 KiB 粒度, RSS 近似) — **非阻塞**.
 ///
-/// 只读遍历 PML4 用户半区 (`0..256`), **全程持 `VMM_LOCK`** — 并发
-/// `unmap_page_in_table` 在解除最后一个表项后会递归释放变空的中间页表
-/// (`get_pmm().free_page`), 无锁遍历与该释放交错即踩野指针; 与 map/unmap
-/// 同持该锁消除此竞态 (供 OOMD 在内存紧急时挑选占用最大的进程).
+/// 只读遍历 PML4 用户半区 (`0..256`). 遍历前经 `try_acquire_lock` **非阻塞**
+/// 获取 `VMM_LOCK`: 锁被并发 map/unmap 占用时**立即返回 `None`, 不做任何遍历**,
+/// 调用方应跳过本轮 (不得将 `None` 当作 0 参与比较). 持锁遍历期间并发
+/// `unmap_page_in_table` 无法递归释放变空的中间页表 (`get_pmm().free_page`),
+/// 消除踩野指针的竞态 (供 OOMD 在内存紧急时挑选占用最大的进程).
 ///
 /// # Arguments
 /// * `cr3` — 进程页表根物理地址 (`Process::cr3`); 0 表示无用户页表.
 ///
 /// # Returns
-/// 该地址空间映射的 4 KiB 当量页数 (大页按其覆盖的 4 KiB 页数折算).
+/// * `Some(页数)` — 成功持锁遍历所得 (大页按其覆盖的 4 KiB 页数折算);
+///   `cr3 == 0` 时返回 `Some(0)`.
+/// * `None` — `VMM_LOCK` 被占用, 未做遍历, 调用方应跳过本轮.
+///
+/// # 调用约束
+/// 调用方不得在已持 `VMM_LOCK` 的情况下调用本函数.
 #[expect(
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pdpt/pd/pt 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
-pub fn count_present_user_pages(cr3: u64) -> u64 {
+pub fn count_present_user_pages(cr3: u64) -> Option<u64> {
     if cr3 == 0 {
-        return 0;
+        return Some(0);
     }
 
+    // 非阻塞获取: 锁被占用则不遍历, 直接放弃本轮.
+    let Some(flags) = try_acquire_lock() else {
+        return None;
+    };
+
     let vmm = get_vmm();
-    let flags = vmm.acquire_lock();
 
     let mut pages = 0u64;
     let pml4_ptr = PhysAddr(cr3).to_virt().0 as *const PageTableEntry;
@@ -2105,5 +2145,5 @@ pub fn count_present_user_pages(cr3: u64) -> u64 {
     }
 
     vmm.release_lock(&flags);
-    pages
+    Some(pages)
 }

@@ -107,18 +107,24 @@ impl OomDaemon {
                     // 持进程表锁可保证页表根在遍历期间不被释放), 而信号发送必须在
                     // 闭包**之外** — `do_signal_send` 内部会再次获取进程表锁,
                     // 在闭包内调用将自锁死.
+                    //
+                    // 页表计数为**非阻塞**: 并发 map/unmap 持 `VMM_LOCK` 时返回
+                    // `None`, 该候选本轮跳过 (以当前最优值代入择优判据, 使其严格
+                    // 大于判据为假, 不当作 RSS=0 参与比较).
                     let mut victim: u32 = 0;
                     let mut victim_rss: u64 = 0;
                     super::process_for_each(|p| {
                         let pid = p.pid.0;
                         let cr3 = p.cr3.load(Ordering::Relaxed);
-                        let mut candidate_rss = 0u64;
+                        let mut candidate_rss: Option<u64> = None;
                         if better_oom_victim(pid, p.get_state(), cr3, victim_rss, || {
                             candidate_rss = mm_api::count_present_user_pages(cr3);
-                            candidate_rss
+                            candidate_rss.unwrap_or(victim_rss)
                         }) {
-                            victim_rss = candidate_rss;
-                            victim = pid;
+                            if let Some(rss) = candidate_rss {
+                                victim_rss = rss;
+                                victim = pid;
+                            }
                         }
                         true
                     });

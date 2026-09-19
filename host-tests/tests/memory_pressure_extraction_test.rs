@@ -255,17 +255,26 @@ fn memory_pressure_services_no_klog_ffi() {
     );
 }
 
-/// 丙批审查 A1 门槛: 用户页表遍历必须与 map/unmap 同持 `VMM_LOCK`.
+/// 丙批审查 A1 门槛 (非阻塞化): 用户页表遍历必须以**非阻塞**方式获取 `VMM_LOCK`.
 ///
 /// 背景: `count_present_user_pages` 原为**无锁**遍历, 而 `unmap_page_in_table`
 /// 在解除最后一个表项后会递归释放变空的中间页表 (`get_pmm().free_page`) —
-/// 两者交错即踩野指针. 修复后遍历全程持 `VMM_LOCK`, 使该释放无法与遍历交错.
+/// 两者交错即踩野指针. 曾以"全程阻塞持锁"收口, 但 `VMM_LOCK` 的
+/// `acquire_lock` 含"已持锁即直接返回"的单核短路, 多核下既不构成跨核互斥,
+/// 也会把"他人持锁"误判为获取成功, 阻塞持锁因此不可信. 改为**非阻塞获取**:
+/// 走一次 `compare_exchange`, 拿不到锁 (并发 map/unmap 持锁) 立即返回 `None`, 不争锁.
+///
+/// 本门槛锁定该不变量, 且**必须能拦住"改回阻塞持锁"的回退**:
+/// - 正: 遍历函数体必出现 `try_acquire_lock` (非阻塞路径), 且先于 `release_lock(`;
+/// - 负: 遍历函数体**不得**出现阻塞式 `acquire_lock()` (剔除 `try_acquire_lock`
+///   子串后判定, 避免自匹配); 且文件必定义 `fn try_acquire_lock` 并内含 `compare_exchange`.
 ///
 /// 页表并发行为需裸机 SMP 才能复现, host 无页表物理内存, 故以源码结构门槛
-/// 收口 (与 B1/B2 同体例); 计数正确性由 QEMU 用例
-/// `mm::vmm::count_present_user_pages` (基线增量恒等) 行为验证.
+/// 收口; 计数正确性由 QEMU 用例 `mm::vmm::count_present_user_pages` (基线增量恒等)
+/// 行为验证, 非阻塞 `None` 分支由本文件
+/// `count_present_user_pages_returns_none_when_vmm_lock_held` 行为验证.
 #[test]
-fn user_page_count_traversal_holds_vmm_lock() {
+fn user_page_count_traversal_uses_nonblocking_vmm_lock() {
     for (file, sig) in [
         (
             "src/kernel/framework/mm/vmm_x86_64.rs",
@@ -287,9 +296,10 @@ fn user_page_count_traversal_holds_vmm_lock() {
             .collect::<Vec<_>>()
             .join("\n");
 
+        // 正: 非阻塞获取路径必须先于释放.
         let acquire = code
-            .find("acquire_lock()")
-            .unwrap_or_else(|| panic!("A1: {file} 遍历必须获取 VMM_LOCK"));
+            .find("try_acquire_lock")
+            .unwrap_or_else(|| panic!("A1: {file} 遍历必须以非阻塞方式获取 VMM_LOCK"));
         let release = code
             .find("release_lock(")
             .unwrap_or_else(|| panic!("A1: {file} 遍历必须释放 VMM_LOCK"));
@@ -297,9 +307,45 @@ fn user_page_count_traversal_holds_vmm_lock() {
             acquire < release,
             "A1: {file} 必须先获取 VMM_LOCK 再释放 (次序不得颠倒)"
         );
+        // 负: 不得回退为阻塞式 acquire_lock() — 剔除 try_acquire_lock 子串后判定.
+        let without_try = code.replace("try_acquire_lock", "");
+        assert!(
+            !without_try.contains("acquire_lock()"),
+            "A1: {file} 遍历不得使用阻塞式 acquire_lock() (非阻塞契约, 回退即拒收)"
+        );
         assert!(
             !body.contains("不取 VMM 锁"),
             "A1: {file} 文档不得再声明无锁遍历 (锁契约已收紧)"
         );
+
+        // 非阻塞助手本体必须用一次 CAS, 不退化回自旋/阻塞.
+        let helper = fn_at_root(&src, "fn try_acquire_lock(");
+        assert!(
+            helper.contains("compare_exchange"),
+            "A1: {file} try_acquire_lock 必须以一次 compare_exchange 实现 (非阻塞)"
+        );
     }
+}
+
+/// 非阻塞 `None` 分支的**可执行**行为证据.
+///
+/// `VMM_LOCK` 是模块级全局锁 (与具体 VMM 实例无关), 故可先在 host 侧持锁,
+/// 再调用 `count_present_user_pages`: 非阻塞路径必须立即返回 `None`, 且**不做
+/// 任何遍历** — 传入非法页表根哨兵 `0xDEAD_BEEF`, 一旦遍历即踩野内存而 panic/
+/// 段错误, 以此证明 "锁被占用时返回 None 且不 panic". 持锁与释放成对, 释放后
+/// 全局锁状态复原 (不影响同进程其他用例).
+#[test]
+fn count_present_user_pages_returns_none_when_vmm_lock_held() {
+    use queenx::kernel::framework::mm::vmm::{VirtualMemoryManager, count_present_user_pages};
+
+    let vmm = VirtualMemoryManager::new();
+    let flags = vmm.acquire_lock();
+    // 0xDEAD_BEEF 非有效页表根: 仅在 "未获取锁即放弃 (不遍历)" 时才安全.
+    let held = count_present_user_pages(0xDEAD_BEEF);
+    vmm.release_lock(&flags);
+
+    assert_eq!(
+        held, None,
+        "VMM_LOCK 被占用时 count_present_user_pages 必须返回 None 且不做遍历"
+    );
 }
