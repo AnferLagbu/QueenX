@@ -123,7 +123,13 @@ impl Inode for Ext2Inode {
         }
         if mtime != u64::MAX {
             inode.i_mtime = u32::try_from(mtime).unwrap_or(u32::MAX);
-            inode.i_ctime = inode.i_mtime;
+            // i_ctime = 元数据变更时刻, 语义独立于 i_mtime —— 取**当前秒值**,
+            // 换算方式与 `services/fs/stat.rs::utimensat_syscall` 同源
+            // (tick / frequency). 不可改用 TSC 周期计数: 那是周期数而非秒,
+            // 落 32 位磁盘字段会被截顶成 `u32::MAX`.
+            let now_secs = crate::framework::syscall::api::get_ticks()
+                / u64::from(crate::framework::timer::get_frequency());
+            inode.i_ctime = u32::try_from(now_secs).unwrap_or(u32::MAX);
         }
         fs.save_inode(self.inode_num, &inode)
     }
