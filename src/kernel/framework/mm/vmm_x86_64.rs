@@ -2034,8 +2034,10 @@ pub fn get_current_pml4() -> u64 {
 
 /// 统计进程页表中已映射的用户页数 (4 KiB 粒度, RSS 近似).
 ///
-/// 只读遍历 PML4 用户半区 (`0..256`), **不取 VMM 锁** — 供 OOMD 在内存紧急时
-/// 粗略挑选占用最大的进程. 与并发 unmap 的竞态允许近似 (仅用于启发式选择).
+/// 只读遍历 PML4 用户半区 (`0..256`), **全程持 `VMM_LOCK`** — 并发
+/// `unmap_page_in_table` 在解除最后一个表项后会递归释放变空的中间页表
+/// (`get_pmm().free_page`), 无锁遍历与该释放交错即踩野指针; 与 map/unmap
+/// 同持该锁消除此竞态 (供 OOMD 在内存紧急时挑选占用最大的进程).
 ///
 /// # Arguments
 /// * `cr3` — 进程页表根物理地址 (`Process::cr3`); 0 表示无用户页表.
@@ -2051,11 +2053,15 @@ pub fn count_present_user_pages(cr3: u64) -> u64 {
         return 0;
     }
 
+    let vmm = get_vmm();
+    let flags = vmm.acquire_lock();
+
     let mut pages = 0u64;
     let pml4_ptr = PhysAddr(cr3).to_virt().0 as *const PageTableEntry;
 
     // SAFETY: cr3 为进程有效 PML4 物理地址, 经直接映射转为可读虚拟地址;
-    // 仅读取 4 级页表结构不做修改; 各层索引均限制在 4 KiB 表内 (< 256 / < 512).
+    // 仅读取 4 级页表结构不做修改; 各层索引均限制在 4 KiB 表内 (< 256 / < 512);
+    // 全程持 VMM_LOCK, 中间页表不会被并发 unmap 递归释放, 指针在遍历期间有效.
     unsafe {
         for i in 0..256usize {
             let pml4e = &*pml4_ptr.add(i);
@@ -2098,5 +2104,6 @@ pub fn count_present_user_pages(cr3: u64) -> u64 {
         }
     }
 
+    vmm.release_lock(&flags);
     pages
 }

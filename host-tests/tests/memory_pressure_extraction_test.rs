@@ -57,6 +57,16 @@ fn services_mm_mod_rs() -> String {
     fs::read_to_string(&path).expect("read services/mm/mod.rs")
 }
 
+/// 提取 `src` 中 `sig` 起始的顶层函数体 (至首个行首 `}` 结束)
+fn fn_at_root<'a>(src: &'a str, sig: &str) -> &'a str {
+    let start = src
+        .find(sig)
+        .unwrap_or_else(|| panic!("未找到函数签名: {sig}"));
+    let rest = &src[start..];
+    let end = rest.find("\n}\n").map_or(rest.len(), |i| i + 2);
+    &rest[..end]
+}
+
 #[test]
 fn memory_pressure_mechanism_in_framework() {
     // DECISION-O ② 验收: 类型/状态/update_pressure 包装必在 framework (机制权威)
@@ -243,4 +253,53 @@ fn memory_pressure_services_no_klog_ffi() {
         !src.contains("crate::klog_ffi"),
         "DECISION-O ②: services 文件不应含 crate::klog_ffi"
     );
+}
+
+/// 丙批审查 A1 门槛: 用户页表遍历必须与 map/unmap 同持 `VMM_LOCK`.
+///
+/// 背景: `count_present_user_pages` 原为**无锁**遍历, 而 `unmap_page_in_table`
+/// 在解除最后一个表项后会递归释放变空的中间页表 (`get_pmm().free_page`) —
+/// 两者交错即踩野指针. 修复后遍历全程持 `VMM_LOCK`, 使该释放无法与遍历交错.
+///
+/// 页表并发行为需裸机 SMP 才能复现, host 无页表物理内存, 故以源码结构门槛
+/// 收口 (与 B1/B2 同体例); 计数正确性由 QEMU 用例
+/// `mm::vmm::count_present_user_pages` (基线增量恒等) 行为验证.
+#[test]
+fn user_page_count_traversal_holds_vmm_lock() {
+    for (file, sig) in [
+        (
+            "src/kernel/framework/mm/vmm_x86_64.rs",
+            "pub fn count_present_user_pages(",
+        ),
+        (
+            "src/kernel/framework/mm/vmm_aarch64.rs",
+            "pub fn count_present_user_pages(",
+        ),
+    ] {
+        let src = fs::read_to_string(repo_root().join(file))
+            .unwrap_or_else(|e| panic!("read {file}: {e}"));
+        let body = fn_at_root(&src, sig);
+        // 剔除注释行后再判定, 避免"注释里写着 acquire_lock()"造成假通过
+        // (负向验证: 把判据行改成注释后, 本用例必须变红).
+        let code: String = body
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let acquire = code
+            .find("acquire_lock()")
+            .unwrap_or_else(|| panic!("A1: {file} 遍历必须获取 VMM_LOCK"));
+        let release = code
+            .find("release_lock(")
+            .unwrap_or_else(|| panic!("A1: {file} 遍历必须释放 VMM_LOCK"));
+        assert!(
+            acquire < release,
+            "A1: {file} 必须先获取 VMM_LOCK 再释放 (次序不得颠倒)"
+        );
+        assert!(
+            !body.contains("不取 VMM 锁"),
+            "A1: {file} 文档不得再声明无锁遍历 (锁契约已收紧)"
+        );
+    }
 }
