@@ -87,7 +87,7 @@
 - **B09-10. 28 处 TODO(TRACK-...) 注释（H.3.5 P2-C）**
   - 描述：28 处 `TODO(TRACK-...)` 注释违反 AGENTS.md §9.4"不留 TODO"；其中 ISSUE-SRC-002（Ed25519）等已在分册 07 登记。
   - 方案：逐一处置——实装、转 plan 任务或删除；完成后 grep 复核为 0。
-  - 状态：[X]（2026-09-14 处置完成，全仓 grep `TODO(TRACK-` + 普通 `TODO` 均 0 残留）：
+  - 状态：[X]（2026-09-14 处置完成，全仓 grep `TODO(TRACK-` **0 残留**；普通 `TODO` **尚余 1 处**——`framework/net/init.rs:610` 的 skb 投递 TODO（即 D-5「net-init」所指项，依赖 NAPI/中断驱动模式，状态 []），故「普通 `TODO` 均 0 残留」表述失实，已订正）：
     - **8 处过时删除**（功能已实装，注释残留）：framework/syscall/types.rs 的 mremap/getitimer/setitimer/clone/hard links/symlinks/fchown/times（dispatch 均已接线）。
     - **16 处转 plan**（简化实现 + 完整实装待办，代码删 TODO 标记保留简化实现）：tickless hrtimer 集成、uefi EFI_SYSTEM_TABLE 解析 + SetTime、power 调频压 + S3 挂起、shadow_stack PMM 物理页 + CR4 #GP 检测、signal 处理注册/blocked 位图/分发 ×4、idt CPUID 完整解析、iouring VFS fd 表/网络异步/超时/缓冲区注册 ×4。
     - **2 处 host-tests 注释引用更新**：td11_12_13（历史清理描述）、mmap_pwm_test（TRACK-5B3EBC 失同步引用，内核 TRACK- 已清零）。
@@ -317,8 +317,8 @@
 - power.rs（2 项）：6F7A9A(S3 挂起)/7A3B01(调频 MSR)
 - tickless.rs（1 项）：3C4D67(hrtimer 集成)
 
-**普通 TODO（9 项，内核需要的功能缺口）**：
-- oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:607（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义）/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
+**普通 TODO（10 项，内核需要的功能缺口）**：
+- oomd.rs:94（OOM killer 实际发送 SIGKILL，安全关键）/ memfd.rs:60/77（per-process fd 表 + CLOEXEC）/ xhci.rs:670（Event Ring 处理）/ net/init.rs:610（skb 投递到 smoltcp，依赖 NAPI）/ pidfd.rs:172（依赖 Task 4 OpenFile 系统）/ overlayfs.rs:205（copy-up 写时复制 + 时间戳更新，overlayfs 核心语义）/ ext2·exfat·nestfs_inode 时间戳（3 处同类——**2026-09-09 判据确认内核需要**：POSIX stat mtime 语义完善项，低优先级）
 
 > 已确认无价值/随手的 TODO 不入清单，直接删除。
 >
@@ -365,7 +365,7 @@
 
 | # | 项 | 处置 | 提交 | 状态 |
 |---|---|---|---|---|
-| 1 | A1 页表遍历竞态根治 | 见「A1 前置闸门结论」：原案（`MmStruct.rss_pages` 记账）不可达，用户裁定走**方案 A** —— 遍历全程持 `VMM_LOCK`（公共 API 面保留、双架构同步）；结构门槛 `user_page_count_traversal_holds_vmm_lock` | `41003e87` | [X] |
+| 1 | A1 页表遍历竞态根治 | 见「A1 前置闸门结论」：原案（`MmStruct.rss_pages` 记账）不可达，用户裁定走**方案 A** —— 遍历全程持 `VMM_LOCK`（公共 API 面保留、双架构同步）；结构门槛 `user_page_count_traversal_holds_vmm_lock` | `41003e87` → `3701381b` → `316002ee` | [X] |
 | 2 | A3 OOMD victim 未过滤僵尸 | 抽出可单测判据 `better_oom_victim`（僵尸/`pid==0`/`cr3==0` 三类排除 + RSS 严格择优 + 延迟闭包） | `93568c05` | [X] |
 | 3 | A4 `terminated_count` 无条件加一 | 改 `record_termination(delivered)`，仅 `do_signal_send` 返 `Ok` 才累加，三向日志分流 | `4614e707` | [X] |
 | 4 | B2 ext2 `i_ctime` 直接抄 `i_mtime` | 改取当前秒值（`get_ticks()/get_frequency()`，与 `utimensat_syscall` 同源）；结构门槛 `test_ext2_ctime_source_independent_of_mtime` | `1b852e5d` | [X] |
@@ -378,7 +378,49 @@
 - A1 前置闸门结论（2026-09-19）：**闸门未过，停手上报后由用户裁定路径**。简报三要素已产出（记账点全集定位 / 口径草案 / 六处不能挂的理由），但核出**阻断性事实**：`MmStruct` 无 per-process 归属——`Process`（`proc/process.rs:133`）仅持 `cr3: AtomicU64`（L145）无 mm 字段；全仓无 `Arc<MmStruct>` / pid→mm 注册表；`CURRENT_MM`（`mm/vma.rs:1271`）为全局单例，唯一生产设置点是 exec（`proc/elf/mod.rs:297`）。故 OOMD 在 scheduler tick 遍历全部进程时**只能取到 `cr3`，取不到任何被遍历进程的 `&MmStruct`** ⇒ 原案「OOMD 改读 `MmStruct.rss_pages`」按现结构不可达。候选路径 ①（保留 cr3 遍历但持 `VMM_LOCK` 消竞态）经用户选为**方案 A** 并已落地（`41003e87`）；候选 ②（先补 per-process mm 归属再落计数器）属碰 TCB 核心/进程结构，未授权、不施工。
 - A1 方案 A 实施记录（`41003e87`）：
   - **改动面**：`count_present_user_pages` 的 x86_64（[vmm_x86_64.rs:2051](../../src/kernel/framework/mm/vmm_x86_64.rs#L2051)）与 aarch64（[vmm_aarch64.rs:1147](../../src/kernel/framework/mm/vmm_aarch64.rs#L1147)）两个版本，`cr3 == 0` 早退之后 `acquire_lock()`、遍历之后 `release_lock(&flags)`；文档注释由「**不取 VMM 锁**…竞态允许近似」改为「**全程持 `VMM_LOCK`**…」，两处 `// SAFETY:` 补记「持锁期间中间页表不会被并发 unmap 递归释放，指针在遍历期间有效」。**公共 API 面未增删**（与用户原案「连同 aarch64 版本、顶层再导出、`test_mm.rs` 用例、`memory_pressure_extraction_test.rs` 文本断言一并删掉」不同，已随方案 A 选项明示并获授权）；`test_mm.rs` 基线增量恒等用例保留为行为验收。
-  - **锁序核验**：`VMM_LOCK` 临界区不回调 `proc`/进程表（`grep proc::|process_|scheduler|PROCESS_TABLE` 于两个 vmm 文件**零命中**），故新增「进程表锁 → VMM_LOCK」边不构成 AB-BA；`mm/` 子树内 `numa.rs`/`uffd.rs` 的 proc 调用均在 VMM_LOCK 之外。TLB shootdown `broadcast_tlb_invalidate` → `send_broadcast_ipi` 为 fire-and-forget（[smp/mod.rs:78](../../src/kernel/framework/smp/mod.rs#L78)），不等待 ack，无反向等待。`acquire_lock` 自带 `IrqSaveFlags` 保存/恢复中断，OOMD 在 scheduler tick 已关中断的上下文里调用后仍保持关中断。
+  - **锁序核验**：`VMM_LOCK` 临界区不回调 `proc`/进程表（`grep proc::|process_|scheduler|PROCESS_TABLE` 于两个 vmm 文件**零命中**），故新增「进程表锁 → VMM_LOCK」边不构成 AB-BA；`mm/` 子树内 `numa.rs`/`uffd.rs` 的 proc 调用均在 VMM_LOCK 之外。TLB shootdown `broadcast_tlb_invalidate` → `send_broadcast_ipi`（[smp/mod.rs:78](../../src/kernel/framework/smp/mod.rs#L78)）为 fire-and-forget、不等待 ack——但该「无反向等待」论证的**前提已失实**：此路径由 [vmm_x86_64.rs:2007-2012](../../src/kernel/framework/mm/vmm_x86_64.rs#L2007) 的 `smp::is_enabled() && smp::get_cpu_count() > 1` 门控，单核下恒假、历史上从未执行，随 2 核 boot 打通**首次真正激活**。它与「IPI 向量 `0xFD`/`0xFE` 无对应 IDT 门」（见 **D-9-3**）属**同一风险**，故本条锁序论证需在 2 核语义下重新评估。`acquire_lock` 自带 `IrqSaveFlags` 保存/恢复中断，OOMD 在 scheduler tick 已关中断的上下文里调用后仍保持关中断。
   - **证据**：host 结构门槛 `user_page_count_traversal_holds_vmm_lock`（双架构 `acquire_lock()` 先于 `release_lock(` 且函数体注释剔除后判定，防「注释里写着判据」假通过）**已负向验证**——临时把 x86_64 的 `acquire_lock()` 行改成注释 ⇒ `A1: …vmm_x86_64.rs 遍历必须获取 VMM_LOCK` FAILED，恢复后 PASS；QEMU 行为验证 `[150/503] mm::vmm::count_present_user_pages` PASS（持锁遍历无递归获取 panic，基线增量恒等不变）。
   - **偏差登记**：原案「删除 `count_present_user_pages` + aarch64 版本 + 顶层再导出 + `test_mm.rs` 用例 + `memory_pressure_extraction_test.rs` 文本断言」随方案 A **作废不执行**（该 API 面保留为门控项）。
-  - **疑点（预存，不在本批授权内）**：x86_64 `acquire_lock`（[vmm_x86_64.rs:1887](../../src/kernel/framework/mm/vmm_x86_64.rs#L1887)）含「单核可重入」短路——`if VMM_LOCK.load(Acquire) { return flags; }`，判据是**全局**锁位而非持有者，故在他核持锁时本核会直接进入临界区，**跨核互斥在 SMP 下不成立**（aarch64 版本无此短路）。本批未触碰该锁实现（属 TCB 核心 + 安全面，四类禁区），仅登记留痕；另 `smp::register_cpu` 当前无 Rust 生产调用点（`SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1），故本竞态在当前单核配置下亦不显现。
+  - **疑点（预存，不在本批授权内）**：x86_64 `acquire_lock`（[vmm_x86_64.rs:1887](../../src/kernel/framework/mm/vmm_x86_64.rs#L1887)）含「单核可重入」短路——`if VMM_LOCK.load(Acquire) { return flags; }`，判据是**全局**锁位而非持有者，故在他核持锁时本核会直接进入临界区，**跨核互斥在 SMP 下不成立**（aarch64 版本无此短路）。本批未触碰该锁实现（属 TCB 核心 + 安全面，四类禁区），仅登记留痕（该单核短路已由本 A1 改道链末环 `316002ee` 移除）；另原记「`smp::register_cpu` 无 Rust 生产调用点（`SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1）」**已被证伪**——[arch/x86_64/smp_init.rs:310](../../src/kernel/framework/arch/x86_64/smp_init.rs#L310) 的 `ap_entry` 存在生产调用点 `crate::framework::smp::register_cpu(lapic_id)`，[smp/mod.rs:47-58](../../src/kernel/framework/smp/mod.rs#L47) 中 `register_cpu` 会把 `SMP_ENABLED` 置 true、`CPU_COUNT` 增至 2，故本竞态在 2 核配置下**真实可发生**。
+
+### D-9. 2 核 boot 打通与 SMP 并发语义复核
+
+> 判据：随 2 核 boot 打通，单核时代恒不执行的 SMP 路径**首次真正激活**——历史上从未进入的分支（IPI 广播 / 跨核 TLB shootdown / VMM_LOCK 跨核互斥）现进入真实执行面，须在 2 核语义下重新评估。本节登记 2 核 boot 缺陷修复与随之暴露的未处理风险。
+
+- **D-9-1. 2 核 boot 停滞·根因①（AP 从未 `lidt`）**
+  - 描述：AP 在未加载 IDT 的状态下开中断——`IDTR.BASE=0` 时首个定时器中断（向量 0x20）触发 #GP → #DF → triple fault，BSP 等待 AP 握手超时，2 核 boot 停滞。
+  - 方案：`idt/idt.rs` 的 `load_idt` 升 `pub(crate)`；`idt/mod.rs` 新增 `load_idt_on_current_cpu()`；`smp_init.rs` 的 `ap_entry` 在 `gdt_init_ap` 之后调用它，并把握手 `done=1` 移到 per-CPU 初始化之后。
+  - 状态：[X]
+  - 详情：改动在工作区（`Makefile`/`smp_init.rs`/`idt/idt.rs`/`idt/mod.rs`），**尚未提交**，HEAD=`316002ee`。
+
+- **D-9-2. 2 核 boot 停滞·根因②（AP 中断返回 `iretq` → `#GP(0x18)`）**
+  - 描述：AP 的中断返回路径 `iretq` 触发 `#GP e=0x18` → `#DF` → triple fault。根因：`arch/x86_64/trampoline.asm:101-107` 自带 GDT 的 `0x18` 是 64-bit 代码段，第 141 行 `jmp dword 0x18:...` 使 AP 以 **CS=0x18** 进入长模式；第 146 行 `lgdt` 换成内核 per-CPU GDT（`gdt.rs:424-454` 中 `0x18`=user_data）后**未重载 CS**，CPU 仍缓存 trampoline 的 0x18 代码段描述符；首个定时器中断经门进入 `irq_common` 后，返回路径 `boot/isr.asm:366` 的 `iretq` 必须按当前 GDT 重装 CS=0x18 → 该选择子在当前 GDT 中是数据段 → `#GP(0x18)`。对照：BSP 无此问题，因为 `boot/boot.asm:268-271` 用 `push dword 0x08; push eax; retf` 显式把 CS 重载为 `0x08`（per-CPU GDT 中正是 code64）。
+  - 方案：`arch/x86_64/gdt.rs` 新增私有 `unsafe fn reload_cs()`（far return 重载 CS 到 `SELECTOR_KERNEL_CODE`，返回 RIP 用 `lea [rip + 2f]` 取运行时地址），并在 `gdt_init_ap` 的 `gdt_flush`/`tss_flush` 之后调用。
+  - 状态：[X]
+  - 详情：证据——QEMU `-d int` 现场（帧0 `CS =0018 ... 00209a00 DPL=0 CS64`；帧1 `v=0d e=0018` 于 `irq_no_kpti_exit` 的 iretq，`CCO=SUBW` 即出口 `cmp word [rsp+8], 0x23`）。改动在工作区，**尚未提交**。
+
+- **D-9-3. IPI 向量 `0xFD`/`0xFE` 无对应 IDT 门（未处理风险）**
+  - 描述：IPI 向量 `0xFD`（TLB 失效广播）/`0xFE`（reschedule）**无对应 IDT 门**：发送点仅 [smp/mod.rs:75,84,89,94](../../src/kernel/framework/smp/mod.rs#L75)，`src/kernel/framework/idt/` 下无任何 `0xFD`/`0xFE` 门注册。2 核打通后一旦发送即 triple fault（当前 boot 窗口未触发）。相关发送路径还有 [sync/rcu.rs:181-183](../../src/kernel/framework/sync/rcu.rs#L181)。
+  - 方案：为 `0xFD`/`0xFE` 注册 IDT 门并补对应 IPI 处理程序（TLB 失效处理 + reschedule 处理）。
+  - 状态：[]
+  - 详情：**与 D-8「锁序核验」的 TLB shootdown fire-and-forget 论证属同一风险**——该论证前提（单核下路径恒不执行）已被 2 核 boot 证伪，锁序论证需在 2 核语义下重新评估。
+
+- **D-9-4. `Makefile` 的 `test-host` 目标退出码恒 0（门槛 fail-open）**
+  - 描述：`Makefile` 的 `test-host` 目标（约 414-420 行）末尾带 `; true`，**退出码恒 0**，即该门槛 fail-open（与「审计脚本 fail-closed」原则相悖）；本次实测：`test-host` 目标退出码 0，但报告内容本身为 99 个 `test result: ok`、0 failed。
+  - 方案：移除 `; true`，让 `cargo test` 退出码直接决定目标成败（fail-closed）。
+  - 状态：[]
+
+- **D-9-5. 首次真正生效的 2 核门控路径（跨核 TLB shootdown）**
+  - 描述：`vmm_x86_64.rs` 约 2007-2012 行 `smp::is_enabled() && smp::get_cpu_count() > 1` 现走 `smp::broadcast_tlb_invalidate()` 分支；2 核下是否自洽**未核实**（本次仅确认 boot 到 Ring 3 的窗口未触发）。
+  - 方案：2 核语义下复核该分支（与 **D-9-3** 的 IDT 门缺口联动）。
+  - 状态：[]
+
+- **D-9-6. `acpi.rs` MADT 日志占位串失真**
+  - 描述：`arch/x86_64/acpi.rs` 约 436-441 行仍打印占位串 `LAPIC base=0xXXXXXXXX, AP count=N`，日志失真。经核实：该处把 `AP_COUNT` 读出到 `_count` 却未格式化进日志，占位串确实未被真实值替换。
+  - 方案：以 `klog_info` 格式化输出真实 LAPIC base 与 `AP_COUNT` 值。
+  - 状态：[]
+
+- **D-9-7. aarch64 与 x86_64 的 `smp` 行为不对称**
+  - 描述：x86_64 有生产 CPU 上线路径——`arch/x86_64/smp_init.rs` 的 `ap_entry` 调用 `smp::register_cpu`（`smp_init.rs:310`），使 `SMP_ENABLED=true`/`CPU_COUNT=2`；aarch64 侧无对应路径——`arch/aarch64/` 全目录无 `register_cpu` / `ap_entry` / `smp_init` 调用点（`send_ipi`/`broadcast_ipi` 虽已由 GICv3 SGI 实装，但无 AP 上线路径调用 `register_cpu`）⇒ aarch64 侧 `SMP_ENABLED` 仍恒 false、`CPU_COUNT` 恒 1。
+  - 方案：明确 aarch64 SMP 上线路径是否在计划内；若不实现，需在文档标注平台差异。
+  - 状态：[]
