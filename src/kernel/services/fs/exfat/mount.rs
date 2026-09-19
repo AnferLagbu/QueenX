@@ -74,18 +74,18 @@ impl Inode for ExfatInode {
         false // 简化: exFAT 目录判断需查 FAT 表
     }
 
-    fn set_times(&self, _atime: u64, _mtime: u64, _pwm: u64) -> KernelResult<()> {
-        // C1/T6-③ 分类: 需转正式任务 (既非"过期可删", 也非本批可交付的实装).
-        // 三项前置基础设施均缺失, 不属本批授权范围:
-        //   1. 无目录项定位 — `ExfatFs::lookup_path` 只返回首簇号, 丢弃目录项
-        //      所在扇区偏移, 无法回写条目 (exfat/read.rs);
-        //   2. 无时间戳编解码 — `ExfatDirEntry` 未解析 exFAT 时间戳 (2 秒精度
-        //      + 10ms + UTC 偏移) 且无 SetChecksum 重算 (exfat/dir.rs);
-        //   3. 无验证载体 — `ExfatFileSystem` 未注册到任何文件系统表, 且无
-        //      exFAT 镜像/块设备 mock; 写错目录项/校验和会破坏文件系统却不可测.
-        // 登记: docs/plan/audit-fix-09-hard-rules-deadcode.md D-5.
-        Ok(())
-    }
+    // `set_times` 刻意不覆写: 原覆写直接 `Ok(())` 既不写回也不做事, 对上层
+    // 伪装成功 (与 B1 同类"静默成功"风险) — 删覆写后落回 trait 默认
+    // `Err(KernelError::NotSupported)`, 如实上报"不支持"。
+    //
+    // exFAT 正式任务 (C1/T6-③; 登记 docs/plan/audit-fix-09-hard-rules-deadcode.md D-5)
+    // 三项前置仍缺:
+    //   1. 无目录项定位 — `ExfatFs::lookup_path` 只返回首簇号, 丢弃目录项
+    //      所在扇区偏移, 无法回写条目 (exfat/read.rs);
+    //   2. 无时间戳编解码 — `ExfatDirEntry` 未解析 exFAT 时间戳 (2 秒精度
+    //      + 10ms + UTC 偏移) 且无 SetChecksum 重算 (exfat/dir.rs);
+    //   3. 无验证载体 — `ExfatFileSystem` 未注册到任何文件系统表, 且无
+    //      exFAT 镜像/块设备 mock.
 
     fn node_id(&self) -> u32 {
         self.cluster
