@@ -679,6 +679,11 @@ pub(crate) mod raw {
             core::ptr::write(&mut (*kproc_ptr).kernel_stack, AtomicU64::new(kstack));
             core::ptr::write(&mut (*kproc_ptr).user_stack, AtomicU64::new(ustack));
             core::ptr::write(&mut (*kproc_ptr).exit_code, AtomicU32::new(0));
+            // P1 修复: 本路径经 alloc_zeroed 分配 (不走 Process::new), 不写此字段则
+            // ref_count 保持 0; 而 `remove_and_free`/`dec_ref_and_maybe_free` 以
+            // "减后归零" 为释放判据 ⇒ 0 上做减法回绕到 u32::MAX, Box::from_raw
+            // 永不执行, Process::drop 不运行, PID 不回收. 显式置 1 使首个 dec 归零.
+            core::ptr::write(&mut (*kproc_ptr).ref_count, AtomicU32::new(1));
             core::ptr::write(&mut (*kproc_ptr).cpu_time, AtomicU64::new(0));
             core::ptr::write(&mut (*kproc_ptr).block_reason, AtomicU32::new(0));
             core::ptr::write(
@@ -840,8 +845,13 @@ impl UserProcManager {
             return;
         }
 
+        // 计数归零才销毁: cr3 可能被 CLONE_VM 兄弟进程共享, 或已被 execve
+        // 转移给其他进程 (转移时源已清空, 见 proc_ops::proc_exec_replace).
         let cr3 = proc_ref.load_cr3();
-        if cr3 != 0 {
+        if cr3 != 0
+            && crate::framework::mm::pmm::get_pmm()
+                .frame_dec(crate::framework::mm::PhysAddr(cr3))
+        {
             raw::destroy_user_page_table(cr3);
         }
         if !keep_kstack {
@@ -907,6 +917,7 @@ impl UserProcManager {
     }
 
     pub fn destroy_by_pid_no_kstack(&self, pid: u32) {
+        // SAFETY: get returns *mut from NonNull which is never null.
         if let Some(proc) = self.processes.lock().get(&pid).copied() {
             // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
             let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
@@ -941,7 +952,7 @@ impl UserProcManager {
         // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc.as_ptr()) };
 
-        // 1. 销毁旧用户页表
+        // 1. 销毁旧用户页表 (计数归零才销毁: 旧表可能被 CLONE_VM 兄弟进程共享)
         let old_cr3 = proc_ref.load_cr3();
         if old_cr3 != 0 {
             // 释放旧用户栈物理页 (必须在销毁页表前完成, 否则无法翻译虚拟地址)
@@ -955,7 +966,11 @@ impl UserProcManager {
                     }
                 }
             }
-            raw::destroy_user_page_table(old_cr3);
+            if crate::framework::mm::pmm::get_pmm()
+                .frame_dec(crate::framework::mm::PhysAddr(old_cr3))
+            {
+                raw::destroy_user_page_table(old_cr3);
+            }
         }
 
         // 2. 更新为新的地址空间 (UserProcRef 已委托到 Process, 无需重复写入)
@@ -997,7 +1012,11 @@ impl UserProcManager {
         let stack_pages = raw::alloc_phys_pages((USER_STACK_SIZE + USER_STACK_GUARD) / PAGE_SIZE);
         if stack_pages.is_null() {
             // 失败回滚: 用户栈物理页分配失败, 销毁页表并释放结构内存.
-            raw::destroy_user_page_table(cr3_val);
+            if crate::framework::mm::pmm::get_pmm()
+                .frame_dec(crate::framework::mm::PhysAddr(cr3_val))
+            {
+                raw::destroy_user_page_table(cr3_val);
+            }
             raw::free_user_process(proc_ptr);
             raw::free_kernel_process(kproc_ptr);
             return None;
@@ -1051,7 +1070,11 @@ impl UserProcManager {
             // 失败回滚: 内核栈物理页分配失败, 释放栈页+页表+结构内存.
             // 顺序仍为 LIFO 反序: 物理资源 → 镜像 → 权威结构.
             raw::free_phys_page(stack_pages);
-            raw::destroy_user_page_table(cr3_val);
+            if crate::framework::mm::pmm::get_pmm()
+                .frame_dec(crate::framework::mm::PhysAddr(cr3_val))
+            {
+                raw::destroy_user_page_table(cr3_val);
+            }
             raw::free_user_process(proc_ptr);
             raw::free_kernel_process(kproc_ptr);
             return None;

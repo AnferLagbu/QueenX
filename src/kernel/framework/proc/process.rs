@@ -410,6 +410,67 @@ impl Process {
         }
     }
 
+    /// 初始化内核态 idle 任务首次被调度时的执行上下文 (x86_64).
+    ///
+    /// idle 是 `cs = SELECTOR_KERNEL_CODE` (0x08) 的**内核线程**: 首次切入由
+    /// `process_switch_asm` 的内核线程分支 (`mov rsp, [rsi+64]; jmp [rsi+56]`)
+    /// 完成, **不经过 iretq** (同特权级 iretq 只弹 RIP/CS/RFLAGS, 不加载 RSP/SS
+    /// —— x86 SDM, 无法完成内核线程的栈切换, 见 `proc/switch.asm`).
+    ///
+    /// 因此 `rsp` 必须是可直接使用的真实栈地址: 取 `allocate_kernel_stack()`
+    /// 存下的**高半区**栈顶 (phys + KERNEL_BASE + KERNEL_STACK_SIZE). 该地址与
+    /// TSS RSP0 (用户态中断入口栈, 见 `allocate_kernel_stack` 与
+    /// `tss_set_kernel_stack`) 是同一个地址, 内核在直接映射区跑栈是既定约定;
+    /// 内核线程的 save/restore 对称, 不再有 `add rsp, KERNEL_BASE` 别名修正.
+    ///
+    /// `cr3` 取内核页表, 保证 `entry` (低 LMA 代码地址) 与高半区内核栈均可寻址.
+    #[cfg(target_arch = "x86_64")]
+    pub fn init_kernel_idle_context(&self, entry: u64, cr3: u64) {
+        let stack_top = self.kernel_stack.load(Ordering::SeqCst);
+        if stack_top == 0 {
+            return;
+        }
+        // 栈向下增长: 从高半区栈顶往下留一个字, 并保证 16 字节对齐.
+        let sp = (stack_top - 16) & !0xF;
+
+        let mut ctx = self.context.lock();
+        ctx.rip = entry;
+        ctx.rsp = sp;
+        ctx.rflags = 0x202;
+        ctx.cr3 = cr3;
+        ctx.cs = u64::from(crate::framework::arch::gdt::SELECTOR_KERNEL_CODE);
+        ctx.ss = u64::from(crate::framework::arch::gdt::SELECTOR_KERNEL_DATA);
+        ctx.ds = u64::from(crate::framework::arch::gdt::SELECTOR_KERNEL_DATA);
+        ctx.es = u64::from(crate::framework::arch::gdt::SELECTOR_KERNEL_DATA);
+        ctx.fs = u64::from(crate::framework::arch::gdt::SELECTOR_KERNEL_DATA);
+        ctx.gs = u64::from(crate::framework::arch::gdt::SELECTOR_KERNEL_DATA);
+    }
+
+    /// 初始化内核态 idle 任务首次被调度时的执行上下文 (aarch64).
+    ///
+    /// aarch64 复用 `ProcessContext` 的字段偏移但语义不同 (见
+    /// `framework/arch/aarch64/context.rs`): `ds`(96) = SP, `es`(104) = TTBR0_EL1,
+    /// `fs`(112) = SPSR_EL1, `gs`(120) = ELR_EL1. `context_switch_asm` 末尾以
+    /// `eret` 恢复 SPSR/ELR, 因此把入口写入 ELR、栈顶写入 SP 即可跳入 idle.
+    ///
+    /// `KERNEL_BASE` 在 aarch64 为 0 (恒等映射), 内核栈地址无需别名转换.
+    #[cfg(target_arch = "aarch64")]
+    // SIMPLIFIED: SPSR_EL1 固定取 EL1h (M[3:0]=0b0101) 且 DAIF 清 0 (中断使能),
+    // 未区分异常级别与 mask 状态; 影响面: 仅覆盖"内核态 idle 且需响应中断"这一
+    // 场景, 未在 aarch64 实机验证; 何时需扩展: aarch64 上线时按实际异常级别/栈布局复核.
+    pub fn init_kernel_idle_context(&self, entry: u64, cr3: u64) {
+        let stack_top = self.kernel_stack.load(Ordering::SeqCst);
+        if stack_top == 0 {
+            return;
+        }
+
+        let mut ctx = self.context.lock();
+        ctx.ds = stack_top & !0xF; // SP
+        ctx.es = cr3; // TTBR0_EL1
+        ctx.fs = 0x5; // SPSR_EL1: EL1h + 中断使能
+        ctx.gs = entry; // ELR_EL1
+    }
+
     pub fn allocate_user_space(&self) -> bool {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
@@ -557,9 +618,17 @@ impl Drop for Process {
     fn drop(&mut self) {
         let cr3 = self.cr3.load(Ordering::SeqCst);
         if cr3 != 0 {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe {
-                vmm_destroy_page_table(cr3);
+            // 计数归零才销毁: cr3 可能仍被 CLONE_VM 的兄弟进程持有, 无条件销毁
+            // 会使对方在用的页表被回收 (UAF). `frame_dec` 对未计数帧 (计数 0)
+            // 返回 false, 同时防止同一 PML4 被二次销毁.
+            if crate::framework::mm::pmm::get_pmm()
+                .frame_dec(crate::framework::mm::PhysAddr(cr3))
+            {
+                // SAFETY: cr3 由 vmm_create_user_page_table / COW 克隆产生,
+                // 且计数已归零 (无其他持有者), 本进程是最后持有者.
+                unsafe {
+                    vmm_destroy_page_table(cr3);
+                }
             }
         }
     }

@@ -1183,10 +1183,6 @@ pub fn get_current_pml4() -> u64 {
 ///
 /// # 调用约束
 /// 调用方不得在已持 `VMM_LOCK` 的情况下调用本函数.
-#[expect(
-    clippy::similar_names,
-    reason = "变量名相似表达同族概念 (l0/l1/l2/l3 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-)]
 pub fn count_present_user_pages(root_paddr: u64) -> Option<u64> {
     if root_paddr == 0 {
         return Some(0);

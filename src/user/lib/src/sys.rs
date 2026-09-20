@@ -168,7 +168,7 @@ pub fn proc_yield()                                        { unsafe { sys0(24); 
 pub fn pipe_create(fds: &mut [i32; 2]) -> i32              { unsafe { sys1(SYS_pipe, fds.as_mut_ptr() as u64) as i32 } }
 pub fn dup_fd(oldfd: i32) -> i32                           { unsafe { sys1(SYS_dup, oldfd as u64) as i32 } }
 pub fn dup2_fd(oldfd: i32, newfd: i32) -> i32              { unsafe { sys2(SYS_dup2, oldfd as u64, newfd as u64) as i32 } }
-pub fn wait_pid(pid: i32) -> i64                           { unsafe { sys1(SYS_wait4, pid as u64) } }
+pub fn wait_pid(pid: i32) -> i64                           { unsafe { sys3(SYS_wait4, pid as u64, 0, 0) } }
 
 pub fn fs_open(path: &[u8], flags: i32, m: i32) -> i32    { unsafe { sys3(SYS_open, path.as_ptr() as u64, flags as u64, m as u64) as i32 } }
 pub fn fs_close(fd: i32) -> i32                            { unsafe { sys1(SYS_close, fd as u64) as i32 } }

@@ -323,6 +323,9 @@ pub extern "C" fn idt_init() -> i32 {
         fn irq125();
         fn irq126();
         fn irq127();
+        // IPI 向量 stub (0xFD TLB 失效 / 0xFE reschedule)
+        fn irq253();
+        fn irq254();
         fn syscall_handler();
         fn isr0x82();
     }
@@ -531,6 +534,10 @@ pub extern "C" fn idt_init() -> i32 {
 
         // 编程 MSI 向量 IDT 条目 (0x40-0x7F)
         manager.init_msi_idt(&msi_table);
+
+        // 编程 IPI 向量 IDT 门 (0xFD TLB 失效 / 0xFE reschedule)
+        let ipi_table: [u64; 2] = [addr!(irq253), addr!(irq254)];
+        manager.init_ipi_idt(&ipi_table);
 
         MODULE_INIT_SUCCESS
     }

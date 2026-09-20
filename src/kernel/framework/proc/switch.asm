@@ -95,10 +95,18 @@ process_switch_asm:
     ; 否则用户态异常/中断入口 isr_common/irq_common 的 swapgs 会把 KERNEL_GS_BASE
     ; (0) 换入 GS base → [gs:KERNEL_PML4_OFF] 访问地址 8 → #PF → 死循环.
     ; GS base 随后由 mov gs (用户数据段 base=0) 恢复为 0 (用户 GS).
-    ; 仅 next 为用户态 (cs=0x23) 时 swapgs; 内核线程切换 (cs=0x08) 不 swapgs.
+    ; 仅 next 为用户态 (cs=0x23) 时 swapgs; 内核态/内核线程切换 (cs=0x08) 不 swapgs.
+    ;
+    ; GS 段寄存器装载**仅限用户态路径**: `mov gs, sel` 以描述符基址 (数据段基址恒 0)
+    ; 写入 IA32_GS_BASE (见 arch/x86_64/mod.rs enter_user_asm 处同一结论). 用户态路径
+    ; 正需 base=0, 且此时 KERNEL_GS_BASE 已在 swapgs 后为 per-CPU 地址; 而内核态恢复
+    ; 路径 (任务阻塞在 syscall 内被换回) 若照搬装载, 会把 per-CPU 基址清零, 使随后
+    ; 内核态 [gs:...] 访问 (KPTI 出口读 USER_PML4) 落到物理低地址 → 读垃圾 CR3 挂起.
     cmp word [rsi + 88], 0x23
     jne .no_swapgs_next
     swapgs
+    mov ax, [rsi + 120]
+    mov gs, ax
 .no_swapgs_next:
     mov ax, [rsi + 96]
     mov ds, ax
@@ -106,20 +114,41 @@ process_switch_asm:
     mov es, ax
     mov ax, [rsi + 112]
     mov fs, ax
-    mov ax, [rsi + 120]
-    mov gs, ax
 
     ; Restore FPU/SSE state (fxrstor requires 16-byte aligned memory)
     ; fpu_state is at offset 144 (17 fields + 1 padding = 18 * 8 = 144 bytes)
     lea rax, [rsi + 144]
     fxrstor [rax]
 
-    ; B05-55 修复: 切到 next 进程用户页表后, 当前栈 (per-CPU syscall_stack,
-    ; 低 LMA) 在用户表中不可寻址. 参照 syscall_entry 返回路径, 将 RSP 转为
-    ; 高半区直接映射别名 (KERNEL_BASE + RSP): 该别名经内核高半区恒等映射
-    ; 在每个用户页表中均可见, push/iretq 才能在同一物理帧上执行.
+    ; ── 路径分派: 内核线程 (cs=0x08) vs 用户态 (cs=0x23) ─────────────
+    ; 这是本文件的第一个 0x23 判断, 作用是**选择栈切换方式**;
+    ; 下方 caller-saved 恢复处还有第二个 0x23 判断, 作用是**决定是否恢复
+    ; rdi/rsi/rdx/rcx/r8-r11** (见该处注释). 两者读同一字段, 目的不同.
+    ;
+    ; iretq 在同特权级下只弹 RIP/CS/RFLAGS, 不加载 RSP/SS (x86 SDM),
+    ; 因此不能靠 iretq 完成内核线程的栈切换.
+    ; 改用 mov rsp + jmp 实现: 保存侧把 rip 存为 context_switch 的返回地址、
+    ; rsp 存为该返回地址之上的位置 (见本文件上方 mov rax,[rsp] / lea rax,[rsp+8]),
+    ; 故 "mov rsp, [rsi+64]; jmp qword [rsi+56]" 与 ret 完全等价, 与保存侧对称.
+    ; 此时 rsi 仍指向 next 的 ProcessContext (mov rsp 不改 rsi), 该结构位于
+    ; 内核内存, 换栈后依旧可读.
+    cmp word [rsi + 88], 0x23
+    je .switch_user_path
+    mov rax, [rsi + 48]         ; 内核线程仅需恢复 rax
+    mov rsp, [rsi + 64]         ; 切到 next 的栈
+    jmp qword [rsi + 56]        ; 跳到 next 的 rip (首次为 idle_entry)
+.switch_user_path:
+
+    ; 统一内核栈契约 (D5): 任务内核栈 (prev 的 syscall/中断栈) 已是高半区 VA
+    ; (phys + KERNEL_BASE, 见 cpu::arch::set_kernel_stack), 经用户页表共享的
+    ; 高半区直接映射 (pd_high) 天然可达, 无需别名转换; 仅"首个任务进入用户态
+    ; 之前"的运行栈 (boot 低半区栈) 需要转 KERNEL_BASE 别名后才能在用户页表中
+    ; push/iretq. 故此处按 RSP 实际所处半区条件转换, 避免对高半区栈重复偏移.
     mov rax, 0xFFFF800000000000    ; KERNEL_BASE
-    add rsp, rax
+    cmp rsp, rax
+    jae .rsp_already_high          ; 已是高半区 (任务内核栈) → 不再偏移
+    add rsp, rax                   ; 低半区 (boot 栈) → 转高半区别名
+.rsp_already_high:
 
     ; Build iretq frame
     push qword [rsi + 128]      ; ss
@@ -136,6 +165,9 @@ process_switch_asm:
     ; 用这些继承的寄存器值 (fork 时父进程的 rdi 等) 进入用户态.
     ; ⚠ 必须放在所有 [rsi] (ProcessContext) 访问之后、iretq 之前, 且恢复 rax
     ; 之后 (rax 是 fork 返回值, 不能被覆盖).
+    ; 这是本文件的第二个 0x23 判断: 仅用户态恢复 caller-saved 寄存器
+    ; (第一个 0x23 判断在 fxrstor 之后, 作用是选择内核线程/用户态的栈切换方式;
+    ; 内核线程分支已在此前 jmp 走, 不会到达本处).
     cmp word [rsi + 88], 0x23
     jne .no_restore_callersaved
     mov rax, rsi                ; rax 暂存 ctx 指针 (rsi 即将被覆盖)

@@ -313,6 +313,10 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
 
     crate::framework::proc::init_per_cpu_sched(cpu_index);
 
+    // 本核 idle 任务: 与 BSP 一样, 每核都需一个 idle 兜底, 否则本核
+    // `schedule()` 在无候选任务时会返回 None (BSP 的 idle 不属于本核).
+    let _ = crate::framework::proc::SCHEDULER.init_per_cpu_idle(cpu_index as u32);
+
     // SAFETY: TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET 是 AP 握手内存布局中
     // 预留的 done 标志位, BSP 已映射该物理页, 写入对齐 u32 安全.
     // DONE_OFFSET 由 Rust 端 offset_of! 计算, 与 BSP 等待逻辑共享同一来源 (DECISION-050).

@@ -4,7 +4,10 @@
 //! 所有布局与 C 版本 [idt.h](../../../include/idt.h) 完全兼容，
 //! 使用 `#[repr(C, packed)]` 确保内存布局一致。
 
-use crate::framework::mm::{KERNEL_TEXT_BASE, USER_ADDR_MIN};
+// 仅测试使用: `is_user_mode` 已改为只依据 CS.RPL, 内核态判据不再需要文本基址;
+// 本符号保留供 `test_user_mode_detection` 构造内核态帧.
+#[cfg(test)]
+use crate::framework::mm::KERNEL_TEXT_BASE;
 
 /// IDT 条目总数 (Intel 64-bit)
 pub const IDT_ENTRIES: usize = 256;
@@ -109,18 +112,19 @@ impl InterruptFrame {
 
     /// 判断当前中断是否来自 user-mode
     ///
-    /// 使用**双重验证策略**:
-    /// 1. CS 段选择子的 DPL 位 (正常情况)
-    /// 2. RIP 地址范围 (应对 CS 异常的情况)
+    /// 唯一判据是 **CS.RPL** (段选择子最低两位): RPL=3 即用户态.
+    ///
+    /// 曾辅以 "RIP 落在低半区" 的启发式作为第二判据, 但内核 `.text` 实际
+    /// 链接在低半区 (`. = 0x100000`), 该条件对内核态异常恒为真 —— 会把内核
+    /// 故障 (如 #UD/#GPF) 误判为用户态, 进而在 `handlers.rs` 走
+    /// `TerminateProcess` 而非 Panic, 内核现场被静默吞掉. 故删除该判据.
     ///
     /// # Returns
     /// - `true`: user-mode 中断
     /// - `false`: kernel-mode 中断
     #[inline(always)]
     pub fn is_user_mode(&self) -> bool {
-        let cs_check = (self.cs & 0x03) == 3;
-        let rip_check = self.rip < KERNEL_TEXT_BASE && self.rip > USER_ADDR_MIN;
-        cs_check || rip_check
+        (self.cs & 0x03) == 3
     }
 
     /// 安全地读取 CR2 寄存器 (Page Fault 地址)
@@ -540,9 +544,10 @@ mod tests {
         let user_frame = InterruptFrame::new_test_frame(14, 0x400000, 0x23);
         assert!(user_frame.is_user_mode());
 
-        // 异常情况: 内核 CS 但用户态 RIP
+        // 回归防护: 内核 CS 且 RIP 落在低半区 —— 旧的 RIP 启发式在此会误判为
+        // 用户态 (内核 .text 链接于低半区, 该条件对内核态异常恒真).
         let anomalous_frame = InterruptFrame::new_test_frame(0, 0x1221d7, 0x08);
-        assert!(anomalous_frame.is_user_mode()); // 基于 RIP 的检测生效
+        assert!(!anomalous_frame.is_user_mode()); // 仅按 CS.RPL: 内核 CS 即内核态
     }
 
     #[test]

@@ -561,6 +561,231 @@ fn test_count_present_user_pages() -> TestResult {
     TestResult::Pass
 }
 
+// ============================================================
+// 帧持有计数: COW 语义 (cr3-lifetime-ownership.md §8.1)
+// ============================================================
+
+/// COW 测试公共前置: 新建用户页表 + 映射一页 (以 `COW_TEST_BYTE` 填充).
+///
+/// 返回 `(pml4, 帧物理地址)`; 失败返回 `Err(消息)`. 调用方负责拆除页表.
+#[cfg(not(feature = "host-test"))]
+pub(super) fn cow_setup_mapped_page() -> Result<(u64, PhysAddr), &'static str> {
+    use crate::framework::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_map_page_in_table,
+    };
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pml4 = vmm_create_user_page_table();
+    if pml4 == 0 {
+        return Err("create_user_page_table failed");
+    }
+    let Some(phys) = get_pmm().alloc_page() else {
+        vmm_destroy_page_table(pml4);
+        return Err("pmm alloc_page failed");
+    };
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    vmm_map_page_in_table(pml4, COW_TEST_VA, phys.as_u64(), flags.bits());
+    // SAFETY: phys 由 PMM 分配, to_virt 得到内核直接映射地址; 写满一页不越界
+    unsafe {
+        core::ptr::write_bytes(phys.to_virt().0 as *mut u8, COW_TEST_BYTE, PAGE_SIZE as usize);
+    }
+    Ok((pml4, phys))
+}
+
+/// COW 测试用虚拟地址 (低半区, 页对齐; 与 `count_present_user_pages` 用例同区)
+#[cfg(not(feature = "host-test"))]
+const COW_TEST_VA: u64 = 0x40_0000;
+/// COW 测试用父页填充字节
+#[cfg(not(feature = "host-test"))]
+const COW_TEST_BYTE: u8 = 0xAA;
+/// COW 测试用子页改写字节
+#[cfg(not(feature = "host-test"))]
+const COW_TEST_BYTE_CHILD: u8 = 0xBB;
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_cow_child_write_isolated_from_parent() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// fork 后子写不污染父页 (§8.1 规则 2/3 的隔离判据).
+///
+/// **判别力**: 旧 `COW_REFS` 的"额外注册数"判据在单次 fork 后仍为 1 ⇒ 误判"唯一引用"
+/// ⇒ 父子写同一物理页 (隔离失效). 新判据以**持有者数** (`>= 2` ⇒ 复制) 纠正之.
+#[cfg(not(feature = "host-test"))]
+fn test_cow_child_write_isolated_from_parent() -> TestResult {
+    use crate::framework::mm::cow::{clone_user_page_table_cow, cow_handle_fault};
+    use crate::framework::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pmm = get_pmm();
+    let (parent, phys) = match cow_setup_mapped_page() {
+        Ok(v) => v,
+        Err(msg) => return TestResult::Fail(msg),
+    };
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "首个映射不得额外 inc (§8.1 规则 1)"
+    );
+
+    // fork: 共享 leaf ⇒ 计数 1 -> 2
+    let Some(child) = clone_user_page_table_cow(parent) else {
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("clone_user_page_table_cow failed");
+    };
+    check!(pmm.frame_ref_count(phys) == 2, "fork 共享后持有者数应为 2");
+    check!(
+        vmm_get_physical_in_table(child, COW_TEST_VA) == phys.as_u64(),
+        "fork 后子页表应先共享同一帧"
+    );
+
+    // 子进程写入 ⇒ COW fault (计数 >= 2 ⇒ 必须复制)
+    let Some(new_phys) = cow_handle_fault(child, COW_TEST_VA) else {
+        vmm_destroy_page_table(child);
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("cow_handle_fault 未返回新帧");
+    };
+    check!(
+        new_phys != phys.as_u64(),
+        "计数 >= 2 时必须复制 (否则父子写同一页)"
+    );
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "复制后旧帧应递减为 1 (父仍持有)"
+    );
+    check!(
+        vmm_get_physical_in_table(child, COW_TEST_VA) == new_phys,
+        "子页表应改指新帧"
+    );
+
+    // SAFETY: 两帧均由 PMM 分配, 内核直接映射可读同一字节偏移
+    let parent_after = unsafe { *(phys.to_virt().0 as *const u8) };
+    let child_copied = unsafe { *(PhysAddr(new_phys).to_virt().0 as *const u8) };
+    check!(parent_after == COW_TEST_BYTE, "父页内容不得被子的复制扰动");
+    check!(child_copied == COW_TEST_BYTE, "复制帧应含旧页内容");
+
+    // SAFETY: 新帧由 PMM 分配, 写满一页不越界
+    unsafe {
+        core::ptr::write_bytes(
+            PhysAddr(new_phys).to_virt().0 as *mut u8,
+            COW_TEST_BYTE_CHILD,
+            PAGE_SIZE as usize,
+        );
+    }
+    // SAFETY: 父帧由 PMM 分配, 内核直接映射可读
+    let parent_final = unsafe { *(phys.to_virt().0 as *const u8) };
+    check!(parent_final == COW_TEST_BYTE, "子写新帧不得污染父页");
+
+    // 拆除: 子先注销新帧与旧帧各一次, 父再注销旧帧 ⇒ 归零恰好一次
+    vmm_destroy_page_table(child);
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "仅销毁子不得释放父仍在用的帧"
+    );
+    vmm_destroy_page_table(parent);
+    check!(pmm.frame_ref_count(phys) == 0, "最后一个持有者拆除后计数归零");
+    TestResult::Pass
+}
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_cow_shared_frame_survives_owner_exit() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// "共享者仍在运行时所有者退出": 共享帧不得被归还 (§8.1 规则 3).
+#[cfg(not(feature = "host-test"))]
+fn test_cow_shared_frame_survives_owner_exit() -> TestResult {
+    use crate::framework::mm::cow::clone_user_page_table_cow;
+    use crate::framework::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pmm = get_pmm();
+    let (parent, phys) = match cow_setup_mapped_page() {
+        Ok(v) => v,
+        Err(msg) => return TestResult::Fail(msg),
+    };
+    let Some(child) = clone_user_page_table_cow(parent) else {
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("clone_user_page_table_cow failed");
+    };
+    check!(pmm.frame_ref_count(phys) == 2, "fork 共享后持有者数应为 2");
+
+    // 所有者 (父) 退出, 共享者 (子) 仍在运行
+    vmm_destroy_page_table(parent);
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "所有者退出不得释放仍被共享的帧"
+    );
+    check!(
+        vmm_get_physical_in_table(child, COW_TEST_VA) == phys.as_u64(),
+        "共享者页表仍应指向该帧"
+    );
+    // SAFETY: 帧由 PMM 分配, 内核直接映射可读
+    let content = unsafe { *(phys.to_virt().0 as *const u8) };
+    check!(content == COW_TEST_BYTE, "共享帧内容在所有者退出后应保持");
+
+    // 帧不得被归还 PMM: 连续分配不得再取到该帧
+    let mut reissued = false;
+    for _ in 0..64 {
+        if let Some(p) = pmm.alloc_page() {
+            if p.0 == phys.0 {
+                reissued = true;
+            }
+            pmm.free_page(p);
+        }
+    }
+    check!(!reissued, "仍被共享的帧不得被重新分配");
+
+    // 共享者退出 (最后持有者) ⇒ 归零
+    vmm_destroy_page_table(child);
+    check!(
+        pmm.frame_ref_count(phys) == 0,
+        "最后一个持有者退出后计数归零"
+    );
+    TestResult::Pass
+}
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_cow_unique_mapping_fault_reuses_frame() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// 唯一引用 ⇒ 就地恢复可写 (§8.1 `should_reuse` 判据的 `<= 1` 分支).
+#[cfg(not(feature = "host-test"))]
+fn test_cow_unique_mapping_fault_reuses_frame() -> TestResult {
+    use crate::framework::mm::cow::cow_handle_fault;
+    use crate::framework::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pmm = get_pmm();
+    let (pml4, phys) = match cow_setup_mapped_page() {
+        Ok(v) => v,
+        Err(msg) => return TestResult::Fail(msg),
+    };
+
+    // 唯一映射 (计数 1): 判据判为"本映射即唯一引用" ⇒ 就地恢复可写, 不复制
+    let reused = cow_handle_fault(pml4, COW_TEST_VA);
+    check!(
+        reused == Some(phys.as_u64()),
+        "唯一引用必须就地恢复可写 (不得复制)"
+    );
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "就地恢复不得改变持有者数"
+    );
+    check!(
+        vmm_get_physical_in_table(pml4, COW_TEST_VA) == phys.as_u64(),
+        "就地恢复后映射仍指向同一帧"
+    );
+
+    // 仍计入一次拆除
+    vmm_destroy_page_table(pml4);
+    check!(pmm.frame_ref_count(phys) == 0, "拆除后计数归零");
+    TestResult::Pass
+}
+
 pub fn register_mm_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -592,6 +817,11 @@ pub fn register_mm_tests() {
         },
         "mm::vmm": {
             "count_present_user_pages": test_count_present_user_pages,
+        },
+        "mm::cow": {
+            "child_write_isolated_from_parent": test_cow_child_write_isolated_from_parent,
+            "shared_frame_survives_owner_exit": test_cow_shared_frame_survives_owner_exit,
+            "unique_mapping_fault_reuses_frame": test_cow_unique_mapping_fault_reuses_frame,
         },
         "mm::uffd": {
             "lifecycle": test_uffd_instance_lifecycle,

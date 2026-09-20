@@ -46,7 +46,7 @@ use super::{
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
+use crate::framework::sync::{IrqSaveFlags, IrqSpinLock, disable_interrupts, restore_interrupts};
 
 use crate::framework::sync::OnceLock;
 pub(crate) static KERNEL_PML4: AtomicU64 = AtomicU64::new(0);
@@ -55,6 +55,206 @@ static VMM_LOCK: AtomicBool = AtomicBool::new(false);
 
 #[cfg(debug_assertions)]
 static VMM_LOCK_RECURSIVE: AtomicBool = AtomicBool::new(false);
+
+/// 本 `VMM_LOCK` 临界区是否产生过需要远程 TLB 失效的页表修改.
+///
+/// 持锁期间由本核在 `flush_tlb` 中置位 (锁内单写者), `release_lock` 在**仍持锁**时
+/// 读取并清除, 出临界区后再据其「发布新代 + 定向 IPI (`0xFD`, 含本核)」——
+/// 远程失效一律移出临界区, 且代计数下**不再有 ack 等待**
+/// (临界区内等对端响应会与被 `VMM_LOCK` 挡住的对端互等死锁).
+static TLB_SHOOTDOWN_NEEDED: AtomicBool = AtomicBool::new(false);
+
+/// 本临界区批次链头 (帧物理地址; 0 表尾).
+///
+/// **仅持 `VMM_LOCK` 期间读写** (锁内单写者): `defer_free` 头插, `release_lock`
+/// 仍持锁时整条摘走. 链节点就是帧自身 (见 `frame_link_next`).
+static BATCH_HEAD: AtomicU64 = AtomicU64::new(0);
+
+/// 已发布代但尚未追平的帧链 (节点同 `BATCH_HEAD`).
+///
+/// 由 `IrqSpinLock` 守护 (持锁即关中断): 只有它保证排空路径在中断上下文下也不自死锁.
+static PENDING_HEAD: IrqSpinLock<u64> = IrqSpinLock::new(0);
+
+/// `PENDING_HEAD` 是否非空的廉价门控 (与 `PENDING_HEAD` **同锁更新**, 故无竞态).
+///
+/// 用途: 排空是热路径外机会式行为, 常态 pending 为空, 免去每次 `release_lock`
+/// 都取一次 `PENDING_HEAD` 锁.
+static PENDING_NONEMPTY: AtomicBool = AtomicBool::new(false);
+
+/// 累计**已真正归还 PMM** 的延迟释放帧数 (计数粒度为帧, 非链).
+///
+/// 仅用于可观测性 / 测试断言, **不参与任何控制逻辑**: 若"代追平判据"出错导致帧永久
+/// 滞留 pending 链, 本计数不再增长 —— 据此可直接断言"帧最终被归还", 弥补现有测试
+/// 对"只泄漏不崩溃"形态无感的缺口.
+static DEFERRED_FREE_RELEASED: AtomicU64 = AtomicU64::new(0);
+
+/// 累计**已送入延迟释放链** (批次链 → pending 链) 的帧数, 粒度为帧.
+///
+/// 仅用于可观测性 / 测试断言, **不参与任何控制逻辑**. 与 `DEFERRED_FREE_RELEASED`
+/// 配对使用, 构成"释放路径是否运行"的最小判别集:
+/// - `admitted == 0` ⇒ 延迟释放路径**根本没被走到** (例如进程从未被回收 ⇒
+///   `Process::drop` 未运行 ⇒ `destroy_page_table` 未被调用);
+/// - `admitted > 0 && released == 0 && pending` ⇒ 帧已入链但代未追平, 滞留 pending.
+/// 二者诊断方向完全不同, 不可只凭 `released == 0` 判定.
+static DEFERRED_FREE_ADMITTED: AtomicU64 = AtomicU64::new(0);
+
+/// 帧内链节点布局: `[0, 8)` = next (u64 物理地址, 0 表尾); `[8, 16)` = gen.
+///
+/// 取帧前 16 字节当节点: 进入延迟释放的帧已不再服务于任何用途 —— unmap 路径在
+/// `defer_free` 之前已把父表项清零; destroy 路径整表正在销毁, 其残留父表项由 mm
+/// 生命周期契约负责 (见 `docs/plan/cr3-lifetime-ownership.md`); 帧是 PMM 分配的
+/// 页对齐 4KB 帧, 经 `phys_to_virt` 常量偏移直映射 (`mm/mod.rs:262`) 可直接写.
+///
+/// 残留窗口 (已登记, 见 `docs/plan/tlb-shootdown-epoch.md` §6 登记项): 被覆盖槽位
+/// 对"已读过父表项"的并发硬件页表遍历可见. `gen` 左移 1 位写入使 bit0 恒为 0
+/// (x86_64 页表项"不存在"位), `next` 是页对齐物理地址 (bit0..11 恒为 0) —— 故遍历
+/// 读到被覆盖槽位只会得到"不存在" → 正常缺页, 不会被误当作"存在"项翻译到其它物理页.
+/// 数据页帧被覆盖则属该帧已无映射的既有语义 (其内容本就要丢弃).
+
+/// 读取帧内链节点的 next 字段 (u64 物理地址, 0 表尾).
+///
+/// # Safety
+///
+/// 调用方必须保证: `frame` 是页对齐的有效物理帧地址, 且其前 16 字节当前不被任何
+/// 映射引用 (即该帧已逻辑死亡、尚未归还 PMM).
+unsafe fn frame_link_next(frame: u64) -> u64 {
+    let p = PhysAddr(frame).to_virt().0 as *mut u64;
+    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    unsafe { p.read() }
+}
+
+/// 写入帧内链节点的 next 字段.
+///
+/// # Safety
+///
+/// 调用方必须保证: `frame` 是页对齐的有效物理帧地址, 且其前 16 字节当前不被任何
+/// 映射引用 (即该帧已逻辑死亡、尚未归还 PMM).
+unsafe fn frame_link_set_next(frame: u64, next: u64) {
+    let p = PhysAddr(frame).to_virt().0 as *mut u64;
+    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    unsafe { p.write(next) };
+}
+
+/// 读取帧内链节点的 gen 字段 (写入时左移 1 位, 读回时右移还原).
+///
+/// # Safety
+///
+/// 调用方必须保证: `frame` 是页对齐的有效物理帧地址, 且其前 16 字节当前不被任何
+/// 映射引用 (即该帧已逻辑死亡、尚未归还 PMM).
+unsafe fn frame_link_gen(frame: u64) -> u64 {
+    let p = PhysAddr(frame).to_virt().0 as *mut u64;
+    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    unsafe { p.add(1).read() >> 1 }
+}
+
+/// 写入帧内链节点的 gen 字段 (左移 1 位写入, 使页表帧 bit0 恒为 0).
+///
+/// # Safety
+///
+/// 调用方必须保证: `frame` 是页对齐的有效物理帧地址, 且其前 16 字节当前不被任何
+/// 映射引用 (即该帧已逻辑死亡、尚未归还 PMM).
+unsafe fn frame_link_set_gen(frame: u64, generation: u64) {
+    let p = PhysAddr(frame).to_virt().0 as *mut u64;
+    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    unsafe { p.add(1).write(generation << 1) };
+}
+
+/// 归还一整条帧链给 PMM.
+///
+/// **禁止持任何锁调用**: `free_page` 内部取 PMM 锁, 持 `PENDING_HEAD` 调用会造成
+/// 锁嵌套. 每节点必须**先读 next 再释放** —— `free_page` 之后帧内容可能被他方改写.
+fn free_chain(chain: u64) {
+    if chain == 0 {
+        return; // 空链不取 PMM: host-test 下 get_pmm 会 panic
+    }
+    let pmm = get_pmm();
+    let mut node = chain;
+    while node != 0 {
+        // SAFETY: 链上节点均为已逻辑死亡的帧 (见 frame_link_next 契约).
+        let next = unsafe { frame_link_next(node) };
+        pmm.free_page(PhysAddr(node));
+        DEFERRED_FREE_RELEASED.fetch_add(1, Ordering::Relaxed);
+        node = next;
+    }
+}
+
+/// 结算本临界区批次链 (`batch`, 非 0): 该批全部帧共享同一释放代 `g`.
+///
+/// `min >= g` ⇒ 全部在线核都已在该批修改发布之后彻底失效过 TLB ⇒ 立即归还;
+/// 否则把 `g` 写入每帧节点后**整条**挂入 `PENDING_HEAD` (不丢帧, 下次排空再判).
+fn settle_batch(batch: u64, g: u64, min: u64) {
+    if min >= g {
+        free_chain(batch);
+        return;
+    }
+    // 锁外先写 gen 并记录链尾: 取 PENDING_HEAD 锁期间只做 O(1) 指针搬运.
+    let mut tail = batch;
+    loop {
+        // SAFETY: 同 free_chain; 帧未归还 PMM, 内容仍可写.
+        let next = unsafe { frame_link_next(tail) };
+        // SAFETY: 同 free_chain.
+        unsafe { frame_link_set_gen(tail, g) };
+        if next == 0 {
+            break;
+        }
+        tail = next;
+    }
+    let mut head = PENDING_HEAD.lock();
+    // SAFETY: 同 free_chain.
+    unsafe { frame_link_set_next(tail, *head) };
+    *head = batch;
+    PENDING_NONEMPTY.store(true, Ordering::Relaxed);
+}
+
+/// 机会式排空: 把已追平代 (`gen <= min`) 的帧归还 PMM.
+///
+/// 持 `PENDING_HEAD` 的时间仅为两次 O(1) 指针搬运 —— 遍历与 `free_page` 一律在锁外.
+/// 摘链后本核独占该链, 他核此后插入的是另一条新链, 二者不交叉.
+fn drain_pending(min: u64) {
+    let chain = {
+        let mut head = PENDING_HEAD.lock();
+        let chain = core::mem::replace(&mut *head, 0u64);
+        PENDING_NONEMPTY.store(false, Ordering::Relaxed);
+        chain
+    };
+    if chain == 0 {
+        return;
+    }
+
+    // 锁外遍历: min 追上的进 free 链, 其余进 hold 链 (记录 hold 链尾供回挂).
+    let mut free_head = 0u64;
+    let mut hold_head = 0u64;
+    let mut hold_tail = 0u64;
+    let mut node = chain;
+    while node != 0 {
+        // SAFETY: 链上节点均为已逻辑死亡的帧 (见 frame_link_next 契约).
+        let next = unsafe { frame_link_next(node) };
+        // SAFETY: 同 free_chain; 帧未归还 PMM, 内容仍可读.
+        let frame_gen = unsafe { frame_link_gen(node) };
+        if min >= frame_gen {
+            // SAFETY: 同 free_chain.
+            unsafe { frame_link_set_next(node, free_head) };
+            free_head = node;
+        } else {
+            // SAFETY: 同 free_chain.
+            unsafe { frame_link_set_next(node, hold_head) };
+            if hold_head == 0 {
+                hold_tail = node;
+            }
+            hold_head = node;
+        }
+        node = next;
+    }
+
+    if hold_head != 0 {
+        let mut head = PENDING_HEAD.lock();
+        // SAFETY: hold_tail 是本链末节点 (其 next 已在上一步写成 0), hold_head 非 0.
+        unsafe { frame_link_set_next(hold_tail, *head) };
+        *head = hold_head;
+        PENDING_NONEMPTY.store(true, Ordering::Relaxed);
+    }
+    free_chain(free_head);
+}
 
 /// 非阻塞获取 `VMM_LOCK`: 锁已被占用时立即返回 `None`, 绝不重试或自旋.
 ///
@@ -803,51 +1003,14 @@ impl VirtualMemoryManager {
                 );
             }
 
-            // B05-55 修复: 映射 IST 专用栈页 (TSS.ist[0..4]) 到用户页表.
+            // 注: 此处**不再**把 IST 栈页恒等映射进用户页表 (取代原 B05-55 修复).
             //
-            // 用户态异常/中断 (如 fork 的 COW #PF) 交付时, CPU 在 isr_common
-            // 切换到内核页表**之前**用 TSS.ist[N-1] 栈压入异常帧
-            // (IDT IST=N → TSS ist[N-1]: #DF=ist[0], NMI=ist[1], int 0x82=ist[2],
-            //  #PF=ist[3]). IST 栈是 per-CPU GDT 结构内的独立缓冲区 (低 LMA),
-            // 远离 TSS 结构本身; 原实现仅映射 TSS 2 页, 未映射 IST 栈页,
-            // 导致用户态 #PF (fork 后首次写栈触发 COW) 交付时 CPU 切到未映射的
-            // ist3 → 压栈二次 #PF → #DF → #TF.
-            //
-            // 权限: PRESENT|WRITABLE (不含 USER) — 交付路径 CPL=0, 且不暴露内核栈.
-            #[expect(
-                clippy::items_after_statements,
-                reason = "item 紧邻使用点声明以便阅读上下文"
-            )]
-            const PER_CPU_IST_STACK_SIZE: u64 = 16384;
-            // SAFETY: get_tss_mut 返回当前 CPU 的有效 TSS (BSP 启动期单 CPU 独占).
-            // TSS 是 #[repr(packed)], ist 字段可能未对齐, 用 read_unaligned 拷贝.
-            let tss_ref = unsafe { &*crate::framework::arch::gdt::get_tss_mut() };
-            let mut ist_tops = [0u64; 4];
-            // SAFETY: tss_ref.ist 为 [u64; 7], 索引 0..4 在界内;
-            // addr_of! 不创建引用, 配合 read_unaligned 避免 packed 错位 UB.
-            unsafe {
-                let ist_ptr = core::ptr::addr_of!(tss_ref.ist) as *const u64;
-                for i in 0..4 {
-                    ist_tops[i] = core::ptr::read_unaligned(ist_ptr.add(i));
-                }
-            }
-            for &ist_top in &ist_tops {
-                if ist_top == 0 {
-                    continue;
-                }
-                let start = (ist_top - PER_CPU_IST_STACK_SIZE) & !(PAGE_SIZE as u64 - 1);
-                let end = ist_top & !(PAGE_SIZE as u64 - 1);
-                let mut ist_addr = start;
-                while ist_addr <= end {
-                    self.map_page_in_table(
-                        pml4_phys.as_u64(),
-                        VirtAddr(ist_addr),
-                        PhysAddr(ist_addr),
-                        PageFlags::PRESENT | PageFlags::WRITABLE,
-                    );
-                    ist_addr += PAGE_SIZE as u64;
-                }
-            }
+            // TSS.ist[] 现为高半区 VA (KERNEL_BASE + 恒等地址, 见
+            // `arch::x86_64::gdt::gdt_init`), 用户页表继承内核 PML4[256..511]
+            // 已含该高半区别名, 交付路径 (CPU 在切 CR3 前用 IST 压栈) 无需额外映射.
+            // 若恢复低半区恒等映射, 内核 IST 栈页会与用户 ELF 装载区 (0x400000)
+            // 争用同一 VA: ELF 装载器按"已有映射即复用"跳过映射 → 代码段 U=0 →
+            // Ring 3 取指 #PF. 因此该映射不得恢复.
 
             // 映射内核栈页 (TSS.RSP0) 到用户页表.
             // 注意: RSP0 在 create_user_page_table 调用时可能尚未设置,
@@ -1109,24 +1272,37 @@ impl VirtualMemoryManager {
                     // SAFETY: pde.frame() valid; present && !huge → points to PT
                     let pt = pde.frame().to_virt().0 as *mut PageTableEntry;
                     let pt_idx = virt.pt_idx();
+                    // SAFETY: pt_idx 在 4KB PT 页范围内
+                    let old_pte = (*pt.add(pt_idx)).value();
                     (*pt.add(pt_idx)).set_value(0);
                     self.flush_tlb(virt.0);
 
-                    // 递归释放空的中间页表
+                    // §8.1 规则 3: 拆除 USER leaf 即注销该映射持有的一份帧引用,
+                    // 归零才延迟释放. **必须过滤 USER 位**: KPTI supervisor 页
+                    // (GDT/IDT/TSS/IST) 与内核页表共享同一物理帧, 参与计数会误释放;
+                    // 设备/MMIO 映射的 pfn 越界, frame_dec 侧 fail-closed 拒绝.
+                    if old_pte & PAGE_PRESENT != 0 && old_pte & PAGE_USER != 0 {
+                        let user_phys = old_pte & 0x000FFFFFFFFFF000;
+                        if get_pmm().frame_dec(PhysAddr(user_phys)) {
+                            self.defer_free(user_phys);
+                        }
+                    }
+
+                    // 递归释放空的中间页表 (延迟到全部在线核 TLB 代追平后再真正释放)
                     if self.is_table_empty(pt) {
                         let pt_phys = pde.frame().as_u64();
                         (*pd.add(virt.pd_idx())).set_value(0);
-                        get_pmm().free_page(PhysAddr(pt_phys));
+                        self.defer_free(pt_phys);
 
                         if self.is_table_empty(pd) {
                             let pd_phys = pdpte.frame().as_u64();
                             (*pdpt.add(virt.pdpt_idx())).set_value(0);
-                            get_pmm().free_page(PhysAddr(pd_phys));
+                            self.defer_free(pd_phys);
 
                             if self.is_table_empty(pdpt) {
                                 let pdpt_phys = pml4e.frame().as_u64();
                                 (*pml4_tbl.add(virt.pml4_idx())).set_value(0);
-                                get_pmm().free_page(PhysAddr(pdpt_phys));
+                                self.defer_free(pdpt_phys);
                             }
                         }
                     }
@@ -1151,23 +1327,24 @@ impl VirtualMemoryManager {
             return;
         }
 
+        // 埋点基线: 与函数末尾的差值为本次调用真正送入延迟释放链的帧数.
+        let admitted_before = DEFERRED_FREE_ADMITTED.load(Ordering::Relaxed);
+
         let _flags = self.acquire_lock();
 
-        let pmm = get_pmm();
         // SAFETY: pml4 valid; VMM_LOCK held
         let pml4_virt = PhysAddr(pml4).to_virt();
 
         // SAFETY: 遍历 4 级释放页表.
         // 仅用户空间项 (0..255); 内核项共享.
         //
-        // B03-06 修复: COW 共享页引用计数处理。
-        // clone_user_page_table_cow_inner 在 fork 时对每个被共享的物理页调
-        // cow_inc_ref, 父子各 +1 → 计数 2。若子进程立即 exit 且未触发 COW fault,
-        // cow_dec_ref 从未被调用 → 物理页引用计数永不归零 → 物理页泄漏。
-        // 根治: 在 destroy_page_table 遍历 leaf PTE 时对每个用户数据页调
-        // cow_dec_ref, 返回 true 时 pmm.free_page 释放。锁序: VMM_LOCK 已持有,
-        // 在持锁状态下调 cow_dec_ref (内部 IrqSpinLock<COW_REFS> 嵌套),
-        // 禁止倒置 — 即禁止先取 COW_REFS 再取 VMM_LOCK。
+        // 帧持有计数处理 (现由 PMM 计数面承载, 原 COW_REFS 已删除, 契约见
+        // docs/plan/cr3-lifetime-ownership.md §8.1 文档的计数规则):
+        // fork 时 clone_user_page_table_cow_inner 对每个被共享的物理页 frame_inc,
+        // 每个 USER leaf 持有其帧一份引用。拆除整表即逐 leaf frame_dec, 归零才
+        // defer_free。若子进程立即 exit 且未触发 COW fault, 该帧就此归还而不泄漏。
+        // 锁序: VMM_LOCK 已持有, frame_dec 内部取 PMM 锁 (VMM → PMM 单向);
+        // 禁止倒置 — 即禁止先取 PMM 锁再取 VMM_LOCK。
         unsafe {
             let pml4_ptr = pml4_virt.0 as *mut PageTableEntry;
 
@@ -1198,35 +1375,40 @@ impl VirtualMemoryManager {
                                     let pt_virt = PhysAddr(pt_phys).to_virt();
                                     let pt = pt_virt.0 as *mut PageTableEntry;
 
-                                    // B03-06: 遍历 leaf PTE 释放用户数据物理页
-                                    // (仅 4KB 页, 排除 huge page).
+                                    // 遍历 leaf PTE 释放用户数据物理页 (仅 4KB USER 页).
+                                    //
+                                    // §8.1 规则 3: 每个 USER leaf 持有其帧一份引用 ⇒ 拆除即
+                                    // frame_dec, 归零才延迟释放. **必须过滤 USER 位**:
+                                    // KPTI 把 GDT/IDT/TSS/IST 等 supervisor 页以
+                                    // PRESENT|WRITABLE (无 USER) 映射进每个用户页表, 这些页与
+                                    // 内核页表共享同一物理帧, 若参与计数会被计入零 → 误释放内核页.
                                     for l in 0..512usize {
                                         // SAFETY: pt.add(l) within the 4KB PT page
                                         let pte = &*pt.add(l);
-                                        if pte.is_present() {
+                                        if pte.is_present() && pte.is_user() {
                                             let user_phys = pte.frame().as_u64();
-                                            // cow_dec_ref 锁序: VMM_LOCK 已持有,
-                                            // 内部 IrqSpinLock<COW_REFS> 嵌套.
-                                            if crate::framework::mm::cow::cow_dec_ref(user_phys) {
-                                                // 引用计数归零: 释放物理页
-                                                pmm.free_page(PhysAddr(user_phys));
+                                            // 锁序: VMM_LOCK 已持有, frame_dec 内部取 PMM 锁
+                                            // (VMM → PMM 单向, 与 alloc_page 路径同向).
+                                            if get_pmm().frame_dec(PhysAddr(user_phys)) {
+                                                // 持有计数归零: 延迟到全部在线核 TLB 代追平后再释放
+                                                self.defer_free(user_phys);
                                             }
                                         }
                                     }
 
-                                    pmm.free_page(PhysAddr(pt_phys));
+                                    self.defer_free(pt_phys);
                                 }
                             }
 
-                            pmm.free_page(PhysAddr(pd_phys));
+                            self.defer_free(pd_phys);
                         }
                     }
 
-                    pmm.free_page(PhysAddr(pdpt_phys));
+                    self.defer_free(pdpt_phys);
                 }
             }
 
-            pmm.free_page(PhysAddr(pml4));
+            self.defer_free(pml4);
         }
 
         // SAFETY: VMM_LOCK held; only mutation is clearing user_tables slot
@@ -1240,7 +1422,26 @@ impl VirtualMemoryManager {
             }
         }
 
+        // 拆除地址空间页表即移除映射, 且上述帧已进入延迟释放队列: 若在线他核仍持有
+        // 经陈旧映射缓存的 TLB 项, 帧被重分配后他核可能访问到他人占用的物理页.
+        // 故必须登记"需远程失效", 由 release_lock 出临界区后先发布新代 + 定向 IPI,
+        // 待全部在线核追平该代 (即均已彻底失效 TLB) 后再真正释放这些帧.
+        // (本函数唯一早退在 acquire_lock 之前, 到此必已拆除映射.)
+        if crate::framework::smp::is_enabled() && crate::framework::smp::get_cpu_count() > 1 {
+            TLB_SHOOTDOWN_NEEDED.store(true, Ordering::Relaxed);
+        }
+
         self.release_lock(&_flags);
+
+        // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
+        // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收 (`Process::drop` 未运行),
+        // 而非"帧入链但代未追平". 本行 `deferred_in_call=0` 则说明走到了但无可延迟帧.
+        crate::klog_info!(
+            Memory,
+            "[VMM] destroy_page_table: cr3={:#X} deferred_in_call={}",
+            pml4,
+            DEFERRED_FREE_ADMITTED.load(Ordering::Relaxed) - admitted_before
+        );
     }
 
     pub fn get_stats(&self) -> (u64, u64, u64) {
@@ -1951,17 +2152,69 @@ impl VirtualMemoryManager {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
-    #[expect(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
-    )]
     pub fn release_lock(&self, flags: &IrqSaveFlags) {
+        // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
+        // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.
+        let shootdown_needed = TLB_SHOOTDOWN_NEEDED.swap(false, Ordering::Relaxed);
+
+        // 仍持锁时整条摘走本临界区批次链 (链头置 0). 摘走必须在同一临界区内完成:
+        // 先释放锁再摘会漏摘他核进入临界区后新增的帧.
+        let batch = BATCH_HEAD.swap(0, Ordering::AcqRel);
+
         #[cfg(debug_assertions)]
         {
             VMM_LOCK_RECURSIVE.store(false, Ordering::Relaxed);
         }
         VMM_LOCK.store(false, Ordering::Release);
         restore_interrupts(flags);
+
+        // 远程失效 = 发布新代 + 定向 IPI (含本核), **不等待** —— 代计数下无需 ack,
+        // 等待一律发生在锁外且中断开启 (锁内等 ack 会与被本锁挡住的对端互等死锁).
+        // 单核 / SMP 未启用时 `flush_tlb` 本就不置位, 取当前代 (恒 0) 即可立即释放.
+        let smp_active =
+            crate::framework::smp::is_enabled() && crate::framework::smp::get_cpu_count() > 1;
+        let g = if shootdown_needed && smp_active {
+            crate::framework::smp::tlb_gen_publish_and_shoot()
+        } else {
+            crate::framework::smp::tlb_gen_now()
+        };
+
+        // 无在线核时 `tlb_gen_min_online` 返回 u64::MAX ⇒ 恒 `>= g` ⇒ 立即释放:
+        // 该情形只出现在 SMP 未初始化 (单核, 无远程 TLB 缓存), 与 HEAD 行为等价.
+        let min = crate::framework::smp::tlb_gen_min_online();
+
+        // 计数基线: 仅用于判断"本次 release_lock 是否发生了归还".
+        let before = DEFERRED_FREE_RELEASED.load(Ordering::Relaxed);
+
+        // 先排空历史 pending (其代更老, 更可能已追平), 再结算本批 —— 反序会让刚挂入的整条批次链被立即摘下又挂回 (两次 O(n) 无效往返).
+        if PENDING_NONEMPTY.load(Ordering::Relaxed) {
+            drain_pending(min);
+        }
+        if batch != 0 {
+            settle_batch(batch, g, min);
+        }
+
+        // SIMPLIFIED: 只统计"释放帧总数"这一聚合量, 不区分批次/来源 (本批结算 vs 历史
+        // pending 排空); 影响面为排查时无法从日志区分是哪条路径释放的; 何时需扩展:
+        // 需要定位滞留来源时, 改为分路径计数.
+        //
+        // 埋点输出 (见 docs/plan/tlb-shootdown-epoch.md S-10): 本临界区**入链了帧**时也必须
+        // 打印 —— "入链了却一帧未归还" 与 "从未入链" 是两个完全不同的诊断, 只打归还数会把
+        // 前者静默掩盖 (`admitted` 的基线无法像 `released` 那样在函数内取到: 入链发生在
+        // `release_lock` 之前的同一临界区内, 故用 `batch != 0` 判"本临界区有帧入链").
+        // `pending` / `gen_g` / `min` 三者共同给出"是否因代未追平而滞留".
+        let after = DEFERRED_FREE_RELEASED.load(Ordering::Relaxed);
+        if after != before || batch != 0 {
+            crate::klog_info!(
+                Memory,
+                "[VMM] deferred-free admitted_total={} released_total={} pending={} gen_g={} min={}",
+                DEFERRED_FREE_ADMITTED.load(Ordering::Relaxed),
+                after,
+                PENDING_NONEMPTY.load(Ordering::Relaxed),
+                g,
+                min
+            );
+        }
     }
 
     #[inline(always)]
@@ -2004,13 +2257,47 @@ impl VirtualMemoryManager {
     fn flush_tlb(&self, addr: u64) {
         crate::arch!(tlb_flush_page(addr as usize));
 
-        #[cfg(feature = "smp")]
-        {
-            use crate::framework::smp;
-            if smp::is_enabled() && smp::get_cpu_count() > 1 {
-                smp::broadcast_tlb_invalidate();
-            }
+        // SIMPLIFIED: 远程失效粒度取全量 `tlb_flush_all` (对端重载 CR3) 而非页级地址载荷;
+        // 影响面为 shootdown 触发时远程核全量 TLB 失效 (性能开销, 非正确性问题);
+        // 何时需扩展: shootdown 成为热路径或页级失效收益显现时, 引入地址载荷
+        // (需同时解决载荷复制/溢出回退/并发写者规避).
+        if crate::framework::smp::is_enabled() && crate::framework::smp::get_cpu_count() > 1 {
+            // 本函数在 VMM_LOCK 临界区内被调用: 此处只登记"本临界区需远程失效",
+            // 真正的"发布代 + 定向 IPI"由 release_lock 出临界区后执行
+            // (临界区内等对端响应会与被本锁挡住的对端互等死锁).
+            TLB_SHOOTDOWN_NEEDED.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// 记录一个待释放物理帧: 头插本临界区批次链, 延后到"全部在线核已追平该批代数"
+    /// 之后才真正归还 PMM.
+    ///
+    /// 必须在持 `VMM_LOCK` 期间调用 (链头由该锁串行化, 锁内单写者). 容量无上限:
+    /// 溢出帧除"记住"别无出路 —— 批次代只能在 `release_lock` 处发布, 锁内等待会与
+    /// 被本锁挡住的核互等死锁.
+    ///
+    /// `pub(crate)`: `mm::cow` 的 COW 复制分支也须走本入口 (帧计入零但远端核 TLB
+    /// 未追平, 见 docs/plan/tlb-shootdown-epoch.md §7.1).
+    ///
+    /// SIMPLIFIED: 排空点唯一 (`release_lock` 出口), 不引入 tick / 返回用户态前的
+    /// 额外排空点; 影响面为未追平帧可能滞留到下一次任一核的 `release_lock`
+    /// (不丢帧, 只推迟归还, 与 HEAD 的单核行为等价 —— 单核下代恒 0, 立即释放);
+    /// 何时需扩展: 出现长时间无 VMM 操作却需及时回收的负载时, 再补排空点.
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+    )]
+    pub(crate) fn defer_free(&self, frame: u64) {
+        // 头插: 新帧的 next 指向当前批次链头, 再更新链头.
+        // SAFETY: 持 VMM_LOCK (本核是批次链唯一写者); frame 刚被解除映射/已从页表
+        // 拆链, 前 16 字节不再被任何映射引用, 可复用为链节点.
+        unsafe {
+            let head = BATCH_HEAD.load(Ordering::Acquire);
+            frame_link_set_next(frame, head);
+            frame_link_set_gen(frame, 0); // 出锁前不会被读, 0 为占位
+        }
+        BATCH_HEAD.store(frame, Ordering::Release);
+        DEFERRED_FREE_ADMITTED.fetch_add(1, Ordering::Relaxed);
     }
 
     #[expect(
@@ -2038,7 +2325,6 @@ pub fn vmm_init() {
         vmm.init();
         slot.write(vmm);
     });
-    super::cow::cow_init();
 }
 
 pub fn get_vmm() -> &'static VirtualMemoryManager {

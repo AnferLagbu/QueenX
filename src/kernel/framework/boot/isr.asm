@@ -147,10 +147,13 @@ isr_common:
 ;   4. mov r14, [gs:0] → 加载内核栈顶 (kernel_rsp); 用户 RSP 存入 [gs:USER_RSP_OFF]
 ;   5. 切 CR3 到内核页表 → 切 RSP 到内核栈
 ;   6. 构建 InterruptFrame, 调用 syscall_dispatch_from_frame
-;   7. 返回: RSP 转高半区别名 → 切用户页表 → iretq 返回用户态
+;   7. 返回: 切用户页表 → iretq 返回用户态 (内核栈为高半区 VA, 无需别名)
 ;
-; SMP 安全: 每个 CPU 有独立的 SyscallPerCpu 和内核栈,
-; IA32_KERNEL_GS_BASE 在 gdt_init/gdt_init_ap 中分别设置。
+; SMP 安全: 每个 CPU 有独立的 SyscallPerCpu, 其 kernel_rsp 由
+; `cpu::arch::set_kernel_stack` (经 gdt_set_kernel_rsp) 在每次上下文切换时
+; 更新为**当前任务内核栈顶 (高半区 VA)** —— 任务因而在 syscall 中让出 CPU
+; 后仍保有私有内核栈 (D5 统一内核栈契约). IA32_KERNEL_GS_BASE 在
+; gdt_init/gdt_init_ap 中分别设置。
 
 ; SyscallPerCpu 字段偏移 (与 gdt.rs SyscallPerCpu 结构体布局一致)
 KERNEL_RSP_OFF  equ 0
@@ -275,20 +278,20 @@ syscall_entry:
     ; 但退出路径此前遗漏了该保护, 导致所有 syscall 返回值被用户页表
     ; 物理地址覆盖, 表现为用户态看到随机的 "成功" 返回值.
     ;
-    ; 修复 (TRACK-INIT-RING3-SYSCALL-RET): iretq 帧位于 syscall 内核栈
-    ; (低半区 LMA), 切换到用户页表后该栈不可寻址 → pop rax/iretq #PF.
-    ; 解法: 切换 CR3 前将 RSP 转为高半区直接映射别名 (KERNEL_BASE + RSP),
-    ; 该别名经共享 pd_high 大页在用户页表中已有映射 (supervisor, 无 USER 位),
-    ; 因此 pop/iretq 在用户页表下仍可读取同一物理帧.
-    push rax                           ; 保护 syscall 返回值 (保存到低半区栈)
-    mov rax, 0xFFFF800000000000        ; KERNEL_BASE (rax 即将被覆盖, 值已入栈)
-    add rsp, rax                       ; RSP → 高半区别名 (同一物理栈)
+    ; 不再做 KERNEL_BASE 别名转换 (原 TRACK-INIT-RING3-SYSCALL-RET 的
+    ; `add rsp, KERNEL_BASE` 已删除): 统一内核栈契约 (D5) 规定
+    ; [gs:KERNEL_RSP_OFF] 恒为高半区 VA (任务内核栈 phys + KERNEL_BASE,
+    ; 见 cpu::arch::set_kernel_stack / gdt_set_kernel_rsp), 本栈在高半区
+    ; 直接映射 (共享 pd_high) 中已映射, 切换用户页表后 pop/iretq 仍可读
+    ; 同一物理帧. 若再叠加一次别名偏移, RSP 落到 phys + 2*KERNEL_BASE
+    ; (未映射) → #PF.
+    push rax                           ; 保护 syscall 返回值 (高半区内核栈)
     mov rax, [gs:USER_PML4_OFF]
     mov cr3, rax
-    pop rax                            ; 恢复 syscall 返回值 (从高半区别名)
+    pop rax                            ; 恢复 syscall 返回值 (同一物理帧)
 
     swapgs                            ; 恢复用户 GS 段
-    iretq                             ; iretq 帧从高半区别名读取 (用户表已映射)
+    iretq                             ; iretq 帧从内核栈读取 (用户表已映射)
 
 ; ── 通用入口: 保存寄存器 → irq_handler ──────────────────────────────────
 ; 栈布局同 isr_common
@@ -530,6 +533,12 @@ irq_stub 124, 172
 irq_stub 125, 173
 irq_stub 126, 174
 irq_stub 127, 175
+
+; ── IPI 向量 (0xFD TLB 失效 / 0xFE reschedule) ─────────────────────────
+; 符号名按向量号命名 (irq253/irq254), 避开既有 irq0-irq127;
+; 沿用 irq_common 入口, 由 handle_irq 前置分支处理.
+irq_stub 253, 0xFD
+irq_stub 254, 0xFE
 
 ; ── syscall / recovery ─────────────────────────────────────────────────
 extern syscall_dispatch_from_frame

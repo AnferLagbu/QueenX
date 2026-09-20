@@ -379,6 +379,27 @@ impl IdtManager {
         crate::klog_info!(Kernel, "IDT: MSI vectors 0x40-0x9F programmed (112 stubs)");
     }
 
+    /// 编程 IPI 向量 IDT 条目 (向量 0xFD TLB 失效 / 0xFE reschedule)
+    ///
+    /// 两个 IPI 向量使用与传统 IRQ 相同的 `irq_common` 入口, DPL0 且不占用 IST.
+    /// 分发由 `handle_irq` 的向量前置分支承担, 不进入 `irq_descriptors` 表.
+    // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
+    #[expect(clippy::cast_possible_truncation)]
+    pub fn init_ipi_idt(&self, ipi_table: &[u64; 2]) {
+        let mut state = self.state.lock();
+        for (i, &handler_addr) in ipi_table.iter().enumerate() {
+            let vector = 0xFD + i as u8;
+            self.set_gate_internal(
+                &mut state,
+                vector,
+                handler_addr,
+                GDT_KERNEL_CODE,
+                IDT_TYPE_INTERRUPT,
+            );
+        }
+        crate::klog_info!(Kernel, "IDT: IPI vectors 0xFD/0xFE programmed (2 stubs)");
+    }
+
     #[expect(
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
@@ -608,6 +629,29 @@ impl IdtManager {
         unsafe {
             let vector = (*frame).int_no as u8;
 
+            // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 用户态异常现场.
+            // `handlers.rs` 对用户态 #DE/#GPF 一律 `TerminateProcess(1)`, 对用户态
+            // #PF 用 `TerminateProcess(pid)` —— 故 "exit code=1" 与 "exit code=pid"
+            // 指向完全不同的异常源. 异常处理器自身不打印现场, 无本行就无法把
+            // "进程以 code=1 终止" 归因到具体异常向量与 RIP. 仅打印 CPL3 异常,
+            // 内核态异常另有 Panic 路径 (不在此重复).
+            if vector < 32 && (*frame).is_user_mode() {
+                // 帧为 packed 结构, 字段须先取出到局部变量再按值传参 (E0793).
+                let err = (*frame).err_code;
+                let rip = (*frame).rip;
+                let rsp = (*frame).rsp;
+                let cr2 = (*frame).fault_address();
+                crate::klog_err!(
+                    Kernel,
+                    "[IDT] user exception: vec={} err={:#X} rip={:#X} rsp={:#X} cr2={:#X}",
+                    vector,
+                    err,
+                    rip,
+                    rsp,
+                    cr2
+                );
+            }
+
             let nesting = self.nested_count.fetch_add(1, Ordering::SeqCst);
             self.current_vector
                 .store(u64::from(vector), Ordering::SeqCst);
@@ -722,6 +766,29 @@ impl IdtManager {
 
     /// 处理 IRQ
     pub fn handle_irq(&self, frame: *mut InterruptFrame, vector: u8) {
+        // IPI 分支: 必须前置于 `vector - IRQ_BASE` 之前.
+        // IRQ_BASE=32, 对 0xFD/0xFE 得 221/222, 越界直索
+        // irq_descriptors[128] ⇒ 中断上下文 panic.
+        // 0xFD (TLB 失效): 先读当前代 → 全量刷新本核 TLB → 声明本核
+        // 已追平该代; 顺序不可颠倒 (先 flush 后读代会读到 flush 之后新
+        // 发布的代, 把本次 flush 未覆盖的批次误判为已追平).
+        // 不进入 do_softirq/信号投递路径.
+        if vector == 0xFD {
+            let g = crate::framework::smp::tlb_gen_now();
+            crate::framework::mm::arch::tlb_flush_all();
+            crate::framework::smp::tlb_gen_set_self(g);
+            self.send_eoi(0);
+            return;
+        }
+        // 0xFE (reschedule): 接线既有 resched_ipi_handler (内部
+        // raise_softirq(Sched)); reschedule 天然 fire-and-forget, 不等 ack.
+        // 不进入 do_softirq/信号投递路径.
+        if vector == 0xFE {
+            crate::framework::proc::cpu_queue::resched_ipi_handler();
+            self.send_eoi(0);
+            return;
+        }
+
         let irq = vector - IRQ_BASE;
 
         // B07 MSI-X: irq >= 16 走 MSI 路径 (irq 16-31 为预留, 32-63 为 MSI vector).

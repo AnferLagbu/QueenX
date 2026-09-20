@@ -36,6 +36,8 @@
 
 use core::slice;
 
+use crate::framework::mm::copy_user::{smap_begin, smap_end};
+
 /// 用户态只读字节指针
 ///
 /// 封装 `*const u8` → `&[u8]` 的 unsafe 转换。
@@ -269,11 +271,9 @@ pub fn write_struct_to_user<T: Copy>(dst_ptr: u64, src: &T) -> bool {
     // 至少有 size_of::<T>() 字节可写, 且 src 持有有效 T 值.
     // P4.B.5: SMAP 启用时, write_unaligned 必须 stac/clac 包裹.
     unsafe {
-        #[cfg(target_arch = "x86_64")]
-        core::arch::asm!("stac", options(nomem, nostack, preserves_flags));
+        smap_begin();
         core::ptr::write_unaligned(dst_ptr as *mut T, *src);
-        #[cfg(target_arch = "x86_64")]
-        core::arch::asm!("clac", options(nomem, nostack, preserves_flags));
+        smap_end();
     }
     true
 }
@@ -294,11 +294,9 @@ pub fn read_struct_from_user<T: Copy>(src_ptr: u64, dst: &mut T) -> bool {
     // 至少有 size_of::<T>() 字节可读.
     // P4.B.5: SMAP 启用时, read_unaligned 必须 stac/clac 包裹.
     unsafe {
-        #[cfg(target_arch = "x86_64")]
-        core::arch::asm!("stac", options(nomem, nostack, preserves_flags));
+        smap_begin();
         *dst = core::ptr::read_unaligned(src_ptr as *const T);
-        #[cfg(target_arch = "x86_64")]
-        core::arch::asm!("clac", options(nomem, nostack, preserves_flags));
+        smap_end();
     }
     true
 }

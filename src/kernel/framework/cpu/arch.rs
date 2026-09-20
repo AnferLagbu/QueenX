@@ -74,9 +74,15 @@ pub fn broadcast_ipi(vector: u8) {
     <crate::framework::arch::CurrentArch as Arch>::broadcast_ipi(vector);
 }
 
-/// 设置当前 CPU 的内核栈指针。
+/// 设置当前 CPU 的内核栈指针 —— x86_64 **统一内核栈契约 (D5) 的唯一写入点**。
 ///
-/// `x86_64`: 写入 TSS 的 RSP0 字段 (ring 0 栈)。
+/// `x86_64`: 同时写入两处, 二者语义都是"当前任务内核栈顶", 必须同值 ——
+/// - `TSS.RSP0`: 用户态中断/异常交付时 CPU 自动切换到的栈顶;
+/// - `SyscallPerCpu.kernel_rsp`: `syscall` 指令入口读取的栈顶 (`boot/isr.asm`)。
+///
+/// 只写 `TSS.RSP0` 会让 syscall 落到每 CPU 共享的 `syscall_stack`: 任务在
+/// syscall 中让出 CPU 后, 其内核栈帧被同一核上后续任务的 syscall 覆盖, 恢复时
+/// 局部量与返回地址失真 (D5 缺陷)。
 /// aarch64: 无操作 — `SP_EL1` 由上下文切换直接管理。
 #[inline(always)]
 #[expect(
@@ -85,9 +91,13 @@ pub fn broadcast_ipi(vector: u8) {
 )]
 pub fn set_kernel_stack(_stack: u64) {
     #[cfg(target_arch = "x86_64")]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        crate::framework::arch::tss::tss_set_kernel_stack(_stack);
+    {
+        // SAFETY: 调用方保证 _stack 是当前任务内核栈顶 VA (高半区, phys+KERNEL_BASE);
+        // 当前处于调度器/进程上下文, 本 CPU 独占访问 per-CPU TSS 与 SyscallPerCpu.
+        unsafe {
+            crate::framework::arch::tss::tss_set_kernel_stack(_stack);
+        }
+        crate::framework::arch::gdt::gdt_set_kernel_rsp(_stack);
     }
     #[cfg(not(target_arch = "x86_64"))]
     {

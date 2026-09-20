@@ -26,6 +26,14 @@ use super::types::{
 /// (与用户指针校验边界语义不同, 见该常量注释).
 use crate::framework::constants::limits::FB_MMAP_ADDR_MAX;
 
+/// `make test-smp` 门槛埋点: 是否已收到首个来自用户态 (CPL3) 的 syscall.
+///
+/// 该埋点是一次性的 (避免刷屏), 用于证明"用户态确实执行过指令" ——
+/// `Entering Ring 3` 日志打印在真正 iretq 之前, 不能作为该证据.
+#[cfg(target_arch = "x86_64")]
+static FIRST_USER_SYSCALL_LOGGED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 #[cfg(target_arch = "x86_64")]
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -56,6 +64,14 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
             return;
         }
         let f = &mut *frame;
+
+        // make test-smp 门槛埋点: 首次收到来自用户态 (CPL3) 的 syscall 时打印一行
+        // 固定文案, 证明用户态确实执行过指令 (仅首次打印, 避免刷屏).
+        if !FIRST_USER_SYSCALL_LOGGED.swap(true, Ordering::SeqCst) {
+            let pid = crate::framework::proc::SCHEDULER.current().unwrap_or(0);
+            crate::klog_info!(Kernel, "[SMP] first user syscall from pid={}", pid);
+        }
+
         let syscall_num = f.rax;
 
         // B05-55 根治: 每次 syscall 进入, 把用户寄存器保存到当前进程 p.context.

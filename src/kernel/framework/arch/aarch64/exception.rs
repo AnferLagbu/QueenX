@@ -626,6 +626,19 @@ unsafe fn exc_puthex(val: u64) {
     }
 }
 
+/// 跨核 TLB 失效 SGI 编号 (aarch64 等价于 x86_64 向量 0xFD)
+///
+/// 发送侧 `send_ipi(target, 0xFD)` 把 `vector & 0xF` 编码进 `ICC_SGI1R_EL1[27:24]`
+/// (见 arch/aarch64/mod.rs 的 `send_ipi`), GIC 交付的 INTID 即低 4 位,
+/// 故接收侧 intid = 0xFD & 0xF = 13, 与栏栈 SGI 7 及 timer PPI 30 均不冲突.
+pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;
+
+/// 跨核重新调度 SGI 编号 (aarch64 等价于 x86_64 向量 0xFE)
+///
+/// 发送侧 `send_ipi(target, 0xFE)` 编码后接收侧 intid = 0xFE & 0xF = 14,
+/// 与 TLB 失效 SGI 13 及栏栈 SGI 7 均不冲突.
+pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;
+
 /// 默认 IRQ 处理 (EL1h)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -656,6 +669,26 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
         if result < 0 {
             crate::klog_info!(Boot, "Barrier recovery SGI failed: {}", result);
         }
+        super::gic::end_of_interrupt(intid);
+        return;
+    }
+
+    // ── 跨核 TLB 失效 SGI 13 (aarch64 等价于 x86_64 向量 0xFD) ──────────
+    if intid == TLB_SHOOTDOWN_SGI {
+        // 先读当前代 → 全量刷新本核 TLB → 声明本核已追平该代,
+        // 顺序不可颠倒 (先 flush 后读代会读到 flush 之后新发布的代,
+        // 把本次 flush 未覆盖的批次误判为已追平)
+        let g = crate::framework::smp::tlb_gen_now();
+        crate::framework::mm::arch::tlb_flush_all();
+        crate::framework::smp::tlb_gen_set_self(g);
+        super::gic::end_of_interrupt(intid);
+        return;
+    }
+
+    // ── 跨核重新调度 SGI 14 (aarch64 等价于 x86_64 向量 0xFE) ───────────
+    if intid == RESCHEDULE_SGI {
+        // 复用既有 IPI 入口, 内部登记 Sched softirq (fire-and-forget, 不等确认)
+        crate::framework::proc::cpu_queue::resched_ipi_handler();
         super::gic::end_of_interrupt(intid);
         return;
     }

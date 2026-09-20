@@ -392,7 +392,9 @@ pub extern "C" fn process_exit(exit_code: u32) {
             // SAFETY: kernel_cr3 是从 vmm::get_kernel_pml4() 获取的合法页表。
             raw::switch_page_table(kernel_cr3);
         }
-        USER_PROC_MANAGER.destroy_by_pid_no_kstack(current_pid);
+        // 用户地址空间的释放在 `SCHEDULER.exit` 内置 Zombie 之后执行 (见该处 D4 注)。
+        // 此处不可调用: 彼时 state 仍为 Running, `destroy_by_pid_no_kstack` 的
+        // is_exited() 守卫不满足, 会空转返回并使页表永不销毁。
     }
     SCHEDULER.exit(exit_code);
 }
@@ -632,6 +634,10 @@ pub extern "C" fn proc_exec_replace(path: *const u8, argv: *const *const u8, arg
     );
 
     // 阶段 4: 移除临时新进程
+    // G3 修复: 新地址空间已转移给当前进程 (所有权随 cr3 移动, 不重新计数),
+    // 临时进程必须先清空其 cr3, 否则其 Process::drop 会对同一 PML4 计数减到
+    // 归零并销毁当前进程正在使用的页表 (UAF).
+    PROCESS_TABLE.with_process(new_pid_u32, |p| p.cr3.store(0, Ordering::SeqCst));
     USER_PROC_MANAGER.detach_by_pid(new_pid_u32);
     PROCESS_TABLE.remove_and_free(new_pid_u32);
 
@@ -803,8 +809,16 @@ pub extern "C" fn sys_fork() -> Pid {
 
     // COW 页表克隆: 父子共享物理页, 写入时触发 page fault 复制
     // KPTI 修复: page fault handler 现在使用 get_user_pml4() 获取正确的用户页表
-    let child_cr3 = crate::framework::mm::cow::clone_user_page_table_cow(parent_cr3)
-        .unwrap_or(parent_cr3);
+    // G2 修复: 克隆失败必须回滚 (原 `.unwrap_or(parent_cr3)` 在 OOM 时静默共享父页表,
+    // 造成父子双所有权且 COW 语义静默降级为共享写)
+    let Some(child_cr3) = crate::framework::mm::cow::clone_user_page_table_cow(parent_cr3)
+    else {
+        // 此刻子进程尚无内核栈 (`allocate_kernel_stack` 在下方) 且未插入进程表,
+        // 直接释放其描述符 + 归还已分配的 PID (否则失败 fork 会泄漏 PID 位图位)
+        raw::drop_boxed_process(child_ptr);
+        PROCESS_TABLE.free_pid(child_pid);
+        return 0;
+    };
     child.cr3.store(child_cr3, Ordering::SeqCst);
     child.pwm.store(0, Ordering::SeqCst);
     // rlimit
@@ -877,7 +891,7 @@ pub extern "C" fn sys_fork() -> Pid {
         }
     }
     // 上下文 RAX=0 (fork 返回值)
-    // child_cr3 是 COW 克隆的子进程页表 (parent_cr3 fallback 时两者相同)
+    // child_cr3 是 COW 克隆出的子进程页表 (克隆失败时已在上面回滚返回)
     if let Some(ctx) = PROCESS_TABLE.with_process(parent_pid, |p| *p.context.lock()) {
         let mut child_ctx = child.context.lock();
         *child_ctx = ctx;

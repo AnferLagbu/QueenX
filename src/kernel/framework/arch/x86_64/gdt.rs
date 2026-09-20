@@ -509,14 +509,24 @@ pub fn gdt_init() -> i32 {
 
         gdt.tss = super::tss::TaskStateSegment::zeroed();
 
+        // IST 栈顶使用高半区 VA (KERNEL_BASE + 恒等地址).
+        //
+        // 原因: 用户态异常/中断交付时, CPU 在 isr_common 切换到内核页表**之前**
+        // 就用 TSS.ist[N-1] 压入异常帧, 因此该 VA 必须在用户页表中可达.
+        // 用户页表继承内核 PML4[256..511] (高半区别名), 高半区 VA 天然可达;
+        // 反之若用低半区恒等 VA, 就必须把内核 IST 栈页恒等映射进用户页表低半区,
+        // 那份映射会与用户 ELF 装载区 (0x400000) 争用同一 VA — 内核静态布局一旦
+        // 漂移到该地址, ELF 代码段便无法映射 → Ring 3 取指 #PF.
+        // RSP0 早已采用高半区 VA, 此处与之统一.
+        let ist_bias = crate::framework::mm::KERNEL_BASE;
         gdt.tss
-            .set_ist(0, gdt.ist0.as_ptr() as u64 + gdt.ist0.len() as u64);
+            .set_ist(0, ist_bias + gdt.ist0.as_ptr() as u64 + gdt.ist0.len() as u64);
         gdt.tss
-            .set_ist(1, gdt.ist1.as_ptr() as u64 + gdt.ist1.len() as u64);
+            .set_ist(1, ist_bias + gdt.ist1.as_ptr() as u64 + gdt.ist1.len() as u64);
         gdt.tss
-            .set_ist(2, gdt.ist2.as_ptr() as u64 + gdt.ist2.len() as u64);
+            .set_ist(2, ist_bias + gdt.ist2.as_ptr() as u64 + gdt.ist2.len() as u64);
         gdt.tss
-            .set_ist(3, gdt.ist3.as_ptr() as u64 + gdt.ist3.len() as u64);
+            .set_ist(3, ist_bias + gdt.ist3.as_ptr() as u64 + gdt.ist3.len() as u64);
 
         gdt.tss.iomap_base = core::mem::size_of::<super::tss::TaskStateSegment>() as u16;
 
@@ -529,7 +539,13 @@ pub fn gdt_init() -> i32 {
         gdt_flush(&gdt.ptr);
         tss_flush(SELECTOR_TSS);
 
-        gdt.syscall.kernel_rsp = gdt.syscall_stack.as_ptr() as u64 + gdt.syscall_stack.len() as u64;
+        // 统一内核栈契约 (D5): `kernel_rsp` 恒为**高半区 VA**.
+        // 运行期由 `gdt_set_kernel_rsp` (经 `cpu::arch::set_kernel_stack`) 按当前
+        // 任务内核栈更新, 与 TSS.RSP0 同值; 此处初值指向本 CPU `syscall_stack`
+        // 的高半区别名, 仅覆盖"首个任务被调度之前"这一窗口 —— 该窗口内不可能
+        // 出现用户态 syscall (用户态首次进入由 `enter_user` / 调度器完成).
+        gdt.syscall.kernel_rsp =
+            ist_bias + gdt.syscall_stack.as_ptr() as u64 + gdt.syscall_stack.len() as u64;
 
         // 读取当前 CR3 作为 PML4 初始值
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
@@ -634,14 +650,16 @@ pub fn gdt_init_ap(cpu_index: u32) {
 
         ap.tss = super::tss::TaskStateSegment::zeroed();
 
+        // IST 栈顶使用高半区 VA, 与 BSP 路径 (gdt_init) 保持一致, 理由见该处注释.
+        let ist_bias = crate::framework::mm::KERNEL_BASE;
         ap.tss
-            .set_ist(0, ap.ist0.as_ptr() as u64 + ap.ist0.len() as u64);
+            .set_ist(0, ist_bias + ap.ist0.as_ptr() as u64 + ap.ist0.len() as u64);
         ap.tss
-            .set_ist(1, ap.ist1.as_ptr() as u64 + ap.ist1.len() as u64);
+            .set_ist(1, ist_bias + ap.ist1.as_ptr() as u64 + ap.ist1.len() as u64);
         ap.tss
-            .set_ist(2, ap.ist2.as_ptr() as u64 + ap.ist2.len() as u64);
+            .set_ist(2, ist_bias + ap.ist2.as_ptr() as u64 + ap.ist2.len() as u64);
         ap.tss
-            .set_ist(3, ap.ist3.as_ptr() as u64 + ap.ist3.len() as u64);
+            .set_ist(3, ist_bias + ap.ist3.as_ptr() as u64 + ap.ist3.len() as u64);
 
         ap.tss.iomap_base = core::mem::size_of::<super::tss::TaskStateSegment>() as u16;
 
@@ -661,7 +679,10 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // 中重载 → #GP(0x18) → #DF → triple fault.
         reload_cs();
 
-        ap.syscall.kernel_rsp = ap.syscall_stack.as_ptr() as u64 + ap.syscall_stack.len() as u64;
+        // 统一内核栈契约 (D5): 与 BSP 路径 (gdt_init) 一致, `kernel_rsp` 取高半区 VA,
+        // 理由见该处注释.
+        ap.syscall.kernel_rsp =
+            ist_bias + ap.syscall_stack.as_ptr() as u64 + ap.syscall_stack.len() as u64;
 
         // 读取当前 CR3 作为 PML4 初始值
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
@@ -768,6 +789,21 @@ pub unsafe fn gdt_set_kpti_pml4(cpu_index: u32, kernel_pml4: u64, user_pml4: u64
 pub unsafe fn gdt_set_user_cr3(user_cr3: u64) {
     let gdt = current_per_cpu_gdt_mut();
     gdt.syscall.user_pml4 = user_cr3;
+}
+
+/// 更新当前 CPU 的 syscall 入口内核栈顶 (`gs:KERNEL_RSP_OFF`).
+///
+/// 该字段是 `syscall` 指令入口读取内核栈顶的唯一来源 (见 `boot/isr.asm`)。
+/// 契约 (D5 统一内核栈契约): 恒为**当前任务内核栈的高半区栈顶 VA**
+/// (`Process::allocate_kernel_stack` 写入的 `phys + KERNEL_BASE + KERNEL_STACK_SIZE`),
+/// 与 `TSS.RSP0` 同值 —— 二者由 `cpu::arch::set_kernel_stack` 一并更新。
+///
+/// 若只更新 `TSS.RSP0` 而漏掉本字段, syscall 会落到每 CPU 共享的
+/// `syscall_stack`: 任务在 syscall 中被让出后, 其内核栈帧会被同一核上后续
+/// 任务的 syscall 覆盖, 恢复时局部量与返回地址失真.
+#[inline]
+pub fn gdt_set_kernel_rsp(rsp: u64) {
+    current_per_cpu_gdt_mut().syscall.kernel_rsp = rsp;
 }
 
 // ============================================================================

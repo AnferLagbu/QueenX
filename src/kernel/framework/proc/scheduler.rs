@@ -146,6 +146,11 @@ struct PerCpuSched {
     cfs_rq: Mutex<CfsRunQueue>,
     dl_rq: Mutex<DlRunQueue>,
     current: AtomicU32,
+    /// 本 CPU 的 idle 任务 pid (0 = 尚未创建).
+    ///
+    /// idle 任务不进入任何运行队列 (CFS/RT/DL), 仅作为 `schedule()` 在
+    /// 本地无候选任务时的最后兜底, 使调度器在运行期永不为 `None`.
+    idle: AtomicU32,
     need_reschedule: AtomicBool,
     rt_running: AtomicBool,
     dl_running: AtomicBool,
@@ -167,6 +172,7 @@ pub fn init_per_cpu_sched(cpu_id: u32) {
                 cfs_rq: Mutex::new(CfsRunQueue::new()),
                 dl_rq: Mutex::new(DlRunQueue::new()),
                 current: AtomicU32::new(0),
+                idle: AtomicU32::new(0),
                 need_reschedule: AtomicBool::new(false),
                 rt_running: AtomicBool::new(false),
                 dl_running: AtomicBool::new(false),
@@ -193,6 +199,43 @@ fn per_cpu_for(cpu_id: u32) -> &'static PerCpuSched {
     init_per_cpu_sched(cpu_id);
     // SAFETY: init_per_cpu_sched 后 OnceLock 已初始化.
     PER_CPU_SCHED[idx].get_or_init(|_| unreachable!())
+}
+
+/// 每 CPU idle 任务的入口: 无条件停机等待中断, 永不返回.
+///
+/// 由 [`Scheduler::init_per_cpu_idle`] 作为 `context.rip` 写入 idle 任务的
+/// 执行上下文, 首次被调度时由上下文切换直接跳入本函数: x86_64 走
+/// `process_switch_asm` 的内核线程 (cs=0x08) 分支 (`mov rsp + jmp`, 不经
+/// iretq —— 同特权级 iretq 不加载 RSP/SS); aarch64 走 `context_switch_asm`
+/// 的 `eret`.
+///
+/// `sti` 与 `hlt` 必须融合在同一条 `asm!` 内: 分两次执行时, `sti` 之后到
+/// `hlt` 之前存在中断窗口, 该窗口内到达的中断会在 `hlt` 之前返回, 随后的
+/// `hlt` 将错过唤醒 —— 待下一个中断源才可能退出停机.
+#[cfg(target_arch = "x86_64")]
+pub extern "C" fn idle_entry() -> ! {
+    loop {
+        // SAFETY: `sti`/`hlt` 在 ring 0 合法; 不读写内存也不修改栈,
+        // `options(nomem, nostack)` 与之一致; 循环保证本函数永不返回.
+        unsafe {
+            core::arch::asm!("sti; hlt", options(nomem, nostack));
+        }
+    }
+}
+
+/// 每 CPU idle 任务的入口: 无条件等待中断, 永不返回 (aarch64 版).
+///
+/// 语义与 x86_64 版相同, 由 [`Scheduler::init_per_cpu_idle`] 作为
+/// `context.ELR_EL1` 写入 idle 任务的执行上下文.
+#[cfg(target_arch = "aarch64")]
+pub extern "C" fn idle_entry() -> ! {
+    loop {
+        // SAFETY: `wfi` 在 EL1 合法; 不读写内存也不修改栈,
+        // `options(nomem, nostack)` 与之一致; 循环保证本函数永不返回.
+        unsafe {
+            core::arch::asm!("wfi", options(nomem, nostack));
+        }
+    }
 }
 
 pub struct Scheduler {
@@ -223,6 +266,11 @@ impl Scheduler {
         init_per_cpu_sched(0);
 
         self.initialized.store(true, Ordering::SeqCst);
+
+        // 先建立本核 idle 任务, 再建立 init: idle 是 `schedule()` 在本地无候选
+        // 任务时的最后兜底, 必须在任何其它任务可能被调度之前就绪.
+        // (创建失败时本核 idle 缺席, `schedule()` 在无候选任务时仍会返回 None.)
+        let _ = self.init_per_cpu_idle(0);
 
         let init_pid = self.create_process("init", None, 0);
         if let Some(pid) = init_pid {
@@ -285,6 +333,59 @@ impl Scheduler {
 
         // 初始化进程组 ID (POSIX: 新进程默认自成一组, pgid = pid)
         crate::framework::proc::proc_init_pgid(pid);
+
+        Some(pid)
+    }
+
+    /// 为指定 CPU 创建 (或复用) 其 idle 任务, 返回 idle 的 pid.
+    ///
+    /// 幂等: 该 CPU 已有 idle (per-CPU `idle` 字段非 0) 时直接返回既有 pid,
+    /// 不重复创建. `Scheduler::init()` 可能被多次调用, 幂等性是必需的.
+    ///
+    /// idle 任务特征:
+    /// - 无父进程 (`parent = None`), 内核态 (`set_kernel(true)`);
+    /// - 调度策略 `SchedPolicy::Idle` + 最空闲优先级 `ProcessPriority::Idle`,
+    ///   因此**不会**被 `pick_cfs_task` / `pick_deadline_task` / RT 队列选中;
+    /// - **不进入任何运行队列** (CFS/RT/DL), 只作为 `schedule()` 的兜底;
+    /// - 拥有独立内核栈 + 预置 context, 首次被调度时直接从 `idle_entry` 开始执行.
+    ///
+    /// 返回 `None` 表示创建失败 (进程表或内核栈分配失败); 此时该 CPU 的 `idle`
+    /// 保持 0, `schedule()` 仍可能返回 `None`.
+    pub fn init_per_cpu_idle(&self, cpu_id: u32) -> Option<Pid> {
+        let per_cpu = per_cpu_for(cpu_id);
+
+        let existing = per_cpu.idle.load(Ordering::SeqCst);
+        if existing != 0 {
+            return Some(existing);
+        }
+
+        let pid = self.create_process("idle", None, 0)?;
+
+        let mut stack_top = 0u64;
+        PROCESS_TABLE.with_process(pid, |proc| {
+            proc.set_sched_policy(SchedPolicy::Idle);
+            proc.set_priority(ProcessPriority::Idle);
+            proc.set_kernel(true);
+            // Created → Ready 是状态机允许的转换; idle 由 schedule() 兜底选中,
+            // 无需 (也不应) 进入 CFS/RT/DL 运行队列.
+            let _ = proc.set_state_safe(ProcessState::Ready);
+            let _ = proc.allocate_kernel_stack();
+            stack_top = proc.kernel_stack.load(Ordering::SeqCst);
+        });
+
+        if stack_top == 0 {
+            // SIMPLIFIED: 内核栈分配失败时放弃本轮 idle 创建 (进程表槽位不再回收);
+            // 影响面: 仅当 PMM 未就绪 (内核已不可用) 时出现, 该 CPU 的 idle 保持 0;
+            // 何时需扩展: 若引入可恢复的 PMM 失败重试, 需先 remove_and_free 该进程.
+            return None;
+        }
+
+        let cr3 = crate::framework::mm::get_kernel_pml4();
+        PROCESS_TABLE.with_process(pid, |proc| {
+            proc.init_kernel_idle_context(idle_entry as *const () as u64, cr3);
+        });
+
+        per_cpu.idle.store(pid, Ordering::SeqCst);
 
         Some(pid)
     }
@@ -435,31 +536,43 @@ impl Scheduler {
         if cfs_rq.is_empty() {
             return None;
         }
-        match cfs_rq.pick_next() {
-            Some((pid, vr)) => {
-                let schedulable = PROCESS_TABLE
-                    .with_process(pid, |p| {
-                        let state = p.get_state();
-                        let policy = p.get_sched_policy();
-                        state != ProcessState::Blocked
-                            && state != ProcessState::Zombie
-                            && policy == SchedPolicy::Normal
-                    })
-                    .unwrap_or(false);
-                if schedulable {
-                    PROCESS_TABLE.with_process(pid, |p| {
-                        p.cfs_on_rq.store(false, Ordering::Release);
-                    });
-                    Some(pid)
-                } else {
-                    // 任务已被 pick_next() 从树中移除, 但不可调度
-                    // (阻塞/僵尸/策略错). 重新插入以避免静默丢失.
-                    cfs_rq.update_curr(pid, vr);
-                    None
-                }
+        // 不可调度节点的暂存区: 全部取回后统一放回 (见下).
+        let mut skipped: alloc::vec::Vec<(Pid, u64)> = alloc::vec::Vec::new();
+        // 循环取下一个节点, 直到取到可调度者 (或树空).
+        //
+        // 不能"取一个不可调度节点就 return None" —— 若最小 vruntime 位置恰好
+        // 是不可调度节点, 每次调度都会在此早返回, 树上其余可调度任务永远选不
+        // 出来 (本核 CFS 永久饥饿). 这里保持"不静默丢失"语义: 不可调度节点
+        // 暂存, 循环继续; 结束后统一放回.
+        let mut picked: Option<Pid> = None;
+        while let Some((pid, vr)) = cfs_rq.pick_next() {
+            let schedulable = PROCESS_TABLE
+                .with_process(pid, |p| {
+                    let state = p.get_state();
+                    let policy = p.get_sched_policy();
+                    state != ProcessState::Blocked
+                        && state != ProcessState::Zombie
+                        && policy == SchedPolicy::Normal
+                })
+                .unwrap_or(false);
+            if schedulable {
+                PROCESS_TABLE.with_process(pid, |p| {
+                    p.cfs_on_rq.store(false, Ordering::Release);
+                });
+                picked = Some(pid);
+                break;
             }
-            None => None,
+            // 该节点已被 pick_next() 从树中移除, 但不可调度 (阻塞/僵尸/策略错):
+            // 暂存, 继续取下一个节点.
+            skipped.push((pid, vr));
         }
+        // 放回暂存的不可调度节点: update_curr 只插树, 不动 nr_running
+        // (与 pick_next 只移除、不改计数器对称), 保证它们不被丢弃.
+        // 全程持有同一把 cfs_rq 锁, 中途未解锁.
+        for (pid, vr) in skipped {
+            cfs_rq.update_curr(pid, vr);
+        }
+        picked
     }
 
     #[expect(
@@ -546,6 +659,18 @@ impl Scheduler {
             next_pid = self.pick_cfs_task();
         }
 
+        // 5. 每 CPU idle 任务兜底 —— 保证 schedule() 在运行期永不为 None
+        //
+        // 真实内核不会因"无任务可运行"而结束运行: 本地没有可调度任务时运行
+        // 本 CPU 的 idle 任务 (等待中断/事件唤醒其它任务). 整机退出只由测试
+        // 框架 (framework/tests 的 qemu_exit) 承担, 不属调度器职责.
+        if next_pid.is_none() {
+            let idle_pid = per_cpu.idle.load(Ordering::SeqCst);
+            if idle_pid != 0 {
+                next_pid = Some(idle_pid);
+            }
+        }
+
         let next = if let Some(pid) = next_pid {
             pid
         } else {
@@ -612,8 +737,29 @@ impl Scheduler {
             }
         }
 
-        // 重新入队上一个任务
-        if let Some(ref _prev_proc) = prev_ptr {
+        // 重新入队上一个任务 —— 仅当 prev 确实可被重新调度时才入队.
+        //
+        // 两个排除条件 (缺一即导致该 CPU 的 CFS 永久饥饿):
+        // - prev 是本 CPU 的 idle 任务: idle 不属任何运行队列, 入队后
+        //   `pick_cfs_task` 会选中它, 但因其策略为 `SchedPolicy::Idle` (!= Normal)
+        //   而返回 None (见 pick_cfs_task 中"不可调度节点"分支), CFS 树上的普通
+        //   任务再也无法被选中;
+        // - prev 已不在 Running/Ready (如 `exit()` 之后的 Zombie, 或阻塞中的
+        //   Blocked): 同样会被 `pick_cfs_task` 判为不可调度而返回 None; 且把
+        //   Blocked/Zombie 任务塞回 CFS 树/置回 Ready 与阻塞、退出语义冲突.
+        let prev_requeue = if prev_ptr.is_some() {
+            per_cpu.idle.load(Ordering::SeqCst) != current_pid
+                && PROCESS_TABLE
+                    .with_process(current_pid, |p| {
+                        let state = p.get_state();
+                        state == ProcessState::Running || state == ProcessState::Ready
+                    })
+                    .unwrap_or(false)
+        } else {
+            false
+        };
+
+        if prev_requeue {
             let was_dl = per_cpu.dl_running.load(Ordering::SeqCst);
             let was_rt = per_cpu.rt_running.load(Ordering::SeqCst);
 
@@ -828,6 +974,11 @@ impl Scheduler {
     pub fn exit(&self, exit_code: u32) {
         let per_cpu = per_cpu();
         if let Some(pid) = self.current() {
+            // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的
+            // 上游分位 —— 与 `vmm_x86_64.rs` 的 `destroy_page_table` 埋点配对, 可区分
+            // "子进程根本没跑到 exit" 与 "已退出成 zombie 但无人回收 (无 wait4 ⇒ 无人调
+            // `remove_and_free` ⇒ `Process::drop` 不运行 ⇒ 页表不销毁)" 两种情形.
+            crate::klog_info!(Process, "exit: pid={} code={}", pid, exit_code);
             // 会话 leader 退出时释放控制终端
             crate::framework::proc::session_leader_exit(pid);
 
@@ -874,16 +1025,22 @@ impl Scheduler {
                 }
                 proc.children.lock().clear();
             });
+
+            // 本函数**不**释放本进程的用户地址空间: 唯一的销毁点是
+            // `Process::drop` -> `vmm_destroy_page_table`, 而 `Process` 只在
+            // **收割 (reap)** 时释放 —— 即 `wait4` 的 `remove_and_free`, 或
+            // `tick_accounting` 的周期僵尸回收 (条件: 父已死或父为 pid 1).
+            // 地址空间因此晚于退出被释放; 这与上游 (Asterinas `set_vmar(None)` /
+            // Linux `exit_mm`) 的"退出即释放"不同, 属已登记缺陷 (见
+            // docs/plan/tlb-shootdown-epoch.md §6 D4 与 docs/plan/cr3-lifetime-ownership.md G4).
         }
 
         per_cpu.need_reschedule.store(true, Ordering::SeqCst);
 
-        if self.schedule().is_none() {
-            crate::arch!(outb(0xf4, (exit_code as u8).wrapping_shl(1) | 1));
-            loop {
-                crate::arch!(halt());
-            }
-        }
+        // 调度下一个任务. 生产路径不因"无任务可运行"而结束运行: 本 CPU 的
+        // idle 任务保证 `schedule()` 在运行期永不为 None. 整机退出 (QEMU exit)
+        // 由测试框架承担 (`framework/tests` 的 `qemu_exit`), 不属调度器职责.
+        let _ = self.schedule();
     }
 
     pub fn yield_current(&self) {

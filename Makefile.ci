@@ -111,7 +111,7 @@ ci-bench-record:
 ci-test-host:
 	@echo "[host-tests] 单元 + 集成测试 (Cargo 自动发现)..."
 	@mkdir -p $(LOG_DIR)
-	@cd host-tests && cargo test --quiet 2>&1 | tee ../$(LOG_DIR)/host_tests.txt
+	@cd host-tests && { cargo test --quiet > ../$(LOG_DIR)/host_tests.txt 2>&1; status=$$?; cat ../$(LOG_DIR)/host_tests.txt; exit $$status; }
 	@echo "PASS: host-tests 全量通过"
 
 # Clean

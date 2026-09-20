@@ -180,6 +180,24 @@ pub fn sys_clone(
     // 共享地址空间: 子进程使用父进程的 CR3
     child.cr3.store(parent_cr3, Ordering::SeqCst);
 
+    // G1 修复: 共享父进程地址空间必须登记一个持有者.
+    // 父子各持同一个 PML4 物理地址 ⇒ 两者的 Process::drop 都会释放同一张页表;
+    // 无持有计数时先退出者会把另一方仍在使用的页表销毁 (UAF). 计数登记处只此一处
+    // (`child_ctx.cr3` 是上下文快照, 不承担所有权, 不重复计数).
+    if !crate::framework::mm::pmm::get_pmm()
+        .frame_inc(crate::framework::mm::PhysAddr(parent_cr3))
+    {
+        // 登记失败 (父 cr3 未处于计数态, 契约违反): 回滚已写入的 cr3,
+        // 避免子进程 drop 时误释放父进程地址空间.
+        crate::klog_error!(
+            "clone: CLONE_VM 无法登记 cr3 持有者 (cr3={:#X}), 拒绝共享地址空间",
+            parent_cr3
+        );
+        child.cr3.store(0, Ordering::SeqCst);
+        raw::drop_boxed_process(child_ptr);
+        return Errno::ENOMEM.as_ret();
+    }
+
     // 复制父进程属性
     let (parent_pwm, parent_sched_policy, parent_rt_priority) =
         api::process_with(parent_pid, |p| {

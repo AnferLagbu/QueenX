@@ -41,21 +41,48 @@ use super::PAGE_SIZE;
 // P4.B.4: SMAP 启用 (CR4.SMAP=1) 后, Ring 0 访问 USER 页触发 #PF.
 // stac (Set AC Flag) 临时取消 SMAP 保护, clac (Clear AC Flag) 恢复.
 // 仅 x86_64 指令, aarch64 无对应. cfg 门控避免跨架构编译失败.
+//
+// stac/clac 在**不具备 SMAP 能力的 CPU 上是 #UD**: CR4.SMAP 仅在 CPUID
+// 报告 SMAP 时置位 (见 `cpu::init_msr`), 故此处按 CR4.SMAP 现况门控 ——
+// 该位为 0 时 AC 标志对访问控制毫无作用, 两条指令退化为 no-op 语义等价.
+// CR4 是 per-CPU 寄存器, 逐核即时读取天然正确, 不引入额外全局状态.
+/// CR4.SMAP 位号 (与 `cpu::init_msr` 置位处同源).
+#[cfg(target_arch = "x86_64")]
+const CR4_SMAP_BIT: u64 = 1 << 21;
+
+/// 查询当前 CPU 是否已启用 SMAP (CR4.SMAP=1).
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn smap_is_enabled() -> bool {
+    let cr4: u64;
+    // SAFETY: 读取 CR4 是特权操作, 但无副作用且不改变任何体系结构状态.
+    unsafe {
+        core::arch::asm!("mov {0}, cr4", out(reg) cr4, options(nomem, nostack, preserves_flags));
+    }
+    cr4 & CR4_SMAP_BIT != 0
+}
+
 /// SAFETY: 调用方保证在 user 内存访问区间内调用, 配对 `smap_end`.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn smap_begin() {
-    unsafe {
-        core::arch::asm!("stac", options(nomem, nostack, preserves_flags));
+pub(crate) unsafe fn smap_begin() {
+    if smap_is_enabled() {
+        // SAFETY: CR4.SMAP=1 意味着 CPU 必然支持 SMAP, stac 不会触发 #UD.
+        unsafe {
+            core::arch::asm!("stac", options(nomem, nostack, preserves_flags));
+        }
     }
 }
 
 /// SAFETY: 与 `smap_begin` 配对, 恢复 SMAP 保护.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn smap_end() {
-    unsafe {
-        core::arch::asm!("clac", options(nomem, nostack, preserves_flags));
+pub(crate) unsafe fn smap_end() {
+    if smap_is_enabled() {
+        // SAFETY: 同上, CR4.SMAP=1 保证 clac 合法.
+        unsafe {
+            core::arch::asm!("clac", options(nomem, nostack, preserves_flags));
+        }
     }
 }
 
@@ -63,12 +90,12 @@ unsafe fn smap_end() {
 // SAFETY: no-op, 不会执行任何特权操作, 调用方配对语义不变.
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-unsafe fn smap_begin() {}
+pub(crate) unsafe fn smap_begin() {}
 
 // SAFETY: no-op, 不会执行任何特权操作, 调用方配对语义不变.
 #[cfg(not(target_arch = "x86_64"))]
 #[inline(always)]
-unsafe fn smap_end() {}
+pub(crate) unsafe fn smap_end() {}
 
 use crate::framework::constants::limits::USER_ADDR_MAX;
 

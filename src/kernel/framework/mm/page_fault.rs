@@ -344,6 +344,17 @@ fn handle_file_fault(
     let vmm_inst = vmm::get_vmm();
     let pml4 = user_cr3;
 
+    // §8.1 规则 2: 页缓存帧自身已持有一份持有者 (pcache), 把它映射进页表新增一份
+    // 引用 ⇒ 必须 frame_inc, 否则拆除该映射时 frame_dec 会把 pcache 的持有者计入零.
+    // 幂等: 同 VA 二次缺页会重入本函数 (MAP_PRIVATE 写路径), 仅当该 VA 当前未映射到
+    // 该帧时才登记 (重复 inc 会使计数虚高、缓存页永不释放).
+    let already_mapped = vmm_inst
+        .get_physical_in_pml4(pml4, VirtAddr(aligned as u64))
+        .is_some_and(|p| p.as_u64() == cache_phys);
+    if !already_mapped {
+        super::pmm::get_pmm().frame_inc(PhysAddr(cache_phys));
+    }
+
     if vma.shared {
         // MAP_SHARED: 可写映射, 写入回写 Page Cache
         let flags = vma.flags | PageFlags::PRESENT | PageFlags::WRITABLE;
@@ -384,6 +395,19 @@ fn handle_file_fault(
             // 用新页替换映射 (可写)
             let cow_flags = vma.flags | PageFlags::PRESENT | PageFlags::WRITABLE;
             vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), new_phys, cow_flags);
+
+            // §8.1 规则 3: 该 VA 的旧映射被替换 ⇒ 注销它持有的那份缓存帧引用
+            // (pcache 自身的持有人在上面 pcache_put 中已注销). 归零时延迟释放:
+            // 他核 TLB 可能仍缓存旧映射, 立即归还的帧会被重分配后经陈旧映射访问.
+            if pmm_inst.frame_dec(PhysAddr(cache_phys)) {
+                let lock_flags = vmm_inst.acquire_lock();
+                #[cfg(target_arch = "x86_64")]
+                vmm_inst.defer_free(cache_phys);
+                // aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 立即归还
+                #[cfg(target_arch = "aarch64")]
+                pmm_inst.free_page(PhysAddr(cache_phys));
+                vmm_inst.release_lock(&lock_flags);
+            }
         }
     }
 
@@ -437,10 +461,11 @@ fn handle_stack_expansion(mm: &MmStruct, addr: usize, user_cr3: u64) -> PfResult
         VmaType::Stack,
     );
     if mm.insert_vma(stack_vma).is_err() {
-        // insert_vma 失败: unmap 刚映射的页面并释放物理页, 防止无 VMA 跟踪的
-        // 孤儿映射 (后续 munmap/mprotect 无法覆盖此区域)
+        // insert_vma 失败: unmap 刚映射的页面, 防止无 VMA 跟踪的孤儿映射
+        // (后续 munmap/mprotect 无法覆盖此区域).
+        // 帧的归还由 unmap 统一承担 (§8.1 规则 3: 每 USER leaf 拆除即 frame_dec,
+        // 归零才延迟释放) —— 此处不得再显式 free_page, 否则同一帧被注销两次.
         vmm_inst.unmap_page_in_table(user_cr3, VirtAddr(page_aligned as u64));
-        pmm_inst.free_page(phys);
         return PfResult::Oom;
     }
 

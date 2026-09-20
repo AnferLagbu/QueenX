@@ -84,6 +84,11 @@ RUST_LIB_TEST_DEBUG = src/rust/target/test-debug/$(RUST_TARGET)/test-debug/libke
 RUST_USER_DIR = src/user
 RUST_USER_TARGET = $(RUST_USER_DIR)/target/$(RUST_TARGET)/release
 
+# 用户程序前置依赖: 无前置依赖时目标文件一旦存在, make 便认为已最新 → recipe 永不执行,
+# 用户态源码改动长期不生效 (与 $(RUST_LIB) 同族踩坑, 见 §L204 注释).
+USER_SRCS := $(shell find $(RUST_USER_DIR) -name '*.rs' -not -path '*/target/*' 2>/dev/null) \
+             $(RUST_USER_DIR)/Cargo.toml $(RUST_USER_DIR)/link.x $(RUST_USER_DIR)/link_aarch64.x
+
 USER_INIT_ELF = $(RUST_USER_TARGET)/init
 USER_SHELL_ELF = $(RUST_USER_TARGET)/eash
 USER_INSTALL_ELF = $(RUST_USER_TARGET)/install
@@ -95,7 +100,7 @@ STAGE1_BIN = build/stage1.bin
 DISK_IMAGE = build/antx.img
 
 .PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-unit test-integration test-smoke test-stress \
-         test-all test-chaos test-smp
+         test-all test-chaos test-smp test-smp-multicore
 
 all: build/kernel.bin build/kernel.flat
 
@@ -142,7 +147,7 @@ user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) 
 	@cp $(USER_TEST_ELF) build/user/proctest.bin
 	@echo "User programs built successfully (Rust)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF):
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link.x -C link-arg=-nostdlib -C link-arg=-no-pie" cargo build --release --target $(RUST_TARGET)
 
@@ -186,7 +191,7 @@ user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) 
 	@cp $(USER_HTTPSRV_ELF) build/user/httpsrv.bin
 	@echo "User programs built (Rust aarch64)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF):
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
@@ -416,7 +421,7 @@ test-host:
 	@echo "║     Running Host-Side Unit Tests             ║"
 	@echo "╚══════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/tests/reports
-	@cd host-tests && cargo test --quiet 2>&1 | tee $(CURDIR)/tests/reports/host_test_$$(date +%Y%m%d_%H%M%S).log; true
+	@cd host-tests && { log=$(CURDIR)/tests/reports/host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --quiet > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 test-unit: build/kernel_test.bin user
@@ -552,15 +557,18 @@ test-stress: iso
 	@echo "╚══════════════════════════════════════════════════════════╝"
 	@python3 tests/stress/run_stress_tests.py
 
+# SMP 测试核数 (S-9): 默认 2 核, 可用 make test-smp SMP_CORES=N 覆盖
+SMP_CORES ?= 2
+
 test-smp: all user $(KERNEL_IMAGE)
 	@echo "╔══════════════════════════════════════════════════════════╗"
-	@echo "║     SMP Tests (2 cores)                                 ║"
+	@echo "║     SMP Tests ($(SMP_CORES) cores)                                 ║"
 	@echo "╚══════════════════════════════════════════════════════════╝"
 	@mkdir -p tests/reports
 	@timestamp=$$(date +%Y%m%d_%H%M%S); \
 	smp_log=tests/reports/smp_test_$${timestamp}.log; \
 	timeout 60 $(QEMU) $(QEMU_FLAGS) \
-		-m 512 -smp 2 \
+		-m 512 -smp $(SMP_CORES) \
 		$(QEMU_KERNEL_FLAG) $(KERNEL_IMAGE) \
 		-serial file:$${smp_log} \
 		-display none \
@@ -568,15 +576,48 @@ test-smp: all user $(KERNEL_IMAGE)
 	echo ""; \
 	echo "--- SMP Test Output (last 60 lines) ---"; \
 	tail -60 "$${smp_log}"; \
-	if ! grep -q "\[SMP\] online CPUs: 2" "$${smp_log}"; then \
-		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] online CPUs: 2' (2 核未全部上线)"; \
+	if ! grep -q "\[SMP\] online CPUs: $(SMP_CORES)" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] online CPUs: $(SMP_CORES)' ($(SMP_CORES) 核未全部上线)"; \
 		exit 1; \
 	fi; \
-	if ! grep -q "Entering Ring 3" "$${smp_log}"; then \
-		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 'Entering Ring 3' (用户态未进入)"; \
+	if ! grep -qE "\[SMP\] first user syscall from pid=[0-9]+([^0-9]|$$)" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] first user syscall from pid=N'"; \
+		echo "  含义: 用户态从未真正执行 (无任何来自 Ring 3/CPL3 的 syscall);"; \
+		echo "  注: 'Entering Ring 3' 打印在 iretq 之前, 不构成用户态已执行的证据."; \
 		exit 1; \
 	fi; \
-	echo "SMP TEST PASSED: online CPUs = 2, 且已进入 Ring 3"
+	if ! grep -q "\[SMP\] TLB shootdown #" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] TLB shootdown #' (跨核 TLB 失效路径未触发)"; \
+		exit 1; \
+	fi; \
+	if ! grep -qE "\[SMP\] TLB shootdown #[0-9]+ gen=[0-9]+ targets=$(SMP_CORES)([^0-9]|$$)" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 'targets=$(SMP_CORES)' 的 TLB shootdown (TLB shootdown 未覆盖全部 $(SMP_CORES) 核)"; \
+		exit 1; \
+	fi; \
+	if ! grep -qE "\[VMM\] deferred-free admitted_total=[1-9][0-9]* released_total=[1-9][0-9]* pending=false" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[VMM] deferred-free admitted_total=N released_total=M pending=false'"; \
+		echo "  含义: 延迟释放的帧未真正归还 PMM —— 入链后滞留 pending (代永远追不平),"; \
+		echo "        或销毁路径从未被走到 (released_total 恒 0); 'pending=false' 必须同时成立,"; \
+		echo "        否则 'released_total 非零' 可能只是滞留批次里漏还的少数几帧."; \
+		echo "  对应 docs/plan/tlb-shootdown-epoch.md S-10 的运行覆盖判据."; \
+		exit 1; \
+	fi; \
+	echo "SMP TEST PASSED: online CPUs = $(SMP_CORES), 且用户态已实际执行 (收到 Ring 3 syscall), 且 TLB shootdown 已覆盖全部核, 且延迟释放帧确有归还 (admitted/released 非零且 pending=false)"
+
+# 一次性覆盖 2/3/4 核 (S-9): 按核数循环调用 test-smp, 任一核数未达
+# 「全部上线 + 用户态实际执行 (Ring 3 syscall)」即 exit 1 (fail-closed)
+SMP_MULTICORE_CORES := 2 3 4
+
+test-smp-multicore: all user $(KERNEL_IMAGE)
+	@echo "╔══════════════════════════════════════════════════════════╗"
+	@echo "║     SMP Tests (cores: $(SMP_MULTICORE_CORES))                            ║"
+	@echo "╚══════════════════════════════════════════════════════════╝"
+	@for n in $(SMP_MULTICORE_CORES); do \
+		echo ""; \
+		$(MAKE) --no-print-directory test-smp SMP_CORES=$$n || exit 1; \
+	done; \
+	echo ""; \
+	echo "SMP MULTICORE TEST PASSED: 核数 $(SMP_MULTICORE_CORES) 全部通过"
 
 # ============================================================================
 # QEMU 调试脚本支持 (QEMU Debug Script Support)

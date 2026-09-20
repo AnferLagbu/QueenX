@@ -7,76 +7,23 @@
 //!
 //! ## 引用计数
 //!
-//! 使用 `BTreeMap<PhysFrame, u32>` 跟踪每帧的共享计数:
-//! - fork: 父子各 +1 = 2
-//! - COW fault: 子分配新页，父引用 -1
-//! - munmap / exit: 引用 -1，归零时释放
+//! 计数面已下沉到 PMM（`frame_inc` / `frame_dec` / `frame_ref_count`，按 pfn 索引）：
+//! - `alloc_page` 置 1（创建者即首个映射的持有者）；
+//! - fork 共享页每 leaf 各 +1 ⇒ 计数 2；
+//! - COW fault: 复制新页，旧帧 -1，归零才释放；
+//! - munmap / exit: 每 USER leaf -1，归零才释放。
+//!
+//! 本模块不再持有独立计数表（原 `COW_REFS` 已删除）——两份重复计数收敛为 PMM 单一
+//! 帧持有计数面，契约见 `docs/plan/cr3-lifetime-ownership.md` §8.1。
 //!
 //! ## SAFETY
 //!
-//! - COW 跟踪表由 `COW_LOCK` 自旋锁保护。
 //! - 所有 `unsafe` 页表访问基于 PMM 分配的有效物理帧，通过 `KERNEL_BASE`
 //!   转换为内核虚拟地址，不会产生悬垂指针。
 //! - volatile 读写确保编译器不重排 MMIO 相关的页表操作。
 
-use alloc::collections::BTreeMap;
-
 use super::vmm;
 use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
-
-use crate::framework::sync::IrqSpinLock;
-static COW_REFS: IrqSpinLock<Option<BTreeMap<u64, u32>>> = IrqSpinLock::new(None);
-
-pub fn cow_init() {
-    *COW_REFS.lock() = Some(BTreeMap::new());
-}
-
-fn frame_key(phys: u64) -> u64 {
-    phys & !(PAGE_SIZE - 1)
-}
-
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
-pub fn cow_inc_ref(phys: u64) {
-    let key = frame_key(phys);
-    let mut guard = COW_REFS.lock();
-    let refs = match guard.as_mut() {
-        Some(r) => r,
-        None => return,
-    };
-    *refs.entry(key).or_insert(0) += 1;
-}
-
-#[expect(
-    clippy::manual_let_else,
-    reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
-)]
-pub fn cow_dec_ref(phys: u64) -> bool {
-    let key = frame_key(phys);
-    let mut guard = COW_REFS.lock();
-    let refs = match guard.as_mut() {
-        Some(r) => r,
-        None => return false,
-    };
-    if let Some(count) = refs.get_mut(&key) {
-        *count -= 1;
-        if *count == 0 {
-            refs.remove(&key);
-            return true;
-        }
-    }
-    false
-}
-
-pub fn cow_ref_count(phys: u64) -> u32 {
-    let key = frame_key(phys);
-    let guard = COW_REFS.lock();
-    guard
-        .as_ref()
-        .map_or(0, |refs| refs.get(&key).copied().unwrap_or(0))
-}
 
 #[expect(
     clippy::used_underscore_binding,
@@ -116,7 +63,10 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     }
 
     let pmm = super::pmm::get_pmm();
-    let child_pml4_phys = pmm.alloc_page()?;
+    // 阶段 1 的首个分页帧: 此刻尚无任何已建子树, 失败无需回滚
+    let Some(child_pml4_phys) = pmm.alloc_page() else {
+        return None;
+    };
     let kernel_pml4 = vmm::get_kernel_pml4();
 
     // SAFETY: child_pml4_phys 刚由 PMM 分配, 物理地址有效;
@@ -146,7 +96,11 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
             continue;
         }
 
-        let child_pdpt_phys = pmm.alloc_page()?;
+        // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
+        let Some(child_pdpt_phys) = pmm.alloc_page() else {
+            free_child_page_table_tree(child_pml4_phys.as_u64());
+            return None;
+        };
         // SAFETY: 刚分配的页, 通过 KERNEL_BASE 映射有效
         let child_pdpt_virt = child_pdpt_phys.to_virt().0 as *mut u64;
         unsafe {
@@ -172,7 +126,10 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 continue;
             }
 
-            let child_pd_phys = pmm.alloc_page()?;
+            let Some(child_pd_phys) = pmm.alloc_page() else {
+                free_child_page_table_tree(child_pml4_phys.as_u64());
+                return None;
+            };
             // SAFETY: 刚分配的页
             let child_pd_virt = child_pd_phys.to_virt().0 as *mut u64;
             unsafe {
@@ -206,7 +163,11 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                     continue;
                 }
 
-                let child_pt_phys = pmm.alloc_page()?;
+                // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
+                let Some(child_pt_phys) = pmm.alloc_page() else {
+                    free_child_page_table_tree(child_pml4_phys.as_u64());
+                    return None;
+                };
                 let child_pt_virt = child_pt_phys.to_virt().0 as *mut u64;
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 unsafe {
@@ -221,55 +182,54 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                     child_pd_virt.add(k).write_volatile(child_pde);
                 }
 
-                // SAFETY: parent_pt 物理地址来自有效 PDE;
-                // 声明为 *mut 因为 COW 会写回清除 WRITABLE 位
+                // SAFETY: parent_pt 物理地址来自有效 PDE (阶段 1 只读该页)
                 let parent_pt_virt =
-                    PhysAddr(parent_pde & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+                    PhysAddr(parent_pde & 0x000FFFFFFFFFF000).to_virt().0 as *const u64;
 
+                // 阶段 1 只建结构: leaf PTE 逐项原值复制 —— 不改父页表、不改子 PTE、
+                // 不登记任何持有者. 使本阶段任一分配失败只需释放已建子树页表帧,
+                // 无需回滚页表内容与帧计数 (父 PTE 清 WRITABLE 与 frame_inc 都在
+                // 阶段 2, 而阶段 2 无分配 ⇒ 不会失败).
                 for l in 0..512usize {
                     // SAFETY: pt 索引在页范围内
                     let parent_pte = unsafe { parent_pt_virt.add(l).read_volatile() };
                     if (parent_pte & 1) == 0 {
                         continue;
                     }
-
-                    let parent_phys = parent_pte & 0x000FFFFFFFFFF000;
-                    let parent_flags = parent_pte & 0xFFF;
-
-                    // B05-55 根治: COW 仅应用于 USER 可写页 (P=1, W=1, U=1).
-                    // 用户页表低半区还含 KPTI 映射的 supervisor 页 (USER_CR3_SAVE,
-                    // SyscallPerCpu, GDT/IDT/TSS, IST 栈, RSP0 栈), 这些页无 USER 位.
-                    // 原实现仅判 W 位, fork 时把这些内核页 WRITABLE 清除 → 用户态异常
-                    // 入口写 USER_CR3_SAVE → 写保护 #PF → 死循环/Triple Fault.
-                    if (parent_flags & 2) != 0 && (parent_flags & 4) != 0 {
-                        // SAFETY: 该 PTE 由本函数独占访问 (外层持有 VMM_LOCK)
-                        unsafe {
-                            let mut pte = parent_pt_virt.add(l).read_volatile();
-                            pte &= !2u64; // clear WRITABLE
-                            parent_pt_virt.add(l).write_volatile(pte);
-                        }
-
-                        let mut child_pte = parent_pte;
-                        child_pte &= !2u64;
-                        // SAFETY: child_pt_virt 指向有效 PT 页
-                        unsafe {
-                            child_pt_virt.add(l).write_volatile(child_pte);
-                        }
-
-                        // fork: 父子各持引用, count 从 1 变为 2
-                        cow_inc_ref(parent_phys);
-                    } else {
-                        // supervisor 页 (KPTI 数据/IDT/GDT/IST/RSP0) 或已只读的页:
-                        // 直接共享 PTE 内容, 不参与 COW
-                        // SAFETY: 已只读的页直接共享 PTE 内容
-                        unsafe {
-                            child_pt_virt.add(l).write_volatile(parent_pte);
-                        }
+                    // SAFETY: child_pt_virt 指向有效 PT 页, l 在页范围内
+                    unsafe {
+                        child_pt_virt.add(l).write_volatile(parent_pte);
                     }
                 }
             }
         }
     }
+
+    // 阶段 2: 无分配的"清 WRITABLE + 登记持有者". 阶段 1 已保证所有页表帧分配成功,
+    // 故阶段 2 不可能失败, 无需回滚路径.
+    //
+    // B05-55 根治: COW 仅应用于 USER 可写页 (P=1, W=1, U=1). 用户页表低半区还含
+    // KPTI 映射的 supervisor 页 (USER_CR3_SAVE, SyscallPerCpu, GDT/IDT/TSS, IST 栈,
+    // RSP0 栈), 这些页无 USER 位. 原实现仅判 W 位, fork 时把这些内核页 WRITABLE
+    // 清除 → 用户态异常入口写 USER_CR3_SAVE → 写保护 #PF → 死循环/Triple Fault.
+    for_each_cow_leaf(
+        parent_pml4,
+        child_pml4_phys.as_u64(),
+        |parent_slot, child_slot, parent_pte| {
+            let flags = parent_pte & 0xFFF;
+            if (flags & 2) == 0 || (flags & 4) == 0 {
+                return;
+            }
+            // SAFETY: 两槽位均为有效页表页内的 4KB leaf 槽位; 本函数外层持 VMM_LOCK,
+            // 这两个槽位由本函数独占访问
+            unsafe {
+                parent_slot.write_volatile(parent_pte & !2u64);
+                child_slot.write_volatile(parent_pte & !2u64);
+            }
+            // fork: 父子各持引用 (每 leaf 一次), PMM 帧持有计数 1 → 2
+            pmm.frame_inc(PhysAddr(parent_pte & 0x000FFFFFFFFFF000));
+        },
+    );
 
     // SMP: 刷新 TLB 使所有被清除 WRITABLE 位的 PTE 失效
     // 父进程可能在其他 CPU 上运行, 完整的 TLB shootdown 需要 IPI
@@ -277,6 +237,159 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     crate::arch!(tlb_flush_all());
 
     Some(child_pml4_phys.as_u64())
+}
+
+/// 锁步遍历父子页表在 PD 级以下的 4KB leaf 槽位, 对每个 present leaf 回调
+/// `(父槽位, 子槽位, 父 PTE 原值)`.
+///
+/// 跳过 PD 级大页 (`PS` 位) —— 大页不参与 COW.
+#[expect(
+    clippy::similar_names,
+    reason = "变量名相似表达同族概念 (pd/pt 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+)]
+#[expect(
+    clippy::unreadable_literal,
+    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+)]
+fn for_each_cow_leaf_in_pd(
+    parent_pd: *mut u64,
+    child_pd: *mut u64,
+    f: &mut impl FnMut(*mut u64, *mut u64, u64),
+) {
+    for k in 0..512usize {
+        // SAFETY: k 在 PD 页范围内; 两端指针由调用方保证指向有效页表帧
+        let pde = unsafe { parent_pd.add(k).read_volatile() };
+        // PS 位 (0x80) 置位 = 2MB 大页, 无下级 PT
+        if (pde & 1) == 0 || (pde & 0x80) != 0 {
+            continue;
+        }
+        let child_pde = unsafe { child_pd.add(k).read_volatile() };
+        if (child_pde & 1) == 0 {
+            continue;
+        }
+
+        let parent_pt = PhysAddr(pde & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+        let child_pt = PhysAddr(child_pde & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+
+        for l in 0..512usize {
+            // SAFETY: l 在 PT 页范围内
+            let pte = unsafe { parent_pt.add(l).read_volatile() };
+            if (pte & 1) == 0 {
+                continue;
+            }
+            // SAFETY: 两端槽位均在有效 PT 页内; 写权限由调用方持有的 VMM_LOCK 保证
+            unsafe {
+                f(parent_pt.add(l), child_pt.add(l), pte);
+            }
+        }
+    }
+}
+
+/// 锁步遍历父子页表低半区的 4KB leaf 槽位, 对每个 present 且非大页的 leaf 回调
+/// `(父槽位, 子槽位, 父 PTE 原值)`.
+///
+/// 高半区 (索引 256-511, 内核映射) 不属于用户地址空间、不参与 COW, 故不在遍历范围.
+#[expect(
+    clippy::unreadable_literal,
+    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+)]
+fn for_each_cow_leaf(
+    parent_root: u64,
+    child_root: u64,
+    mut f: impl FnMut(*mut u64, *mut u64, u64),
+) {
+    let parent_pml4 = PhysAddr(parent_root).to_virt().0 as *mut u64;
+    let child_pml4 = PhysAddr(child_root).to_virt().0 as *mut u64;
+
+    for i in 0..256usize {
+        // SAFETY: i 在 PML4 低半区范围内; 两个根均由调用方保证为有效页表帧
+        let pml4e = unsafe { parent_pml4.add(i).read_volatile() };
+        if (pml4e & 1) == 0 {
+            continue;
+        }
+        let child_pml4e = unsafe { child_pml4.add(i).read_volatile() };
+        if (child_pml4e & 1) == 0 {
+            continue;
+        }
+
+        let parent_pdpt = PhysAddr(pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+        let child_pdpt = PhysAddr(child_pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+
+        for j in 0..512usize {
+            // SAFETY: j 在 PDPT 页范围内
+            let pdpte = unsafe { parent_pdpt.add(j).read_volatile() };
+            // PS 位 (0x80) 置位 = 1GB 大页, 无下级 PD
+            if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
+                continue;
+            }
+            let child_pdpte = unsafe { child_pdpt.add(j).read_volatile() };
+            if (child_pdpte & 1) == 0 {
+                continue;
+            }
+
+            let parent_pd = PhysAddr(pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+            let child_pd = PhysAddr(child_pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+
+            for_each_cow_leaf_in_pd(parent_pd, child_pd, &mut f);
+        }
+    }
+}
+
+/// 释放克隆中途失败时已建成的子页表子树 (仅页表帧; 数据帧与内核映射不触碰).
+///
+/// 后序遍历: 先释放最底层页表帧, 最后释放 `root` 自身. 子页表页在分配时已被清零,
+/// 故其低半区任何 present 槽位必为本次克隆所建; 高半区是内核页表的副本, 不在范围内.
+///
+/// 调用方须持有 `VMM_LOCK` (`defer_free` 的 `BATCH_HEAD` 单写者前提).
+#[expect(
+    clippy::unreadable_literal,
+    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
+)]
+fn free_child_page_table_tree(root: u64) {
+    if root == 0 {
+        return;
+    }
+    let pml4 = PhysAddr(root).to_virt().0 as *mut u64;
+
+    for i in 0..256usize {
+        // SAFETY: i 在 PML4 低半区范围内; root 为 PMM 分配的有效页表帧
+        let pml4e = unsafe { pml4.add(i).read_volatile() };
+        if (pml4e & 1) == 0 {
+            continue;
+        }
+        let pdpt = PhysAddr(pml4e & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+
+        for j in 0..512usize {
+            // SAFETY: j 在 PDPT 页范围内
+            let pdpte = unsafe { pdpt.add(j).read_volatile() };
+            // 大页 (PS) 无下级页表帧
+            if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
+                continue;
+            }
+            let pd = PhysAddr(pdpte & 0x000FFFFFFFFFF000).to_virt().0 as *mut u64;
+
+            for k in 0..512usize {
+                // SAFETY: k 在 PD 页范围内
+                let pde = unsafe { pd.add(k).read_volatile() };
+                if (pde & 1) == 0 || (pde & 0x80) != 0 {
+                    continue;
+                }
+                release_child_table_frame(pde & 0x000FFFFFFFFFF000);
+            }
+            release_child_table_frame(pdpte & 0x000FFFFFFFFFF000);
+        }
+        release_child_table_frame(pml4e & 0x000FFFFFFFFFF000);
+    }
+    release_child_table_frame(root);
+}
+
+/// 归还单个子页表帧. x86_64 走延迟释放 (与他处一致, 见 `cow_handle_fault`);
+/// aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 直接归还.
+fn release_child_table_frame(frame: u64) {
+    #[cfg(target_arch = "x86_64")]
+    vmm::get_vmm().defer_free(frame);
+    #[cfg(target_arch = "aarch64")]
+    super::pmm::get_pmm().free_page(PhysAddr(frame));
 }
 
 /// COW fault 处理: 为写入分配新页
@@ -297,28 +410,20 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
     let old_phys = vmm_inst.get_physical_in_pml4(pml4, VirtAddr(page_aligned))?;
     let old_frame = old_phys.as_u64() & 0x000FFFFFFFFFF000;
 
-    let should_reuse = {
-        let mut guard = COW_REFS.lock();
-        let refs = guard.as_mut()?;
-        match refs.get_mut(&old_frame) {
-            Some(count) if *count <= 1 => {
-                refs.remove(&old_frame);
-                true
-            }
-            Some(_) => false,
-            None => true,
-        }
-    };
+    let pmm_inst = super::pmm::get_pmm();
+
+    // §8.1 判据: 计数 = 持有者数. <= 1 表示本映射即该帧唯一引用 (或该帧未计数,
+    // 如设备/MMIO 映射) ⇒ 就地恢复可写, 无需复制.
+    let should_reuse = pmm_inst.frame_ref_count(PhysAddr(old_frame)) <= 1;
 
     if should_reuse {
-        // 引用计数 ≤ 1: 直接恢复 WRITABLE 位, 无需分配新页
+        // 唯一引用: 直接恢复 WRITABLE 位, 无需分配新页
         // map_page_in_table 内部持有 VMM_LOCK + TLB 刷新, SMP 安全
         let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
         vmm_inst.map_page_in_table(pml4, VirtAddr(page_aligned), old_phys, flags);
         return Some(old_phys.as_u64());
     }
 
-    let pmm_inst = super::pmm::get_pmm();
     let new_phys = pmm_inst.alloc_page()?;
     let new_virt = new_phys.to_virt();
 
@@ -332,8 +437,20 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
         );
     }
 
-    if cow_dec_ref(old_frame) {
+    // 计数归零 = 无其他映射持有旧帧, 可以归还
+    let old_frame_released = pmm_inst.frame_dec(PhysAddr(old_frame));
+    if old_frame_released {
+        // 归零不等于"远端核 TLB 已失效": 若他核曾运行本进程, 其 TLB 仍缓存旧映射,
+        // 立即归还后该帧可被重分配 ⇒ 他核经陈旧映射访问他人物理页 (UAF).
+        // x86_64 故走延迟释放 (等 TLB 代追平, 见 tlb-shootdown-epoch §7.1);
+        // `defer_free` 要求持 VMM_LOCK (BATCH_HEAD 单写者), 此处显式持锁.
+        let lock_flags = vmm_inst.acquire_lock();
+        #[cfg(target_arch = "x86_64")]
+        vmm_inst.defer_free(old_frame);
+        // aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 保持既有立即归还语义
+        #[cfg(target_arch = "aarch64")]
         pmm_inst.free_page(PhysAddr(old_frame));
+        vmm_inst.release_lock(&lock_flags);
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
@@ -346,13 +463,6 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_frame_key_alignment() {
-        assert_eq!(frame_key(0x1000), 0x1000);
-        assert_eq!(frame_key(0x1FFF), 0x1000);
-        assert_eq!(frame_key(0x2000), 0x2000);
-    }
 
     #[test]
     fn test_virt_index_functions() {

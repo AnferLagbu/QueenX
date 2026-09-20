@@ -35,58 +35,59 @@ fn test_pf_result_values() -> TestResult {
 }
 
 // ============================================================
-// COW (Copy-on-Write)
+// COW 帧持有计数 (计数面已收敛到 PMM, 原 COW_REFS 已删除)
 // ============================================================
 
-fn test_cow_frame_key_alignment() -> TestResult {
-    let frame_of = |p: u64| p & !(4095u64);
-    assert_eq_test!(frame_of(0x1000), 0x1000, "0x1000 aligned");
-    assert_eq_test!(frame_of(0x1FFF), 0x1000, "0x1FFF rounds down");
-    assert_eq_test!(frame_of(0x2000), 0x2000, "0x2000 aligned");
-    assert_eq_test!(frame_of(0), 0, "0 rounds down");
+// E-04 (2026-09-06): 测试运行器双端适配 — 计数语义测试依赖裸机 PMM 物理页,
+// host 无 PMM 初始化 → 直接 Skip. 计数语义的 host 维覆盖在
+// host-tests/tests/pmm_buddy_host_test.rs (VecMetaStore 载体) 内.
+#[cfg(feature = "host-test")]
+fn test_cow_shared_frame_alloc_starts_at_one() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
+}
+
+#[cfg(not(feature = "host-test"))]
+fn test_cow_shared_frame_alloc_starts_at_one() -> TestResult {
+    let pmm = crate::framework::mm::get_pmm();
+    let Some(phys) = pmm.alloc_page() else {
+        return TestResult::Fail("pmm alloc_page failed");
+    };
+
+    // §8.1 规则 1: alloc_page 的 +1 即"创建者把该帧交付给紧随其后的首个映射"
+    assert_eq_test!(pmm.frame_ref_count(phys), 1, "分配后持有者数应为 1");
+
+    check!(pmm.frame_dec(phys), "唯一持有者注销即归零");
+    check!(!pmm.frame_dec(phys), "已归零帧再次 dec 须 fail-closed");
+    // 计数已归零: free_page 走"未计数帧"路径归还 (等价于延迟释放链的最终动作)
+    pmm.free_page(phys);
     TestResult::Pass
 }
 
-fn test_cow_ref_init() -> TestResult {
-    crate::framework::mm::cow_init();
-    let count = crate::framework::mm::cow_ref_count(0x1000);
-    assert_eq_test!(count, 0, "initially zero");
-    TestResult::Pass
+// E-04 同理: 同 test_cow_shared_frame_alloc_starts_at_one
+#[cfg(feature = "host-test")]
+fn test_cow_shared_frame_inc_dec_paired() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
 }
 
-fn test_cow_ref_inc_dec() -> TestResult {
-    crate::framework::mm::cow_init();
-    let phys = 0x5000u64;
+#[cfg(not(feature = "host-test"))]
+fn test_cow_shared_frame_inc_dec_paired() -> TestResult {
+    let pmm = crate::framework::mm::get_pmm();
+    let Some(phys) = pmm.alloc_page() else {
+        return TestResult::Fail("pmm alloc_page failed");
+    };
 
-    crate::framework::mm::cow_inc_ref(phys);
-    assert_eq_test!(
-        crate::framework::mm::cow_ref_count(phys),
-        1,
-        "after inc=1"
-    );
+    // COW 共享形态: 双方各持一份引用 (1 → 2)
+    check!(pmm.frame_inc(phys), "共享方登记应成功");
+    assert_eq_test!(pmm.frame_ref_count(phys), 2, "共享后持有者数应为 2");
 
-    crate::framework::mm::cow_inc_ref(phys);
-    assert_eq_test!(
-        crate::framework::mm::cow_ref_count(phys),
-        2,
-        "after inc=2"
-    );
+    // 一方退出: 仍有持有者 ⇒ 不得报告归零 (否则在用帧被销毁)
+    check!(!pmm.frame_dec(phys), "仍有持有者时不得报告归零");
+    assert_eq_test!(pmm.frame_ref_count(phys), 1, "注销一方后应为 1");
 
-    let should_free = crate::framework::mm::cow_dec_ref(phys);
-    check!(!should_free, "dec to 1 should not free");
-    assert_eq_test!(
-        crate::framework::mm::cow_ref_count(phys),
-        1,
-        "after dec=1"
-    );
-
-    let should_free = crate::framework::mm::cow_dec_ref(phys);
-    check!(should_free, "dec to 0 should free");
-    assert_eq_test!(
-        crate::framework::mm::cow_ref_count(phys),
-        0,
-        "after dec=0"
-    );
+    // 最后一方退出: 恰好归零一次
+    check!(pmm.frame_dec(phys), "最后一方注销应报告归零");
+    assert_eq_test!(pmm.frame_ref_count(phys), 0, "归零后持有者数为 0");
+    pmm.free_page(phys);
     TestResult::Pass
 }
 
@@ -403,9 +404,8 @@ pub fn register_new_tests() {
             "pf_result_values": test_pf_result_values,
         },
         "cow": {
-            "frame_key_alignment": test_cow_frame_key_alignment,
-            "ref_init": test_cow_ref_init,
-            "ref_inc_dec": test_cow_ref_inc_dec,
+            "shared_frame_alloc_starts_at_one": test_cow_shared_frame_alloc_starts_at_one,
+            "shared_frame_inc_dec_paired": test_cow_shared_frame_inc_dec_paired,
         },
         "elf": {
             "header_sizes": test_elf64_header_sizes,

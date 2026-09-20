@@ -402,8 +402,9 @@
 - **D-9-3. IPI 向量 `0xFD`/`0xFE` 无对应 IDT 门（未处理风险）**
   - 描述：IPI 向量 `0xFD`（TLB 失效广播）/`0xFE`（reschedule）**无对应 IDT 门**：发送点仅 [smp/mod.rs:75,84,89,94](../../src/kernel/framework/smp/mod.rs#L75)，`src/kernel/framework/idt/` 下无任何 `0xFD`/`0xFE` 门注册。2 核打通后一旦发送即 triple fault（当前 boot 窗口未触发）。相关发送路径还有 [sync/rcu.rs:181-183](../../src/kernel/framework/sync/rcu.rs#L181)。
   - 方案：为 `0xFD`/`0xFE` 注册 IDT 门并补对应 IPI 处理程序（TLB 失效处理 + reschedule 处理）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：**与 D-8「锁序核验」的 TLB shootdown fire-and-forget 论证属同一风险**——该论证前提（单核下路径恒不执行）已被 2 核 boot 证伪，锁序论证需在 2 核语义下重新评估。
+  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md)（代计数路线）承接，进度以该文件 S-1（`0xFD`/`0xFE` stub 与 IDT 门）/ S-2（`handle_irq` 前置分支）/ S-8（验收门槛）为准，本台账不再单独推进。当前形态：骨架已落地并通过双架构构建（波 1）；**运行验证已回填**——`make test-smp`（2/3/4 核）与 `./scripts/qemu_boot_test.sh x86_64` 均退出码 0，`0xFD` 定向 IPI 实测触发（`[SMP] TLB shootdown #N gen=N targets=M`，`M` 等于核数、`gen` 连续无跳变），且 §5 注入 1（前半）复验使 `test-smp` FAIL（判别力成立）。详见该文件 S-8 / S-11。
 
 - **D-9-4. `Makefile` 的 `test-host` 目标退出码恒 0（门槛 fail-open）**
   - 描述：`Makefile` 的 `test-host` 目标（约 414-420 行）末尾带 `; true`，**退出码恒 0**，即该门槛 fail-open（与「审计脚本 fail-closed」原则相悖）；本次实测：`test-host` 目标退出码 0，但报告内容本身为 99 个 `test result: ok`、0 failed。
@@ -413,7 +414,8 @@
 - **D-9-5. 首次真正生效的 2 核门控路径（跨核 TLB shootdown）**
   - 描述：`vmm_x86_64.rs` 约 2007-2012 行 `smp::is_enabled() && smp::get_cpu_count() > 1` 现走 `smp::broadcast_tlb_invalidate()` 分支；2 核下是否自洽**未核实**（本次仅确认 boot 到 Ring 3 的窗口未触发）。
   - 方案：2 核语义下复核该分支（与 **D-9-3** 的 IDT 门缺口联动）。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 承接：原「2 核门控走 `broadcast_tlb_invalidate()`」形态已废止，改为运行期门控 `smp::is_enabled() && get_cpu_count() > 1` 下的「发布新代 + 定向 IPI（含本核）」（该文件 S-3 / S-5 / D6），不再使用 all-excluding-self 广播。**复核已回填**：2/3/4 核门槛均退出码 0，IPI 目标集合恒等于核数（含本核），代连续无跳变。
 
 - **D-9-6. `acpi.rs` MADT 日志占位串失真**
   - 描述：`arch/x86_64/acpi.rs` 约 436-441 行仍打印占位串 `LAPIC base=0xXXXXXXXX, AP count=N`，日志失真。经核实：该处把 `AP_COUNT` 读出到 `_count` 却未格式化进日志，占位串确实未被真实值替换。
@@ -423,4 +425,5 @@
 - **D-9-7. aarch64 与 x86_64 的 `smp` 行为不对称**
   - 描述：x86_64 有生产 CPU 上线路径——`arch/x86_64/smp_init.rs` 的 `ap_entry` 调用 `smp::register_cpu`（`smp_init.rs:310`），使 `SMP_ENABLED=true`/`CPU_COUNT=2`；aarch64 侧无对应路径——`arch/aarch64/` 全目录无 `register_cpu` / `ap_entry` / `smp_init` 调用点（`send_ipi`/`broadcast_ipi` 虽已由 GICv3 SGI 实装，但无 AP 上线路径调用 `register_cpu`）⇒ aarch64 侧 `SMP_ENABLED` 仍恒 false、`CPU_COUNT` 恒 1。
   - 方案：明确 aarch64 SMP 上线路径是否在计划内；若不实现，需在文档标注平台差异。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 与 [smp-ipi-protocol.md](./smp-ipi-protocol.md) §5.3 承接并**明确标注**：aarch64 侧本轮实现接收侧 SGI 分支（同语义），但因无 AP 上线路径，`SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1，IPI 路径**在 aarch64 上不可运行验证，仅编译验证**，不得标注为已验证。

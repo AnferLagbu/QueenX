@@ -38,6 +38,10 @@ const BUDDY_ALLOCATED: u8 = 0xFF;
 /// 不能用 0 — pfn 0 是合法物理页号.
 const SENTINEL: u64 = u64::MAX;
 
+/// 分配失败注入的"未武装"标记 (见 `PhysicalMemoryManager::alloc_fail_countdown`).
+#[cfg(any(test, feature = "kernel_test"))]
+const ALLOC_FAIL_DISARMED: u32 = u32::MAX;
+
 /// 物理 RAM 基地址
 /// `x86_64`: 0 (multiboot 给出的物理内存从 0 开始)
 /// aarch64: 0x40000000 (QEMU virt 机器 RAM 基址)
@@ -164,6 +168,8 @@ pub trait MetaStore {
     fn setup_meta(&mut self, phys: u64, bytes: usize);
     /// 预置 FREE_LINKS 载体: 填充 0xFF (=SENTINEL) 并记录区段
     fn setup_links(&mut self, phys: u64, bytes: usize);
+    /// 预置帧持有计数载体: 清零 `bytes` 字节并记录区段 (init_bitmap 调用)
+    fn setup_counts(&mut self, phys: u64, bytes: usize);
 
     /// 置位 bitmap 第 `bit` 位 (载体未就绪/越界时静默跳过)
     fn bitmap_set(&self, bit: usize);
@@ -178,6 +184,11 @@ pub trait MetaStore {
     fn meta_read(&self, idx: usize) -> u8;
     /// 写 buddy_meta[idx]
     fn meta_write(&self, idx: usize, val: u8);
+
+    /// 读帧持有计数 (按 pfn 索引; 0 = 未计数帧, 见 `frame_inc`/`frame_dec` 契约)
+    fn counts_read(&self, idx: usize) -> u8;
+    /// 写帧持有计数 (载体未就绪/越界时静默跳过)
+    fn counts_write(&self, idx: usize, val: u8);
 
     /// 读 FREE_LINKS[idx].prev (存前驱块头 pfn, SENTINEL=无前驱)
     fn links_read_prev(&self, idx: usize) -> u64;
@@ -206,6 +217,8 @@ pub struct RawMetaStore {
     bitmap_words: usize,
     /// buddy_meta 段虚拟地址 (按页 1 字节)
     meta: Option<NonNull<u8>>,
+    /// 帧持有计数段虚拟地址 (按 pfn 1 字节)
+    counts: Option<NonNull<u8>>,
     /// FREE_LINKS 段虚拟地址 (FreeIndex = prev/next 各 u64)
     links: Option<NonNull<FreeIndex>>,
     /// 宿主 `PhysicalMemoryManager.buddy_heads` 字段地址
@@ -219,6 +232,7 @@ impl RawMetaStore {
             bitmap: None,
             bitmap_words: 0,
             meta: None,
+            counts: None,
             links: None,
             heads,
         }
@@ -247,6 +261,14 @@ impl MetaStore for RawMetaStore {
         // SAFETY: 同上; 0xFF 字节填充 → 每个 u64 字段 = u64::MAX = SENTINEL (链表空态)
         unsafe { raw::fill_memory(virt, 0xFF, bytes) };
         self.links = NonNull::new(virt.cast::<FreeIndex>());
+    }
+
+    fn setup_counts(&mut self, phys: u64, bytes: usize) {
+        let virt = (phys + KERNEL_BASE) as *mut u8;
+        // SAFETY: virt 由 init_bitmap 计算 (phys + KERNEL_BASE 内核映射区),
+        // bytes 为该区段长度, 区段已按页对齐且未他用; 清零 = 全部帧"未计数"
+        unsafe { raw::zero_memory(virt, bytes) };
+        self.counts = NonNull::new(virt);
     }
 
     fn bitmap_set(&self, bit: usize) {
@@ -317,6 +339,23 @@ impl MetaStore for RawMetaStore {
         }
     }
 
+    fn counts_read(&self, idx: usize) -> u8 {
+        let Some(counts) = self.counts else {
+            // 载体未就绪 (bitmap 就绪前): 视为未计数 (0), 归还走传统路径
+            return 0;
+        };
+        // SAFETY: 调用方保证 idx < total_pages; counts 在 setup_counts 中建立
+        unsafe { *counts.as_ptr().add(idx) }
+    }
+
+    fn counts_write(&self, idx: usize, val: u8) {
+        let Some(counts) = self.counts else { return };
+        // SAFETY: 调用方保证 idx < total_pages; counts 在 setup_counts 中建立
+        unsafe {
+            *counts.as_ptr().add(idx) = val;
+        }
+    }
+
     fn links_read_prev(&self, idx: usize) -> u64 {
         let Some(links) = self.links else { return SENTINEL };
         // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
@@ -375,6 +414,8 @@ pub struct VecMetaStore {
     bitmap_words: usize,
     /// buddy_meta 载体 (按页 1 字节)
     meta: RefCell<Option<Vec<u8>>>,
+    /// 帧持有计数载体 (按 pfn 1 字节)
+    counts: RefCell<Option<Vec<u8>>>,
     /// FREE_LINKS 载体 (每项 16 字节 = prev/next 各 u64)
     links: RefCell<Option<Vec<u8>>>,
     /// buddy_heads 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
@@ -388,6 +429,7 @@ impl VecMetaStore {
             bitmap: RefCell::new(None),
             bitmap_words: 0,
             meta: RefCell::new(None),
+            counts: RefCell::new(None),
             links: RefCell::new(None),
             heads: RefCell::new(Vec::new()),
         }
@@ -460,6 +502,28 @@ impl MetaStore for VecMetaStore {
         let mut meta = self.meta.borrow_mut();
         if let Some(m) = meta.as_mut() {
             if let Some(slot) = m.get_mut(idx) {
+                *slot = val;
+            }
+        }
+    }
+
+    fn setup_counts(&mut self, _phys: u64, bytes: usize) {
+        *self.counts.borrow_mut() = Some(vec![0u8; bytes]);
+    }
+
+    fn counts_read(&self, idx: usize) -> u8 {
+        let counts = self.counts.borrow();
+        counts
+            .as_ref()
+            .and_then(|c| c.get(idx))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    fn counts_write(&self, idx: usize, val: u8) {
+        let mut counts = self.counts.borrow_mut();
+        if let Some(c) = counts.as_mut() {
+            if let Some(slot) = c.get_mut(idx) {
                 *slot = val;
             }
         }
@@ -562,6 +626,14 @@ pub struct PhysicalMemoryManager {
     total_allocs: AtomicU64,
     total_frees: AtomicU64,
     failed_allocs: AtomicU64,
+    /// 分配失败注入剩余次数: `ALLOC_FAIL_DISARMED` 表示未武装, 否则为"还需成功分配
+    /// 的次数", 归零后下一次 `alloc_page` 及之后一律返回 `None`.
+    ///
+    /// 仅 `test` / `kernel_test` 配置编译, 生产二进制不含 (避免死代码, F9).
+    /// 用途: 构造"COW 克隆中途分配失败"的确定性状态, 供回滚用例判别
+    /// (见 docs/plan/cr3-lifetime-ownership.md §5.2 注入 2).
+    #[cfg(any(test, feature = "kernel_test"))]
+    alloc_fail_countdown: AtomicU32,
     // ---- Buddy 分配器 ----
     /// H-04 (2026-09-09): 内存元数据载体 — 生产为 RawMetaStore (裸指针),
     /// host 测试经 inject_meta_store 注入 VecMetaStore (Vec<u8> 堆载体).
@@ -599,6 +671,8 @@ impl PhysicalMemoryManager {
             total_allocs: AtomicU64::new(0),
             total_frees: AtomicU64::new(0),
             failed_allocs: AtomicU64::new(0),
+            #[cfg(any(test, feature = "kernel_test"))]
+            alloc_fail_countdown: AtomicU32::new(ALLOC_FAIL_DISARMED),
             store: UnsafeCell::new(None),
             buddy_heads: UnsafeCell::new([SENTINEL; MAX_BUDDY_ORDER as usize + 1]),
             buddy_reserve_deferred: UnsafeCell::new(alloc::vec::Vec::new()),
@@ -709,6 +783,21 @@ impl PhysicalMemoryManager {
             Ordering::Relaxed,
         );
 
+        // ---- 帧持有计数布局 (位于 FREE_LINKS 之后, 页对齐) ----
+        // 按 pfn 索引, 每页 1 字节: 0 = 未计数帧, n >= 1 = n 个持有者.
+        // 语义与契约见 `frame_inc` / `frame_dec`; 不复用 buddy_meta (该字节已被
+        // buddy 阶数语义占用), 故独立成区.
+        let counts_bytes = total_pages;
+        let counts_phys =
+            (free_links_phys + free_links_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let counts_pages = counts_bytes.div_ceil(PAGE_SIZE as usize) as u64;
+
+        // 将 early_current 推过计数区
+        self.early_current.store(
+            counts_phys + counts_pages * PAGE_SIZE + PAGE_SIZE,
+            Ordering::Relaxed,
+        );
+
         // H-04 (2026-09-09): 三区内存预置统一经 MetaStore 载体 —
         // 生产自动创建 RawMetaStore (基于 phys + KERNEL_BASE 裸指针, 行为不变),
         // host 测试已在 init_bitmap 前经 inject_meta_store 注入 VecMetaStore.
@@ -734,6 +823,7 @@ impl PhysicalMemoryManager {
         store.setup_bitmap(bitmap_aligned, bitmap_bytes);
         store.setup_meta(buddy_meta_phys, buddy_meta_bytes);
         store.setup_links(free_links_phys, free_links_bytes);
+        store.setup_counts(counts_phys, counts_bytes);
         self.bitmap_size.set(bitmap_words);
         klog_pmm!(
             "[PMM] Buddy meta: {} B at 0x{:X}",
@@ -745,6 +835,12 @@ impl PhysicalMemoryManager {
             free_links_bytes,
             free_links_phys + KERNEL_BASE,
             free_links_pages
+        );
+        klog_pmm!(
+            "[PMM] FRAME_COUNTS: {} B at 0x{:X} ({} pages)",
+            counts_bytes,
+            counts_phys + KERNEL_BASE,
+            counts_pages
         );
 
         // ---- 在 bitmap 中标记 reserved 区 ----
@@ -778,6 +874,12 @@ impl PhysicalMemoryManager {
             self.set_bit(i);
         }
 
+        // 标记帧持有计数页已用
+        let fc_start_page = phys_to_page(counts_phys) as usize;
+        for i in fc_start_page..(fc_start_page + counts_pages as usize).min(total_pages) {
+            self.set_bit(i);
+        }
+
         // ---- 从空闲 bitmap 页构建 buddy 空闲链表 ----
         self.buddy_init_free_lists(total_pages);
 
@@ -796,11 +898,51 @@ impl PhysicalMemoryManager {
         self.update_stats();
     }
 
+    /// 武装"分配失败注入": 接下来的 `skip` 次 `alloc_page` 照常成功, 其后一律返回 `None`.
+    ///
+    /// 仅 `test` / `kernel_test` 配置编译 (调用方为回滚用例). 生产二进制不含本入口,
+    /// 故不可作为运行期降级开关使用.
+    #[cfg(any(test, feature = "kernel_test"))]
+    pub fn arm_alloc_failure(&self, skip: u32) {
+        self.alloc_fail_countdown.store(skip, Ordering::SeqCst);
+    }
+
+    /// 解除"分配失败注入", 恢复常态分配.
+    ///
+    /// 用例必须在断言前调用 (含失败分支), 否则注入会泄漏到后续用例.
+    #[cfg(any(test, feature = "kernel_test"))]
+    pub fn disarm_alloc_failure(&self) {
+        self.alloc_fail_countdown.store(ALLOC_FAIL_DISARMED, Ordering::SeqCst);
+    }
+
+    /// 消费一次注入计数: 返回 `true` 表示本次分配应失败 (计数已归零).
+    ///
+    /// 未武装时恒 `false` 且不触碰计数; 武装后每次调用递减一次, 归零即失败.
+    #[cfg(any(test, feature = "kernel_test"))]
+    fn alloc_fail_should_fail(&self) -> bool {
+        let remaining = self.alloc_fail_countdown.load(Ordering::SeqCst);
+        if remaining == ALLOC_FAIL_DISARMED {
+            return false;
+        }
+        if remaining == 0 {
+            return true;
+        }
+        self.alloc_fail_countdown.store(remaining - 1, Ordering::SeqCst);
+        false
+    }
+
     pub fn alloc_page(&self) -> Option<PhysAddr> {
+        #[cfg(any(test, feature = "kernel_test"))]
+        if self.alloc_fail_should_fail() {
+            self.failed_allocs.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
         let flags = self.acquire_lock();
         let result = self.do_alloc(0);
         match result {
-            Some(_) => {
+            Some(addr) => {
+                // 单页帧: 分配者即初始持有者, 持有计数置 1 (见 frame_inc/frame_dec)
+                self.frame_counts_write(phys_to_page(addr.0) as usize, 1);
                 self.total_allocs.fetch_add(1, Ordering::Relaxed);
             }
             None => {
@@ -816,9 +958,125 @@ impl PhysicalMemoryManager {
             return;
         }
         let flags = self.acquire_lock();
-        self.do_free(addr, 0);
-        self.total_frees.fetch_add(1, Ordering::Relaxed);
+        // 丢弃一个持有者; 仅当无人持有时才真正归还 PMM (未计数帧保持既有归还语义)
+        if self.frame_counts_release(phys_to_page(addr.0) as usize) {
+            self.do_free(addr, 0);
+            self.total_frees.fetch_add(1, Ordering::Relaxed);
+        }
         self.release_lock(&flags);
+    }
+
+    /// 登记一个帧持有者 (共享方使用).
+    ///
+    /// # 契约 (§3.2 大页计数语义)
+    /// - 只接受**单页帧** (由 `alloc_page` / `alloc_pages(1)` 产生, 计数 >= 1);
+    ///   连续多帧块 (order > 0) 内页未计数, 传入时返回 `false` (拒绝登记).
+    /// - **pfn 越界 fail-closed**: 非 PMM 分配的物理地址 (设备/MMIO 映射) 不在计数区
+    ///   范围内, 拒绝登记 (否则会越界读写计数区).
+    /// - 返回 `true` 表示计数已 +1; `false` 表示帧未处于计数态 (契约违反, 计数不变).
+    pub fn frame_inc(&self, addr: PhysAddr) -> bool {
+        if addr.0 == 0 {
+            return false;
+        }
+        let flags = self.acquire_lock();
+        let ok = match self.frame_counts_pfn(addr) {
+            Some(pfn) => {
+                let cur = self.frame_counts_read(pfn);
+                if cur == 0 || cur == u8::MAX {
+                    false
+                } else {
+                    self.frame_counts_write(pfn, cur + 1);
+                    true
+                }
+            }
+            None => false,
+        };
+        self.release_lock(&flags);
+        ok
+    }
+
+    /// 注销一个帧持有者.
+    ///
+    /// # 契约
+    /// - 返回 `true` = 该帧已无持有者 (计数归零), 调用方据此销毁/归还.
+    /// - 返回 `false` = 仍有持有者, **或**该帧不处于计数态 (未计数帧无计数可减,
+    ///   fail-closed: 调用方不得据此销毁). 归零恰好发生一次.
+    /// - **pfn 越界 fail-closed**: 同 `frame_inc`, 未计数区地址一律返回 `false`.
+    pub fn frame_dec(&self, addr: PhysAddr) -> bool {
+        if addr.0 == 0 {
+            return false;
+        }
+        let flags = self.acquire_lock();
+        let zero = match self.frame_counts_pfn(addr) {
+            Some(pfn) => {
+                let cur = self.frame_counts_read(pfn);
+                if cur == 0 {
+                    false
+                } else if cur == 1 {
+                    self.frame_counts_write(pfn, 0);
+                    true
+                } else {
+                    self.frame_counts_write(pfn, cur - 1);
+                    false
+                }
+            }
+            None => false,
+        };
+        self.release_lock(&flags);
+        zero
+    }
+
+    /// 观测单页帧当前持有者数 (0 = 未计数帧; 仅用于断言/审计)
+    pub fn frame_ref_count(&self, addr: PhysAddr) -> u8 {
+        if addr.0 == 0 {
+            return 0;
+        }
+        let flags = self.acquire_lock();
+        let count = self
+            .frame_counts_pfn(addr)
+            .map_or(0, |pfn| self.frame_counts_read(pfn));
+        self.release_lock(&flags);
+        count
+    }
+
+    /// 帧计数索引前置校验: 返回 pfn; 越界 (非 PMM 分配的物理地址, 如 MMIO 设备
+    /// 映射) 返回 `None` ⇒ 调用方 fail-closed (不计数, 也不报告归零).
+    #[inline]
+    fn frame_counts_pfn(&self, addr: PhysAddr) -> Option<usize> {
+        let pfn = phys_to_page(addr.0) as usize;
+        (pfn < self.get_total_pages() as usize).then_some(pfn)
+    }
+
+    /// 读帧持有计数 (载体未就绪时返回 0 = 未计数)
+    #[inline]
+    fn frame_counts_read(&self, pfn: usize) -> u8 {
+        self.meta_store().map_or(0, |store| store.counts_read(pfn))
+    }
+
+    /// 写帧持有计数 (载体未就绪时静默跳过)
+    #[inline]
+    fn frame_counts_write(&self, pfn: usize, val: u8) {
+        if let Some(store) = self.meta_store() {
+            store.counts_write(pfn, val);
+        }
+    }
+
+    /// 归还前的计数处理: 丢弃一个持有者.
+    ///
+    /// 返回 `true` = 可归还 PMM:
+    /// - 计数 >= 2: 递减后返回 `false` (仍有持有者, 不归还);
+    /// - 计数 == 1: 递减到 0 并返回 `true`;
+    /// - 计数 == 0: 未计数帧 (连续多帧块内页 / reserved 页), 保持既有"直接归还"语义.
+    #[inline]
+    fn frame_counts_release(&self, pfn: usize) -> bool {
+        let cur = self.frame_counts_read(pfn);
+        if cur <= 1 {
+            self.frame_counts_write(pfn, 0);
+            true
+        } else {
+            self.frame_counts_write(pfn, cur - 1);
+            false
+        }
     }
 
     pub fn alloc_pages(&self, count: usize) -> Option<PhysAddr> {
@@ -862,7 +1120,15 @@ impl PhysicalMemoryManager {
         let flags = self.acquire_lock();
         let result = self.do_alloc(order);
         match result {
-            Some(_) => {
+            Some(addr) => {
+                // 单页帧 (order == 0) 与 alloc_page 同语义: 分配者持有计数 1.
+                // 连续多帧块不逐页计数 (§3.2: 块视为单一 holder, 归还走 free_pages).
+                // SIMPLIFIED: 块首计数未实装; 影响面: order > 0 的块内页计数恒为 0,
+                // 其归还/共享不经计数面 (与既有语义一致); 何时需扩展: 出现大页共享
+                // (如透明大页拆分共享) 时按逐页计数扩展, 契约入口 frame_inc/frame_dec 不变.
+                if order == 0 {
+                    self.frame_counts_write(phys_to_page(addr.0) as usize, 1);
+                }
                 self.total_allocs
                     .fetch_add(npages as u64, Ordering::Relaxed);
             }
@@ -881,8 +1147,17 @@ impl PhysicalMemoryManager {
         let order = count_to_order(count);
         let npages = 1usize << order as usize;
         let flags = self.acquire_lock();
-        self.do_free(addr, order);
-        self.total_frees.fetch_add(npages as u64, Ordering::Relaxed);
+        if order == 0 {
+            // 单页路径与 free_page 同语义: 计数归零才归还
+            if self.frame_counts_release(phys_to_page(addr.0) as usize) {
+                self.do_free(addr, 0);
+                self.total_frees.fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            // 连续多帧块: 不逐页计数, 整块归还为单一 holder 语义
+            self.do_free(addr, order);
+            self.total_frees.fetch_add(npages as u64, Ordering::Relaxed);
+        }
         self.release_lock(&flags);
     }
 
