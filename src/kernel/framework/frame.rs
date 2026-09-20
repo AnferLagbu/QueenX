@@ -1,35 +1,33 @@
 //! Frame — 物理页安全抽象 (TCB)
 //!
-//! 将裸 `PhysAddr` 封装为带引用计数的类型安全句柄，
-//! 防止 double-free / use-after-free / DMA 竞争。
+//! 将裸 `PhysAddr` 封装为类型安全句柄，防止 double-free / use-after-free / DMA 竞争。
 //!
 //! ## 与 Asterinas OSTD `Frame` 的关系
 //!
-//! 等价于 OSTD 的 `Frame<M>` 概念：每个物理地址被唯一拥有，
-//! 释放时核查引用计数为零。元数据槽位 (`usize`) 可供
-//! services 层挂载自定义状态（如 slab 缓存索引、DMA pin 标志）。
+//! 等价于 OSTD 的 `Frame<M>` 概念：句柄可共享 (`Clone` ⇒ 持有者 +1，
+//! `Drop` ⇒ 持有者 −1)，持有计数由 PMM 按 pfn 索引维护，**仅归零才归还**物理页。
+//! 元数据槽位 (`usize`) 可供 services 层挂载自定义状态（如 slab 缓存索引、DMA pin 标志）。
 //!
 //! ## SAFETY 不变量
 //!
-//! - **唯一所有权**: 任意时刻最多一个 `Frame` 实例持有一个物理地址。
+//! - **归还恰好一次**: 持有计数归零只发生一次，物理归还仅由最后一个句柄的 `Drop` 触发。
 //! - **释放前清理**: 释放 Frame 前确保无 DMA 缓冲区 / 页表条目引用。
 //! - **对齐**: Frame 地址始终对齐到 `PAGE_SIZE` 边界。
 //! - `from_raw()` 是唯一 unsafe 构造路径；services 层通过 `FrameAlloc::alloc()` 获取。
 
 use core::fmt;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::framework::mm::PAGE_SIZE;
 use crate::framework::mm::PhysAddr;
 
-/// 一个带引用计数和自定义元数据的物理帧。
+/// 一个可共享的物理帧句柄（持有计数由 PMM 维护）。
 ///
 /// # Safety Invariant
-/// 每个物理地址在同一时刻最多被一个 Frame 实例持有。
+/// 每个物理地址在同一时刻被一个或多个 `Frame` 句柄共同持有，
+/// 句柄数即 PMM 侧的持有计数；计数归零前后续不得再构造句柄。
 #[derive(Debug)]
 pub struct Frame {
     phys: PhysAddr,
-    ref_count: AtomicU32,
     order: u8,
     meta: usize,
 }
@@ -47,7 +45,6 @@ impl Frame {
         );
         Self {
             phys,
-            ref_count: AtomicU32::new(1),
             order,
             meta: 0,
         }
@@ -76,36 +73,26 @@ impl Frame {
         (PAGE_SIZE as usize) << self.order
     }
 
-    /// 当前引用计数
+    /// 当前持有者数 (PMM 计数面, 0 = 未计数帧)
     #[inline(always)]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
     pub fn ref_count(&self) -> u32 {
-        self.ref_count.load(Ordering::Acquire)
+        crate::framework::mm::api::frame_ref_count(self.phys)
     }
 
-    /// 增加引用计数 (如被页表映射、DMA 缓冲引用)
+    /// 登记一个额外持有者 (如被页表映射、DMA 缓冲引用)。
+    ///
+    /// 返回 `false` = 帧不处于计数态 (未计数块 / MMIO 地址), 未登记成功。
     #[inline(always)]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
-    pub fn inc_ref(&self) {
-        self.ref_count.fetch_add(1, Ordering::AcqRel);
-    }
-
-    /// 减少引用计数。返回 true 表示计数归零，可物理释放。
-    #[inline(always)]
-    #[expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    )]
-    pub fn dec_ref(&self) -> bool {
-        let prev = self.ref_count.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(prev > 0, "Frame ref_count underflow");
-        prev == 1
+    pub fn inc_ref(&self) -> bool {
+        crate::framework::mm::api::frame_inc(self.phys)
     }
 
     /// 自定义元数据（services 可挂载任意 usize 值）
@@ -163,6 +150,51 @@ impl Frame {
     }
 }
 
+impl Clone for Frame {
+    /// 派生一个共享同一物理帧的句柄 (持有者 +1)。
+    ///
+    /// 帧不处于计数态 (MMIO / 未计数块 / 计数已归零) 时 **硬失败**：
+    /// 静默产生未计数句柄会让后续 `Drop` 把仍被使用的物理帧计入零。
+    fn clone(&self) -> Self {
+        assert!(
+            crate::framework::mm::api::frame_inc(self.phys),
+            "Frame::clone 要求帧处于持有计数态 (分配后未归零)"
+        );
+        Self {
+            phys: self.phys,
+            order: self.order,
+            meta: self.meta,
+        }
+    }
+}
+
+impl Drop for Frame {
+    /// 注销本句柄的持有者 (持有者 −1)；**仅计数归零才归还**物理帧。
+    fn drop(&mut self) {
+        // host 维: 帧为纯算术载体 (host-tests/src/dma_stream.rs 经 from_raw 构造
+        // 伪地址/MMIO 地址), 不触碰 PMM —— 与 sync/spinlock.rs 的
+        // "host 无中断语义降为 no-op" 先例同型, 非平行实现.
+        #[cfg(not(feature = "host-test"))]
+        {
+            use crate::framework::mm::{api, pmm};
+            if self.order == 0 {
+                // 单页帧: 持有计数归零才归还 (frame_dec 返回 true = 无其他持有者)
+                if api::frame_dec(self.phys) {
+                    api::pmm_free_page_phys(self.phys);
+                }
+            } else if self.order <= pmm::MAX_BUDDY_ORDER {
+                // 连续多帧块: 块内页不参与计数 (见 pmm::alloc_pages 的 SIMPLIFIED 契约),
+                // 整块视为单一持有者, 按阶整块归还
+                api::pmm_free_pages_phys(self.phys, 1usize << self.order);
+            }
+            // SIMPLIFIED: order > MAX_BUDDY_ORDER (1GB 大页, 经 alloc_huge(Size1G) 构造)
+            // 无 buddy 阶可表达, 不归还 (fail-closed: 宁可泄漏也不按错阶释放 buddy 状态);
+            // 影响面: 仅该形态帧 (当前零调用点); 何时需扩展: 出现 alloc_huge(Size1G)
+            // 真实使用点时改走 pmm::free_huge_page(phys, PageSize::Size1G).
+        }
+    }
+}
+
 impl fmt::Display for Frame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -175,6 +207,6 @@ impl fmt::Display for Frame {
     }
 }
 
-// SAFETY: Frame 是堆分配对象，Send + Sync 来自 AtomicU32 的安全并发访问。
+// SAFETY: Frame 是堆分配对象，Send + Sync 来自 PMM 计数面 (内部锁保护) 的安全并发访问。
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}

@@ -5,6 +5,11 @@
 //! `fork()` 时父子进程**共享**物理页，均标记为只读。
 //! 任意一方写入时触发 #PF → COW handler → 复制物理页。
 //!
+//! **架构边界**：置只读依赖缺页恢复路径。`x86_64` 侧完整；aarch64 无 page-fault
+//! 处理器（EL0 非 SVC 同步异常径直停机），故 aarch64 的 `fork` **只登记帧持有计数、
+//! 不置只读**（保持既有"共享写"语义）。补齐 aarch64 缺页路径是内核工程必需项，
+//! 见 [cr3-lifetime-ownership.md](../../docs/plan/cr3-lifetime-ownership.md) D-13 登记项。
+//!
 //! ## 引用计数
 //!
 //! 计数面已下沉到 PMM（`frame_inc` / `frame_dec` / `frame_ref_count`，按 pfn 索引）：
@@ -23,7 +28,34 @@
 //! - volatile 读写确保编译器不重排 MMIO 相关的页表操作。
 
 use super::vmm;
-use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr};
+use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, is_user_leaf};
+
+/// COW 标记: **用户可写** leaf → 只读; 其余情形**原值返回** (`x86_64` 非用户可写页,
+/// 以及 aarch64 全量).
+///
+/// 置只读的前提是"首次写入能被缺页处理器复制恢复". aarch64 无 page-fault 处理器
+/// (EL0 非 SVC 同步异常径直停机), 置只读会让 fork 后的首次写入挂死系统, 故 aarch64
+/// 分支恒返回原值 —— 保持既有"共享写"语义 (见 `docs/plan/cr3-lifetime-ownership.md`
+/// D-13 详情与登记项).
+#[inline]
+fn mark_cow_readonly(entry: u64) -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // bit1 为可写位 (WRITABLE), bit2 为用户位 (USER)
+        if entry & 0b10 != 0 && entry & 0b100 != 0 {
+            entry & !0b10
+        } else {
+            entry
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SIMPLIFIED: aarch64 无缺页处理器 ⇒ 不置只读, 仅登记帧持有计数;
+        // 影响面: fork 后父子为"共享写"而非真 COW, 跨进程写竞争需用户态自行避免;
+        // 何时扩展: 补齐 aarch64 缺页/COW 恢复路径后, 此分支改为清 AP[2] (bit7).
+        entry
+    }
+}
 
 #[expect(
     clippy::used_underscore_binding,
@@ -205,29 +237,37 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         }
     }
 
-    // 阶段 2: 无分配的"清 WRITABLE + 登记持有者". 阶段 1 已保证所有页表帧分配成功,
+    // 阶段 2: 无分配的"登记持有者 + 清 WRITABLE". 阶段 1 已保证所有页表帧分配成功,
     // 故阶段 2 不可能失败, 无需回滚路径.
     //
-    // B05-55 根治: COW 仅应用于 USER 可写页 (P=1, W=1, U=1). 用户页表低半区还含
+    // 计数面 (§8.1 规则 3 的 fork 侧): **每个用户 leaf** 在父子两侧各持一份引用,
+    // 与拆除侧 (unmap / destroy_page_table 的逐用户 leaf frame_dec) 严格同集 ——
+    // 判据统一走 `is_user_leaf` 分派, 不用裸位掩码.
+    //
+    // COW 标记只对"用户可写页"且只在具备缺页恢复路径的架构上做. 用户页表低半区还含
     // KPTI 映射的 supervisor 页 (USER_CR3_SAVE, SyscallPerCpu, GDT/IDT/TSS, IST 栈,
-    // RSP0 栈), 这些页无 USER 位. 原实现仅判 W 位, fork 时把这些内核页 WRITABLE
-    // 清除 → 用户态异常入口写 USER_CR3_SAVE → 写保护 #PF → 死循环/Triple Fault.
+    // RSP0 栈), 这些页无 USER 位; 若对其清 WRITABLE, 用户态异常入口写 USER_CR3_SAVE
+    // → 写保护 #PF → 死循环/Triple Fault.
     for_each_cow_leaf(
         parent_pml4,
         child_pml4_phys.as_u64(),
         |parent_slot, child_slot, parent_pte| {
-            let flags = parent_pte & 0xFFF;
-            if (flags & 2) == 0 || (flags & 4) == 0 {
+            if !is_user_leaf(parent_pte) {
                 return;
             }
-            // SAFETY: 两槽位均为有效页表页内的 4KB leaf 槽位; 本函数外层持 VMM_LOCK,
-            // 这两个槽位由本函数独占访问
-            unsafe {
-                parent_slot.write_volatile(parent_pte & !2u64);
-                child_slot.write_volatile(parent_pte & !2u64);
-            }
-            // fork: 父子各持引用 (每 leaf 一次), PMM 帧持有计数 1 → 2
+            // fork: 父子各持引用 (每 leaf 一次), PMM 帧持有计数 +1
             pmm.frame_inc(PhysAddr(parent_pte & 0x000FFFFFFFFFF000));
+
+            // 仅当 COW 标记确有变化时才写回 (aarch64 分支恒为原值 ⇒ 两侧都不写)
+            let ro_entry = mark_cow_readonly(parent_pte);
+            if ro_entry != parent_pte {
+                // SAFETY: 两槽位均为有效页表页内的 4KB leaf 槽位; 本函数外层持
+                // VMM_LOCK, 这两个槽位由本函数独占访问
+                unsafe {
+                    parent_slot.write_volatile(ro_entry);
+                    child_slot.write_volatile(ro_entry);
+                }
+            }
         },
     );
 

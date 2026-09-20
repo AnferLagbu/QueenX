@@ -81,9 +81,7 @@ fn nvme_msix_dispatch() {
 #[cfg(target_arch = "x86_64")]
 fn nvme_msix03_selftest(ci: usize) {
     use crate::framework::driver::storage::nvme as fw_nvme;
-    use crate::framework::driver::storage::{
-        nvme_alloc_dma_buffer, nvme_free_dma_buffer, nvme_with_interrupts_enabled,
-    };
+    use crate::framework::driver::storage::{nvme_alloc_dma_buffer, nvme_with_interrupts_enabled};
     use crate::framework::mm::PAGE_SIZE;
 
     let has_irq = NVME_CONTROLLERS
@@ -96,10 +94,12 @@ fn nvme_msix03_selftest(ci: usize) {
 
     slog_info!(Driver, "[MSIX-03][services] pre-test hook entered (ctrl {ci})");
 
-    let Some((buf_virt, buf_phys, buf_size)) = nvme_alloc_dma_buffer(PAGE_SIZE as usize) else {
+    // RAII 句柄: 作用域结束 (含提前 return) 即归还 DMA 缓冲
+    let Some(buf) = nvme_alloc_dma_buffer(PAGE_SIZE as usize) else {
         slog_warn!(Driver, "[MSIX-03][services] DMA alloc failed, skip");
         return;
     };
+    let buf_phys = buf.dma_addr().as_u64();
 
     // 锁内提交: IF=0 无中断窗口, 计数捕获与提交原子 (无丢失唤醒)
     let cmd = fw_nvme::NvmeCommand::read(1, 0, 1, buf_phys);
@@ -109,7 +109,6 @@ fn nvme_msix03_selftest(ci: usize) {
     };
     let Ok(before) = submitted else {
         slog_warn!(Driver, "[MSIX-03][services] io submit failed, skip");
-        nvme_free_dma_buffer(buf_virt, buf_size);
         return;
     };
 
@@ -139,7 +138,6 @@ fn nvme_msix03_selftest(ci: usize) {
         "[MSIX-03][services] ISR-driven io read (ctrl {ci}): {}",
         if handled { "Ok" } else { "Err(timeout)" }
     );
-    nvme_free_dma_buffer(buf_virt, buf_size);
 }
 
 /// 初始化存储子系统并注册块设备到 Chitin (services 权威)

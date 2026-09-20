@@ -33,6 +33,7 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.1.6 任务: USB/XHCI 驱动迁移
 
+use crate::framework::dma_buf::DmaStream;
 use crate::framework::iomem::IoMem;
 use crate::framework::mm::PhysAddr;
 use crate::services::error::KernelError;
@@ -772,12 +773,8 @@ impl XhciController {
 ///
 /// 所有 DMA 操作通过 framework safe wrapper 执行, 0 unsafe。
 pub struct TransferRing {
-    /// TRB 缓冲区虚拟地址 (DMA 分配)
-    vaddr: u64,
-    /// TRB 缓冲区物理地址 (写 Doorbell 前需用)
-    paddr: u64,
-    /// 缓冲区实际字节数
-    buf_size: usize,
+    /// TRB 缓冲区 DMA 句柄 (RAII: 本结构析构即归还; 虚拟/物理地址由句柄派生)
+    dma: DmaStream,
     /// 队列深度 (TRB 条目数)
     depth: u32,
     /// 当前 enqueue 位置 (下一个可写 TRB 索引)
@@ -797,37 +794,27 @@ impl TransferRing {
     /// - `None`: DMA 分配失败
     pub fn new(max_trbs: u32) -> Option<Self> {
         let buf_size = (max_trbs as usize) * core::mem::size_of::<Trb>();
-        let (vaddr, paddr, actual_size) =
-            crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)?;
+        let dma = crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)?;
 
         // 清零 — 通过 framework safe wrapper
-        crate::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_zero_dma(
+            dma.cpu_addr().as_ptr() as u64,
+            dma.size(),
+        );
 
-        let depth = (actual_size / core::mem::size_of::<Trb>()) as u32;
+        let depth = (dma.size() / core::mem::size_of::<Trb>()) as u32;
 
         Some(Self {
-            vaddr,
-            paddr,
-            buf_size: actual_size,
+            dma,
             depth,
             enqueue_index: 0,
             cycle: true,
         })
     }
 
-    /// 释放 Transfer Ring DMA 内存.
-    pub fn free(&self) {
-        if self.vaddr != 0 {
-            crate::framework::driver::storage::nvme_free_dma_buffer(
-                self.vaddr,
-                self.buf_size,
-            );
-        }
-    }
-
     /// 获取物理地址 (用于设置 Endpoint Context dequeue pointer).
     pub fn physical_address(&self) -> u64 {
-        self.paddr
+        self.dma.dma_addr().as_u64()
     }
 
     /// 获取当前 enqueue 偏移 (字节), 用于更新 Endpoint Context.
@@ -866,9 +853,10 @@ impl TransferRing {
 
         // 通过 framework safe wrapper 写入 TRB
         // 创建 raw pointer 是 safe 操作; 实际解引用由 framework 内部 unsafe 完成
+        let vaddr = self.dma.cpu_addr().as_ptr() as u64;
         let trb_ptr: *const u8 = &trb as *const Trb as *const u8;
         crate::framework::driver::storage::xhci_write_trb(
-            self.vaddr,
+            vaddr,
             self.enqueue_index,
             trb_ptr,
         );
@@ -880,10 +868,10 @@ impl TransferRing {
             let link_control = (TrbType::Link as u32) << 10
                 | 1 << 1 // Toggle Cycle
                 | u32::from(self.cycle);
-            let link_trb = Trb::new(self.paddr, 0, link_control);
+            let link_trb = Trb::new(self.dma.dma_addr().as_u64(), 0, link_control);
             let link_ptr: *const u8 = &link_trb as *const Trb as *const u8;
             crate::framework::driver::storage::xhci_write_trb(
-                self.vaddr,
+                vaddr,
                 self.enqueue_index,
                 link_ptr,
             );
@@ -1006,7 +994,10 @@ impl TransferRing {
     /// 清空 Transfer Ring (重置所有 TRB, 回到初始状态).
     pub fn reset(&mut self) {
         // 通过 framework safe wrapper 清零
-        crate::framework::driver::storage::nvme_zero_dma(self.vaddr, self.buf_size);
+        crate::framework::driver::storage::nvme_zero_dma(
+            self.dma.cpu_addr().as_ptr() as u64,
+            self.dma.size(),
+        );
         self.enqueue_index = 0;
         self.cycle = true;
     }

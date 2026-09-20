@@ -16,6 +16,7 @@
 // 说明: `super::KERNEL_BASE` / `super::kpti::kpti_init` 走显式路径, 无需在此导入.
 use super::{
     PAGE_NX, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PhysAddr, VirtAddr, get_pmm,
+    is_user_leaf,
 };
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -708,16 +709,30 @@ impl Aarch64Vmm {
         }
         let l3_idx = l3_index(vaddr);
 
-        // 清除 L3 页描述符
+        // 清除 L3 页描述符, 保留旧值以判定是否为用户 leaf (帧持有计数面)
         // SAFETY: l3 是已验证的 L3 页表基地址；l3_idx < 512。
-        unsafe {
+        let old_entry = unsafe {
+            let entry = ptr::read_volatile(l3.add(l3_idx));
             ptr::write_volatile(l3.add(l3_idx), 0);
-        }
+            entry
+        };
 
         // TLB 失效 — 必须在释放页表页前执行, 以避免投机性遍历落入已释放物理页.
         // SAFETY: 标准 TLB 失效序列；ARM 架构要求 tlbi vaae1is 的操作数是虚拟地址右移12位（页帧号）。
         unsafe {
             core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
+        }
+
+        // §8.1 规则 3: 拆除用户 leaf 即注销该映射持有的一份帧引用, 归零才释放.
+        // **必须过滤用户 leaf**: KPTI supervisor 页与内核页表共享同一物理帧, 参与计数
+        // 会误释放; 设备/MMIO 映射的 pfn 越界, frame_dec 侧 fail-closed 拒绝.
+        // 释放时机**严格晚于**上面的 tlbi + dsb ish —— 先让所有核停止使用该映射,
+        // 再归还物理帧 (aarch64 广播失效即追平, 不移植 `x86_64` 的 defer_free).
+        if is_user_leaf(old_entry) {
+            let user_phys = old_entry & 0x0000_FFFF_FFFF_F000;
+            if get_pmm().frame_dec(PhysAddr(user_phys)) {
+                get_pmm().free_page(PhysAddr(user_phys));
+            }
         }
 
         // 递归释放空的中间页表页, 避免 unmap 间内存泄漏
@@ -1077,6 +1092,13 @@ impl Aarch64Vmm {
             return;
         }
 
+        // 释放前先做一次系统级失效: 本函数会立即归还用户数据帧与各级页表帧,
+        // 必须确保所有核已停止用该页表 (复用 switch_page_table 的广播形态).
+        // SAFETY: 标准系统级 TLB 失效序列, 不触及任何 Rust 内存.
+        unsafe {
+            core::arch::asm!("dsb ishst", "tlbi vmalle1is", "dsb ish", "isb");
+        }
+
         // SAFETY: phys_to_virt converts root_paddr to kernel VA
         let l0 = phys_to_virt(root_paddr) as *mut u64;
 
@@ -1116,7 +1138,28 @@ impl Aarch64Vmm {
                 let entry = ptr::read_volatile(l2.add(i));
                 if entry & 0b11 == 0b11 {
                     let l3_paddr = entry & 0x0000_FFFF_FFFF_F000;
-                    self.free_table(l3_paddr);
+                    self.destroy_l3_table(l3_paddr);
+                }
+            }
+        }
+        self.free_table(paddr);
+    }
+
+    /// 销毁 L3 表: 逐**用户 leaf** 注销帧引用 (归零才释放), 随后释放 L3 页表页本身.
+    ///
+    /// §8.1 规则 3 的拆除侧: 每个用户 leaf 持有其帧一份引用 ⇒ 拆除即 `frame_dec`,
+    /// 与 fork 的 +1 侧 (`cow::clone_user_page_table_cow_inner`) 同集.
+    /// 归零即释放 (aarch64 广播失效即追平, 不移植 `x86_64` 的 `defer_free`).
+    /// 大页 leaf (L2 块描述符 `0b01`) 不参与计数, 与 `x86_64` 一致.
+    fn destroy_l3_table(&self, paddr: u64) {
+        let l3 = phys_to_virt(paddr) as *mut u64;
+        for i in 0..512 {
+            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            let entry = unsafe { ptr::read_volatile(l3.add(i)) };
+            if is_user_leaf(entry) {
+                let user_phys = entry & 0x0000_FFFF_FFFF_F000;
+                if get_pmm().frame_dec(PhysAddr(user_phys)) {
+                    get_pmm().free_page(PhysAddr(user_phys));
                 }
             }
         }

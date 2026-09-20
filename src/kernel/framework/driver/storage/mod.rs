@@ -32,6 +32,7 @@ pub use ahci::H2dFis;
 pub use nvme::{NvmeCommand, NvmeCompletion};
 
 use super::framework;
+use crate::framework::dma_buf::{DmaDirection, DmaStream};
 use crate::framework::iomem::IoMem;
 #[cfg(target_arch = "x86_64")]
 use crate::framework::arch::InterruptArch;
@@ -278,29 +279,33 @@ pub fn nvme_alloc_io_queues() -> Option<((u64, u64), (u64, u64))> {
     Some(((sq_virt.0, sq_phys.0), (cq_virt.0, cq_phys.0)))
 }
 
-/// 分配 DMA 缓冲区, 返回 `(vaddr, phys_addr, size)` —
-/// 实际分配大小可能向上对齐到页。
-pub fn nvme_alloc_dma_buffer(size: usize) -> Option<(u64, u64, usize)> {
+/// 分配 DMA 缓冲区 (RAII 句柄) — NVMe / AHCI / xHCI 共用入口。
+///
+/// 物理页由 `BuddyFrameAlloc` 分配并清零, 句柄析构即按持有计数归还物理帧
+/// (取代原 `alloc_coherent` + `free_coherent` 双键反查路径)。
+fn alloc_dma_buffer(size: usize) -> Option<DmaStream> {
+    use crate::framework::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
     use crate::framework::dma::get_dma;
+    use crate::framework::mm::PAGE_SIZE;
 
-    let dma = get_dma();
-    if !dma.is_initialized() {
+    if size == 0 {
         return None;
     }
-
-    let (v, p) = dma.alloc_coherent(size)?;
-    Some((v.0, p.0, size))
+    let pages = size.div_ceil(PAGE_SIZE as usize);
+    let frame = BuddyFrameAlloc.alloc_pages(pages)?;
+    // 清零: 设备读到的初值必须是已定义数据
+    frame.zero();
+    let stream = DmaStream::from_frame(frame, DmaDirection::Bidirectional).ok()?;
+    // 保持既有 alloc_coherent 的"清零对设备可见"语义
+    // (x86_64: CLFLUSH 循环; aarch64: DC CVAU + dsb ish)
+    get_dma().cache_flush(stream.dma_addr().to_virt(), stream.size());
+    Some(stream)
 }
 
-/// 释放 DMA 缓冲区
-pub fn nvme_free_dma_buffer(vaddr: u64, size: usize) {
-    use crate::framework::dma::get_dma;
-    use crate::framework::mm::VirtAddr;
-
-    let dma = get_dma();
-    if vaddr != 0 {
-        dma.free_coherent(VirtAddr(vaddr), size);
-    }
+/// 分配 DMA 缓冲区, 返回持有该缓冲区的 RAII 句柄 —
+/// 实际分配大小按页向上取整 (`DmaStream::size()` 可能大于 `size`)。
+pub fn nvme_alloc_dma_buffer(size: usize) -> Option<DmaStream> {
+    alloc_dma_buffer(size)
 }
 
 /// 向 `NVMe` Admin SQ 提交命令并等待完成
@@ -605,28 +610,9 @@ pub fn ahci_alloc_port_dma() -> Option<AhciCmdListHandle> {
     })
 }
 
-/// AHCI DMA buffer 分配 (用于读写数据传输)
-pub fn ahci_alloc_dma_buffer(size: usize) -> Option<(u64, u64, usize)> {
-    use crate::framework::dma::get_dma;
-
-    let dma = get_dma();
-    if !dma.is_initialized() {
-        return None;
-    }
-
-    let (v, p) = dma.alloc_coherent(size)?;
-    Some((v.0, p.0, size))
-}
-
-/// 释放 AHCI DMA 缓冲区
-pub fn ahci_free_dma_buffer(vaddr: u64, size: usize) {
-    use crate::framework::dma::get_dma;
-    use crate::framework::mm::VirtAddr;
-
-    let dma = get_dma();
-    if vaddr != 0 {
-        dma.free_coherent(VirtAddr(vaddr), size);
-    }
+/// AHCI DMA buffer 分配 (用于读写数据传输), 返回 RAII 句柄
+pub fn ahci_alloc_dma_buffer(size: usize) -> Option<DmaStream> {
+    alloc_dma_buffer(size)
 }
 
 /// 复制数据到 AHCI DMA 缓冲区

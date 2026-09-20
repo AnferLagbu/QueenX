@@ -876,14 +876,15 @@ impl AhciPort {
 
         let byte_count = u32::from(count) * SECTOR_SIZE as u32;
 
-        // 分配 DMA 缓冲区
-        let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::framework::driver::storage::ahci_alloc_dma_buffer(
-                byte_count as usize,
-            ) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
+        let buf = match crate::framework::driver::storage::ahci_alloc_dma_buffer(
+            byte_count as usize,
+        ) {
+            Some(v) => v,
+            None => return Err(()),
+        };
+        let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
+        let buf_paddr = buf.dma_addr().as_u64();
 
         let fis = H2dFis::read_dma(lba, count);
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);
@@ -897,7 +898,6 @@ impl AhciPort {
             );
         }
 
-        crate::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
@@ -933,14 +933,15 @@ impl AhciPort {
 
         let byte_count = u32::from(count) * SECTOR_SIZE as u32;
 
-        // 分配 DMA 缓冲区
-        let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::framework::driver::storage::ahci_alloc_dma_buffer(
-                byte_count as usize,
-            ) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
+        let buf = match crate::framework::driver::storage::ahci_alloc_dma_buffer(
+            byte_count as usize,
+        ) {
+            Some(v) => v,
+            None => return Err(()),
+        };
+        let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
+        let buf_paddr = buf.dma_addr().as_u64();
 
         // 复制数据到 DMA 缓冲区
         crate::framework::driver::storage::ahci_copy_to_dma(
@@ -952,13 +953,12 @@ impl AhciPort {
         let fis = H2dFis::write_dma(lba, count);
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, true);
 
-        crate::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
     #[expect(
         clippy::similar_names,
-        reason = "变量名相似表达同族概念 (DMA 三元组 buf_vaddr/buf_paddr/buf_size 物理/虚拟地址对); 与同文件 read/write_dma 一致, 重命名破坏领域语义连续性"
+        reason = "变量名相似表达同族概念 (buf_vaddr/buf_paddr 虚拟/物理地址对); 与同文件 read/write_dma 一致, 重命名破坏领域语义连续性"
     )]
     /// ATA IDENTIFY DEVICE (0xEC, PIO-in 经 PRDT 传输)
     ///
@@ -975,11 +975,14 @@ impl AhciPort {
         }
 
         let byte_count = SECTOR_SIZE as u32;
-        let Some((buf_vaddr, buf_paddr, buf_size)) =
-            crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
+
+        // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
+        let Some(buf) = crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
         else {
             return Err(());
         };
+        let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
+        let buf_paddr = buf.dma_addr().as_u64();
 
         let fis = H2dFis::identify();
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, false);
@@ -992,7 +995,6 @@ impl AhciPort {
             );
         }
 
-        crate::framework::driver::storage::ahci_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 }

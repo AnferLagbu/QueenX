@@ -217,6 +217,30 @@ pub const PAGE_USER: u64 = 1 << 2;
 pub const PAGE_HUGE: u64 = 1 << 7; // 大页标志 (huge page)
 pub const PAGE_NX: u64 = 1u64 << 63;
 
+/// 裸 `u64` 页表项是否为**用户 leaf** —— 帧持有计数面的唯一判据.
+///
+/// fork 的 +1 侧 (`cow::clone_user_page_table_cow_inner`) 与拆除的 −1 侧
+/// (`vmm::unmap_page_in_table` / `vmm::destroy_page_table`) 必须**同集**, 否则会把
+/// 仍在映射的帧计入零而误释放 (UAF). 置于父模块是为了让两处共用同一实现 ——
+/// `vmm` 反向依赖 `cow` 会构成模块环依赖 (违反 F3).
+///
+/// 类型化封装 `PageTableEntry::is_user` 只适用于 `x86_64` 的 PTE 结构, 裸 `u64`
+/// 判据必须按架构分派位布局:
+/// - `x86_64`: bit2 为用户位 (USER).
+/// - aarch64: bits[1:0] = 0b11 页描述符, bit6 = AP[1] (EL0 可访问).
+///   aarch64 的 bit2 是 MAIR 属性索引位, 裸用 `PAGE_USER` 会误判.
+#[inline]
+pub(crate) fn is_user_leaf(entry: u64) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        entry & PAGE_USER != 0
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        entry & 0b11 == 0b11 && entry & (1 << 6) != 0
+    }
+}
+
 /// 页表索引辅助宏
 #[inline(always)]
 #[expect(

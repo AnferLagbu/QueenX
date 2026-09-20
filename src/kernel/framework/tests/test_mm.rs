@@ -786,6 +786,116 @@ fn test_cow_unique_mapping_fault_reuses_frame() -> TestResult {
     TestResult::Pass
 }
 
+// ============================================================
+// 帧句柄语义: Clone/Drop 与 PMM 持有计数配对 (cr3-lifetime-ownership.md §8.3)
+// ============================================================
+
+/// host-test 无 PMM 初始化 → 跳过 (帧归还面在 PMM 侧)
+#[cfg(feature = "host-test")]
+fn test_frame_handle_clone_drop_pairing() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (帧持有计数面在 PMM 侧)")
+}
+
+/// `Frame` 句柄语义: `Clone` ⇒ 持有者 +1, `Drop` ⇒ 持有者 −1, **仅归零才归还**.
+///
+/// **判别力**: 把 `Frame` 退回"本地计数器"形态后, 句柄析构不再经 PMM 计数面
+/// ⇒ "未归零不得归还"与"归零即归还"两侧均失去观测面 (本用例同时判两侧).
+#[cfg(not(feature = "host-test"))]
+fn test_frame_handle_clone_drop_pairing() -> TestResult {
+    use crate::framework::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pmm = get_pmm();
+    let alloc = BuddyFrameAlloc;
+    let free_before = alloc.free_pages();
+
+    let Some(frame) = alloc.alloc(0) else {
+        return TestResult::Fail("FrameAlloc::alloc(0) 失败");
+    };
+    let phys = frame.phys();
+    check!(pmm.frame_ref_count(phys) == 1, "分配后持有者数应为 1");
+    check!(alloc.free_pages() == free_before - 1, "分配应从 PMM 取走一页");
+    check!(frame.ref_count() == 1, "Frame::ref_count 应读同一计数面");
+
+    let shared = frame.clone();
+    check!(pmm.frame_ref_count(phys) == 2, "Clone 后持有者数应为 2");
+    check!(shared.phys() == phys, "克隆句柄应指向同一物理帧");
+
+    drop(shared);
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "克隆句柄析构后持有者数应回到 1"
+    );
+    check!(
+        alloc.free_pages() == free_before - 1,
+        "仍有持有者时不得归还物理帧"
+    );
+
+    // 未归零的帧不得被重新发放
+    let mut reissued = false;
+    for _ in 0..64 {
+        if let Some(p) = pmm.alloc_page() {
+            if p.0 == phys.0 {
+                reissued = true;
+            }
+            pmm.free_page(p);
+        }
+    }
+    check!(!reissued, "仍有持有者的帧不得被重新分配");
+
+    drop(frame);
+    check!(pmm.frame_ref_count(phys) == 0, "最后一个句柄析构后计数归零");
+    check!(alloc.free_pages() == free_before, "计数归零即归还物理帧");
+    TestResult::Pass
+}
+
+/// host-test 无 PMM 初始化 → 跳过 (帧归还面在 PMM 侧)
+#[cfg(feature = "host-test")]
+fn test_frame_dma_buffer_raii_release() -> TestResult {
+    TestResult::Skip("E-04: host 无 PMM 初始化, 跳过 (帧持有计数面在 PMM 侧)")
+}
+
+/// driver DMA 缓冲接线面: 句柄 RAII 归还, 且**按帧自身阶数**整块归还 (§8.3 D-12).
+///
+/// **判别力**: 请求 2 页时若 `Frame.order` 与 buddy 实际块阶不一致 (旧 `alloc_pages`
+/// 硬编码 order 9), 析构会按错阶释放 ⇒ 归还页数与分配页数不等 (本用例按页数判据捕捉).
+#[cfg(not(feature = "host-test"))]
+fn test_frame_dma_buffer_raii_release() -> TestResult {
+    use crate::framework::alloc::frame_alloc::{BuddyFrameAlloc, FrameAlloc};
+    use crate::framework::driver::storage::nvme_alloc_dma_buffer;
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pmm = get_pmm();
+    let alloc = BuddyFrameAlloc;
+    let free_before = alloc.free_pages();
+
+    // 请求 2 页 (8 KiB) ⇒ 帧阶数应为 1, 缓冲大小按页取整
+    let Some(buf) = nvme_alloc_dma_buffer(2 * PAGE_SIZE as usize) else {
+        return TestResult::Fail("nvme_alloc_dma_buffer 失败");
+    };
+    let phys = buf.dma_addr();
+    check!(
+        buf.size() == 2 * PAGE_SIZE as usize,
+        "2 页请求应得到 2 页缓冲 (页取整且阶数同值)"
+    );
+    check!(alloc.free_pages() == free_before - 2, "分配应取走 2 页");
+    check!(
+        buf.cpu_addr().as_ptr() as u64 == phys.to_virt().0,
+        "CPU 虚拟地址应为物理地址的内核直接映射"
+    );
+    // SAFETY: 缓冲由 PMM 分配 2 页, 内核直接映射可读整块
+    let zeroed = unsafe { core::ptr::read_volatile(phys.to_virt().0 as *const u8) };
+    check!(zeroed == 0, "DMA 缓冲初值应为零 (清零对设备可见)");
+
+    drop(buf);
+    check!(
+        alloc.free_pages() == free_before,
+        "句柄析构应按帧阶数整块归还 (页数守恒)"
+    );
+    check!(pmm.frame_ref_count(phys) == 0, "归还后计数面应无残留持有者");
+    TestResult::Pass
+}
+
 pub fn register_mm_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -822,6 +932,10 @@ pub fn register_mm_tests() {
             "child_write_isolated_from_parent": test_cow_child_write_isolated_from_parent,
             "shared_frame_survives_owner_exit": test_cow_shared_frame_survives_owner_exit,
             "unique_mapping_fault_reuses_frame": test_cow_unique_mapping_fault_reuses_frame,
+        },
+        "mm::frame": {
+            "handle_clone_drop_pairing": test_frame_handle_clone_drop_pairing,
+            "dma_buffer_raii_release": test_frame_dma_buffer_raii_release,
         },
         "mm::uffd": {
             "lifecycle": test_uffd_instance_lifecycle,

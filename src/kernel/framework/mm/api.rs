@@ -150,6 +150,26 @@ pub fn pmm_free_pages_phys(addr: super::PhysAddr, count: usize) {
     get_pmm().free_pages(addr, count);
 }
 
+/// 登记一个帧持有者 (共享语义), 契约见 `PhysicalMemoryManager::frame_inc`.
+///
+/// 返回 `true` = 计数已 +1; `false` = 帧不处于计数态 (未计数块 / MMIO / pfn 越界),
+/// 调用方按 fail-closed 处理 (不得当作登记成功).
+pub fn frame_inc(addr: super::PhysAddr) -> bool {
+    get_pmm().frame_inc(addr)
+}
+
+/// 注销一个帧持有者, 契约见 `PhysicalMemoryManager::frame_dec`.
+///
+/// 返回 `true` = 计数归零 (调用方据此归还物理帧), `false` = 仍有持有者或未计数帧.
+pub fn frame_dec(addr: super::PhysAddr) -> bool {
+    get_pmm().frame_dec(addr)
+}
+
+/// 观测帧持有者数 (0 = 未计数帧), 契约见 `PhysicalMemoryManager::frame_ref_count`.
+pub fn frame_ref_count(addr: super::PhysAddr) -> u32 {
+    u32::from(get_pmm().frame_ref_count(addr))
+}
+
 /// 分配一个大页 (2MB 或 1GB), 返回物理地址.
 pub fn pmm_alloc_huge_page_phys(size_type: super::PageSize) -> Option<super::PhysAddr> {
     get_pmm().alloc_huge_page(size_type)

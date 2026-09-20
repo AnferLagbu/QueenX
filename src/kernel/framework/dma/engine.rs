@@ -427,7 +427,11 @@ impl DmaEngine {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
-    fn cache_flush(&self, addr: VirtAddr, size: usize) {
+    /// 刷新 CPU 缓存, 使 CPU 写入对设备可见 (一致性 DMA 分配后调用)。
+    ///
+    /// `pub(crate)`: framework 内其它 DMA 分配入口 (如 `driver/storage` 的
+    /// `DmaStream` 句柄路径) 复用同一实现, 避免缓存刷新逻辑出现第二份.
+    pub(crate) fn cache_flush(&self, addr: VirtAddr, size: usize) {
         // 架构相关缓存刷新
         #[cfg(target_arch = "x86_64")]
         {

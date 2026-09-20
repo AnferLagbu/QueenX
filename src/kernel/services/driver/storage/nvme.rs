@@ -922,7 +922,7 @@ impl NvmeController {
     /// Identify 控制器
     pub fn identify_controller(&mut self) -> bool {
         let buf_size = 4096; // Identify 数据为 4KB
-        let (vaddr, paddr, actual_size) = if let Some(v) =
+        let buf = if let Some(v) =
             crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
         {
             v
@@ -930,9 +930,11 @@ impl NvmeController {
             slog_warn!(Driver, "Identify 缓冲区分配失败");
             return false;
         };
+        let vaddr = buf.cpu_addr().as_ptr() as u64;
+        let paddr = buf.dma_addr().as_u64();
 
         // 清零缓冲区
-        crate::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_zero_dma(vaddr, buf.size());
 
         let cmd = fw_nvme::NvmeCommand::identify(0, IDENTIFY_CNS_CONTROLLER, paddr);
         let result = self.submit_admin_cmd(cmd);
@@ -962,7 +964,6 @@ impl NvmeController {
             }
         }
 
-        crate::framework::driver::storage::nvme_free_dma_buffer(vaddr, actual_size);
         success
     }
 
@@ -973,7 +974,7 @@ impl NvmeController {
     /// Identify 命名空间
     pub fn identify_namespace(&mut self, nsid: u32) -> bool {
         let buf_size = 4096;
-        let (vaddr, paddr, actual_size) = if let Some(v) =
+        let buf = if let Some(v) =
             crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
         {
             v
@@ -981,8 +982,10 @@ impl NvmeController {
             slog_warn!(Driver, "Identify NS 缓冲区分配失败");
             return false;
         };
+        let vaddr = buf.cpu_addr().as_ptr() as u64;
+        let paddr = buf.dma_addr().as_u64();
 
-        crate::framework::driver::storage::nvme_zero_dma(vaddr, actual_size);
+        crate::framework::driver::storage::nvme_zero_dma(vaddr, buf.size());
 
         let cmd = fw_nvme::NvmeCommand::identify(nsid, IDENTIFY_CNS_NAMESPACE, paddr);
         let result = self.submit_admin_cmd(cmd);
@@ -1020,7 +1023,6 @@ impl NvmeController {
             }
         }
 
-        crate::framework::driver::storage::nvme_free_dma_buffer(vaddr, actual_size);
         success
     }
 
@@ -1127,12 +1129,13 @@ impl NvmeController {
 
         let byte_count = (count as usize) * self.lba_format_size as usize;
 
-        // 分配 DMA 缓冲区
-        let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
+        let buf = match crate::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
+            Some(v) => v,
+            None => return Err(()),
+        };
+        let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
+        let buf_paddr = buf.dma_addr().as_u64();
 
         let nlb = ((byte_count + (self.lba_format_size as usize) - 1)
             / (self.lba_format_size as usize)) as u16;
@@ -1151,7 +1154,6 @@ impl NvmeController {
             );
         }
 
-        crate::framework::driver::storage::nvme_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 
@@ -1181,12 +1183,13 @@ impl NvmeController {
 
         let byte_count = (count as usize) * self.lba_format_size as usize;
 
-        // 分配 DMA 缓冲区
-        let (buf_vaddr, buf_paddr, buf_size) =
-            match crate::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
-                Some(v) => v,
-                None => return Err(()),
-            };
+        // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
+        let buf = match crate::framework::driver::storage::nvme_alloc_dma_buffer(byte_count) {
+            Some(v) => v,
+            None => return Err(()),
+        };
+        let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
+        let buf_paddr = buf.dma_addr().as_u64();
 
         // 复制数据到 DMA 缓冲区
         crate::framework::driver::storage::nvme_copy_to_dma(buf_vaddr, buffer, byte_count);
@@ -1200,7 +1203,6 @@ impl NvmeController {
 
         let result = self.submit_io_cmd(cmd);
 
-        crate::framework::driver::storage::nvme_free_dma_buffer(buf_vaddr, buf_size);
         result
     }
 

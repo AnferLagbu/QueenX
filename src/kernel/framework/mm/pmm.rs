@@ -31,7 +31,10 @@ use crate::framework::sync::OnceLock;
 const MAX_EARLY_ALLOCS: usize = 256;
 
 /// 最大 buddy 阶数: 2^9 × 4 KB = 2 MB
-const MAX_BUDDY_ORDER: u8 = 9;
+///
+/// `pub(crate)`: `Frame` 句柄析构需按同一界判定整块归还 (见 `frame.rs`),
+/// 避免该界在 framework 内出现第二份硬编码.
+pub(crate) const MAX_BUDDY_ORDER: u8 = 9;
 /// `buddy_meta` 中的哨兵值: 页面已分配 / 不是空闲链表头
 const BUDDY_ALLOCATED: u8 = 0xFF;
 /// 索引式空闲链表哨兵值: 表示链表头/尾 (无前驱或后继).
