@@ -164,7 +164,7 @@ pub fn devtree_unbind_user_device(
         process_dec_ref(pid);
 
         for (start, end) in &device_ranges {
-            mm.remove_range(*start, *end);
+            mm.remove_range(*start, *end, cr3);
         }
     }
 
@@ -340,7 +340,7 @@ pub fn devtree_unmap_user_device(
         vmm.unmap_page_in_table(cr3, page_virt);
     }
 
-    mm.remove_range(virt_addr, virt_addr + pages * PAGE_SIZE as usize);
+    mm.remove_range(virt_addr, virt_addr + pages * PAGE_SIZE as usize, cr3);
 
     devtree_clear_user_mapped(node_id);
 

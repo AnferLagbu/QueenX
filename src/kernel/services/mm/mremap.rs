@@ -25,7 +25,8 @@ use crate::framework::syscall::Errno;
 /// # Errors
 ///
 /// 当 `old_addr == 0`、`old_size == 0`、`new_size == 0`、`old_addr` 未按页对齐
-/// 或 flags 含非法位时返回 `EINVAL`; 当映射尺寸超过 1 GiB 上限时返回 `ENOMEM`.
+/// 或 flags 含非法位时返回 `EINVAL`; 当映射尺寸超过 1 GiB 上限时返回 `ENOMEM`;
+/// 当无法取得当前进程的用户页表根 (无 mm 或 cr3 为 0) 时返回 `ENOMEM`.
 pub fn mremap_syscall(
     mm: &MmStruct,
     old_addr: u64,
@@ -60,10 +61,16 @@ pub fn mremap_syscall(
     }
 
     // 2. 委托 framework 层执行搬迁
+    // 目标用户页表根: 被裁掉区间的页表项必须从进程用户页表拆除.
+    let cr3 = crate::framework::proc::process_get_cr3(
+        crate::framework::proc::process_get_current_pid(),
+    )
+    .ok_or(Errno::ENOMEM)?;
     mm.mremap(
         old_addr as usize,
         old_size as usize,
         new_size as usize,
         flags,
+        cr3,
     )
 }

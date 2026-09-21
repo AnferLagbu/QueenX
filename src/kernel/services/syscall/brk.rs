@@ -36,7 +36,15 @@ pub fn sys_brk(addr: u64) -> i64 {
 
     // VMA 路径: 通过 MmStruct 扩展/收缩堆
     if let Some(mm) = vma_get_current_mm() {
-        match mm.set_brk(addr as usize) {
+        // 目标用户页表根: 堆收缩需拆除堆页, 拆除必须作用在进程用户页表上.
+        // 取不到 (进程无 mm / cr3 为 0) 时 fail-closed, 不静默退化为操作内核表;
+        // 扩展方向虽不使用 cr3, 但同样要求进程具备合法页表根.
+        let Some(cr3) = crate::framework::proc::process_get_cr3(
+            crate::framework::proc::process_get_current_pid(),
+        ) else {
+            return Errno::ENOMEM.as_ret();
+        };
+        match mm.set_brk(addr as usize, cr3) {
             Ok(new_brk) => return new_brk as i64,
             Err(_) => return Errno::ENOMEM.as_ret(),
         }

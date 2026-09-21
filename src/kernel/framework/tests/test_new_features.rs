@@ -371,7 +371,8 @@ fn test_mm_struct_operations() -> TestResult {
         assert_eq_test!(v.start, 0x400000usize, "found start");
     }
 
-    mm.remove_range(0x400000, 0x401000);
+    // cr3 = 0: 本测试只校验 VMA 描述符增删, 不建页表; 显式变体对 cr3 == 0 直接返回.
+    mm.remove_range(0x400000, 0x401000, 0);
     let not_found = mm.find_vma(0x400500);
     check!(not_found.is_none(), "removed");
 

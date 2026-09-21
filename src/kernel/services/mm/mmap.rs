@@ -187,11 +187,14 @@ fn find_or_allocate_addr(
 #[inline]
 /// 执行 munmap 系统调用: 解除指定地址区间的内存映射.
 ///
-/// 先释放文件映射区域的 Page Cache 引用, 再从进程地址空间移除对应 VMA.
+/// 先释放文件映射区域的 Page Cache 引用, 再从进程地址空间移除对应 VMA
+/// 并拆除其页表项.
 ///
 /// # Errors
 ///
-/// 当 `addr == 0` 或 `length == 0` 时返回 `EINVAL`.
+/// 当 `addr == 0` 或 `length == 0` 时返回 `EINVAL`;
+/// 当无法取得当前进程的用户页表根 (无 mm 或 cr3 为 0) 时返回 `ENOMEM`
+/// (fail-closed: 不静默退化为操作内核表).
 pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno> {
     if addr == 0 || length == 0 {
         return Err(Errno::EINVAL);
@@ -200,9 +203,15 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
     let start = addr as usize;
     let end = start + length as usize;
 
+    // 目标用户页表根: 用户数据页建在进程用户页表上, 拆除必须作用在同一张表.
+    let cr3 = crate::framework::proc::process_get_cr3(
+        crate::framework::proc::process_get_current_pid(),
+    )
+    .ok_or(Errno::ENOMEM)?;
+
     release_file_pages(mm, start, end);
 
-    mm.remove_range(start, end);
+    mm.remove_range(start, end, cr3);
     Ok(())
 }
 

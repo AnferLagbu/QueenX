@@ -588,6 +588,106 @@ impl VirtualMemoryManager {
         self.release_lock(&_flags);
     }
 
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
+    )]
+    /// 修改**指定页表**中虚拟页的保护属性 (mprotect 显式变体)
+    ///
+    /// 与 [`Self::protect_page`] 的唯一区别是目标页表由调用方显式给出 (`pml4`),
+    /// 而非固定为内核表 `KERNEL_PML4`. 用户地址空间的 `mprotect` 必须走此变体:
+    /// 用户数据页建在**进程用户页表**上 (见 `create_user_page_table` 的说明),
+    /// 两表低半区不同源, 改内核表不会影响用户页权限.
+    ///
+    /// 遍历四级页表找到 PTE, 修改 R/W/U/NX 位, 然后 flush TLB.
+    /// 如果页不存在, 静默跳过 (mprotect 对未映射页无操作).
+    pub fn protect_page_in_table(&self, pml4: u64, virt: VirtAddr, new_flags: PageFlags) {
+        if pml4 == 0 {
+            return;
+        }
+
+        // 安全门: KPTI 共享页表防护
+        // 禁止修改 PML4[256..511] (kernel high half).
+        // KPTI init 时复制 PML4[256..512], 底层 PDPT/PD 页物理共享.
+        // 此处修改权限位会同时影响 kernel 和 user 页表.
+        if virt.pml4_idx() >= 256 {
+            crate::klog_boot_info!(
+                "[VMM] protect_page_in_table: skip kernel-half virt={:#X} pml4_idx={}",
+                virt.0,
+                virt.pml4_idx()
+            );
+            return;
+        }
+
+        let _flags = self.acquire_lock();
+
+        // SAFETY: pml4 是进程用户页表根物理地址; phys_to_virt 给出内核 VA.
+        let pml4_virt = PhysAddr(pml4).to_virt();
+
+        // SAFETY: VMM_LOCK held. Page table walk with present-bit guards at each level.
+        unsafe {
+            let pml4 = pml4_virt.0 as *mut PageTableEntry;
+            let pml4e = &*pml4.add(virt.pml4_idx());
+
+            if !pml4e.is_present() {
+                self.release_lock(&_flags);
+                return;
+            }
+
+            let pdpt = pml4e.frame().to_virt().0 as *mut PageTableEntry;
+            let pdpte = &*pdpt.add(virt.pdpt_idx());
+
+            if !pdpte.is_present() {
+                self.release_lock(&_flags);
+                return;
+            }
+
+            if pdpte.is_huge() {
+                // 1GB page: 修改 PDPT entry 的权限位
+                let entry = pdpt.add(virt.pdpt_idx());
+                let mut val = (*entry).value();
+                // 保留物理帧地址和保留位, 仅修改权限位
+                val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
+                val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
+                (*entry).set_value(val);
+                self.flush_tlb(virt.0);
+                self.release_lock(&_flags);
+                return;
+            }
+
+            let pd = pdpte.frame().to_virt().0 as *mut PageTableEntry;
+            let pde = &*pd.add(virt.pd_idx());
+
+            if !pde.is_present() {
+                self.release_lock(&_flags);
+                return;
+            }
+
+            if pde.is_huge() {
+                // 2MB page: 修改 PD entry 的权限位
+                let entry = pd.add(virt.pd_idx());
+                let mut val = (*entry).value();
+                val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
+                val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
+                (*entry).set_value(val);
+                self.flush_tlb(virt.0);
+                self.release_lock(&_flags);
+                return;
+            }
+
+            // 4KB page: 修改 PT entry 的权限位
+            let pt = pde.frame().to_virt().0 as *mut PageTableEntry;
+            let entry = pt.add(virt.pt_idx());
+            let mut val = (*entry).value();
+            val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
+            val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
+            (*entry).set_value(val);
+            self.flush_tlb(virt.0);
+        }
+
+        self.release_lock(&_flags);
+    }
+
     pub fn get_physical(&self, virt: VirtAddr) -> Option<PhysAddr> {
         self.get_physical_in_pml4(KERNEL_PML4.load(Ordering::Acquire), virt)
     }

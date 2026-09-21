@@ -556,6 +556,104 @@ impl Aarch64Vmm {
     }
 
     #[expect(
+        clippy::used_underscore_binding,
+        reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
+    )]
+    /// 修改**指定页表**中虚拟页的保护属性 (mprotect 显式变体)
+    ///
+    /// 与 [`Self::protect_page`] 的唯一区别是目标页表根由调用方显式给出
+    /// (`root_paddr`), 而非固定为内核表 `self.kernel_l0`. 用户地址空间的
+    /// `mprotect` 必须走此变体: 用户数据页建在**进程用户页表**上,
+    /// 改内核表不会影响用户页权限.
+    ///
+    /// 遍历 aarch64 页表, 找到目标页/块描述符, 保留物理地址,
+    /// 仅修改 AP (访问权限) 和 UXN/PXN (执行权限) 位, 然后 TLB invalidate.
+    pub fn protect_page_in_table(&self, root_paddr: u64, virt: VirtAddr, new_flags: PageFlags) {
+        if root_paddr == 0 {
+            return;
+        }
+
+        let _lock_flags = self.acquire_lock();
+
+        let vaddr = virt.as_u64();
+        let raw_flags = new_flags.bits();
+
+        // SAFETY: root_paddr 是调用方指定的 L0 页表物理地址, phys_to_virt 转换为内核 VA.
+        let l0 = phys_to_virt(root_paddr) as *mut u64;
+        let l0_idx = l0_index(vaddr);
+
+        let l1 = self.get_next_level(l0, l0_idx);
+        if l1.is_null() {
+            self.release_lock(&_lock_flags);
+            return;
+        }
+        let l1_idx = l1_index(vaddr);
+
+        // 检查 L1 块映射 (1GB)
+        // SAFETY: l1 是已验证的 L1 页表基地址; l1_idx < 512.
+        unsafe {
+            let l1_entry = ptr::read_volatile(l1.add(l1_idx));
+            if (l1_entry & 0b11) == DESC_TYPE_BLOCK as u64 {
+                // L1 块映射 (1GB): 修改权限位
+                let paddr = l1_entry & 0x0000_FFFF_FFFF_F000;
+                let new_desc =
+                    block_flags_to_descriptor(raw_flags, paddr, 1, 0x0000_FFFF_FFFF_F000);
+                ptr::write_volatile(l1.add(l1_idx), new_desc);
+                core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
+                self.release_lock(&_lock_flags);
+                return;
+            }
+        }
+
+        let l2 = self.get_next_level(l1, l1_idx);
+        if l2.is_null() {
+            self.release_lock(&_lock_flags);
+            return;
+        }
+        let l2_idx = l2_index(vaddr);
+
+        // 检查 L2 块映射 (2MB)
+        // SAFETY: l2 是已验证的 L2 页表基地址; l2_idx < 512.
+        unsafe {
+            let l2_entry = ptr::read_volatile(l2.add(l2_idx));
+            if (l2_entry & 0b11) == DESC_TYPE_BLOCK as u64 {
+                // L2 块映射 (2MB): 修改权限位
+                let paddr = l2_entry & 0x0000_FFFF_FFFF_F000;
+                let new_desc =
+                    block_flags_to_descriptor(raw_flags, paddr, 2, 0x0000_FFFF_FFFF_F000);
+                ptr::write_volatile(l2.add(l2_idx), new_desc);
+                core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
+                self.release_lock(&_lock_flags);
+                return;
+            }
+        }
+
+        let l3 = self.get_next_level(l2, l2_idx);
+        if l3.is_null() {
+            self.release_lock(&_lock_flags);
+            return;
+        }
+        let l3_idx = l3_index(vaddr);
+
+        // L3 页描述符 (4KB): 修改权限位
+        // SAFETY: l3 是已验证的 L3 页表基地址; l3_idx < 512.
+        unsafe {
+            let l3_entry = ptr::read_volatile(l3.add(l3_idx));
+            if l3_entry == 0 {
+                // 页未映射, 无需修改
+                self.release_lock(&_lock_flags);
+                return;
+            }
+            let paddr = l3_entry & 0x0000_FFFF_FFFF_F000;
+            let new_desc = page_flags_to_descriptor(raw_flags, paddr);
+            ptr::write_volatile(l3.add(l3_idx), new_desc);
+            core::arch::asm!("dsb ishst", "tlbi vaae1is, {}", "dsb ish", "isb", in(reg) vaddr >> 12);
+        }
+
+        self.release_lock(&_lock_flags);
+    }
+
+    #[expect(
         clippy::unused_self,
         reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
     )]

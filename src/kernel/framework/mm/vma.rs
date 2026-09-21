@@ -433,8 +433,14 @@ impl MmStruct {
         Ok(())
     }
 
-    /// 删除 [start, end) 范围内的 VMA 映射
-    pub fn remove_range(&self, start: usize, end: usize) {
+    /// 删除 [start, end) 范围内的 VMA 映射, 并拆除对应页表项
+    ///
+    /// `cr3` 为**目标用户页表根** (进程 `Process::cr3`). 拆除必须作用在与
+    /// 建立侧相同的表上: 用户数据页由缺页路径建在进程用户页表上, 而
+    /// `vmm.unmap_page` 等全局单表变体固定操作内核表
+    /// (`KERNEL_PML4`), 两者低半区不同源 ⇒ 必须走显式变体.
+    /// `cr3 == 0` 时显式变体内部直接返回 (fail-closed, 不触碰任何表).
+    pub fn remove_range(&self, start: usize, end: usize, cr3: u64) {
         let mut vmas = self.vmas.lock();
 
         let mut i = 0;
@@ -455,18 +461,18 @@ impl MmStruct {
 
             if start <= vma_start && end >= vma_end {
                 let removed = vmas.remove(i);
-                self.unmap_vma_pages(&removed);
+                self.unmap_vma_pages(&removed, cr3);
             } else if start <= vma_start {
                 let mut truncated = vmas.remove(i);
                 truncated.start = end;
                 vmas.insert(i, truncated);
-                self.unmap_vma_pages(&Vma::new(start, end, vma_flags, vma_type));
+                self.unmap_vma_pages(&Vma::new(start, end, vma_flags, vma_type), cr3);
                 i += 1;
             } else if end >= vma_end {
                 let mut truncated = vmas.remove(i);
                 truncated.end = start;
                 vmas.insert(i, truncated);
-                self.unmap_vma_pages(&Vma::new(start, vma_end, vma_flags, vma_type));
+                self.unmap_vma_pages(&Vma::new(start, vma_end, vma_flags, vma_type), cr3);
                 i += 1;
             } else {
                 let left = Vma::new(vma_start, start, vma_flags, vma_type);
@@ -475,7 +481,7 @@ impl MmStruct {
                 vmas.remove(i);
                 vmas.insert(i, right);
                 vmas.insert(i, left);
-                self.unmap_vma_pages(&mid);
+                self.unmap_vma_pages(&mid, cr3);
                 i += 2;
             }
         }
@@ -487,14 +493,16 @@ impl MmStruct {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    fn unmap_vma_pages(&self, vma: &Vma) {
+    fn unmap_vma_pages(&self, vma: &Vma, cr3: u64) {
         // 锁序: 调用者持有 VMA_LOCK, 此处获取 VMM_LOCK
         // 这是唯一合法的嵌套方向 (VMA → VMM).
         // 禁止在持有 VMM_LOCK 时获取 VMA_LOCK 以避免 ABBA 死锁.
         let vmm = super::vmm::get_vmm();
         let mut addr = vma.start;
         while addr < vma.end {
-            vmm.unmap_page(VirtAddr(addr as u64));
+            // 显式变体: 拆除作用在进程用户页表上 (与建立侧同表),
+            // 并承担 §8.1 规则 3 的帧持有注销 (frame_dec + 归零才延迟释放).
+            vmm.unmap_page_in_table(cr3, VirtAddr(addr as u64));
             addr += PAGE_SIZE as usize;
         }
     }
@@ -529,6 +537,9 @@ impl MmStruct {
     /// 3. 修改目标部分的 VMA flags 和页表权限
     /// 4. flush TLB
     ///
+    /// `cr3` 为**目标用户页表根** (进程 `Process::cr3`): 权限改写必须作用在
+    /// 用户页表上, 否则用户页权限根本未被修改 (内核表低半区与用户表不同源).
+    ///
     /// # Errors
     /// 当 `len` 为 0 时返回 `EINVAL`; 当 `start + len` 溢出, 或范围内没有任何已映射的 VMA 时返回 `ENOMEM`.
     // 有意窄化: 显式收窄, 调用方保证值域
@@ -538,6 +549,7 @@ impl MmStruct {
         start: usize,
         len: usize,
         new_flags: PageFlags,
+        cr3: u64,
     ) -> Result<(), crate::framework::syscall::Errno> {
         use crate::framework::errno::Errno;
 
@@ -649,7 +661,7 @@ impl MmStruct {
             let page_start = start & !(PAGE_SIZE as usize - 1);
             let mut addr = page_start;
             while addr < end {
-                vmm.protect_page(VirtAddr(addr as u64), new_flags);
+                vmm.protect_page_in_table(cr3, VirtAddr(addr as u64), new_flags);
                 addr += PAGE_SIZE as usize;
             }
         }
@@ -659,7 +671,7 @@ impl MmStruct {
             let page_start = start & !(PAGE_SIZE as usize - 1);
             let mut addr = page_start;
             while addr < end {
-                vmm.protect_page(VirtAddr(addr as u64), new_flags);
+                vmm.protect_page_in_table(cr3, VirtAddr(addr as u64), new_flags);
                 addr += PAGE_SIZE as usize;
             }
         }
@@ -683,6 +695,9 @@ impl MmStruct {
     /// 触达时通过 page fault on-demand 重新 alloc (清零).
     /// v2 计划: 引入 page migration, 逐页 copy 旧→新.
     ///
+    /// `cr3` 为**目标用户页表根** (进程 `Process::cr3`), 用于拆除被裁掉
+    /// 区间的页表项.
+    ///
     /// ## 错误
     ///
     /// - `EFAULT`: 旧地址未映射 / 范围不匹配 / 原地扩展失败
@@ -701,6 +716,7 @@ impl MmStruct {
         old_size: usize,
         new_size: usize,
         flags: i32,
+        cr3: u64,
     ) -> Result<usize, crate::framework::syscall::Errno> {
         use crate::framework::errno::Errno;
 
@@ -725,7 +741,7 @@ impl MmStruct {
 
         // new_size == 0 退化为 munmap
         if new_size == 0 {
-            self.remove_range(old_addr, old_addr + old_size_aligned);
+            self.remove_range(old_addr, old_addr + old_size_aligned, cr3);
             return Ok(0);
         }
 
@@ -733,7 +749,7 @@ impl MmStruct {
 
         // 缩小: 截断尾部
         if new_size_aligned <= old_size_aligned {
-            self.remove_range(old_addr + new_size_aligned, old_addr + old_size_aligned);
+            self.remove_range(old_addr + new_size_aligned, old_addr + old_size_aligned, cr3);
             return Ok(old_addr);
         }
 
@@ -767,7 +783,7 @@ impl MmStruct {
             .ok_or(Errno::ENOMEM)?;
 
         // 删除旧 vma
-        self.remove_range(old_addr, old_addr + old_size_aligned);
+        self.remove_range(old_addr, old_addr + old_size_aligned, cr3);
 
         // 插入新 vma (继承旧 vma 的 flags / type / offset / inode_id / shared / file_pwm)
         let new_vma = Vma {
@@ -791,12 +807,15 @@ impl MmStruct {
     ///
     /// `brk/start_brk` 使用 `AtomicUsize` 实现无锁线程安全访问.
     ///
+    /// `cr3` 为**目标用户页表根** (进程 `Process::cr3`), 仅在堆收缩
+    /// (拆除堆页) 时被使用.
+    ///
     /// # Errors
     /// 当扩展堆时插入的新 VMA 与已有 VMA 重叠且不兼容时, 返回 `Err`
     /// (错误信息来自 `insert_vma`).
     // 有意窄化: 显式收窄, 调用方保证值域
     #[expect(clippy::cast_possible_truncation)]
-    pub fn set_brk(&self, new_brk: usize) -> Result<usize, &'static str> {
+    pub fn set_brk(&self, new_brk: usize, cr3: u64) -> Result<usize, &'static str> {
         let page_aligned = (new_brk + PAGE_SIZE as usize - 1) & !(PAGE_SIZE as usize - 1);
 
         let start_brk = self.start_brk.load(Ordering::Acquire);
@@ -811,7 +830,7 @@ impl MmStruct {
             // 先更新 brk，防止其他 CPU 在 remove_range 后读到旧值
             // 去访问已被 unmap 的堆区域
             self.brk.store(page_aligned, Ordering::Release);
-            self.remove_range(page_aligned, current_brk);
+            self.remove_range(page_aligned, current_brk, cr3);
         }
 
         Ok(self.brk.load(Ordering::Acquire))

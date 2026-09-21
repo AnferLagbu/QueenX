@@ -53,7 +53,7 @@ pub fn prot_to_page_flags(prot: i32) -> PageFlags {
 /// # Errors
 ///
 /// 当 `addr` 未按页对齐、`len == 0` 或 `prot` 含非法位时返回 `EINVAL`;
-/// 当无法取得当前进程的 mm(内存描述符缺失)时返回 `ENOMEM`.
+/// 当无法取得当前进程的 mm(内存描述符缺失)或其用户页表根(无 mm / cr3 为 0)时返回 `ENOMEM`.
 pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> {
     // 验证 addr 页对齐
     if addr & 0xFFF != 0 {
@@ -72,9 +72,16 @@ pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> 
     // 转换 prot → PageFlags
     let new_flags = prot_to_page_flags(prot);
 
+    // 目标用户页表根: 用户页的权限位只存在于进程用户页表中,
+    // 改内核表 (全局单表变体) 不会影响用户页权限.
+    let cr3 = crate::framework::proc::process_get_cr3(
+        crate::framework::proc::process_get_current_pid(),
+    )
+    .ok_or(Errno::ENOMEM)?;
+
     // 委托 framework 层执行页表修改
     vma_get_current_mm().map_or(Err(Errno::ENOMEM), |mm| {
-        match mm.mprotect(addr as usize, len as usize, new_flags) {
+        match mm.mprotect(addr as usize, len as usize, new_flags, cr3) {
             Ok(()) => Ok(0),
             Err(e) => Err(e),
         }

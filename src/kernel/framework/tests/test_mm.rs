@@ -787,6 +787,161 @@ fn test_cow_unique_mapping_fault_reuses_frame() -> TestResult {
 }
 
 // ============================================================
+// 拆除 / 改权限的目标页表正确性 (munmap-protect-pml4.md)
+// ============================================================
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_remove_range_targets_user_table() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// `remove_range` 必须作用在**进程用户页表**上: 拆除 PTE 并注销该映射的帧引用.
+///
+/// **判别力**:
+/// - 负向控制 `cr3 == 0`: 显式变体 fail-closed ⇒ 用户 PTE 悬留、帧计数不变
+///   (与修复前"拆除落在内核表上"的失效形态同构: 用户 PTE 悬留 + 帧不归还);
+/// - 正向: 传入正确 cr3 ⇒ PTE 消失 且 帧持有者归零 (§8.1 规则 3).
+#[cfg(not(feature = "host-test"))]
+fn test_remove_range_targets_user_table() -> TestResult {
+    use crate::framework::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
+    use crate::framework::mm::pmm::get_pmm;
+    use crate::framework::mm::vma::{MmStruct, Vma, VmaType};
+
+    let pmm = get_pmm();
+    let (pml4, phys) = match cow_setup_mapped_page() {
+        Ok(v) => v,
+        Err(msg) => return TestResult::Fail(msg),
+    };
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    let va = COW_TEST_VA as usize;
+    // 负向与正向各用独立的 MmStruct: `remove_range` 无条件删除 VMA 描述符,
+    // 复用同一实例会让正向找不到 VMA 而失去判别力.
+    let mm_neg = MmStruct::new();
+    if let Err(e) = mm_neg.insert_vma(Vma::new(
+        va,
+        va + PAGE_SIZE as usize,
+        flags,
+        VmaType::Anonymous,
+    )) {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail(e);
+    }
+
+    // 负向控制: cr3 == 0 ⇒ 显式变体不做任何事 (不退化到内核表)
+    mm_neg.remove_range(va, va + PAGE_SIZE as usize, 0);
+    check!(
+        vmm_get_physical_in_table(pml4, COW_TEST_VA) == phys.as_u64(),
+        "cr3 == 0 不得拆除用户 PTE (fail-closed)"
+    );
+    check!(pmm.frame_ref_count(phys) == 1, "cr3 == 0 不得注销帧引用");
+
+    // 正向: 正确 cr3 ⇒ 用户 PTE 拆除 + 帧归零
+    let mm_pos = MmStruct::new();
+    if let Err(e) = mm_pos.insert_vma(Vma::new(
+        va,
+        va + PAGE_SIZE as usize,
+        flags,
+        VmaType::Anonymous,
+    )) {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail(e);
+    }
+    mm_pos.remove_range(va, va + PAGE_SIZE as usize, pml4);
+    check!(
+        vmm_get_physical_in_table(pml4, COW_TEST_VA) == 0,
+        "用户 PTE 必须被拆除"
+    );
+    check!(pmm.frame_ref_count(phys) == 0, "拆除后帧持有者应归零");
+
+    vmm_destroy_page_table(pml4);
+    TestResult::Pass
+}
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_mprotect_targets_user_table() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// `mprotect` 必须**就地**改写进程用户页表的权限位.
+///
+/// **判别力**:
+/// - 权限位确实被改写 (PTE 值变化), x86_64 上 Writable 位清零;
+/// - 物理帧与帧持有者不变 —— 修复前 `VmSpace::protect` 的 unmap→remap 形态在
+///   unmap 侧 `frame_dec` (唯一持有者归零 ⇒ 延迟释放) 后把待释放帧挂回 = UAF;
+/// - 逆向改回可精确还原原 PTE (往返一致性).
+#[cfg(not(feature = "host-test"))]
+fn test_mprotect_targets_user_table() -> TestResult {
+    use crate::framework::mm::get_vmm;
+    use crate::framework::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
+    use crate::framework::mm::pmm::get_pmm;
+    use crate::framework::mm::vma::{MmStruct, Vma, VmaType};
+
+    let pmm = get_pmm();
+    let (pml4, phys) = match cow_setup_mapped_page() {
+        Ok(v) => v,
+        Err(msg) => return TestResult::Fail(msg),
+    };
+    let vmm = get_vmm();
+    let va = COW_TEST_VA;
+    let Some(pte_before) = vmm.get_pte_value(pml4, VirtAddr(va)) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("get_pte_value 应读到已映射 PTE");
+    };
+
+    let mm = MmStruct::new();
+    let rw = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    if let Err(e) = mm.insert_vma(Vma::new(
+        va as usize,
+        va as usize + PAGE_SIZE as usize,
+        rw,
+        VmaType::Anonymous,
+    )) {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail(e);
+    }
+
+    // 改为只读
+    let ro = PageFlags::PRESENT | PageFlags::USER;
+    if mm.mprotect(va as usize, PAGE_SIZE as usize, ro, pml4).is_err() {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("mprotect 至只读失败");
+    }
+    let Some(pte_ro) = vmm.get_pte_value(pml4, VirtAddr(va)) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("改权限后 PTE 不得消失 (禁止 unmap→remap 形态)");
+    };
+    check!(pte_ro != pte_before, "权限位应被改写");
+    check!(pte_ro & 0b1 != 0, "改权限后仍应 present");
+    #[cfg(target_arch = "x86_64")]
+    check!(pte_ro & 0b10 == 0, "x86_64: Writable 位应被清除");
+    check!(
+        vmm_get_physical_in_table(pml4, va) == phys.as_u64(),
+        "改权限不得更换物理帧"
+    );
+    check!(
+        pmm.frame_ref_count(phys) == 1,
+        "改权限不得触碰帧持有计数 (唯一持有者不得归零)"
+    );
+
+    // 改回可写 ⇒ 精确还原
+    if mm.mprotect(va as usize, PAGE_SIZE as usize, rw, pml4).is_err() {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("mprotect 改回可写失败");
+    }
+    check!(
+        vmm.get_pte_value(pml4, VirtAddr(va)) == Some(pte_before),
+        "往返改权限应精确还原 PTE"
+    );
+    check!(pmm.frame_ref_count(phys) == 1, "往返后持有者仍为 1");
+
+    vmm_destroy_page_table(pml4);
+    check!(pmm.frame_ref_count(phys) == 0, "拆除后计数归零");
+    TestResult::Pass
+}
+
+// ============================================================
 // 帧句柄语义: Clone/Drop 与 PMM 持有计数配对 (cr3-lifetime-ownership.md §8.3)
 // ============================================================
 
@@ -932,6 +1087,10 @@ pub fn register_mm_tests() {
             "child_write_isolated_from_parent": test_cow_child_write_isolated_from_parent,
             "shared_frame_survives_owner_exit": test_cow_shared_frame_survives_owner_exit,
             "unique_mapping_fault_reuses_frame": test_cow_unique_mapping_fault_reuses_frame,
+        },
+        "mm::vma_teardown": {
+            "remove_range_targets_user_table": test_remove_range_targets_user_table,
+            "mprotect_targets_user_table": test_mprotect_targets_user_table,
         },
         "mm::frame": {
             "handle_clone_drop_pairing": test_frame_handle_clone_drop_pairing,

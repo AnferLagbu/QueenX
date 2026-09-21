@@ -148,7 +148,7 @@ impl VmSpace {
         Ok(())
     }
 
-    /// 修改页保护属性（通过先 unmap 再 map 实现）
+    /// 修改页保护属性（就地修改 PTE 权限位）
     ///
     /// # Errors
     /// 当 `vaddr` 超出用户地址空间范围 ([0, `USER_ADDR_MAX`)) 时返回
@@ -159,14 +159,10 @@ impl VmSpace {
             return Err("vaddr outside user address space");
         }
         let vmm = get_vmm();
-        // 查找当前映射, 然后用新 flags 重新映射.
-        if let Some(old_phys) = vmm.get_physical_in_pml4(self.pt_root.as_u64(), vaddr) {
-            // SAFETY: Unmap then re-map atomically (lock is held within VMM).
-            unsafe {
-                vmm.unmap_page_in_table(self.pt_root.as_u64(), vaddr);
-                vmm.map_page_in_table(self.pt_root.as_u64(), vaddr, old_phys, new_flags);
-            }
-        }
+        // 就地改权限: 不拆除映射, 故不触及帧持有计数面.
+        // (原 "先 unmap 再 map" 形态在 unmap 侧会 `frame_dec`, 若该 leaf 是唯一
+        // 持有者则计数归零进入延迟释放, 随后又把待释放帧挂回 ⇒ UAF.)
+        vmm.protect_page_in_table(self.pt_root.as_u64(), vaddr, new_flags);
         Ok(())
     }
 
