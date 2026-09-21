@@ -209,14 +209,18 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
     )
     .ok_or(Errno::ENOMEM)?;
 
-    release_file_pages(mm, start, end);
+    release_file_pages(mm, start, end, cr3);
 
     mm.remove_range(start, end, cr3);
     Ok(())
 }
 
 /// 释放文件映射区域的 Page Cache 引用
-fn release_file_pages(mm: &MmStruct, start: usize, end: usize) {
+///
+/// 仅注销「该 VA 确实持有该页缓存帧」的引用 (判据在 framework 侧实现一份,
+/// 与建立侧缺页路径共用): 从未缺页的页、已被 COW 换出的页不持有缓存帧,
+/// 故不得注销他处条目. `cr3` 为该进程用户页表根.
+fn release_file_pages(mm: &MmStruct, start: usize, end: usize, cr3: u64) {
     let vmas = mm.vmas.lock();
     for vma in vmas.iter() {
         if vma.vma_type != VmaType::FileBacked || vma.inode_id == 0 {
@@ -232,7 +236,13 @@ fn release_file_pages(mm: &MmStruct, start: usize, end: usize) {
         let mut addr = overlap_start;
         while addr < overlap_end {
             let page_index = ((addr - vma.start) as u64 + vma.offset) / PAGE_SIZE;
-            crate::framework::mm::pcache::pcache_put(vma.inode_id, page_index);
+            // 返回 None = 该 VA 未持有此缓存帧 (无需注销, 非错误)
+            let _ = crate::framework::mm::pcache::pcache_release_for_va(
+                cr3,
+                addr as u64,
+                vma.inode_id,
+                page_index,
+            );
             addr += PAGE_SIZE as usize;
         }
     }

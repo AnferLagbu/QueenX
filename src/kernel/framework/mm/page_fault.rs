@@ -297,10 +297,6 @@ fn handle_uffd_provided(vma: &Vma, aligned: usize, user_cr3: u64) -> PfResult {
     clippy::manual_let_else,
     reason = "manual_let_else: if-let + unwrap 模式改 let-else 语法; 部分场景有 return value 需改 match, 当前优先 expect 兑底"
 )]
-#[expect(
-    clippy::single_match_else,
-    reason = "DECISION-043 pedantic 兜底: 当前批量 expect 兑底; 后续可逐处手工重构 (改 .cast() / let-else / 命名等)"
-)]
 fn handle_file_fault(
     _mm: &MmStruct,
     vma: &Vma,
@@ -310,50 +306,42 @@ fn handle_file_fault(
 ) -> PfResult {
     let page_index = ((aligned - vma.start) as u64 + vma.offset) / PAGE_SIZE;
 
-    // Demand Paging (B2 第三步真语义): miss 时同步从 vfs 读 4KB 填 pcache.
-    // 与传统 demand paging 一致: 用户访问哪页才读哪页, 不预先读全部.
-    let cache_phys = match super::pcache::pcache_lookup(vma.inode_id, page_index) {
-        Some(p) => p, // 命中: 直接用
-        None => {
-            // miss → 分配全零页
-            let phys = match super::pcache::pcache_get(vma.inode_id, page_index) {
-                Some(p) => p,
-                None => return PfResult::Oom,
-            };
-            // 同步从 vfs 读 4KB 文件数据填入 pcache
-            // pwm 取自 Vma 记录的创建者凭证, 保证权限校验正确
-            // P3-I-19: 传入 mount_idx (vma.mount_idx, mmap 时记录的挂载点)
-            // 让 vfs_pread_inode 能走 FileSystem trait 分发而非硬编码 RamFS.
-            let file_off = vma.offset + (aligned - vma.start) as u64;
-            let mut page_buf = [0u8; PAGE_SIZE as usize];
-            let n = crate::framework::fs::vfs_pread_inode(
-                vma.mount_idx,
-                vma.inode_id,
-                file_off,
-                &mut page_buf,
-                vma.file_pwm,
-            );
-            if n > 0 {
-                super::pcache::pcache_fill(vma.inode_id, page_index, &page_buf[..n as usize]);
-            }
-            // n <= 0 (EOF / 文件短): 保持 pcache_get 时的零页 (POSIX: mmap 文件尾零填充)
-            phys
-        }
+    // 建立侧唯一入口 (§8.1 规则 2): 登记「本 VA 映射持有该文件缓存页」.
+    // 入口内含幂等判据 (该 VA 已持有 ⇒ 不重复登记) 与被替换旧帧的注销,
+    // 与拆除侧 `pcache_release_for_va` 共用同一判据实现.
+    let (cache_phys, newly_inserted) = match super::pcache::pcache_acquire_for_va(
+        user_cr3,
+        aligned as u64,
+        vma.inode_id,
+        page_index,
+    ) {
+        Some(v) => v,
+        None => return PfResult::Oom,
     };
+
+    // Demand Paging (B2 第三步真语义): 新插入的条目内容仍是零页 ⇒ 同步从 vfs 读
+    // 4KB 填 pcache. 与传统 demand paging 一致: 用户访问哪页才读哪页, 不预先读全部.
+    if newly_inserted {
+        // pwm 取自 Vma 记录的创建者凭证, 保证权限校验正确
+        // P3-I-19: 传入 mount_idx (vma.mount_idx, mmap 时记录的挂载点)
+        // 让 vfs_pread_inode 能走 FileSystem trait 分发而非硬编码 RamFS.
+        let file_off = vma.offset + (aligned - vma.start) as u64;
+        let mut page_buf = [0u8; PAGE_SIZE as usize];
+        let n = crate::framework::fs::vfs_pread_inode(
+            vma.mount_idx,
+            vma.inode_id,
+            file_off,
+            &mut page_buf,
+            vma.file_pwm,
+        );
+        if n > 0 {
+            super::pcache::pcache_fill(vma.inode_id, page_index, &page_buf[..n as usize]);
+        }
+        // n <= 0 (EOF / 文件短): 保持插入时的零页 (POSIX: mmap 文件尾零填充)
+    }
 
     let vmm_inst = vmm::get_vmm();
     let pml4 = user_cr3;
-
-    // §8.1 规则 2: 页缓存帧自身已持有一份持有者 (pcache), 把它映射进页表新增一份
-    // 引用 ⇒ 必须 frame_inc, 否则拆除该映射时 frame_dec 会把 pcache 的持有者计入零.
-    // 幂等: 同 VA 二次缺页会重入本函数 (MAP_PRIVATE 写路径), 仅当该 VA 当前未映射到
-    // 该帧时才登记 (重复 inc 会使计数虚高、缓存页永不释放).
-    let already_mapped = vmm_inst
-        .get_physical_in_pml4(pml4, VirtAddr(aligned as u64))
-        .is_some_and(|p| p.as_u64() == cache_phys);
-    if !already_mapped {
-        super::pmm::get_pmm().frame_inc(PhysAddr(cache_phys));
-    }
 
     if vma.shared {
         // MAP_SHARED: 可写映射, 写入回写 Page Cache
@@ -389,16 +377,18 @@ fn handle_file_fault(
                 );
             }
 
-            // 释放 Page Cache 引用
+            // 注销本 VA 对 Page Cache 的持有: 上面已确认该 VA 正持有此缓存页
+            // (acquire 的登记/幂等判据), 故此处直接 pcache_put, 无需再判 PTE.
             super::pcache::pcache_put(vma.inode_id, page_index);
 
             // 用新页替换映射 (可写)
             let cow_flags = vma.flags | PageFlags::PRESENT | PageFlags::WRITABLE;
             vmm_inst.map_page_in_table(pml4, VirtAddr(aligned as u64), new_phys, cow_flags);
 
-            // §8.1 规则 3: 该 VA 的旧映射被替换 ⇒ 注销它持有的那份缓存帧引用
-            // (pcache 自身的持有人在上面 pcache_put 中已注销). 归零时延迟释放:
-            // 他核 TLB 可能仍缓存旧映射, 立即归还的帧会被重分配后经陈旧映射访问.
+            // §8.1 规则 3: 该 VA 的旧映射被替换 ⇒ 注销它持有的那份缓存帧引用.
+            // (pcache 条目自身那份持有在 ref_count 归零时由 deref 释放, 已含在上面
+            // 的 pcache_put 内). 归零时延迟释放: 他核 TLB 可能仍缓存旧映射,
+            // 立即归还的帧会被重分配后经陈旧映射访问.
             if pmm_inst.frame_dec(PhysAddr(cache_phys)) {
                 let lock_flags = vmm_inst.acquire_lock();
                 #[cfg(target_arch = "x86_64")]

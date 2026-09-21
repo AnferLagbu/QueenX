@@ -9,6 +9,18 @@
 //! - `MAP_SHARED`: 写回 Page Cache (脏页标记)
 //! - `MAP_PRIVATE`: COW, 写入不回写 Page Cache
 //!
+//! ## 计数契约
+//!
+//! - `PageCacheEntry::ref_count` = **当前映射持有该缓存帧的 VMA 页数**:
+//!   每一次「新建/替换映射指向该帧」登记一份 (`pcache_acquire_for_va`),
+//!   每一次「拆除指向该帧的用户 leaf」注销一份 (`pcache_release_for_va`).
+//! - 条目自身对帧的持有由 `insert` 的 `alloc_page` 计入帧计数 (置 1),
+//!   故条目存在时恒有 `pmm.frame_ref_count(phys) == ref_count + 1`.
+//! - `ref_count` 归零 (最后一个映射持有者注销) 时 `deref` 释放条目自身那份并移除条目.
+//! - 判据「该 VA 是否持有该缓存页」= *该 VA 的 PTE 帧 == 该页缓存帧*,
+//!   只在 `pcache_acquire_for_va` / `pcache_release_for_va` 内实现一份
+//!   (建立侧 `page_fault` 与拆除侧 `mmap` 共用, 避免两侧各自判断而错位).
+//!
 //! ## 同步
 //!
 //! 每个桶由独立的 `IrqSpinLock` 保护, 持锁期间关中断,
@@ -20,7 +32,7 @@
 //! - 脏页写回由文件系统负责 (当前阶段仅标记)
 //! - 仅 `pcache_copy_to_user` 保留 unsafe (用户态指针操作)
 
-use crate::framework::mm::{PAGE_SIZE, PhysAddr, pmm};
+use crate::framework::mm::{PAGE_SIZE, PhysAddr, VirtAddr, pmm, vmm};
 use crate::framework::sync::IrqSpinLock;
 
 // ============================================================================
@@ -83,7 +95,8 @@ struct PageCacheEntry {
     page_index: u64,
     /// 物理页帧 (由 PMM 分配)
     phys: u64,
-    /// 引用计数 (多少个 VMA 映射了此页)
+    /// 映射持有该缓存帧的 VMA 页数 (契约见模块文档「计数契约」;
+    /// 条目自身对帧的持有不计入此值, 由 `alloc_page` 计入帧计数)
     ref_count: u32,
     /// 是否为脏页 (`MAP_SHARED` 写入后标记)
     dirty: bool,
@@ -164,16 +177,18 @@ impl PageCacheBucket {
         None
     }
 
-    /// 插入缓存页 (分配物理页并从文件读取)
-    /// 返回物理地址, 或 None (桶满/OOM)
-    fn insert(&mut self, inode_id: u32, page_index: u64) -> Option<u64> {
+    /// 登记一份「映射持有该缓存页」的引用
+    ///
+    /// 命中 ⇒ `ref_count += 1`; 未命中 ⇒ 分配物理页并插入 (`ref_count = 1`,
+    /// 该值即首个映射持有者; 条目自身对帧的持有由 `alloc_page` 计入帧计数).
+    /// 返回 `(物理地址, 是否为新插入的条目)`, 或 `None` (桶满/OOM).
+    fn insert(&mut self, inode_id: u32, page_index: u64) -> Option<(u64, bool)> {
+        // 先检查是否已存在 (满桶命中仍应登记成功)
+        if let Some(phys) = self.lookup_and_ref(inode_id, page_index) {
+            return Some((phys, false));
+        }
         if self.count >= PCACHE_BUCKET_CAPACITY {
             return None;
-        }
-
-        // 先检查是否已存在
-        if let Some(phys) = self.lookup_and_ref(inode_id, page_index) {
-            return Some(phys);
         }
 
         // 分配物理页
@@ -183,7 +198,7 @@ impl PageCacheBucket {
         // 清零 (防止信息泄漏)
         zero_phys_page(phys);
 
-        // pcache_get 仅分配全零页; miss 时的文件数据回填由调用方
+        // 此处仅分配全零页; miss 时的文件数据回填由调用方
         // 通过 pcache_fill(inode, page, src) 显式完成 (避免持锁 + 跨层 I/O).
 
         // 插入条目
@@ -196,13 +211,21 @@ impl PageCacheBucket {
                 entry.dirty = false;
                 entry.occupied = true;
                 self.count += 1;
-                return Some(phys.as_u64());
+                return Some((phys.as_u64(), true));
             }
         }
 
         // 不应到达此处 (count 检查已通过)
         pmm_inst.free_page(phys);
         None
+    }
+
+    /// 观测条目的映射持有者数 (`None` = 条目不存在)
+    fn ref_count_of(&self, inode_id: u32, page_index: u64) -> Option<u32> {
+        self.entries
+            .iter()
+            .find(|e| e.occupied && e.inode_id == inode_id && e.page_index == page_index)
+            .map(|e| e.ref_count)
     }
 
     /// 标记脏页
@@ -234,10 +257,17 @@ impl PageCacheBucket {
         }
     }
 
-    /// 释放指定 inode 的所有缓存页
+    /// 释放指定 inode 的缓存页
+    ///
+    /// **仅释放无映射持有者 (`ref_count == 0`) 的条目**: 仍被映射的页由其最后一个
+    /// 映射的注销路径 (`deref` 归零) 释放. 这保证 `close(fd)` 不摧毁仍活跃的映射缓存
+    /// (`munmap` 允许晚于 `close`).
+    ///
+    /// 注: 本工程无「纯缓存引用」(条目只由缺页路径创建 ⇒ 存在即有映射持有),
+    /// 故该集合当前恒为空, 本函数实际为守卫语义 (见 plan 登记项).
     fn invalidate_inode(&mut self, inode_id: u32) {
         for entry in &mut self.entries {
-            if entry.occupied && entry.inode_id == inode_id {
+            if entry.occupied && entry.inode_id == inode_id && entry.ref_count == 0 {
                 let phys = PhysAddr(entry.phys);
                 pmm::get_pmm().free_page(phys);
                 *entry = PageCacheEntry::empty();
@@ -287,14 +317,16 @@ fn pcache_hash(inode_id: u32, page_index: u64) -> usize {
 // 公共 API
 // ============================================================================
 
-/// 查找或创建缓存页
+/// 登记一份「映射持有该缓存页」的引用, 返回缓存帧物理地址
 ///
 /// 若缓存命中, 返回物理地址并增加引用计数.
-/// 若未命中, 分配物理页并插入缓存.
+/// 若未命中, 分配物理页并插入缓存 (`ref_count` 置 1).
+///
+/// 建立侧应优先使用 `pcache_acquire_for_va` (含幂等判据与旧帧注销).
 pub fn pcache_get(inode_id: u32, page_index: u64) -> Option<u64> {
     let idx = pcache_hash(inode_id, page_index);
     let mut guard = PAGE_CACHE[idx].lock();
-    guard.insert(inode_id, page_index)
+    guard.insert(inode_id, page_index).map(|(phys, _)| phys)
 }
 
 /// 查找缓存页 (不增加引用计数)
@@ -318,12 +350,115 @@ pub fn pcache_put(inode_id: u32, page_index: u64) {
     guard.deref(inode_id, page_index);
 }
 
-/// 释放 inode 的所有缓存页 (文件关闭时调用)
+/// 释放 inode 的缓存页 (文件关闭时调用)
+///
+/// 仅释放无映射持有者的条目 (详见 `PageCacheBucket::invalidate_inode`).
 pub fn pcache_invalidate_inode(inode_id: u32) {
     for i in 0..PCACHE_HASH_BUCKETS {
         let mut guard = PAGE_CACHE[i].lock();
         guard.invalidate_inode(inode_id);
     }
+}
+
+/// 观测条目的映射持有者数 (`None` = 条目不存在)
+///
+/// 契约: 条目存在时 `pmm.frame_ref_count(phys) == ref_count + 1`.
+/// 仅用于断言/审计 (风格对齐 `pmm.frame_ref_count`), 不参与生产决策.
+pub fn pcache_ref_count(inode_id: u32, page_index: u64) -> Option<u32> {
+    let idx = pcache_hash(inode_id, page_index);
+    let guard = PAGE_CACHE[idx].lock();
+    guard.ref_count_of(inode_id, page_index)
+}
+
+/// 为一个 VMA 页登记「映射持有该文件缓存页」(建立侧唯一入口)
+///
+/// 幂等: 若该 VA 的 PTE 帧已是本页缓存帧 ⇒ 不重复登记, 直接返回该帧.
+/// 否则登记一份 (命中 `+1` / 未命中插入) 并 `frame_inc` (新建映射新增一份帧持有);
+/// 若该 VA 原先映射的是**其它**帧 ⇒ 注销其映射持有者 (归零则按架构释放).
+///
+/// 返回 `(缓存帧物理地址, 是否为新插入的条目)`; 后者为 `true` 时帧内容仍是零页,
+/// 需调用方回填文件数据. `pml4 == 0` / 桶满 / OOM / 帧计数契约违反 ⇒ `None` (fail-closed).
+pub fn pcache_acquire_for_va(
+    pml4: u64,
+    va: u64,
+    inode_id: u32,
+    page_index: u64,
+) -> Option<(u64, bool)> {
+    // 用户页表根缺失 ⇒ fail-closed (不得退化到全局单表)
+    if pml4 == 0 {
+        return None;
+    }
+    let vmm_inst = vmm::get_vmm();
+    let old = vmm_inst
+        .get_physical_in_pml4(pml4, VirtAddr(va))
+        .map_or(0, |p| p.as_u64());
+
+    // 幂等: 该 VA 已持有本页缓存帧
+    if old != 0 && pcache_lookup(inode_id, page_index) == Some(old) {
+        return Some((old, false));
+    }
+
+    let idx = pcache_hash(inode_id, page_index);
+    let (phys, newly_inserted) = {
+        let mut guard = PAGE_CACHE[idx].lock();
+        guard.insert(inode_id, page_index)?
+    };
+
+    let pmm_inst = pmm::get_pmm();
+    if !pmm_inst.frame_inc(PhysAddr(phys)) {
+        // 帧未处于计数态 (契约违反): 回滚刚登记的引用, fail-closed
+        pcache_put(inode_id, page_index);
+        return None;
+    }
+
+    // 旧帧被本页缓存帧替换 ⇒ 注销其映射持有者
+    if old != 0 && old != phys && pmm_inst.frame_dec(PhysAddr(old)) {
+        release_frame_after_last_holder(old);
+    }
+
+    Some((phys, newly_inserted))
+}
+
+/// 注销一个 VMA 页对文件缓存页的映射持有 (拆除侧唯一入口)
+///
+/// 仅当该 VA 的 PTE 帧**恰为**本页缓存帧时注销 (`pcache_put`, `-1`) 并返回该帧;
+/// 否则返回 `None` (该 VA 未持有 ⇒ 不得注销他处条目).
+///
+/// 帧计数不在此处改: 用户 leaf 的拆除由 `unmap_page_in_table` 承担,
+/// 条目自身那份由 `deref` 在 `ref_count` 归零时释放.
+pub fn pcache_release_for_va(
+    pml4: u64,
+    va: u64,
+    inode_id: u32,
+    page_index: u64,
+) -> Option<u64> {
+    // 用户页表根缺失 ⇒ fail-closed
+    if pml4 == 0 {
+        return None;
+    }
+    let cur = pcache_lookup(inode_id, page_index)?;
+    let mapped = vmm::get_vmm()
+        .get_physical_in_pml4(pml4, VirtAddr(va))
+        .map_or(0, |p| p.as_u64());
+    if mapped != cur {
+        return None;
+    }
+    pcache_put(inode_id, page_index);
+    Some(cur)
+}
+
+/// 旧帧的映射持有者已注销且计数归零 ⇒ 按架构释放
+///
+/// x86_64 走延迟释放 (他核 TLB 可能仍缓存旧映射), aarch64 无该机制 ⇒ 立即归还.
+fn release_frame_after_last_holder(phys: u64) {
+    let vmm_inst = vmm::get_vmm();
+    let lock_flags = vmm_inst.acquire_lock();
+    #[cfg(target_arch = "x86_64")]
+    vmm_inst.defer_free(phys);
+    // aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 立即归还
+    #[cfg(target_arch = "aarch64")]
+    pmm::get_pmm().free_page(PhysAddr(phys));
+    vmm_inst.release_lock(&lock_flags);
 }
 
 /// 将缓存页数据写入目标虚拟地址 (用于 #PF 时填充用户页)

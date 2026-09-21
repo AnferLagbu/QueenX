@@ -1051,6 +1051,311 @@ fn test_frame_dma_buffer_raii_release() -> TestResult {
     TestResult::Pass
 }
 
+// ============================================================
+// pcache 文件页缓存: 引用登记与映射生命周期对齐
+// 立项与裁定见计划文档 docs/plan/pcache-frame-ownership.md
+// ============================================================
+
+/// pcache 测试用虚拟地址 (低半区, 页对齐)
+#[cfg(not(feature = "host-test"))]
+const PCACHE_TEST_VA1: u64 = 0x80_0000;
+/// pcache 测试用第二个虚拟地址 (同一文件页的第二个映射)
+#[cfg(not(feature = "host-test"))]
+const PCACHE_TEST_VA2: u64 = 0x81_0000;
+// pcache 为全局结构, 各用例使用互不相同的 inode 编号, 避免用例间串扰
+#[cfg(not(feature = "host-test"))]
+const PCACHE_TEST_INODE_MATRIX: u32 = 0x5101;
+#[cfg(not(feature = "host-test"))]
+const PCACHE_TEST_INODE_RELEASE: u32 = 0x5102;
+#[cfg(not(feature = "host-test"))]
+const PCACHE_TEST_INODE_STALE: u32 = 0x5103;
+#[cfg(not(feature = "host-test"))]
+const PCACHE_TEST_INODE_CLOSE: u32 = 0x5104;
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_pcache_ref_count_matches_mapping_matrix() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// 同一文件页被两个 VMA 依次映射时, `ref_count` 必须与映射持有者数一一对应.
+///
+/// **判别力**: 修复前命中路径走 `pcache_lookup`(不 +1) ⇒ 第二个映射建立后
+/// `ref_count` 仍为 1 而帧计数为 3 ⇒ 第二个映射拆除即把条目误减到 0 而提前驱逐.
+/// 本用例断言 `(ref_count, frame_ref_count)` 逐级为 `(1,2) → (2,3) → (1,2) → 释放`.
+#[cfg(not(feature = "host-test"))]
+fn test_pcache_ref_count_matches_mapping_matrix() -> TestResult {
+    use crate::framework::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_map_page_in_table,
+    };
+    use crate::framework::mm::pcache::{
+        pcache_acquire_for_va, pcache_ref_count, pcache_release_for_va,
+    };
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pml4 = vmm_create_user_page_table();
+    if pml4 == 0 {
+        return TestResult::Fail("create_user_page_table failed");
+    }
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    let pmm = get_pmm();
+    let inode = PCACHE_TEST_INODE_MATRIX;
+
+    // 第一个映射: 登记 + 建映射 ⇒ (ref_count, frame) = (1, 2)
+    let Some((phys, inserted)) = pcache_acquire_for_va(pml4, PCACHE_TEST_VA1, inode, 0) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("首次 acquire 失败");
+    };
+    check!(inserted, "首次访问应为新插入条目");
+    vmm_map_page_in_table(pml4, PCACHE_TEST_VA1, phys, flags.bits());
+    check!(pcache_ref_count(inode, 0) == Some(1), "首个映射持有者应为 1");
+    check!(
+        pmm.frame_ref_count(PhysAddr(phys)) == 2,
+        "帧持有 = 条目自身 1 + 映射 1"
+    );
+
+    // 第二个映射命中同一页 ⇒ (2, 3)
+    let Some((phys2, inserted2)) = pcache_acquire_for_va(pml4, PCACHE_TEST_VA2, inode, 0) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("第二次 acquire 失败");
+    };
+    check!(phys2 == phys, "同一文件页应复用同一缓存帧");
+    check!(!inserted2, "命中不应重复插入条目");
+    vmm_map_page_in_table(pml4, PCACHE_TEST_VA2, phys, flags.bits());
+    check!(
+        pcache_ref_count(inode, 0) == Some(2),
+        "第二个映射持有者应 +1"
+    );
+    check!(
+        pmm.frame_ref_count(PhysAddr(phys)) == 3,
+        "不变式: frame_ref_count == ref_count + 1"
+    );
+
+    // 注销第二个映射 ⇒ 条目保留
+    let vmm = crate::framework::mm::get_vmm();
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA2, inode, 0) == Some(phys),
+        "持有者应可注销"
+    );
+    vmm.unmap_page_in_table(pml4, VirtAddr(PCACHE_TEST_VA2));
+    check!(pcache_ref_count(inode, 0) == Some(1), "仍有一个映射持有者");
+    check!(
+        pmm.frame_ref_count(PhysAddr(phys)) == 2,
+        "不变式: frame_ref_count == ref_count + 1"
+    );
+
+    // 注销第一个映射 ⇒ 条目消失且帧归零
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA1, inode, 0) == Some(phys),
+        "末个持有者应可注销"
+    );
+    vmm.unmap_page_in_table(pml4, VirtAddr(PCACHE_TEST_VA1));
+    check!(
+        pcache_ref_count(inode, 0).is_none(),
+        "末个映射注销后条目应释放"
+    );
+    check!(pmm.frame_ref_count(PhysAddr(phys)) == 0, "缓存帧应归还");
+
+    vmm_destroy_page_table(pml4);
+    TestResult::Pass
+}
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_pcache_release_requires_actual_holding() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// 未映射该缓存帧的 VA 不得注销该页的引用.
+///
+/// **判别力**: 修复前 `release_file_pages` 按地址区间逐页无条件 `pcache_put`
+/// ⇒ 从未缺页的 VMA 拆除时会注销他处条目 (此处表达为对未映射 VA 的注销调用).
+#[cfg(not(feature = "host-test"))]
+fn test_pcache_release_requires_actual_holding() -> TestResult {
+    use crate::framework::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_map_page_in_table,
+    };
+    use crate::framework::mm::pcache::{
+        pcache_acquire_for_va, pcache_ref_count, pcache_release_for_va,
+    };
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pml4 = vmm_create_user_page_table();
+    if pml4 == 0 {
+        return TestResult::Fail("create_user_page_table failed");
+    }
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    let pmm = get_pmm();
+    let inode = PCACHE_TEST_INODE_RELEASE;
+
+    let Some((phys, _)) = pcache_acquire_for_va(pml4, PCACHE_TEST_VA1, inode, 0) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("acquire 失败");
+    };
+    vmm_map_page_in_table(pml4, PCACHE_TEST_VA1, phys, flags.bits());
+    check!(pcache_ref_count(inode, 0) == Some(1), "登记后应为 1");
+
+    // 负向: VA2 未映射该帧 ⇒ 不得注销
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA2, inode, 0).is_none(),
+        "未持有该缓存帧的 VA 不得注销"
+    );
+    check!(pcache_ref_count(inode, 0) == Some(1), "条目不得被他处注销");
+    check!(
+        pmm.frame_ref_count(PhysAddr(phys)) == 2,
+        "帧计数不得被他处触碰"
+    );
+
+    // 收尾: 正常注销并归还
+    let vmm = crate::framework::mm::get_vmm();
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA1, inode, 0) == Some(phys),
+        "持有者应可注销"
+    );
+    vmm.unmap_page_in_table(pml4, VirtAddr(PCACHE_TEST_VA1));
+    check!(pcache_ref_count(inode, 0).is_none(), "条目应释放");
+    check!(pmm.frame_ref_count(PhysAddr(phys)) == 0, "缓存帧应归还");
+
+    vmm_destroy_page_table(pml4);
+    TestResult::Pass
+}
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_pcache_stale_leaf_replacement_releases_old_frame() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// VA 的旧映射帧被本页缓存帧替换时, 旧帧的映射持有者必须注销.
+///
+/// **判别力**: 修复前该路径只 `frame_inc` 新帧并覆盖 PTE, 不注销旧帧
+/// ⇒ 旧帧计数永不为 0 (帧泄漏).
+#[cfg(not(feature = "host-test"))]
+fn test_pcache_stale_leaf_replacement_releases_old_frame() -> TestResult {
+    use crate::framework::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_map_page_in_table,
+    };
+    use crate::framework::mm::pcache::{
+        pcache_acquire_for_va, pcache_ref_count, pcache_release_for_va,
+    };
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pml4 = vmm_create_user_page_table();
+    if pml4 == 0 {
+        return TestResult::Fail("create_user_page_table failed");
+    }
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    let pmm = get_pmm();
+    let inode = PCACHE_TEST_INODE_STALE;
+
+    // 建立首个条目并映射 ⇒ 帧计数 2
+    let Some((old_phys, _)) = pcache_acquire_for_va(pml4, PCACHE_TEST_VA1, inode, 0) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("首次 acquire 失败");
+    };
+    vmm_map_page_in_table(pml4, PCACHE_TEST_VA1, old_phys, flags.bits());
+
+    // 注销引用但保留 PTE (构造"条目已驱逐但映射悬留"的失效前置) ⇒ 旧帧计数降为 1
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA1, inode, 0) == Some(old_phys),
+        "注销失败"
+    );
+    check!(pcache_ref_count(inode, 0).is_none(), "条目应已释放");
+    check!(
+        pmm.frame_ref_count(PhysAddr(old_phys)) == 1,
+        "旧帧仍由悬留映射持有"
+    );
+
+    // 重新登记同一页 ⇒ 插入新帧并注销被替换的旧帧
+    let Some((new_phys, inserted)) = pcache_acquire_for_va(pml4, PCACHE_TEST_VA1, inode, 0) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("再次 acquire 失败");
+    };
+    check!(inserted, "应为新插入条目");
+    check!(new_phys != old_phys, "应分配新的缓存帧");
+    vmm_map_page_in_table(pml4, PCACHE_TEST_VA1, new_phys, flags.bits());
+    check!(
+        pmm.frame_ref_count(PhysAddr(old_phys)) == 0,
+        "被替换的旧帧持有者必须注销 (归零)"
+    );
+    check!(
+        pmm.frame_ref_count(PhysAddr(new_phys)) == 2,
+        "不变式: frame_ref_count == ref_count + 1"
+    );
+
+    // 收尾
+    let vmm = crate::framework::mm::get_vmm();
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA1, inode, 0) == Some(new_phys),
+        "持有者应可注销"
+    );
+    vmm.unmap_page_in_table(pml4, VirtAddr(PCACHE_TEST_VA1));
+    check!(pcache_ref_count(inode, 0).is_none(), "条目应释放");
+    check!(pmm.frame_ref_count(PhysAddr(new_phys)) == 0, "缓存帧应归还");
+
+    vmm_destroy_page_table(pml4);
+    TestResult::Pass
+}
+
+/// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
+#[cfg(feature = "host-test")]
+fn test_pcache_close_fd_keeps_mapped_entry() -> TestResult {
+    TestResult::Skip("E-04: host 无 VMM/PMM 初始化, 跳过 (依赖裸机页表分配)")
+}
+
+/// 文件关闭不得驱逐仍被映射持有的缓存页 (`munmap` 允许晚于 `close`).
+///
+/// **判别力**: 修复前 `invalidate_inode` 无条件释放条目 ⇒ 关闭 fd 即摧毁
+/// 仍活跃的映射缓存.
+#[cfg(not(feature = "host-test"))]
+fn test_pcache_close_fd_keeps_mapped_entry() -> TestResult {
+    use crate::framework::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_map_page_in_table,
+    };
+    use crate::framework::mm::pcache::{
+        pcache_acquire_for_va, pcache_invalidate_inode, pcache_ref_count, pcache_release_for_va,
+    };
+    use crate::framework::mm::pmm::get_pmm;
+
+    let pml4 = vmm_create_user_page_table();
+    if pml4 == 0 {
+        return TestResult::Fail("create_user_page_table failed");
+    }
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    let pmm = get_pmm();
+    let inode = PCACHE_TEST_INODE_CLOSE;
+
+    let Some((phys, _)) = pcache_acquire_for_va(pml4, PCACHE_TEST_VA1, inode, 0) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("acquire 失败");
+    };
+    vmm_map_page_in_table(pml4, PCACHE_TEST_VA1, phys, flags.bits());
+
+    // 关闭 fd: 条目仍被映射持有 ⇒ 不得驱逐
+    pcache_invalidate_inode(inode);
+    check!(
+        pcache_ref_count(inode, 0) == Some(1),
+        "关闭 fd 不得驱逐仍被映射持有的条目"
+    );
+    check!(
+        pmm.frame_ref_count(PhysAddr(phys)) == 2,
+        "关闭 fd 不得触碰帧计数"
+    );
+
+    // 最后一个映射注销后才释放
+    let vmm = crate::framework::mm::get_vmm();
+    check!(
+        pcache_release_for_va(pml4, PCACHE_TEST_VA1, inode, 0) == Some(phys),
+        "持有者应可注销"
+    );
+    vmm.unmap_page_in_table(pml4, VirtAddr(PCACHE_TEST_VA1));
+    check!(pcache_ref_count(inode, 0).is_none(), "条目应释放");
+    check!(pmm.frame_ref_count(PhysAddr(phys)) == 0, "缓存帧应归还");
+
+    vmm_destroy_page_table(pml4);
+    TestResult::Pass
+}
+
 pub fn register_mm_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -1091,6 +1396,13 @@ pub fn register_mm_tests() {
         "mm::vma_teardown": {
             "remove_range_targets_user_table": test_remove_range_targets_user_table,
             "mprotect_targets_user_table": test_mprotect_targets_user_table,
+        },
+        "mm::pcache": {
+            "ref_count_matches_mapping_matrix": test_pcache_ref_count_matches_mapping_matrix,
+            "release_requires_actual_holding": test_pcache_release_requires_actual_holding,
+            "stale_leaf_replacement_releases_old_frame":
+                test_pcache_stale_leaf_replacement_releases_old_frame,
+            "close_fd_keeps_mapped_entry": test_pcache_close_fd_keeps_mapped_entry,
         },
         "mm::frame": {
             "handle_clone_drop_pairing": test_frame_handle_clone_drop_pairing,

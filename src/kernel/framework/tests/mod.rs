@@ -68,7 +68,9 @@ pub struct TestCase {
 
 // E-06 (2026-09-07): 256→512 扩容 — host-tests 侧 sha256/checksum/capability
 // 载体用例去重合入本套件 (新增 ~60 纯逻辑用例), 256 容量已满会导致注册静默丢弃.
-const MAX_TESTS: usize = 512;
+// pcache 帧持有计数工程 (2026-09-21): 512 已再次占满, 新增 mm::pcache 四条用例
+// 会把注册表尾部的 timerfd/syscall 用例挤出 (静默丢弃) ⇒ 扩容至 640 留余量.
+const MAX_TESTS: usize = 640;
 
 fn noop_test() -> TestResult {
     TestResult::Pass
@@ -100,10 +102,14 @@ impl TestRegistry {
     }
 
     fn register(&mut self, module: &'static str, name: &'static str, func: TestFn) {
-        if self.count < MAX_TESTS {
-            self.cases[self.count] = TestCase { module, name, func };
-            self.count += 1;
-        }
+        // 满容量 fail-closed: 静默丢弃会让用例"看起来绿"而实际未运行
+        // (2026-09-21 pcache 工程实测: +4 用例把表尾 timerfd/syscall 用例挤出).
+        assert!(
+            self.count < MAX_TESTS,
+            "测试注册表已满: 用例被丢弃, 需上调 MAX_TESTS"
+        );
+        self.cases[self.count] = TestCase { module, name, func };
+        self.count += 1;
     }
 }
 
