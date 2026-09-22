@@ -901,6 +901,14 @@ pub extern "C" fn kernel_init() {
             crate::framework::arch::aarch64::timer::start_interval(interval);
         }
 
+        // 11-1. 运行期跨核 TLB 失效探针 (S-13) — 多核已上线 (interrupt_late_init
+        // 完成 AP 启动) 且各子系统就绪后一次性自检, 进入用户态前完成.
+        // 判别力来源与注入覆盖见 docs/plan/tlb-shootdown-epoch.md §5 注入 3.
+        #[cfg(target_arch = "x86_64")]
+        if !crate::framework::mm::tlb_probe_selftest() {
+            crate::klog_kern_warn!("[SMP] TLB probe FAILED — cross-core TLB invalidation unreliable");
+        }
+
         crate::klog_boot_info!("QueenX initialized, entering user mode...");
 
         // 11. Syscall 子系统初始化 (必须在 interrupt_late_init 之后, launch_first_user_process 之前)

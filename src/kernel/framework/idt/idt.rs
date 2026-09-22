@@ -769,14 +769,13 @@ impl IdtManager {
         // IPI 分支: 必须前置于 `vector - IRQ_BASE` 之前.
         // IRQ_BASE=32, 对 0xFD/0xFE 得 221/222, 越界直索
         // irq_descriptors[128] ⇒ 中断上下文 panic.
-        // 0xFD (TLB 失效): 先读当前代 → 全量刷新本核 TLB → 声明本核
-        // 已追平该代; 顺序不可颠倒 (先 flush 后读代会读到 flush 之后新
-        // 发布的代, 把本次 flush 未覆盖的批次误判为已追平).
+        // 0xFD (TLB 失效): 收敛入口 `smp::tlb_catch_up_local` 完成
+        // "先读当前代 → 全量刷新本核 TLB → 声明本核已追平该代" (次序不可颠倒,
+        // 否则"假追平"); 随后登记运行期探针观测 (未装备时为空操作).
         // 不进入 do_softirq/信号投递路径.
         if vector == 0xFD {
-            let g = crate::framework::smp::tlb_gen_now();
-            crate::framework::mm::arch::tlb_flush_all();
-            crate::framework::smp::tlb_gen_set_self(g);
+            crate::framework::smp::tlb_catch_up_local();
+            crate::framework::smp::tlb_probe_report();
             self.send_eoi(0);
             return;
         }

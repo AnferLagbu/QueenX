@@ -602,7 +602,17 @@ test-smp: all user $(KERNEL_IMAGE)
 		echo "  对应 docs/plan/tlb-shootdown-epoch.md S-10 的运行覆盖判据."; \
 		exit 1; \
 	fi; \
-	echo "SMP TEST PASSED: online CPUs = $(SMP_CORES), 且用户态已实际执行 (收到 Ring 3 syscall), 且 TLB shootdown 已覆盖全部核, 且延迟释放帧确有归还 (admitted/released 非零且 pending=false)"
+	if ! grep -q "\[SMP\] TLB probe PASS" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] TLB probe PASS' (运行期跨核 TLB 失效探针未通过)"; \
+		echo "  对应 docs/plan/tlb-shootdown-epoch.md §5 注入 3 的运行覆盖判据."; \
+		exit 1; \
+	fi; \
+	if grep -q "\[SMP\] TLB probe FAIL" "$${smp_log}"; then \
+		echo "SMP TEST FAILED: $${smp_log} 中出现 '[SMP] TLB probe FAIL' (跨核 TLB 失效未跨核传播)"; \
+		echo "  含义: flush_tlb_remote 未登记远程失效 / 定向 IPI 未送达 / tlb_flush_all 退化为空."; \
+		exit 1; \
+	fi; \
+	echo "SMP TEST PASSED: online CPUs = $(SMP_CORES), 且用户态已实际执行 (收到 Ring 3 syscall), 且 TLB shootdown 已覆盖全部核, 且延迟释放帧确有归还 (admitted/released 非零且 pending=false), 且运行期跨核 TLB 失效探针通过"
 
 # 一次性覆盖 2/3/4 核 (S-9): 按核数循环调用 test-smp, 任一核数未达
 # 「全部上线 + 用户态实际执行 (Ring 3 syscall)」即 exit 1 (fail-closed)

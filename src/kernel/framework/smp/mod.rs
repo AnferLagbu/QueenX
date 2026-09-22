@@ -154,6 +154,18 @@ pub fn tlb_gen_min_online() -> u64 {
     min_gen
 }
 
+/// 收尾一次跨核 TLB 失效接收序列: 读代 → 全量失效本核 TLB → 声明本核已追平.
+///
+/// x86_64 (`0xFD`) 与 aarch64 (SGI 13) 接收侧共用的**唯一**实现 (消除平行实现).
+/// 三段次序不可颠倒: 先 flush 后读代会读到 flush 之后新发布的代, 把本次 flush
+/// 未覆盖的批次误判为已追平 (假追平). 该次序由
+/// `scripts/audit_tlb_receive_order.py` 静态 fail-closed 强制.
+pub fn tlb_catch_up_local() {
+    let g = tlb_gen_now();
+    crate::framework::mm::arch::tlb_flush_all();
+    tlb_gen_set_self(g);
+}
+
 /// 发布新代并向全部在线核 (含本核) 发送 `0xFD` 定向 IPI, 返回新代值.
 ///
 /// 发布必须先于发 IPI: 对端收到 IPI 即会读代, 反序会读到旧代. IPI 集合含本核,
@@ -174,6 +186,105 @@ pub fn tlb_gen_publish_and_shoot() -> u64 {
     let count = TLB_SHOOTDOWN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     crate::klog_info!(Kernel, "[SMP] TLB shootdown #{} gen={} targets={}", count, g, targets);
     g
+}
+
+// ── 运行期跨核 TLB 失效探针 (S-13) ───────────────────────────────────────
+//
+// 判别力来源: 探针**不比对 shootdown 计数**, 而是要求每个远程核在 0xFD/SGI13
+// 接收路径内部读一个专用探测页并按 (代, 观测字节) 报告. 因此:
+// - 令 `flush_tlb_remote` 不置位 (不发 IPI) ⇒ 远程核永不报告 ⇒ 超时判 FAIL;
+// - 令定向 IPI 未送达 ⇒ 同上;
+// - 令 `tlb_flush_all` 退化为空操作 ⇒ 远程核报告陈旧字节 (帧 A 内容) ⇒ 判 FAIL.
+// 见 docs/plan/tlb-shootdown-epoch.md §5 注入 3.
+
+/// 探针当前代: 0 = 未装备 (接收侧此时不触碰探测页).
+static TLB_PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 每核最近一次探针观测到的**代**: 0 = 尚无观测.
+static TLB_PROBE_OBS_SEQ: [AtomicU64; crate::framework::config::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::framework::config::MAX_CPUS];
+
+/// 每核最近一次探针观测到的**字节**.
+///
+/// 写者次序: 先写本槽, 后写 [`TLB_PROBE_OBS_SEQ`] (Release); 读者据代判定字节有效.
+static TLB_PROBE_OBS_VAL: [AtomicU32; crate::framework::config::MAX_CPUS] =
+    [const { AtomicU32::new(0) }; crate::framework::config::MAX_CPUS];
+
+/// 装备探针 (驱动侧调用): 清空全部在线核观测槽后发布新代 `seq`.
+///
+/// 必须**逐个代串行**使用: 驱动方须等上一代全部远程核报告完毕, 再装备下一代,
+/// 否则迟到的旧代报告会覆盖新代观测槽 (接收侧登记的是"装备时读到的代").
+pub fn tlb_probe_arm(seq: u64) {
+    let cpu_count = get_cpu_count();
+    for i in 0..(cpu_count as usize).min(crate::framework::config::MAX_CPUS) {
+        TLB_PROBE_OBS_SEQ[i].store(0, Ordering::Relaxed);
+        TLB_PROBE_OBS_VAL[i].store(0, Ordering::Relaxed);
+    }
+    TLB_PROBE_SEQ.store(seq, Ordering::Release);
+}
+
+/// 收起探针: 接收侧此后不再触碰探测页 (拆除映射前必须先收起).
+pub fn tlb_probe_disarm() {
+    TLB_PROBE_SEQ.store(0, Ordering::Release);
+}
+
+/// 登记探针观测 (由接收侧在 [`tlb_catch_up_local`] **之后**调用).
+///
+/// 仅登记, 不 panic, 不做任何失效判定 (判定在驱动侧
+/// [`tlb_probe_wait_remotes`]); 目的只是把"本核确实执行了 flush 之后所读到的
+/// 字节"暴露给驱动侧.
+pub fn tlb_probe_report() {
+    let seq = TLB_PROBE_SEQ.load(Ordering::Acquire);
+    if seq == 0 {
+        return;
+    }
+    let cpu = get_current_cpu() as usize;
+    if cpu >= crate::framework::config::MAX_CPUS {
+        return;
+    }
+    // SAFETY: `tlb_probe_arm` 之后探测页在内核页表中恒为 present (驱动方保证
+    // "先建映射, 后装备"), 且全部在线核共用同一内核页表; 读取页对齐首字节不越界.
+    let v = unsafe { core::ptr::read_volatile(crate::framework::mm::TLB_PROBE_VA as *const u8) };
+    TLB_PROBE_OBS_VAL[cpu].store(u32::from(v), Ordering::Relaxed);
+    TLB_PROBE_OBS_SEQ[cpu].store(seq, Ordering::Release);
+}
+
+/// 统计 [0, cpu_count) 内**远程在线核**尚未报告 `(seq, expect)` 的个数.
+fn tlb_probe_missing(seq: u64, expect: u8, me: u32, cpu_count: u32) -> u32 {
+    let mut missing = 0u32;
+    for i in 0..cpu_count {
+        if i == me || !CPU_ONLINE[i as usize].load(Ordering::Acquire) {
+            continue;
+        }
+        if TLB_PROBE_OBS_SEQ[i as usize].load(Ordering::Acquire) != seq
+            || TLB_PROBE_OBS_VAL[i as usize].load(Ordering::Acquire) != u32::from(expect)
+        {
+            missing += 1;
+        }
+    }
+    missing
+}
+
+/// 有界自旋等待全部**远程在线核**报告 `(seq, expect)`, 返回仍未达成的核数.
+///
+/// 不含本核: 驱动侧在重映射前已自行失效本核 TLB, 且引导期 BSP 中断可能关闭,
+/// 自身 IPI 未必即时投递 —— 本核不构成"跨核传播"的证据.
+/// fail-closed: 超时后把未达成核数原样返回 (非 0 即失败), 不以"待定"放行.
+pub fn tlb_probe_wait_remotes(seq: u64, expect: u8) -> u32 {
+    // 有界自旋: AP 处于 `sti; hlt` 空闲态, IPI 投递为微秒级; 该上界远超所需,
+    // 仅在 IPI 真正未送达 (探针要判定的故障) 时耗尽.
+    const TIMEOUT_SPINS: u32 = 50_000_000;
+    let me = get_current_cpu();
+    let cpu_count = get_cpu_count();
+    let mut spins = 0u32;
+    while spins < TIMEOUT_SPINS {
+        if tlb_probe_missing(seq, expect, me, cpu_count) == 0 {
+            return 0;
+        }
+        core::hint::spin_loop();
+        spins += 1;
+    }
+    tlb_probe_missing(seq, expect, me, cpu_count)
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

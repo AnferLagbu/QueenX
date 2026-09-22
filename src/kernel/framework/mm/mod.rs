@@ -201,6 +201,14 @@ pub const USER_ADDR_MIN: u64 = 0xFFFF;
 /// 用于 DMA 缓存刷写对齐、false sharing 避免等场景.
 pub const CACHE_LINE_SIZE: u64 = 64;
 
+/// 运行期跨核 TLB 失效探针的专用虚拟地址 (用户半区 `PML4[255]` 空闲槽).
+///
+/// 选址依据: 用户半区 (`PML4[0..255]`) 不参与 KPTI 共享 (KPTI 仅复制高半区
+/// `PML4[256..512]`), 且引导期只有 `PML4[0]` 与 `PML4[256]` 被 boot 建立
+/// (低 4 GiB 恒等映射), 故 `PML4[255]` 可整槽新建 / 整槽拆除而不扰动既有映射.
+/// 该页在探针未装备时无映射, 装备前不得访问 (见 `framework::smp::tlb_probe_report`).
+pub const TLB_PROBE_VA: u64 = 0x0000_7F80_0000_0000;
+
 /// 内核文本段基址 (符号地址).
 /// `x86_64`: 高半核最高 2GB 区域 (-2GB 符号地址), 用于内核代码绝对寻址
 ///   和 RIP/地址分类 (内核文本段 vs 直接映射区).

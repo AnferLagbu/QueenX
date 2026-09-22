@@ -675,12 +675,12 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
 
     // ── 跨核 TLB 失效 SGI 13 (aarch64 等价于 x86_64 向量 0xFD) ──────────
     if intid == TLB_SHOOTDOWN_SGI {
-        // 先读当前代 → 全量刷新本核 TLB → 声明本核已追平该代,
-        // 顺序不可颠倒 (先 flush 后读代会读到 flush 之后新发布的代,
-        // 把本次 flush 未覆盖的批次误判为已追平)
-        let g = crate::framework::smp::tlb_gen_now();
-        crate::framework::mm::arch::tlb_flush_all();
-        crate::framework::smp::tlb_gen_set_self(g);
+        // 收敛入口 `smp::tlb_catch_up_local` 完成
+        // "先读当前代 → 全量刷新本核 TLB → 声明本核已追平该代", 次序不可颠倒
+        // (先 flush 后读代会读到 flush 之后新发布的代, 把本次 flush 未覆盖的批次
+        // 误判为已追平); 随后登记运行期探针观测 (未装备时为空操作).
+        crate::framework::smp::tlb_catch_up_local();
+        crate::framework::smp::tlb_probe_report();
         super::gic::end_of_interrupt(intid);
         return;
     }

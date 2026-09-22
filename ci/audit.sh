@@ -129,6 +129,18 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_comme
     fi
 fi
 
+# S-14: TLB 失效接收侧三段次序 audit — 防"先 flush 后读代"的假追平
+# (结构性次序问题, 运行期不可观测; 以静态 fail-closed 审计确定性覆盖,
+#  见 docs/plan/tlb-shootdown-epoch.md §5 注入 2)
+if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_tlb_receive_order.py" ]; then
+    step "0.5h/6 TLB 失效接收侧三段次序 (S-14)"
+    if "$PROJECT_ROOT/scripts/audit_tlb_receive_order.py" 2>&1 | tail -8; then
+        ok "S-14: 接收侧次序正确 (读代 → 全量失效 → 声明追平)"
+    else
+        err "S-14: 接收侧三段次序被破坏 (假追平风险)! 见上方输出"
+    fi
+fi
+
 # ── 1. 双架构 check ─────────────────────────────────────────────
 step "1/6 双架构 cargo check (x86_64 + aarch64)"
 pushd src/rust > /dev/null

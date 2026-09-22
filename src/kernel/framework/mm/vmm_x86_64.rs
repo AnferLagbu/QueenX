@@ -58,7 +58,7 @@ static VMM_LOCK_RECURSIVE: AtomicBool = AtomicBool::new(false);
 
 /// 本 `VMM_LOCK` 临界区是否产生过需要远程 TLB 失效的页表修改.
 ///
-/// 持锁期间由本核在 `flush_tlb` 中置位 (锁内单写者), `release_lock` 在**仍持锁**时
+/// 持锁期间由本核在 `flush_tlb_remote` 中置位 (锁内单写者), `release_lock` 在**仍持锁**时
 /// 读取并清除, 出临界区后再据其「发布新代 + 定向 IPI (`0xFD`, 含本核)」——
 /// 远程失效一律移出临界区, 且代计数下**不再有 ack 等待**
 /// (临界区内等对端响应会与被 `VMM_LOCK` 挡住的对端互等死锁).
@@ -463,7 +463,8 @@ impl VirtualMemoryManager {
             if pdpte.is_huge() {
                 // 1GB 页: 直接清空 PDPT 项
                 (*pdpt.add(virt.pdpt_idx())).set_value(0);
-                self.flush_tlb(virt.0);
+                // 拆除既有翻译 ⇒ 远程核可能缓存旧条目, 必须远程失效
+                self.flush_tlb_remote(virt.0);
             } else {
                 // SAFETY: pdpte.frame() valid; present && !huge → points to PD
                 let pd = pdpte.frame().to_virt().0 as *mut PageTableEntry;
@@ -476,12 +477,14 @@ impl VirtualMemoryManager {
 
                 if pde.is_huge() {
                     (*pd.add(virt.pd_idx())).set_value(0);
-                    self.flush_tlb(virt.0);
+                    // 拆除既有翻译 ⇒ 远程核可能缓存旧条目, 必须远程失效
+                    self.flush_tlb_remote(virt.0);
                 } else {
                     // SAFETY: pde.frame() valid; present && !huge → points to PT
                     let pt = pde.frame().to_virt().0 as *mut PageTableEntry;
                     (*pt.add(virt.pt_idx())).set_value(0);
-                    self.flush_tlb(virt.0);
+                    // 拆除既有翻译 ⇒ 远程核可能缓存旧条目, 必须远程失效
+                    self.flush_tlb_remote(virt.0);
                 }
             }
         }
@@ -550,7 +553,8 @@ impl VirtualMemoryManager {
                 val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 (*entry).set_value(val);
-                self.flush_tlb(virt.0);
+                // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
+                self.flush_tlb_remote(virt.0);
                 self.release_lock(&_flags);
                 return;
             }
@@ -570,7 +574,8 @@ impl VirtualMemoryManager {
                 val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 (*entry).set_value(val);
-                self.flush_tlb(virt.0);
+                // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
+                self.flush_tlb_remote(virt.0);
                 self.release_lock(&_flags);
                 return;
             }
@@ -582,7 +587,8 @@ impl VirtualMemoryManager {
             val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
             val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
             (*entry).set_value(val);
-            self.flush_tlb(virt.0);
+            // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
+            self.flush_tlb_remote(virt.0);
         }
 
         self.release_lock(&_flags);
@@ -650,7 +656,8 @@ impl VirtualMemoryManager {
                 val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 (*entry).set_value(val);
-                self.flush_tlb(virt.0);
+                // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
+                self.flush_tlb_remote(virt.0);
                 self.release_lock(&_flags);
                 return;
             }
@@ -670,7 +677,8 @@ impl VirtualMemoryManager {
                 val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
                 (*entry).set_value(val);
-                self.flush_tlb(virt.0);
+                // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
+                self.flush_tlb_remote(virt.0);
                 self.release_lock(&_flags);
                 return;
             }
@@ -682,7 +690,8 @@ impl VirtualMemoryManager {
             val &= !(PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
             val |= new_flags.bits() & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER | PAGE_NX);
             (*entry).set_value(val);
-            self.flush_tlb(virt.0);
+            // 权限变更 (mprotect): 远程核可能缓存旧 R/W/U/NX 位, 必须远程失效 (S-9)
+            self.flush_tlb_remote(virt.0);
         }
 
         self.release_lock(&_flags);
@@ -868,7 +877,8 @@ impl VirtualMemoryManager {
             let pt_ptr = (pt_virt as *mut u64).add(virt.pt_idx());
             pt_ptr.write_volatile(raw_pte);
 
-            self.flush_tlb(virt.0);
+            // 替换既有翻译 (swap-in/out 改写 PTE): 远程核可能缓存旧条目, 必须远程失效 (S-9)
+            self.flush_tlb_remote(virt.0);
         }
 
         self.release_lock(&_flags);
@@ -1134,6 +1144,10 @@ impl VirtualMemoryManager {
     }
 
     #[expect(
+        clippy::similar_names,
+        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+    )]
+    #[expect(
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
     )]
@@ -1167,20 +1181,22 @@ impl VirtualMemoryManager {
         unsafe {
             let pml4_ptr = pml4_virt.0 as *mut PageTableEntry;
 
-            let pdpt = self.get_or_create_table_entry(pml4_ptr.add(virt.pml4_idx()), true, 0);
+            let (pdpt, split_pdpt) =
+                self.get_or_create_table_entry(pml4_ptr.add(virt.pml4_idx()), true, 0);
             if pdpt.is_null() {
                 self.release_lock(&_flags);
                 return;
             }
 
-            let pd =
+            let (pd, split_pd) =
                 self.get_or_create_table_entry(pdpt.add(virt.pdpt_idx()), true, HUGE_PAGE_2M_SIZE);
             if pd.is_null() {
                 self.release_lock(&_flags);
                 return;
             }
 
-            let pt = self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
+            let (pt, split_pt) =
+                self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
             if pt.is_null() {
                 crate::klog_boot_info!(
                     "[VMM] map_page_in_table: failed to get/create PT for {:#x}",
@@ -1200,10 +1216,17 @@ impl VirtualMemoryManager {
             }
 
             let pte = &mut *pt.add(virt.pt_idx());
+            let leaf_was_present = pte.is_present();
             pte.set_frame(phys);
             pte.set_flags(flags);
 
-            self.flush_tlb(virt.0);
+            // 判定"本次写入是否为替换" (叶项原本存在 / 本次拆分了巨页) ⇒ 远程失效;
+            // 纯新建 (用户地址空间该 VA 首次映射, 或进程页表首次建立中间级) ⇒ 仅本核 (S-9).
+            if split_pdpt || split_pd || split_pt || leaf_was_present {
+                self.flush_tlb_remote(virt.0);
+            } else {
+                self.flush_tlb_local(virt.0);
+            }
         }
 
         self.release_lock(&_flags);
@@ -1226,6 +1249,10 @@ impl VirtualMemoryManager {
     /// - `virt` 是内核高半区虚拟地址 (`pml4_idx` >= 256)
     /// - `phys` 是对应的物理地址
     /// - 仅用于映射内核栈 (RSP0) 等必要内核结构
+    #[expect(
+        clippy::similar_names,
+        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+    )]
     pub fn map_kernel_page_in_table(
         &self,
         pml4: u64,
@@ -1256,20 +1283,22 @@ impl VirtualMemoryManager {
         unsafe {
             let pml4_ptr = pml4_virt.0 as *mut PageTableEntry;
 
-            let pdpt = self.get_or_create_table_entry(pml4_ptr.add(virt.pml4_idx()), true, 0);
+            let (pdpt, split_pdpt) =
+                self.get_or_create_table_entry(pml4_ptr.add(virt.pml4_idx()), true, 0);
             if pdpt.is_null() {
                 self.release_lock(&_flags);
                 return;
             }
 
-            let pd =
+            let (pd, split_pd) =
                 self.get_or_create_table_entry(pdpt.add(virt.pdpt_idx()), true, HUGE_PAGE_2M_SIZE);
             if pd.is_null() {
                 self.release_lock(&_flags);
                 return;
             }
 
-            let pt = self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
+            let (pt, split_pt) =
+                self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
             if pt.is_null() {
                 crate::klog_boot_info!(
                     "[VMM] map_kernel_page_in_table: failed to get/create PT for {:#x}",
@@ -1287,10 +1316,18 @@ impl VirtualMemoryManager {
             }
 
             let pte = &mut *pt.add(virt.pt_idx());
+            let leaf_was_present = pte.is_present();
             pte.set_frame(phys);
             pte.set_flags(flags);
 
-            self.flush_tlb(virt.0);
+            // 内核高半区 VA 在进程页表中的映射: 该 VA 的中间级与内核页表**共享**
+            // (KPTI 只复制 PML4 顶层), 故本次拆分巨页即改动共享结构 ⇒ 必须远程失效;
+            // 仅当叶项此前不存在且未拆分时才是纯新建 (S-9).
+            if split_pdpt || split_pd || split_pt || leaf_was_present {
+                self.flush_tlb_remote(virt.0);
+            } else {
+                self.flush_tlb_local(virt.0);
+            }
         }
 
         self.release_lock(&_flags);
@@ -1353,7 +1390,8 @@ impl VirtualMemoryManager {
             if pdpte.is_huge() {
                 // 1GB 页: 直接清空 PDPT 项
                 (*pdpt.add(virt.pdpt_idx())).set_value(0);
-                self.flush_tlb(virt.0);
+                // 拆除既有翻译 ⇒ 远程核可能缓存旧条目, 必须远程失效
+                self.flush_tlb_remote(virt.0);
             } else {
                 // SAFETY: pdpte.frame() valid; present && !huge → points to PD
                 let pd = pdpte.frame().to_virt().0 as *mut PageTableEntry;
@@ -1367,7 +1405,8 @@ impl VirtualMemoryManager {
                 if pde.is_huge() {
                     // 2MB 页: 直接清空 PDE 项
                     (*pd.add(virt.pd_idx())).set_value(0);
-                    self.flush_tlb(virt.0);
+                    // 拆除既有翻译 ⇒ 远程核可能缓存旧条目, 必须远程失效 (S-9)
+                    self.flush_tlb_remote(virt.0);
                 } else {
                     // SAFETY: pde.frame() valid; present && !huge → points to PT
                     let pt = pde.frame().to_virt().0 as *mut PageTableEntry;
@@ -1375,7 +1414,8 @@ impl VirtualMemoryManager {
                     // SAFETY: pt_idx 在 4KB PT 页范围内
                     let old_pte = (*pt.add(pt_idx)).value();
                     (*pt.add(pt_idx)).set_value(0);
-                    self.flush_tlb(virt.0);
+                    // 拆除既有翻译 ⇒ 远程核可能缓存旧条目, 必须远程失效 (S-9)
+                    self.flush_tlb_remote(virt.0);
 
                     // §8.1 规则 3: 拆除 USER leaf 即注销该映射持有的一份帧引用,
                     // 归零才延迟释放. **必须过滤 USER 位**: KPTI supervisor 页
@@ -1554,6 +1594,10 @@ impl VirtualMemoryManager {
 
     // ==================== 私有方法 ====================
 
+    #[expect(
+        clippy::similar_names,
+        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
+    )]
     fn map_page_internal(
         &self,
         virt: VirtAddr,
@@ -1588,27 +1632,37 @@ impl VirtualMemoryManager {
         unsafe {
             let pml4 = pml4_virt.0 as *mut PageTableEntry;
 
-            let pdpt = self.get_or_create_table_entry(pml4.add(virt.pml4_idx()), true, 0);
+            let (pdpt, split_pdpt) =
+                self.get_or_create_table_entry(pml4.add(virt.pml4_idx()), true, 0);
             if pdpt.is_null() {
                 return Err("Failed to allocate PDPT");
             }
 
-            let pd =
+            let (pd, split_pd) =
                 self.get_or_create_table_entry(pdpt.add(virt.pdpt_idx()), true, HUGE_PAGE_2M_SIZE);
             if pd.is_null() {
                 return Err("Failed to allocate PD");
             }
 
-            let pt = self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
+            let (pt, split_pt) =
+                self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
             if pt.is_null() {
                 return Err("Failed to allocate PT");
             }
 
             let pte = &mut *pt.add(virt.pt_idx());
+            let leaf_was_present = pte.is_present();
             pte.set_frame(phys);
             pte.set_flags(flags);
 
-            self.flush_tlb(virt.0);
+            // 判定"本次写入是否为替换": 叶子项原本已存在 (覆盖), 或本次调用拆分了巨页
+            // (旧巨页条目被换成下一级表指针). 二者皆否 = 纯新建 (该 VA 此前无翻译),
+            // 远程核不可能缓存陈旧条目 ⇒ 只失效本核, 不登记远程需求 (S-9).
+            if split_pdpt || split_pd || split_pt || leaf_was_present {
+                self.flush_tlb_remote(virt.0);
+            } else {
+                self.flush_tlb_local(virt.0);
+            }
         }
 
         Ok(())
@@ -1635,7 +1689,7 @@ impl VirtualMemoryManager {
             // 记录 PML4E 是否已存在 — 新建的 PDPT 需同步到 USER_PML4
             let pml4e_existed = (*pml4.add(pml4_idx)).is_present();
 
-            let pdpt = self.get_or_create_table_entry(pml4.add(pml4_idx), true, 0);
+            let (pdpt, _) = self.get_or_create_table_entry(pml4.add(pml4_idx), true, 0);
             if pdpt.is_null() {
                 return Err("Failed to allocate PDPT");
             }
@@ -1654,7 +1708,8 @@ impl VirtualMemoryManager {
                 return Ok(());
             }
 
-            let pd =
+            // 上方门已令 present 的 1GB PDPTE 提前返回 ⇒ 本次不会拆分巨页, 拆分标志恒 false.
+            let (pd, _) =
                 self.get_or_create_table_entry(pdpt.add(virt.pdpt_idx()), true, HUGE_PAGE_2M_SIZE);
             if pd.is_null() {
                 return Err("Failed to allocate PD");
@@ -1671,7 +1726,9 @@ impl VirtualMemoryManager {
             pde.set_frame(phys);
             pde.set_flags(flags);
 
-            self.flush_tlb(virt.0);
+            // 到达此处的前提: 两条守卫已排除"PD 叶项 present"的两种情形, 且本次无巨页拆分
+            // ⇒ 该 VA 此前不存在 2MB 翻译, 远程核不可能缓存陈旧条目 ⇒ 仅失效本核 (S-9).
+            self.flush_tlb_local(virt.0);
         }
 
         Ok(())
@@ -1698,7 +1755,7 @@ impl VirtualMemoryManager {
             // 记录 PML4E 是否已存在 — 新建的 PDPT 需同步到 USER_PML4
             let pml4e_existed = (*pml4.add(pml4_idx)).is_present();
 
-            let pdpt = self.get_or_create_table_entry(pml4.add(pml4_idx), true, 0);
+            let (pdpt, _) = self.get_or_create_table_entry(pml4.add(pml4_idx), true, 0);
             if pdpt.is_null() {
                 return Err("Failed to allocate PDPT");
             }
@@ -1720,7 +1777,9 @@ impl VirtualMemoryManager {
             pdpte.set_frame(phys);
             pdpte.set_flags(flags);
 
-            self.flush_tlb(virt.0);
+            // 两条守卫已排除"PDPT 叶项 present"的两种情形, PML4 级又不含巨页 ⇒ 该 VA 此前
+            // 不存在 1GB 翻译, 远程核不可能缓存陈旧条目 ⇒ 仅失效本核 (S-9).
+            self.flush_tlb_local(virt.0);
         }
 
         Ok(())
@@ -1741,12 +1800,17 @@ impl VirtualMemoryManager {
         clippy::unreadable_literal,
         reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
     )]
+    /// 取 (必要时创建) `entry` 指向的下一级页表, 返回 `(表指针, 本次是否拆分巨页)`.
+    ///
+    /// 第二个返回值供调用方判定"本次叶子写入是否为替换": 拆分把既有巨页条目换成下一级
+    /// 表指针, 属**替换** (远程核可能缓存旧巨页条目 ⇒ 必须远程失效). 该事实不能从叶子
+    /// 存在位隐式推得, 故由本函数显式回报 (见 docs/plan/tlb-shootdown-epoch.md S-9).
     unsafe fn get_or_create_table_entry(
         &self,
         entry: *mut PageTableEntry,
         create: bool,
         huge_step: u64,
-    ) -> *mut PageTableEntry {
+    ) -> (*mut PageTableEntry, bool) {
         unsafe {
             // SAFETY: 调用方保证 `entry` 指向 PMM 分配的页表页内合法 PageTableEntry.
             // 解引用通过 512 项表大小做边界检查.
@@ -1755,16 +1819,17 @@ impl VirtualMemoryManager {
             if e.is_present() && !e.is_huge() {
                 // SAFETY: Present && !huge → frame 位是合法的下一级表物理地址.
                 // phys_to_virt 给出合法内核 VA.
-                e.frame().to_virt().0 as *mut PageTableEntry
+                (e.frame().to_virt().0 as *mut PageTableEntry, false)
             } else if create {
                 let pmm = get_pmm();
 
-                pmm.alloc_page().map_or(core::ptr::null_mut(), |page| {
+                pmm.alloc_page().map_or((core::ptr::null_mut(), false), |page| {
                     let page_virt = page.to_virt();
                     let pt = page_virt.0 as *mut PageTableEntry;
                     core::ptr::write_bytes(pt as *mut u8, 0, PAGE_SIZE as usize);
 
-                    if e.is_huge() {
+                    let split = e.is_huge();
+                    if split {
                         // 拆分巨页: 从巨页帧填充 512 个子条目
                         // step = PAGE_SIZE → PD→PT (2MB→4KB), 新 PT 条目不需要 HUGE_PAGE
                         // step = HUGE_PAGE_2M_SIZE → PDPT→PD (1GB→2MB), 新 PD 条目需要 HUGE_PAGE
@@ -1811,10 +1876,10 @@ impl VirtualMemoryManager {
                         | (PageFlags::PRESENT | PageFlags::WRITABLE).bits();
                     (*entry).set_value(new_val);
 
-                    page_virt.0 as *mut PageTableEntry
+                    (page_virt.0 as *mut PageTableEntry, split)
                 })
             } else {
-                core::ptr::null_mut()
+                (core::ptr::null_mut(), false)
             }
         }
     }
@@ -1871,12 +1936,13 @@ impl VirtualMemoryManager {
             // VMM_LOCK 已持有, 所有页表修改串行化.
             unsafe {
                 let pml4 = pml4_virt.0 as *mut PageTableEntry;
-                let pdpt = self.get_or_create_table_entry(pml4.add(v.pml4_idx()), false, 0);
+                // create=false: 只取现有表, 不创建也不拆分 ⇒ 拆分标志恒 false.
+                let (pdpt, _) = self.get_or_create_table_entry(pml4.add(v.pml4_idx()), false, 0);
                 if pdpt.is_null() {
                     return Err("PDPT not present");
                 }
 
-                let pd = self.get_or_create_table_entry(pdpt.add(v.pdpt_idx()), false, 0);
+                let (pd, _) = self.get_or_create_table_entry(pdpt.add(v.pdpt_idx()), false, 0);
                 if pd.is_null() {
                     return Err("PD not present");
                 }
@@ -1912,7 +1978,8 @@ impl VirtualMemoryManager {
                 let new_flags = (huge_flags & !PageFlags::HUGE_PAGE) | PageFlags::PRESENT;
                 pd_entry.set_flags(new_flags);
 
-                self.flush_tlb(virt);
+                // 巨页拆分: 2MB PDE 被替换为 4KB 页表, 拆分前已缓存的 2MB 条目必须远程失效 (S-9)
+                self.flush_tlb_remote(virt);
             }
 
             Ok(())
@@ -1945,7 +2012,8 @@ impl VirtualMemoryManager {
             let entry = &mut *pml4.add(v.pml4_idx());
             if entry.is_present() && !entry.is_user() {
                 entry.set_user(true);
-                self.flush_tlb(virt);
+                // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
+                self.flush_tlb_remote(virt);
             }
         }
     }
@@ -1987,7 +2055,8 @@ impl VirtualMemoryManager {
             pdpte.set_user(true);
 
             if pdpte.is_huge() {
-                self.flush_tlb(virt);
+                // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
+                self.flush_tlb_remote(virt);
                 return;
             }
 
@@ -1999,7 +2068,8 @@ impl VirtualMemoryManager {
             pde.set_user(true);
         }
 
-        self.flush_tlb(virt);
+        // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
+        self.flush_tlb_remote(virt);
     }
 
     // 有意窄化: 显式收窄, 调用方保证值域
@@ -2270,7 +2340,7 @@ impl VirtualMemoryManager {
 
         // 远程失效 = 发布新代 + 定向 IPI (含本核), **不等待** —— 代计数下无需 ack,
         // 等待一律发生在锁外且中断开启 (锁内等 ack 会与被本锁挡住的对端互等死锁).
-        // 单核 / SMP 未启用时 `flush_tlb` 本就不置位, 取当前代 (恒 0) 即可立即释放.
+        // 单核 / SMP 未启用时 `flush_tlb_remote` 本就不置位, 取当前代 (恒 0) 即可立即释放.
         let smp_active =
             crate::framework::smp::is_enabled() && crate::framework::smp::get_cpu_count() > 1;
         let g = if shootdown_needed && smp_active {
@@ -2354,7 +2424,27 @@ impl VirtualMemoryManager {
         clippy::unused_self,
         reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
     )]
-    fn flush_tlb(&self, addr: u64) {
+    /// 本核页级 TLB 失效, **不**登记远程失效需求.
+    ///
+    /// 仅用于"目标 VA 此前不存在翻译"的**纯新建**映射: x86 不缓存"不存在"的翻译,
+    /// 远程核不可能持有该 VA 的陈旧条目, 远程失效无对象 (若一律登记, 每次新建映射都会
+    /// 向全部在线核发一轮 IPI —— 过度失效, 见 docs/plan/tlb-shootdown-epoch.md S-9).
+    fn flush_tlb_local(&self, addr: u64) {
+        crate::arch!(tlb_flush_page(addr as usize));
+    }
+
+    #[inline(always)]
+    // 有意窄化: 显式收窄, 调用方保证值域
+    #[expect(clippy::cast_possible_truncation)]
+    #[expect(
+        clippy::unused_self,
+        reason = "保留 &self 签名以便调用点统一用法, 不依赖 self 字段时可改关联函数"
+    )]
+    /// 本核页级 TLB 失效 + 登记"本临界区需远程失效".
+    ///
+    /// 用于**替换/覆盖既有翻译** (拆除、重映射、巨页拆分、swap 替换) 与**权限变更**
+    /// (mprotect / 设 USER 位): 远程核可能已缓存旧条目, 不失效即读到陈旧翻译.
+    fn flush_tlb_remote(&self, addr: u64) {
         crate::arch!(tlb_flush_page(addr as usize));
 
         // SIMPLIFIED: 远程失效粒度取全量 `tlb_flush_all` (对端重载 CR3) 而非页级地址载荷;
@@ -2449,6 +2539,105 @@ pub fn get_current_pml4() -> u64 {
         cr3
     } else {
         KERNEL_PML4.load(Ordering::Acquire)
+    }
+}
+
+/// 运行期跨核 TLB 失效探针 (S-13) —— 引导期一次性自检.
+///
+/// **判别力来源**: 不比对 shootdown 计数, 而是要求每个**远程核**在 `0xFD` 接收
+/// 路径内 ([`crate::framework::smp::tlb_probe_report`]) 读本探针的专用探测页
+/// (`TLB_PROBE_VA`) 并按 (代, 观测字节) 报告. 因此能确定性检出三类注入:
+/// - `flush_tlb_remote` 不置位 (无远程失效登记 ⇒ 无 IPI) ⇒ 远程核永不报告 ⇒ FAIL;
+/// - 定向 IPI 未送达 ⇒ 同上 ⇒ FAIL;
+/// - `tlb_flush_all` 退化为空操作 ⇒ 远程核报告陈旧字节 (帧 A = `0xAA`) ⇒ FAIL.
+///
+/// 见 `docs/plan/tlb-shootdown-epoch.md` §5 注入 3 / 注入 4.
+///
+/// **不设 GLOBAL 位**: `tlb_flush_all` 的实现是重载 CR3, 而重载 CR3 **不失效
+/// GLOBAL 页** —— 探测页一旦带 GLOBAL 位, 远程核会跨 flush 保留陈旧翻译,
+/// 探针随即失去判别力 (字节比对恒为旧值).
+///
+/// 返回 `true` = 通过 (含单核 / SMP 未启用下的跳过); `false` = 判别性失败.
+pub fn tlb_probe_selftest() -> bool {
+    use crate::framework::smp;
+
+    // 单核 / SMP 未启用: 无远程核可观测, 探针无判别对象 ⇒ 跳过 (不构成失败).
+    if !smp::is_enabled() || smp::get_cpu_count() <= 1 {
+        crate::klog_boot_info!("[SMP] TLB probe SKIP (single core / SMP disabled)");
+        return true;
+    }
+
+    let Some(frame_a) = get_pmm().alloc_page() else {
+        crate::klog_boot_info!("[SMP] TLB probe FAIL (alloc frame A)");
+        return false;
+    };
+    let Some(frame_b) = get_pmm().alloc_page() else {
+        get_pmm().free_page(frame_a);
+        crate::klog_boot_info!("[SMP] TLB probe FAIL (alloc frame B)");
+        return false;
+    };
+
+    // 播种两个数据帧: A = 0xAA, B = 0xBB (经内核直接映射 VA 写入).
+    // SAFETY: frame_a / frame_b 由 PMM 分配, 各为完整 4KB 页; `to_virt` 给出合法
+    // 内核直接映射 VA; 探针尚未装备 (`tlb_probe_arm` 未调用), 接收侧不访问该页,
+    // 无并发读者.
+    unsafe {
+        core::ptr::write_volatile(frame_a.to_virt().0 as *mut u8, 0xAA);
+        core::ptr::write_volatile(frame_b.to_virt().0 as *mut u8, 0xBB);
+    }
+
+    let probe_va = VirtAddr(crate::framework::mm::TLB_PROBE_VA);
+    let vmm = get_vmm();
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE;
+
+    // 建映射到帧 A. 该 VA 此前无翻译 ⇒ `map_page_internal` 走"纯新建"分支 (仅本核
+    // 失效, 不登记远程), 故下面显式发布一次 shootdown 作为 seq=1 的触发源.
+    if vmm.map_page(probe_va, frame_a, flags).is_err() {
+        get_pmm().free_page(frame_a);
+        get_pmm().free_page(frame_b);
+        crate::klog_boot_info!("[SMP] TLB probe FAIL (map frame A)");
+        return false;
+    }
+
+    // seq=1: 装备探针 → 显式发布代 + 广播 0xFD → 远程核应在接收路径读到帧 A (0xAA).
+    smp::tlb_probe_arm(1);
+    smp::tlb_gen_publish_and_shoot();
+    let miss1 = smp::tlb_probe_wait_remotes(1, 0xAA);
+
+    // seq=2: **先装备, 再重映射**到帧 B —— 叶子已存在 ⇒ `map_page_internal` 必经
+    // `flush_tlb_remote` (登记远程失效), 由 `map_page` 出临界区时发布代 + 广播 IPI.
+    // 此为注入 3 的检出点: 若 `flush_tlb_remote` 不置位则无 IPI, 远程核永不报告
+    // seq=2. 装备必须先于重映射 (IPI 在重映射之后的 release_lock 内才发出).
+    smp::tlb_probe_arm(2);
+    let remap_ok = vmm.map_page(probe_va, frame_b, flags).is_ok();
+    let miss2 = smp::tlb_probe_wait_remotes(2, 0xBB);
+
+    // 先收起探针再拆除映射: 拆除本身会广播 IPI, 若此刻仍装备, 接收侧将去读一个
+    // 正被清零的页 (缺页). 收起后接收侧对探测页零访问.
+    smp::tlb_probe_disarm();
+
+    // 完整回收 (零残留): `unmap_page_in_table` 清叶子 + 远程失效 + 递归释放变空的
+    // PT/PD/PDPT 三个表页 + 清零 `KERNEL_PML4[255]`. 叶子非 USER ⇒ 其回收路径不做
+    // frame_dec, 两个数据帧须自行归还.
+    vmm.unmap_page_in_table(get_kernel_pml4(), probe_va);
+    super::release_frame(frame_a);
+    super::release_frame(frame_b);
+
+    if miss1 == 0 && miss2 == 0 && remap_ok {
+        crate::klog_boot_info!(
+            "[SMP] TLB probe PASS (remotes observed seq1=0xAA, seq2=0xBB; cpu_count={})",
+            smp::get_cpu_count()
+        );
+        true
+    } else {
+        crate::klog_boot_info!(
+            "[SMP] TLB probe FAIL (miss1={} miss2={} remap_ok={} cpu_count={})",
+            miss1,
+            miss2,
+            remap_ok,
+            smp::get_cpu_count()
+        );
+        false
     }
 }
 

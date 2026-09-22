@@ -8,7 +8,7 @@
 >
 > **关联**：D-9-3（`0xFD`/`0xFE` 无 IDT 门）/ D-9-5（跨核 TLB shootdown 门控首次生效）/ D-9-7（aarch64 SMP 不对称）/ D-8（TLB shootdown 锁序论证前提失实）。
 >
-> **文件状态**：本文件的 **S-3 / S-6 / S-7 中依赖 ack 计数的部分**已被 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md)（代计数路线）**取代**，非增量 —— 新路线不建 ack 计数协议、不做"临界区外等 ack"、不设定长 deferred 缓冲；**S-5 的"定向投递"能力不废止**，由新路线的 `tlb_gen_publish_and_shoot` 承接。骨架类条目（S-1 `0xFD`/`0xFE` 的 stub 与 IDT 门、S-2 `handle_irq` 前置分支、S-4 `0xFE` 接线、S-8 aarch64 SGI 分支、S-9 参数化）已在工作区落地并沿用。台账 **D-9-3 / D-9-5 / D-9-7 现指向 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md)**。
+> **文件状态**：本文件的 **S-3 / S-6 / S-7 中依赖 ack 计数的部分**已被 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md)（代计数路线）**取代**，非增量 —— 新路线不建 ack 计数协议、不做"临界区外等 ack"、不设定长 deferred 缓冲；**S-5 的"定向投递"能力不废止**，由新路线的 `tlb_gen_publish_and_shoot` 承接。骨架类条目（S-1 `0xFD`/`0xFE` 的 stub 与 IDT 门、S-2 `handle_irq` 前置分支、S-4 `0xFE` 接线、S-8 aarch64 SGI 分支、S-9 参数化）已在工作区落地并沿用。台账 **D-9-3 / D-9-5 / D-9-7 现指向 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md)**。§3 的 S-1..S-10 状态已按落地实况归位（S-1/S-2/S-4/S-5/S-8/S-9 为已落地骨架；S-3/S-6/S-7 标注为**已被 epoch 路线取代、不再实施**；S-10 为文档同步），§4 的 fail-closed 注入复验已执行并回填（S-NEG-1 / S-NEG-2）。
 
 ## 1. 决策记录
 
@@ -73,32 +73,37 @@
 - **S-1. `0xFD`/`0xFE` 的 stub 与 IDT 门**
   - 描述：IPI 向量无 stub 也无门，投递即无描述符可用。
   - 方案：`boot/isr.asm` 用既有 `%macro irq_stub 2` 新增两个实例（`irq_stub 253, 0xFD` / `irq_stub 254, 0xFE`，沿用 `irq_common` 入口）；`idt/mod.rs` 的 `extern "C"` 块补 `fn irq253(); fn irq254();`；`idt.rs` 在 `init_msi_idt()` 之后注册两门（`GDT_KERNEL_CODE` + `IDT_TYPE_INTERRUPT`，DPL0、非 IST）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：向量号 `0xFD`/`0xFE` 空闲——既有门占用为 `0-31`、`32-47`、`0x40-0x9F`、`0x80`、`0x82`（`0x82` 与 MSI 段 `0x80-0x9F` 重叠属既有面，不在本工程处理）。stub 符号名取 `irq253`/`irq254`（按向量号命名），避开既有 `irq0-irq127` 符号。`push 0xFD` 会按 imm8 符号扩展成 `0xFFFF…FD`，但接收侧 [idt/mod.rs:573](../../src/kernel/framework/idt/mod.rs#L573) 以 `frame_ref.int_no as u8` 截断取向量，与既有 `0xAF` 等 stub 同构，无额外风险。
+  - 落地证据：`boot/isr.asm:537-541`（`irq_stub 253, 0xFD` / `irq_stub 254, 0xFE`）、`idt/mod.rs:326-328`（`fn irq253(); fn irq254();`）、`idt/mod.rs:538-540`（`ipi_table` 并调 `init_ipi_idt`）、`idt.rs:382-400`（`init_ipi_idt` 编程两门，DPL0、非 IST）。启动日志实测出现 `IDT: IPI vectors 0xFD/0xFE programmed (2 stubs)`（见 [smp_test_20260922_110411.log](../../tests/reports/smp_test_20260922_110411.log) 第 64 行）。
 
 - **S-2. `handle_irq` 前置 IPI 分支（消除 `irq_descriptors[128]` 越界）**
   - 描述：`irq = vector - IRQ_BASE` 对 `0xFD` 得 221，直索 128 项数组 → panic（§2.2）。
   - 方案：在 [idt.rs:725](../../src/kernel/framework/idt/idt.rs#L725) 取 `irq` 之前，按 `vector` 判定 `0xFD`/`0xFE` 并走独立分支：执行对应处理（S-3/S-4）→ 发 LAPIC EOI（`send_eoi`）→ `return`。IPI 分支**不进** `do_softirq`/信号投递路径（`0xFE` 经 `raise_softirq` 自行登记 Sched softirq）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：置于 `handle_irq` 最前，先于 `stats.record_irq`，避免 `irq` 越界值污染统计。
+  - 落地证据：`idt.rs:768-790`（`0xFD`/`0xFE` 前置分支，位于 `let irq = vector - IRQ_BASE;` 之前）—— 分支在 `stats.record_irq` 之前 `return`，越界值不污染统计。判别力由 §4 注入验证 S-NEG-1 证实（移除该分支即越界 panic）。
 
 - **S-3. `0xFD` 处理：本核失效 + 完成确认**
   - 描述：目标核需刷新本核 TLB 并向发起核确认，否则发起核无法界定「失效已完成」。
   - 方案：处理体内调 `mm::arch::tlb_flush_all()`；随后对 `TLB_ACK_PENDING` 做**有下界保护**的递减（仅当 `>0` 时减，用 `fetch_update` 或 CAS 循环），避免迟到/多余 IPI 造成下溢污染下一次 shootdown 的计数。
-  - 状态：[]
+  - 状态：[X]（**已废止**：ack 计数方案未实施）
   - 详情：粒度取 `tlb_flush_all`，取页级由 S-6 的 SIMPLIFIED 说明承载。
+  - 落地证据（**取代**）：本条的「ack 计数 + 有下界递减」**不再实施** —— ack 路线整体已被 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 的代计数路线取代（本文档开头「文件状态」段）。现行接收侧为 `idt.rs:776-781`：`tlb_gen_now()` 读代 → `mm::arch::tlb_flush_all()` 全量刷新 → `tlb_gen_set_self(g)` 声明本核追平（[smp/mod.rs:130](../../src/kernel/framework/smp/mod.rs#L130)），无 `TLB_ACK_PENDING`、无递减。全仓库无 `TLB_ACK_PENDING` 符号。
 
 - **S-4. `0xFE` 处理：接线既有 `resched_ipi_handler`**
   - 描述：[cpu_queue.rs:118-121](../../src/kernel/framework/proc/cpu_queue.rs#L118-L121) 的 `resched_ipi_handler` 全仓库零调用（§2.2）。
   - 方案：`0xFE` 分支调用该函数（`raise_softirq(Sched)`），使跨核重新调度请求真正落地；不改其内部逻辑。
-  - 状态：[]
+  - 状态：[X]
   - 详情：`0xFE` **不等 ack**（reschedule 天然可 fire-and-forget），仅 `0xFD` 走确认栅栏。
+  - 落地证据：`idt.rs:783-789` —— `0xFE` 分支调用 `crate::framework::proc::cpu_queue::resched_ipi_handler()` 后 `send_eoi(0)` 并 `return`；`resched_ipi_handler` 由此从「全仓库零调用」变为真实调用路径。
 
 - **S-5. 定向 cpumask 投递替代 all-excluding-self 广播**
   - 描述：`broadcast_ipi` 用 `ICR_ALL_EXCLUDE_SELF`（[apic.rs:164-174](../../src/kernel/framework/arch/x86_64/apic.rs#L164-L174)），无法表达「只发给在线核」，多核下会把 IPI 投给未上线的目标。
   - 方案：`smp/mod.rs` 新增定向 shootdown 发送：遍历 `0..get_cpu_count()`，对 `CPU_ONLINE[i] && get_apic_id(i) != 本核 APIC ID` 的核逐一向其 APIC ID `send_ipi(.., 0xFD)`，并累加目标数。保留既有 `broadcast_ipi` 供 reschedule 广播使用。
-  - 状态：[]
+  - 状态：[X]
   - 详情：本核 APIC ID 取 `get_current_cpu()`（`arch!(cpu_id())`，与 [smp/mod.rs:22](../../src/kernel/framework/smp/mod.rs#L22) 初始化同源）。
+  - 落地证据（**由新路线承接**）：定点投递能力由 `tlb_gen_publish_and_shoot`（[smp/mod.rs:162-177](../../src/kernel/framework/smp/mod.rs#L162-L177)）承接 —— 遍历 `0..get_cpu_count()`，对 `CPU_ONLINE[i]` 为真的核逐一 `send_tlb_invalidate_ipi(get_apic_id(i))`（[smp/mod.rs:88](../../src/kernel/framework/smp/mod.rs#L88) 发 `0xFD`）并累加 `targets`；**IPI 集合含本核**（与原文「排除本核」有意不同，理由见 `smp/mod.rs:159-161`：使发送侧与接收侧走同一「读代 → flush → 声明」路径）。实测日志 `[SMP] TLB shootdown #N gen=G targets=N` 的 `targets=` 恒等于核数（[Makefile:593](../../Makefile#L593) 以 `targets=$(SMP_CORES)` 作 fail-closed 断言）。
 
 - **S-6. shootdown 移出 `VMM_LOCK` 临界区 + ack 栅栏（D2）**
   - 描述：临界区内等 ack 必死锁（§2.3）；须改为「临界区内只记录，释放锁后广播并等 ack」。
@@ -107,31 +112,36 @@
     2. `release_lock()` 在**仍持锁**时读并清该标志，然后照原序 `VMM_LOCK.store(false)` → `restore_interrupts(flags)`；此后若标志置位且 `smp::is_enabled() && get_cpu_count() > 1`，调用新增的 `smp::tlb_shootdown_sync()`。
     3. `smp::tlb_shootdown_sync()`：以 **IF=1** 自旋等待 `SHOOTDOWN_IN_FLIGHT` 清零（串行化在途 shootdown，避免并发计数错乱）→ 置 in-flight → `TLB_ACK_PENDING.store(目标数)` → 按 S-5 定向发送 `0xFD` → 以 **IF=1** 自旋等待 `TLB_ACK_PENDING == 0` → 清 in-flight。
     4. 等 ack 期间 IF 必须保持开启：本核仍需响应他核 `0xFD`（否则两核互 shootdown 互等死锁，§2.3 推论）。
-  - 状态：[]
+  - 状态：[X]（**已废止**：ack 栅栏方案未实施）
   - 详情：**`// SIMPLIFIED:` 标记必填**——远程失效粒度为 `tlb_flush_all`（重载 CR3）而非页级：影响面为 shootdown 触发时远程核全量 TLB 失效（性能开销，非正确性）；扩展条件为 shootdown 成为热路径或出现页级失效收益时，再引入地址载荷（需同时解决载荷数组的复制、溢出回退与并发写者规避）。另：`release_lock` 现被约 21 处调用（含大量早退路径），标志为空时零开销直通。
+  - 落地证据（**取代**）：本条的「`SHOOTDOWN_IN_FLIGHT` 串行化 + `TLB_ACK_PENDING` 自旋等 ack」**不再实施**。新路线沿用「排空点放在 `release_lock` 出口」这一**同源结论**（等待不得发生于持 `VMM_LOCK` 且 IF=0 的临界区内），但完成判定改为「全部在线核已追平代 ≥ 帧释放代」，**无任何自旋等待**：`release_lock` 出口读并清原子标志后用 `tlb_gen_publish_and_shoot()` 发布新代 + 定向 IPI 即返回（[vmm_x86_64.rs:2277](../../src/kernel/framework/mm/vmm_x86_64.rs#L2277)），发送侧不阻塞。跑界口径 `smp::is_enabled() && get_cpu_count() > 1` 保留（[vmm_x86_64.rs:2277-2279](../../src/kernel/framework/mm/vmm_x86_64.rs#L2277-L2279)）。全仓库无 `SHOOTDOWN_IN_FLIGHT` / `TLB_ACK_PENDING` 符号。
 
 - **S-7. deferred-free：帧释放延后至 ack 完成（D3）**
   - 描述：§2.4 的 8 处 `free_page` 与同区 TLB 失效共享临界区，release 后到 ack 完成之间存在「刚释放帧被重分配 + 第三核陈旧映射」窗口。
   - 方案：临界区内把待释放帧记入局部缓冲（内核栈上的定长数组），`release_lock` 中在 shootdown + ack 完成后才真正调 `pmm.free_page`。缓冲设上限，溢出时对超出部分立即释放并一次性告警。
-  - 状态：[]
+  - 状态：[X]（**已废止**：定长缓冲方案被证伪，未实施）
   - 详情：范围以「同一临界区内既有 `flush_tlb` 又有 `pmm.free_page`」为判据逐一核实落点，已核实两区共 8 处（[L1093-1129](../../src/kernel/framework/mm/vmm_x86_64.rs#L1093-L1129) 3 处 + [L1212-1229](../../src/kernel/framework/mm/vmm_x86_64.rs#L1212-L1229) 5 处）；[L633](../../src/kernel/framework/mm/vmm_x86_64.rs#L633) 经核实不在范围内。缓冲溢出属 SIMPLIFIED 路径，须以 `// SIMPLIFIED:` 注明（简化了什么 + 影响 + 何时扩展）。`page_fault.rs`/`cow.rs`/`swap.rs` 的 `free_page` 不在本工程临界区内，属既有面，只登记不动（§12.5）。
+  - 落地证据（**取代**）：本条的「内核栈上定长缓冲 + 溢出即释放」**不再实施** —— 该设计已作为**正确性漏洞**被证伪（`destroy_page_table` 在单临界区内 defer 十万级帧，定长缓冲溢出路径必然触发，溢出的帧会在远程核仍持陈旧映射时被立即释放）。现行容器为**无上限的侵入式帧链表**，释放判据为「`tlb_gen_min_online() >= 帧释放代`」，见 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) §1 D10 与 §3 S-4。帧归还入口收敛为 `framework/mm/mod.rs` 的 `release_frame_locked`（持锁路径）/ `release_frame`（自锁路径）。
 
 - **S-8. aarch64 SGI 同语义分支（D4）**
   - 描述：aarch64 接收侧无 TLB/reschedule SGI 分支，与 x86_64 语义不对称（§2.6）。
   - 方案：`arch/aarch64/exception.rs` 的 `irq_handler` 按 SGI intid 增补分支：TLB 失效 SGI → `tlb_flush_all` + ack 递减；reschedule SGI → 复用 `resched_ipi_handler`。向量编号与既有 barrier SGI(7) 不冲突。
-  - 状态：[]
+  - 状态：[X]
   - 详情：aarch64 无 AP 上线路径（`SMP_ENABLED` 恒 false），本轮**仅编译验证，无运行验证载体**（见 §5.3）；须避免不可达分支触碰 F9 死代码红线（分支由 SGI intid 判定，属真实可执行路径）。
+  - 落地证据：`arch/aarch64/exception.rs:634`（`pub const TLB_SHOOTDOWN_SGI: u32 = 0xFD & 0xF;` = 13）+ `:636-638`（reschedule SGI = `0xFE & 0xF` = 14）；处理分支 `:677-683`（`intid == TLB_SHOOTDOWN_SGI` → `tlb_flush_all()` → `tlb_gen_set_self(g)`，同样按 P1 序）与 `:691`（`resched_ipi_handler()`）。**取代点**：原文 S-8 的「ack 递减」随 ack 路线废止改为代计数（`tlb_gen_set_self`）。双架构构建已覆盖编译面；运行面按 §5.3 标注为不可验证。
 
 - **S-9. `test-smp` 参数化至 2/3/4 核**
   - 描述：`test-smp` 硬编码 `-smp 2` 与断言 `online CPUs: 2`，无法验证 2 核以上（§2.5）。
   - 方案：`Makefile` 以变量表达核数（默认 2），断言文本随核数生成；新增一次性覆盖 2/3/4 核的验证入口（或按核数循环调用），任一核数未达「全部上线 + 进入 Ring 3」即 `exit 1`（保持 fail-closed）。
-  - 状态：[]
+  - 状态：[X]
   - 详情：核数上限受 QEMU 与 trampoline 握手窗口约束，3/4 核结果需实测记录；若 3/4 核暴露新缺陷，按分册 9 台账格式登记，不在本工程内擅自扩范围。
+  - 落地证据：`Makefile:560-561`（`SMP_CORES ?= 2`）、`:563-605`（`test-smp` 断言文本随核数生成，四个断言全部 fail-closed）、`:607-620`（`SMP_MULTICORE_CORES := 2 3 4` + `test-smp-multicore` 按核数循环、任一失败即 `exit 1`）。实测 `make test-smp-multicore` 在 2/3/4 核**全绿**（3 核首轮曾出现 `online CPUs: 2` 的 AP 启动竞态抖动，单独复跑 `make test-smp SMP_CORES=3` 即通过、随后全核复跑全绿；该观测已另记于 [duplicate-impl-convergence.md](./duplicate-impl-convergence.md) §5，与本工程 x86 侧改动无因果）。
 
 - **S-10. 文档同步**
   - 描述：台账 D-9-3 / D-9-5 / D-9-7 与本工程状态需一致（§9.2）。
   - 方案：本工程完成后更新 D-9-3（`0xFD`/`0xFE` 门与处理程序已补）、D-9-5（跨核 shootdown 门控语义已复核，指向本文档）、D-9-7（aarch64 差异标注指向本文档 §5.3）；`docs/explain/` 如需描述 IPI 协议则用自由描述风格（禁用结构化字段）。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：台账 D-9-3 / D-9-5 / D-9-7 经核对**均已为 `[X]`**（[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md)），三者详情均已写明「归属转移 —— 本项由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 承接」；D-9-3 详情并已回填本工程 §4 注入验证结论（「注入 1（前半）复验使 `test-smp` FAIL，判别力成立」）。本文件 §5.3 的 aarch64 不可运行验证标注即 D-9-7 的指向目标，双侧一致。
 
 ## 4. 验证门槛（§2.3 五条底线 + 本工程附加项）
 
@@ -143,6 +153,15 @@
 6. **本工程附加**：`make test-smp` 在 2/3/4 核下均通过（S-9）。
 
 **fail-closed 复验（必做）**：注入式反向验证——临时移除 `0xFD` 的 IDT 门或处理分支，确认 `test-smp` **必须 FAIL**（而非静默通过），验证后完全还原。
+
+- **S-NEG-1（移除 `0xFD` 处理分支）**：把 [idt.rs:776](../../src/kernel/framework/idt/idt.rs#L776) 起的 `if vector == 0xFD { … }` 整块临时替换为标记注释。结果：`make test-smp SMP_CORES=2` **FAIL**（`未找到 '[SMP] first user syscall from pid=N'`）；内核日志 [smp_test_20260922_110411.log](../../tests/reports/smp_test_20260922_110411.log) 第 85-87 行实测
+  `========== KERNEL PANIC ==========` / `panicked at framework/idt/idt.rs:797:31:` / `index out of bounds: the len is 128 but the index is 221`
+  —— 与 §2.2 预言的越界机制（`0xFD` ⇒ `irq = 221` ⇒ 直索 128 项 `irq_descriptors`）逐字吻合。
+- **S-NEG-2（不编程 `0xFD` 的 IDT 门）**：在 [idt.rs:388](../../src/kernel/framework/idt/idt.rs#L388) 的 `init_ipi_idt` 循环内临时跳过 `vector == 0xFD`。结果：`make test-smp SMP_CORES=2` **FAIL**；日志 [smp_test_20260922_110612.log](../../tests/reports/smp_test_20260922_110612.log) 第 260 行实测
+  `[ERR] [KERN] [IDT] user exception: vec=13 err=0x7EA rip=0x400000 rsp=0x7FFFFFF0DFF8 cr2=0x0`
+  —— `vec=13` 为 #GP，错误码 `0x7EA` 的 selector index = `0x7EA >> 3 = 0xFD`，精确指向「`0xFD` 门缺失」触发的通用保护异常。
+- **还原核验**：两处注入逐字还原后 `git status --short` 与 `git --no-pager diff --stat` 均为空、`grep -rn "TEMP-NEG-VERIFY" src/` 零残留 ⇒ byte-exact 还原；随后 `make test-smp-multicore`（2/3/4 核）**全绿**。
+- **结论**：两个环节各自移除后，`test-smp` 均从「静默通过」变为可观测 FAIL ⇒ **判别力成立**，`test-smp` 对本工程核心路径具备 fail-closed 约束。
 
 ## 5. 遗留与登记项
 
