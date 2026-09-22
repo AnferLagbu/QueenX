@@ -1289,20 +1289,24 @@ impl UserProcManager {
                 );
             }
 
-            // 检查 RSP 指向的地址本身 (应该是 guard page 或未映射)
-            let rsp_page = rsp_val & !(PAGE_SIZE - 1);
+            // 检查 guard page (应保持未映射)
+            // 已映射栈页范围 = [stack_bottom, stack_bottom + USER_STACK_SIZE),
+            // guard 页即其下方一页 (stack_bottom - USER_STACK_GUARD).
+            // 注意: `initial_rsp` = 栈顶边界 - 8 (见 `create`), 即 rsp 恒落在栈顶
+            // 已映射页内, 故不能以 "含 rsp 的页" 判定 guard —— 该判据恒报 unexpected.
+            let guard_page = proc_ref.load_stack_bottom().saturating_sub(USER_STACK_GUARD);
             if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(rsp_page))
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(guard_page))
             {
                 crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_stack_rsp_page virt={:#X} -> phys={:#X} (unexpected: should be guard/unmapped)",
-                    rsp_page,
+                    "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} -> phys={:#X} (unexpected: should be unmapped)",
+                    guard_page,
                     phys.0
                 );
             } else {
                 crate::klog_boot_info!(
-                    "[USER] SELF-CHECK: user_stack_rsp_page virt={:#X} NOT MAPPED (expected: guard page) ✓",
-                    rsp_page
+                    "[USER] SELF-CHECK: user_stack_guard_page virt={:#X} NOT MAPPED (expected: guard page) ✓",
+                    guard_page
                 );
             }
 

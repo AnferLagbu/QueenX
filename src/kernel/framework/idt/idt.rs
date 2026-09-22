@@ -629,29 +629,6 @@ impl IdtManager {
         unsafe {
             let vector = (*frame).int_no as u8;
 
-            // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 用户态异常现场.
-            // `handlers.rs` 对用户态 #DE/#GPF 一律 `TerminateProcess(1)`, 对用户态
-            // #PF 用 `TerminateProcess(pid)` —— 故 "exit code=1" 与 "exit code=pid"
-            // 指向完全不同的异常源. 异常处理器自身不打印现场, 无本行就无法把
-            // "进程以 code=1 终止" 归因到具体异常向量与 RIP. 仅打印 CPL3 异常,
-            // 内核态异常另有 Panic 路径 (不在此重复).
-            if vector < 32 && (*frame).is_user_mode() {
-                // 帧为 packed 结构, 字段须先取出到局部变量再按值传参 (E0793).
-                let err = (*frame).err_code;
-                let rip = (*frame).rip;
-                let rsp = (*frame).rsp;
-                let cr2 = (*frame).fault_address();
-                crate::klog_err!(
-                    Kernel,
-                    "[IDT] user exception: vec={} err={:#X} rip={:#X} rsp={:#X} cr2={:#X}",
-                    vector,
-                    err,
-                    rip,
-                    rsp,
-                    cr2
-                );
-            }
-
             let nesting = self.nested_count.fetch_add(1, Ordering::SeqCst);
             self.current_vector
                 .store(u64::from(vector), Ordering::SeqCst);
@@ -664,6 +641,33 @@ impl IdtManager {
                 let exception_handler = create_handler(vector);
 
                 let action = exception_handler.handle(frame);
+
+                // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 用户态异常现场.
+                // `handlers.rs` 对用户态 #DE/#GPF 一律 `TerminateProcess(1)`, 对用户态
+                // #PF 用 `TerminateProcess(pid)` —— 故 "exit code=1" 与 "exit code=pid"
+                // 指向完全不同的异常源. 异常处理器自身不打印现场, 无本行就无法把
+                // "进程以 code=1 终止" 归因到具体异常向量与 RIP. 内核态异常另有 Panic
+                // 路径 (不在此重复).
+                //
+                // 仅在**未被恢复**时打印: 用户态缺页含大量正常路径 (fork 后 COW 写
+                // 共享页 / 栈扩展 / demand paging), 处理器返回 `Recovered` 后原指令
+                // 重试即成功, 属正常执行而非异常; 一律按 ERR 打印会把正常缺页误判为故障.
+                if (*frame).is_user_mode() && !matches!(action, RecoveryAction::Recovered) {
+                    // 帧为 packed 结构, 字段须先取出到局部变量再按值传参 (E0793).
+                    let err = (*frame).err_code;
+                    let rip = (*frame).rip;
+                    let rsp = (*frame).rsp;
+                    let cr2 = (*frame).fault_address();
+                    crate::klog_err!(
+                        Kernel,
+                        "[IDT] user exception: vec={} err={:#X} rip={:#X} rsp={:#X} cr2={:#X}",
+                        vector,
+                        err,
+                        rip,
+                        rsp,
+                        cr2
+                    );
+                }
 
                 self.detailed_stats.record_recovery_action(&action);
 
