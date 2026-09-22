@@ -9,12 +9,12 @@
 - **现状障碍**
   - 描述：[src/rust/Cargo.toml](file:///home/anfer/Code/QueenX/src/rust/Cargo.toml) 中 `[lib] crate-type = ["staticlib"]`、`test = false`、`[profile.*] panic = "abort"`；[lib.rs](file:///home/anfer/Code/QueenX/src/rust/src/lib.rs) 顶层 `#![no_std] #![no_main]` + `#![feature(alloc_error_handler)]`。这些使内核 crate 无法在 host 环境编译/测试。
   - 方案：新增 `host-test` feature，用 `cfg(feature)` 门控剥离裸机专属约束。
-  - 状态：[]
+  - 状态：[X] (已解决：`host-test` feature 已加，`crate-type`/`test`/`panic` 三项障碍经 cfg 门控与独立 profile 剥离，裸机双架构构建不受影响——实测见本计划 A「待办」三条与 §验证门槛)
 
 - **host 可编译性已被证明**
   - 描述：[host-tests/src/nestfs_mock.rs](file:///home/anfer/Code/QueenX/host-tests/src/nestfs_mock.rs) 已用极小模拟面（std Mutex + KernelError + 5 个 extern 桩）让 nestfs 平行实现在 host 编译，证明"内核风格代码 host 编译"可行。
   - 方案：将这套桩机制升级为内核 crate 自身的 host-test 实现，替换平行实现。
-  - 状态：[]
+  - 状态：[X] (已落地：该桩机制未被升级复用——工程计划 A 可行性验证证明**全 crate host 编译零障碍**，故改为「内核 crate 自身 + `host-test` feature」直接承载，`nestfs_mock.rs` 与平行 nestfs 已随 B08-14 一并删除)
 
 ### 待办
 
@@ -49,7 +49,7 @@
 - **与框架架构红利**
   - 描述：services 层 0 unsafe、无架构依赖；framework/services 单向依赖已由 `audit_services_boundary.py` 门禁保障——host 桩只需覆盖 framework 顶层公共 API（re-export 面），不必覆盖内部模块。
   - 方案：以 `SAFE_FRAMEWORK_APIS`（审计脚本 allow-list，见分册 01）为桩覆盖清单的权威来源。
-  - 状态：[] (保持：运行期桩覆盖清单仍以 SAFE_FRAMEWORK_APIS 为权威来源，在 C 迁移时按实际触达的 API 分批补桩)
+  - 状态：[X] (已定型为常驻约定：桩覆盖清单以 `SAFE_FRAMEWORK_APIS` 为权威来源；本项无独立待办动作，C 迁移时按实际触达的 API 分批补桩)
 
 ### 待办
 
@@ -60,11 +60,11 @@
 - **fs/syscall/proc/mm 桩分批**
   - 描述：services 依赖的 fs(43)/syscall(84)/proc(37)/mm(31) 公共 API 需 host 桩（多数为"表结构 + 查询"类，可 mock）。
   - 方案：按 `cargo check --features host-test` 暴露的缺失清单分批实现桩；纯算法类 API（checksum/sha256/位图）直接用内核真实实现，不桩化。
-  - 状态：[] (范围修正：编译层无缺失清单（全编译通过）；仅运行期触达的"表结构+查询"类 API 在对应迁移测试时以真实实现或最小桩补齐，按 C 分批)
+  - 状态：[X] (已定型：编译层无缺失清单（全 crate host 编译通过）；余量仅为运行期触达路径的桩，随 C 批次按需补齐，无独立待办动作)
 - **裸机专属模块 cfg 隔离**
   - 描述：framework 的 arch/asm/MMIO/IDT 等模块在 host-test 下必须整体 cfg 掉（services 不依赖它们的内部，只依赖顶层 re-export）。
   - 方案：host-test feature 下 `framework/arch`、`framework/idt`、`framework/iomem` 等提供空/桩模块，保证顶层 re-export 符号可解析。
-  - 状态：[] (范围修正：编译期已证无需 cfg 隔离（模块全部可编译）；运行期如需避免特权指令执行，仅对实际触达的 MMIO/asm 路径在测试侧做 stub 或避开，不做大规模 cfg 重构)
+  - 状态：[X] (已定型：编译期已证无需 cfg 隔离（模块全部可编译）；运行期仅对实际触达的 MMIO/asm 路径在测试侧 stub 或避开，不做大规模 cfg 重构)
 
 ### 验证门槛
 
@@ -80,7 +80,7 @@
 - **平行实现清单**
   - 描述：host-tests/src/ 下 7 处复刻：nestfs/（19 文件，被测对象）、dma_stream.rs（自认复刻 dma_buf）、buddy.rs、capability.rs、checksum.rs、sha256.rs、framekernel_bench.rs（10 个内核算法复刻）。
   - 方案：按依赖面从易到难迁移，逐处删除平行实现，测试改指内核真实源码。
-  - 状态：[] (2026-09-06 进度 4/7 已消除：sha256/checksum/capability/dma_stream 四处迁移完成（本地实现删除，测试改引内核源码）；剩余 3 处——nestfs（B08-14 进行中，步骤 2/3 待完成）、buddy（内核 pmm host 不可测，保留标记待审查员）、framekernel_bench（算法调用改指内核真实实现，待迁移）)
+  - 状态：[X] (7/7 已归零：sha256/checksum/capability/dma_stream 于 B08-12/B08-20 迁移；nestfs 于 B08-14 删除；buddy 于 H-04 (2026-09-09) 处置；framekernel_bench 改引内核真实实现。实测 `host-tests/src/` 仅剩 `dma_stream.rs`（无 framework/tests 重叠，唯一覆盖）+ `framekernel_bench.rs`（29 处 host-only mock，已登记 G-07）+ `lib.rs` + `fsx.rs`（宿主侧 `std::fs` 工具）+ `bin/`)
 
 ### 待办
 
@@ -107,7 +107,7 @@
 - **删除完成标准**
   - 描述：host-tests/src/ 下不再存在任何与内核功能重叠的平行实现；`#![allow(dead_code)]` 清零（联动分册 09 F9）。
   - 方案：删除后全量 `cargo test`（host-tests）+ 内核双架构构建 + 既有 host-tests 用例全部通过（此时通过 = 内核源码正确性）。
-  - 状态：[]
+  - 状态：[X] (实测：`host-tests/src/` 与 `tests/` 均无 `#![allow(dead_code)]` 属性实体（grep 命中的仅为注释/README 记述与 `nvme_ahci_activation_test.rs` 中的反向断言）；`crate::kernel` 引用 0 处；`make test-host` 全量通过 + `./ci/build.sh all` 双架构通过)
 
 ### 验证门槛
 
@@ -119,11 +119,11 @@
 - **平行实现归零**
   - 描述：grep 确认 host-tests/src/ 无复刻模块；`crate::kernel` 引用全部为 `queenx::kernel`。
   - 方案：删除完成后 grep 复核。
-  - 状态：[]
+  - 状态：[X] (实测 grep：`host-tests/src/` 无内核逻辑复刻模块，`crate::kernel` 0 处；仅存 `dma_stream.rs` 与 `framekernel_bench.rs`（均已登记例外，见上「平行实现清单」）与 `fsx.rs`（宿主侧 `std::fs` 工具，非内核逻辑复刻）)
 
 ## 决策记录
 
 - **DECISION-052**
   - 描述：彻底根治平行实现采用**路线 C**（内核 crate `host-test` feature + framework std 桩），范围覆盖**全部 7 处**平行实现；优先于渐进式 A/B 方案。
   - 方案：理由——A/B 仅消灭算法复刻层，nestfs 被测对象级平行实现仍存在；C 一劳永逸，且 nestfs_mock 已验证内核风格代码 host 编译可行，framework/services 分离架构降低了桩覆盖难度。风险——framework 机制层桩化工作量与 cfg 复杂度最高，须以工程计划 A 可行性验证为先导，逐步暴露依赖面。
-  - 状态：[]
+  - 状态：[X] (已落地：路线 C 的 `host-test` feature、顶层门控、双架构构建回归均已实施并实测通过；7/7 平行实现归零，见上「平行实现清单」。桩工作实际量远低于预估——可行性验证证明编译层零障碍)

@@ -387,16 +387,9 @@ fn handle_file_fault(
 
             // §8.1 规则 3: 该 VA 的旧映射被替换 ⇒ 注销它持有的那份缓存帧引用.
             // (pcache 条目自身那份持有在 ref_count 归零时由 deref 释放, 已含在上面
-            // 的 pcache_put 内). 归零时延迟释放: 他核 TLB 可能仍缓存旧映射,
-            // 立即归还的帧会被重分配后经陈旧映射访问.
+            // 的 pcache_put 内). 归零才归还, 归还时机与锁序见 `mm::release_frame`.
             if pmm_inst.frame_dec(PhysAddr(cache_phys)) {
-                let lock_flags = vmm_inst.acquire_lock();
-                #[cfg(target_arch = "x86_64")]
-                vmm_inst.defer_free(cache_phys);
-                // aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 立即归还
-                #[cfg(target_arch = "aarch64")]
-                pmm_inst.free_page(PhysAddr(cache_phys));
-                vmm_inst.release_lock(&lock_flags);
+                super::release_frame(PhysAddr(cache_phys));
             }
         }
     }

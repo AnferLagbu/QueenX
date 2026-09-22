@@ -825,11 +825,11 @@ impl Aarch64Vmm {
         // **必须过滤用户 leaf**: KPTI supervisor 页与内核页表共享同一物理帧, 参与计数
         // 会误释放; 设备/MMIO 映射的 pfn 越界, frame_dec 侧 fail-closed 拒绝.
         // 释放时机**严格晚于**上面的 tlbi + dsb ish —— 先让所有核停止使用该映射,
-        // 再归还物理帧 (aarch64 广播失效即追平, 不移植 `x86_64` 的 defer_free).
+        // 再归还物理帧 (aarch64 广播失效即追平, 归还时机见 `mm::release_frame_locked`).
         if is_user_leaf(old_entry) {
             let user_phys = old_entry & 0x0000_FFFF_FFFF_F000;
             if get_pmm().frame_dec(PhysAddr(user_phys)) {
-                get_pmm().free_page(PhysAddr(user_phys));
+                super::release_frame_locked(PhysAddr(user_phys));
             }
         }
 
@@ -1247,7 +1247,7 @@ impl Aarch64Vmm {
     ///
     /// §8.1 规则 3 的拆除侧: 每个用户 leaf 持有其帧一份引用 ⇒ 拆除即 `frame_dec`,
     /// 与 fork 的 +1 侧 (`cow::clone_user_page_table_cow_inner`) 同集.
-    /// 归零即释放 (aarch64 广播失效即追平, 不移植 `x86_64` 的 `defer_free`).
+    /// 归零时的归还时机与语义见 `mm::release_frame_locked` (aarch64 立即归还).
     /// 大页 leaf (L2 块描述符 `0b01`) 不参与计数, 与 `x86_64` 一致.
     fn destroy_l3_table(&self, paddr: u64) {
         let l3 = phys_to_virt(paddr) as *mut u64;
@@ -1257,7 +1257,7 @@ impl Aarch64Vmm {
             if is_user_leaf(entry) {
                 let user_phys = entry & 0x0000_FFFF_FFFF_F000;
                 if get_pmm().frame_dec(PhysAddr(user_phys)) {
-                    get_pmm().free_page(PhysAddr(user_phys));
+                    super::release_frame_locked(PhysAddr(user_phys));
                 }
             }
         }

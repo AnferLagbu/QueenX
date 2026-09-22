@@ -6,7 +6,6 @@
 //!
 //! ## 职责
 //!
-//! - Page Cache: 文件内容缓存的安全 API
 //! - Swap: 页面换出/换入的安全 API
 //! - mmap: 文件映射的安全参数验证与 VFS 交互
 //! - PMM 策略: 阶数选择/碎片化评估/回收阈值/水位线
@@ -21,7 +20,6 @@ pub mod mprotect;
 pub mod mremap;
 /// D3: NUMA 安全封装
 pub mod numa;
-pub mod pcache;
 /// T2-2: PMM 策略 (阶数选择/碎片化/回收阈值/水位线) — services 层
 pub mod pmm_policy;
 /// T2-3: Slab 策略 (缓存大小选择/对象数计算/分配优先级/大小限制) — services 层

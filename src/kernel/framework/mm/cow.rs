@@ -423,13 +423,9 @@ fn free_child_page_table_tree(root: u64) {
     release_child_table_frame(root);
 }
 
-/// 归还单个子页表帧. x86_64 走延迟释放 (与他处一致, 见 `cow_handle_fault`);
-/// aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 直接归还.
+/// 归还单个子页表帧. 调用方须持 `VMM_LOCK` (归还时机与锁序见 `mm::release_frame_locked`).
 fn release_child_table_frame(frame: u64) {
-    #[cfg(target_arch = "x86_64")]
-    vmm::get_vmm().defer_free(frame);
-    #[cfg(target_arch = "aarch64")]
-    super::pmm::get_pmm().free_page(PhysAddr(frame));
+    super::release_frame_locked(PhysAddr(frame));
 }
 
 /// COW fault 处理: 为写入分配新页
@@ -478,19 +474,11 @@ pub fn cow_handle_fault(pml4: u64, fault_addr: u64) -> Option<u64> {
     }
 
     // 计数归零 = 无其他映射持有旧帧, 可以归还
-    let old_frame_released = pmm_inst.frame_dec(PhysAddr(old_frame));
-    if old_frame_released {
+    if pmm_inst.frame_dec(PhysAddr(old_frame)) {
         // 归零不等于"远端核 TLB 已失效": 若他核曾运行本进程, 其 TLB 仍缓存旧映射,
         // 立即归还后该帧可被重分配 ⇒ 他核经陈旧映射访问他人物理页 (UAF).
-        // x86_64 故走延迟释放 (等 TLB 代追平, 见 tlb-shootdown-epoch §7.1);
-        // `defer_free` 要求持 VMM_LOCK (BATCH_HEAD 单写者), 此处显式持锁.
-        let lock_flags = vmm_inst.acquire_lock();
-        #[cfg(target_arch = "x86_64")]
-        vmm_inst.defer_free(old_frame);
-        // aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 保持既有立即归还语义
-        #[cfg(target_arch = "aarch64")]
-        pmm_inst.free_page(PhysAddr(old_frame));
-        vmm_inst.release_lock(&lock_flags);
+        // 归还时机 (x86 延迟 / aarch64 立即) 与锁序见 `mm::release_frame`.
+        super::release_frame(PhysAddr(old_frame));
     }
 
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;

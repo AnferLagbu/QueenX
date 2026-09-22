@@ -241,6 +241,39 @@ pub(crate) fn is_user_leaf(entry: u64) -> bool {
     }
 }
 
+/// 归还一个物理帧 —— **要求调用方已持 `VMM_LOCK`**
+///
+/// 「帧计数归零后何时真正归还物理页」的**唯一语义点** (mm 子系统共用此入口,
+/// 不再在调用点重复架构分派):
+/// - `x86_64`: 延迟释放 (`defer_free` 把帧挂入批次链, 等 TLB 代追平后归还).
+///   原因: 归零不等于「远端核 TLB 已失效」—— 他核若曾运行该地址空间, 其 TLB 仍
+///   缓存旧映射, 立即归还的帧被重分配后会经陈旧映射访问他人物理页 (UAF).
+///   `defer_free` 内部以本帧前 16 字节为链节点, 故**同一帧只能入链一次**.
+/// - aarch64: 立即归还. 广播失效 (`tlbi vaae1is` + `dsb ish`) 即追平, TLB 代协议
+///   仅覆盖 `x86_64`, 故不移植 `defer_free`.
+///
+/// 锁序约束: 调用方另持的锁必须在 `VMM_LOCK` **之前**取得 (如 `VMA_LOCK`);
+/// **不得在持有 pcache 桶锁时调用** —— 既定锁序为 `VMA_LOCK → VMM_LOCK → 桶锁`,
+/// 桶锁内调用构成反向嵌套.
+pub(crate) fn release_frame_locked(phys: PhysAddr) {
+    #[cfg(target_arch = "x86_64")]
+    vmm::get_vmm().defer_free(phys.0);
+    #[cfg(target_arch = "aarch64")]
+    pmm::get_pmm().free_page(phys);
+}
+
+/// 归还一个物理帧 —— **自持 `VMM_LOCK` 变体**
+///
+/// 语义与锁序约束见 [`release_frame_locked`]; 本入口只负责加/解锁, 供不持
+/// `VMM_LOCK` 的路径 (缺页换叶 / COW / 页缓存条目释放) 使用. 已持锁的路径必须
+/// 直接用 `release_frame_locked`, 否则构成递归加锁.
+pub(crate) fn release_frame(phys: PhysAddr) {
+    let vmm_inst = vmm::get_vmm();
+    let lock_flags = vmm_inst.acquire_lock();
+    release_frame_locked(phys);
+    vmm_inst.release_lock(&lock_flags);
+}
+
 /// 页表索引辅助宏
 #[inline(always)]
 #[expect(

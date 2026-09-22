@@ -1384,7 +1384,7 @@ impl VirtualMemoryManager {
                     if old_pte & PAGE_PRESENT != 0 && old_pte & PAGE_USER != 0 {
                         let user_phys = old_pte & 0x000FFFFFFFFFF000;
                         if get_pmm().frame_dec(PhysAddr(user_phys)) {
-                            self.defer_free(user_phys);
+                            super::release_frame_locked(PhysAddr(user_phys));
                         }
                     }
 
@@ -1392,17 +1392,17 @@ impl VirtualMemoryManager {
                     if self.is_table_empty(pt) {
                         let pt_phys = pde.frame().as_u64();
                         (*pd.add(virt.pd_idx())).set_value(0);
-                        self.defer_free(pt_phys);
+                        super::release_frame_locked(PhysAddr(pt_phys));
 
                         if self.is_table_empty(pd) {
                             let pd_phys = pdpte.frame().as_u64();
                             (*pdpt.add(virt.pdpt_idx())).set_value(0);
-                            self.defer_free(pd_phys);
+                            super::release_frame_locked(PhysAddr(pd_phys));
 
                             if self.is_table_empty(pdpt) {
                                 let pdpt_phys = pml4e.frame().as_u64();
                                 (*pml4_tbl.add(virt.pml4_idx())).set_value(0);
-                                self.defer_free(pdpt_phys);
+                                super::release_frame_locked(PhysAddr(pdpt_phys));
                             }
                         }
                     }
@@ -1491,24 +1491,24 @@ impl VirtualMemoryManager {
                                             // (VMM → PMM 单向, 与 alloc_page 路径同向).
                                             if get_pmm().frame_dec(PhysAddr(user_phys)) {
                                                 // 持有计数归零: 延迟到全部在线核 TLB 代追平后再释放
-                                                self.defer_free(user_phys);
+                                                super::release_frame_locked(PhysAddr(user_phys));
                                             }
                                         }
                                     }
 
-                                    self.defer_free(pt_phys);
+                                    super::release_frame_locked(PhysAddr(pt_phys));
                                 }
                             }
 
-                            self.defer_free(pd_phys);
+                            super::release_frame_locked(PhysAddr(pd_phys));
                         }
                     }
 
-                    self.defer_free(pdpt_phys);
+                    super::release_frame_locked(PhysAddr(pdpt_phys));
                 }
             }
 
-            self.defer_free(pml4);
+            super::release_frame_locked(PhysAddr(pml4));
         }
 
         // SAFETY: VMM_LOCK held; only mutation is clearing user_tables slot

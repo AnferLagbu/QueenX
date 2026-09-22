@@ -238,23 +238,32 @@ impl PageCacheBucket {
         }
     }
 
-    /// 减少引用计数, 归零时释放
-    fn deref(&mut self, inode_id: u32, page_index: u64) {
+    /// 减少引用计数, 归零时移除条目并返回**待归还的帧**
+    ///
+    /// 调用方 (桶锁持有者) 必须在**出桶锁之后**归还返回的帧: 归还需 `VMM_LOCK`,
+    /// 而桶锁在既定锁序中位于 `VMM_LOCK` 之后 (见 `mm::release_frame`).
+    ///
+    /// 仅当 `frame_dec` 报告「本次即最后持有者」(计数 1→0) 时返回帧 —— 这是该帧的
+    /// 最后一次引用注销, 必须走统一的延迟释放语义 (x86_64), 故不得在桶锁内
+    /// 立即 `free_page`. `frame_dec == false` (仍有其他持有者或契约违反) ⇒ 不归还.
+    fn deref(&mut self, inode_id: u32, page_index: u64) -> Option<PhysAddr> {
         for entry in &mut self.entries {
             if entry.occupied && entry.inode_id == inode_id && entry.page_index == page_index {
                 if entry.ref_count > 0 {
                     entry.ref_count -= 1;
                 }
                 if entry.ref_count == 0 {
-                    // 释放物理页
+                    // 条目自身那份持有 (契约: `frame_ref_count == ref_count + 1`)
                     let phys = PhysAddr(entry.phys);
-                    pmm::get_pmm().free_page(phys);
+                    let last_holder = pmm::get_pmm().frame_dec(phys);
                     *entry = PageCacheEntry::empty();
                     self.count -= 1;
+                    return if last_holder { Some(phys) } else { None };
                 }
-                return;
+                return None;
             }
         }
+        None
     }
 
     /// 释放指定 inode 的缓存页
@@ -346,8 +355,14 @@ pub fn pcache_mark_dirty(inode_id: u32, page_index: u64) {
 /// 释放缓存页引用 (munmap 时调用)
 pub fn pcache_put(inode_id: u32, page_index: u64) {
     let idx = pcache_hash(inode_id, page_index);
-    let mut guard = PAGE_CACHE[idx].lock();
-    guard.deref(inode_id, page_index);
+    // 桶锁内只改计数/条目: 归还需 VMM_LOCK, 必须在出桶锁后执行 (锁序见 mm::release_frame)
+    let last_frame = {
+        let mut guard = PAGE_CACHE[idx].lock();
+        guard.deref(inode_id, page_index)
+    };
+    if let Some(phys) = last_frame {
+        super::release_frame(phys);
+    }
 }
 
 /// 释放 inode 的缓存页 (文件关闭时调用)
@@ -411,9 +426,9 @@ pub fn pcache_acquire_for_va(
         return None;
     }
 
-    // 旧帧被本页缓存帧替换 ⇒ 注销其映射持有者
+    // 旧帧被本页缓存帧替换 ⇒ 注销其映射持有者; 归零才归还 (时机与锁序见 mm::release_frame)
     if old != 0 && old != phys && pmm_inst.frame_dec(PhysAddr(old)) {
-        release_frame_after_last_holder(old);
+        super::release_frame(PhysAddr(old));
     }
 
     Some((phys, newly_inserted))
@@ -445,20 +460,6 @@ pub fn pcache_release_for_va(
     }
     pcache_put(inode_id, page_index);
     Some(cur)
-}
-
-/// 旧帧的映射持有者已注销且计数归零 ⇒ 按架构释放
-///
-/// x86_64 走延迟释放 (他核 TLB 可能仍缓存旧映射), aarch64 无该机制 ⇒ 立即归还.
-fn release_frame_after_last_holder(phys: u64) {
-    let vmm_inst = vmm::get_vmm();
-    let lock_flags = vmm_inst.acquire_lock();
-    #[cfg(target_arch = "x86_64")]
-    vmm_inst.defer_free(phys);
-    // aarch64 无延迟释放机制 (TLB 代协议仅覆盖 x86_64), 立即归还
-    #[cfg(target_arch = "aarch64")]
-    pmm::get_pmm().free_page(PhysAddr(phys));
-    vmm_inst.release_lock(&lock_flags);
 }
 
 /// 将缓存页数据写入目标虚拟地址 (用于 #PF 时填充用户页)
