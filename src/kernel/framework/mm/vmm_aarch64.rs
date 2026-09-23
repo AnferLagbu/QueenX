@@ -63,6 +63,24 @@ const PXN: u64 = 1 << 53; // EL1 不可执行
 /// 每级页表项数
 const TABLE_ENTRIES: usize = 512;
 
+/// 用户 L0 表的**保留槽**下标 (VA `0x0000_0080_0000_0000` = 512 GiB).
+///
+/// 该 VA 段用户态从不使用 (实测用户面仅占 L0 索引 0/170/255), 故借它关联本进程的
+/// **EL1 视图**根表物理地址 (见 [`Aarch64Vmm::build_el1_view`]).
+///
+/// 存法刻意与普通表项不同: 只写物理地址, **不置 `bits[1:0]`** ⇒ 硬件读到的是
+/// 一枚**无效描述符**, VA 512 GiB~1 TiB 在用户态保持未映射, 行为与全零槽一致;
+/// `destroy_page_table` / `count_present_user_pages` / COW 克隆的遍历均以
+/// `bits[1:0] == 0b11` 过滤, 天然跳过本槽.
+///
+/// 以此换取的收益: EL0→EL1 入口汇编只需 `ldr x4, [x2, #8]` (x2 = 当前 `TTBR0`)
+/// 即可取到本进程的 EL1 视图 —— 关联**随当前页表一起切换**, 无需全局槽,
+/// 也就不存在"调度后忘记更新全局槽 ⇒ 用错视图"的陈旧值风险.
+const EL1_VIEW_SLOT: usize = 1;
+
+/// 描述符输出地址掩码 (bits `[47:12]`).
+const DESC_ADDR_MASK: u64 = 0x0000_FFFF_FFFF_F000;
+
 // ─── 地址提取宏 ───────────────────────────────────────
 
 #[inline(always)]
@@ -301,7 +319,7 @@ impl Aarch64Vmm {
             ptr::write_volatile(kernel_l0_ptr, current_l0);
         }
 
-        // 读取当前 TTBR1_EL1 (由 mmu::init 设置 TTBR1_L1 表, 含高半区映射).
+        // 读取当前 TTBR1_EL1 (由 mmu::init 设置的 4 级内核根表, 含高半区映射).
         // 不覆盖 TTBR1_EL1 — 高半区映射用于 VBAR_EL1 高地址访问异常向量表.
         let current_ttbr1: u64;
         // SAFETY: mrs ttbr1_el1 是系统寄存器读取指令，无副作用.
@@ -315,7 +333,7 @@ impl Aarch64Vmm {
         // SAFETY: current_ttbr1 是 mmu::init 写入 TTBR1_EL1 的有效页表物理地址;
         // KPTI 全局状态在 boot 阶段被独占写入; PMM 已初始化.
         unsafe {
-            super::kpti::kpti_init(current_ttbr1);
+            super::kpti::kpti_init(self, current_ttbr1);
         }
     }
 
@@ -710,6 +728,9 @@ impl Aarch64Vmm {
                 return;
             }
         };
+        // KPTI 方案 S3: 该 L0 槽位可能是本轮才新建 (用户栈 L0[255] / PIE L0[170] 均在
+        // `create_user_page_table` 之后映射), 须同步进本进程 EL1 视图.
+        Self::mirror_l0_slot_to_el1_view(l0, l0_idx);
         let l1_idx = l1_index(vaddr);
 
         let l2 = match self.ensure_next_level(l1, l1_idx) {
@@ -872,6 +893,9 @@ impl Aarch64Vmm {
                     unsafe {
                         core::arch::asm!("dsb ishst");
                     }
+                    // KPTI 方案 S3: 清空必须同步到 EL1 视图 —— 否则视图残留指向即将
+                    // `free_table` 的 L1 页的陈旧表项 (UAF).
+                    Self::mirror_l0_slot_to_el1_view(l0, l0_idx);
                     self.free_table(l1_paddr);
                 }
             }
@@ -943,6 +967,19 @@ impl Aarch64Vmm {
             }
         };
 
+        // KPTI 方案 S3: 用户低区 L2 必须 **eager** 建立.
+        // EL1 视图的 `L1_el1[0]` 直接指向本页 (与用户视图 `L1_u[0]` 同页共享 ⇒
+        // 零同步); 若留待 `map_page_in_table` 惰性创建, EL1 视图将长期持有
+        // stale 项 (指向 0), 内核态解引用用户裸指针即翻译失败.
+        let user_l2 = match self.alloc_table() {
+            Some(t) => t,
+            None => {
+                self.free_table(user_l1);
+                self.free_table(user_l0);
+                return None;
+            }
+        };
+
         let kernel_l0 = phys_to_virt(self.kernel_l0) as *const u64;
         let user_l0_ptr = phys_to_virt(user_l0) as *mut u64;
         let user_l1_desc = table_descriptor(user_l1);
@@ -951,6 +988,11 @@ impl Aarch64Vmm {
         unsafe {
             // L0[0] → 新的用户 L1 表 (干净, 不共享)
             ptr::write_volatile(user_l0_ptr.add(0), user_l1_desc);
+            // L1_u[0] → 新的用户 L2 表 (用户低区 0-1 GiB 的低 8 MiB 段)
+            ptr::write_volatile(
+                (phys_to_virt(user_l1) as *mut u64).add(0),
+                table_descriptor(user_l2),
+            );
 
             // 从内核 L0 复制 TTBR1 项 (索引 256..511).
             // 它们覆盖高半区内核地址空间
@@ -963,11 +1005,172 @@ impl Aarch64Vmm {
                 ptr::write_volatile(user_l0_ptr.add(i), entry);
             }
         }
+        // SAFETY: dsb ishst 确保上面的页表写入对 MMU walker 可见 (后续
+        // build_el1_view 要按该结构反推 L2_u 描述符).
+        unsafe {
+            core::arch::asm!("dsb ishst");
+        }
+
+        // KPTI 方案 S3: 建立本进程的 EL1 视图 (用户半区 ∪ 内核恒等) 并登记进保留槽.
+        // 失败即 fail-closed: 无 EL1 视图的用户进程在内核态无法解引用用户裸指针
+        // (copy_from_user / UserReadPtr 均按当前地址空间直访), 不可放行.
+        if self.build_el1_view(user_l0).is_none() {
+            self.free_table(user_l2);
+            self.free_table(user_l1);
+            self.free_table(user_l0);
+            return None;
+        }
 
         // 分配唯一页表 ID (用于 KPTI 页表隔离追踪)
         let _table_id = self.next_table_id.fetch_add(1, Ordering::Relaxed);
 
         Some(user_l0)
+    }
+
+    /// 为用户页表 `user_root` 建立配套的 **EL1 视图** (KPTI 方案 S3), 并把根表
+    /// 物理地址登记进 `user_root` 的保留槽 [`EL1_VIEW_SLOT`].
+    ///
+    /// # 为什么需要 EL1 视图
+    ///
+    /// 全切换模型下 EL0 与 EL1 使用不同的 `TTBR0`: EL0 只能看见用户映射
+    /// (Meltdown 面最小), 但内核态必须**同时**看见内核镜像与用户页 ——
+    /// `copy_from_user` / `UserReadPtr` 的做法是直接解引用用户裸指针
+    /// (`userptr.rs`), **不做页表遍历**, 地址空间缺映射即翻译故障.
+    /// 这与 x86_64 给 `KERNEL_PML4` 低半区填用户项 (`ensure_pml4_user`) 同一归因.
+    ///
+    /// # 结构与代价
+    ///
+    /// 与 EL0 视图的差异只在 L0/L1 两级 (L2 以下全部共享):
+    /// - `L0_el1[0] → L1_el1`; `L0_el1[170]/[255]` 与用户表同值 (PIE / mmap 栈)
+    /// - `L1_el1[0] → L2_u` —— 与用户视图 `L1_u[0]` **指向同一页** ⇒ 后续
+    ///   map/unmap 用户页对两侧同时生效, 零同步成本
+    /// - `L1_el1[1]` = 内核 `L1_IDMAP[1]` 的 **DRAM 1 GiB 块** ⇒ 内核
+    ///   镜像/数据/BSS/内核栈 (VA 1-2 GiB) 在 EL1 视图下可达
+    ///
+    /// **刻意不含 Device**: 内核 MMIO 统一走高半区别名 (`IoMem` 的 `virt`),
+    /// 若把 0-1 GiB 的 Device 页并入本视图, 用户进程页表就会带上 MMIO 面,
+    /// 每进程还要多一级 L2. 故每进程仅多 2 页 (`L0_el1` + `L1_el1`).
+    ///
+    /// # 返回
+    ///
+    /// 成功返回 EL1 视图根表物理地址; 前置结构缺失或内存不足时返回 `None`
+    /// (试探性失败不留残留页).
+    pub fn build_el1_view(&self, user_root: u64) -> Option<u64> {
+        if user_root == 0 || self.kernel_l0 == 0 {
+            return None;
+        }
+
+        let user = phys_to_virt(user_root) as *mut u64;
+
+        // 前置: 用户视图 L0[0] → L1_u → L2_u 必须已建立 (共享对象)
+        let l1_u = self.get_next_level(user, 0);
+        if l1_u.is_null() {
+            return None;
+        }
+        // SAFETY: l1_u 是已存在的 L1 表页; 读槽位 0.
+        let l2_u_desc = unsafe { ptr::read_volatile(l1_u) };
+        if l2_u_desc & 0b11 != 0b11 {
+            return None;
+        }
+
+        // 前置: 内核 L0[0] → L1_IDMAP, 且 L1_IDMAP[1] 是 1 GiB 块描述符
+        let kernel = phys_to_virt(self.kernel_l0) as *mut u64;
+        let l1_idmap = self.get_next_level(kernel, 0);
+        if l1_idmap.is_null() {
+            return None;
+        }
+        // SAFETY: l1_idmap 是已存在的 L1 表页; 读槽位 1.
+        let dram_desc = unsafe { ptr::read_volatile(l1_idmap.add(1)) };
+        if dram_desc & 0b11 != 0b01 {
+            // 与 mmu::init 的 DRAM 块布局不符 ⇒ fail-closed, 不建半成品视图
+            return None;
+        }
+
+        let el1_l0 = self.alloc_table()?;
+        let el1_l1 = match self.alloc_table() {
+            Some(t) => t,
+            None => {
+                self.free_table(el1_l0);
+                return None;
+            }
+        };
+
+        let el1_l0_ptr = phys_to_virt(el1_l0) as *mut u64;
+        let el1_l1_ptr = phys_to_virt(el1_l1) as *mut u64;
+        // SAFETY: el1_l0/el1_l1 是刚分配并清零的表页; 各索引均 < 512;
+        // 写入后由调用方在切换 TTBR0 前经 tlbi 生效 (见 exception.rs 入口汇编).
+        unsafe {
+            // ① 共享用户 L0 的有效项 (PIE / mmap 栈).
+            //    保留槽自身位 [1:0] = 0 ⇒ 不满足 0b11, 天然跳过.
+            for i in 1..256 {
+                let entry = ptr::read_volatile(user.add(i));
+                if entry & 0b11 == 0b11 {
+                    ptr::write_volatile(el1_l0_ptr.add(i), entry);
+                }
+            }
+            // ② L0_el1[0] → L1_el1
+            ptr::write_volatile(el1_l0_ptr, table_descriptor(el1_l1));
+            // ③ L1_el1[0] → L2_u (共享), L1_el1[1] = DRAM 1 GiB 块
+            ptr::write_volatile(el1_l1_ptr, l2_u_desc);
+            ptr::write_volatile(el1_l1_ptr.add(1), dram_desc);
+            // ④ 登记关联: 用户表保留槽 = EL1 视图根 (不置位 ⇒ 硬件视为无效项)
+            ptr::write_volatile(user.add(EL1_VIEW_SLOT), el1_l0);
+            core::arch::asm!("dsb ishst");
+        }
+
+        Some(el1_l0)
+    }
+
+    /// 拆除 `user_root` 配套的 EL1 视图: **仅释放视图自身的 L0_el1/L1_el1 两页**.
+    ///
+    /// 不得递归: `L0_el1[170]/[255]` 与 `L1_el1[0] → L2_u` 都与用户视图**共享**,
+    /// 递归释放会与 `destroy_page_table` 的用户半区遍历重复释放 (双释放 / UAF).
+    fn destroy_el1_view(&self, user_root: u64) {
+        if user_root == 0 {
+            return;
+        }
+        let user = phys_to_virt(user_root) as *mut u64;
+        // SAFETY: user_root 是有效用户 L0 表页; 保留槽内值仅取输出地址位.
+        let el1_l0 = unsafe { ptr::read_volatile(user.add(EL1_VIEW_SLOT)) } & DESC_ADDR_MASK;
+        if el1_l0 == 0 {
+            return;
+        }
+        // SAFETY: el1_l0 是本进程 EL1 视图根表页, 槽位 0 为 → L1_el1 的表描述符.
+        let el1_l1 = unsafe { ptr::read_volatile(phys_to_virt(el1_l0) as *const u64) }
+            & DESC_ADDR_MASK;
+        self.free_table(el1_l1);
+        self.free_table(el1_l0);
+    }
+
+    /// 把用户表 L0 的槽位 `idx` 镜像到本进程 EL1 视图的同一槽位 (KPTI 方案 S3 同步点).
+    ///
+    /// EL1 视图的 L0 是**用户 L0 槽位 1..255 的副本** (下级 L1/L2/L3 与用户视图共享),
+    /// 而用户栈 (VA `0x7FFF_FFFF_F000` ⇒ L0\[255\]) 与 PIE (L0\[170\]) 都是
+    /// `create_user_page_table` **之后**才经 `map_page_in_table` 惰性映射的. 视图若不同步
+    /// 这些槽位, 就会停留在建视图时刻的快照 (全 0): 内核态按当前地址空间直访用户裸指针
+    /// (`copy_from_user` / `userptr.rs`) 将触发 level-0 翻译故障.
+    ///
+    /// 槽位 0 由视图自身占用 (`L0_el1[0] → L1_el1`, 内含内核 DRAM 块), 保留槽
+    /// [`EL1_VIEW_SLOT`] 存放视图根地址, 二者都不镜像; 高半区槽位 (≥ 256) 于用户表恒为
+    /// 内核 L0 的副本, 不参与映射变更, 同样不镜像.
+    ///
+    /// 无 EL1 视图时 (保留槽为 0, 如内核表 / trampoline 表) 为空操作; 全部调用点均在
+    /// `VMM_LOCK` 持锁路径内, 与视图构建互斥.
+    fn mirror_l0_slot_to_el1_view(user_l0: *mut u64, idx: usize) {
+        if idx == 0 || idx == EL1_VIEW_SLOT || idx >= 256 {
+            return;
+        }
+        // SAFETY: user_l0 是有效 L0 表页; idx 与 EL1_VIEW_SLOT 均 < 512;
+        // el1_l0 取自保留槽, 是本进程 EL1 视图根表页 (由 build_el1_view 写入).
+        unsafe {
+            let el1_l0 = ptr::read_volatile(user_l0.add(EL1_VIEW_SLOT)) & DESC_ADDR_MASK;
+            if el1_l0 == 0 {
+                return;
+            }
+            let entry = ptr::read_volatile(user_l0.add(idx));
+            ptr::write_volatile((phys_to_virt(el1_l0) as *mut u64).add(idx), entry);
+            core::arch::asm!("dsb ishst");
+        }
     }
 
     #[expect(
@@ -1209,6 +1412,12 @@ impl Aarch64Vmm {
                 }
             }
         }
+
+        // KPTI 方案 S3: 先拆除配套 EL1 视图 —— **仅释放视图自身的 L0_el1/L1_el1 两页**,
+        // 不递归. 视图的 L0 有效项 (PIE / mmap 栈) 与 L1_el1[0] → L2_u 均与用户视图
+        // **共享页表页**, 递归释放会与下面的用户半区遍历重复释放 (双释放 / UAF);
+        // 且保留槽 (EL1_VIEW_SLOT) 的位 [1:0] = 00 不满足 0b11 ⇒ 上面的遍历天然跳过它.
+        self.destroy_el1_view(root_paddr);
 
         self.free_table(root_paddr);
     }

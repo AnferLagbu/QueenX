@@ -222,16 +222,49 @@ handle_el0_sync:
     mrs  x1, sp_el0
     str  x1, [sp, #(8 * 33)]
 
-    // ── KPTI: 切换 TTBR1_EL1 到完整内核页表 ──────────────────────
-    // 从 EL0 进入时, TTBR1 可能指向 trampoline 页表.
-    // 读取 KERNEL_TTBR1 全局变量, 若非 0 则写入 TTBR1_EL1.
-    adrp x0, KERNEL_TTBR1
-    ldr  x0, [x0, #:lo12:KERNEL_TTBR1]
-    cbz  x0, 1f
+    // ── KPTI 入口: 记录用户 TTBR0, 切到"本进程 EL1 视图"──────────────
+    // 此刻仍是 (用户表 + tramp 表); 异常帧已压入内核栈首页. 本段位于 .vectors
+    // (高半区) ⇒ TTBR0 切换后高半区取指不受影响, 且后续 bl 目标 (低半区 .text)
+    // 经 TTBR0 的"内核恒等 DRAM 块"可达 (见 vmm_aarch64::build_el1_view).
+    //
+    // 第一步: 切完整内核表 (TTBR0) + 内核 TTBR1. 这是**读取保留槽的前提** ——
+    // 此刻 TTBR0 仍指向用户表, 而用户表内不含内核 DRAM 的恒等映射; TTBR1 仍是
+    // tramp 表, 只映射 .vectors 与全局量页 ⇒ 高半区别名同样取不到用户表所在 PA.
+    // 只有先切内核表, 低半区恒等地址 (VA == PA, 全 DRAM) 才可达.
+    mrs  x2, ttbr0_el1
+    adrp x3, {kpti_globals}
+    add  x3, x3, #:lo12:{kpti_globals}
+    str  x2, [x3, #24]                  // user_ttbr0
+    ldr  x4, [x3, #16]                  // kernel_ttbr0
+    cbz  x4, 1f
     dsb  ish
-    msr  ttbr1_el1, x0
+    msr  ttbr0_el1, x4
     isb
 1:
+    ldr  x5, [x3, #8]                   // kernel_ttbr1
+    cbz  x5, 2f
+    dsb  ish
+    msr  ttbr1_el1, x5
+    isb
+2:
+    tlbi vmalle1is
+    dsb  ish
+    isb
+    // 第二步: TTBR0 精化为**本进程 EL1 视图** (方案 S3). 用户表**保留槽
+    // index 1** 存有视图根物理地址, 只写地址不置 bits[1:0] ⇒ 硬件视为无效
+    // 描述符 (该 VA 段保持未映射), 软件却可直接读出. 视图 = 用户半区 (进程页
+    // 可达) ∪ 内核恒等 DRAM 块 (镜像/栈可达), 故 copy_from_user 等可直接解引用
+    // 用户裸指针. 保留槽为 0 (视图未建) 时保持完整内核表 —— 退化为旧行为.
+    // 注: TTBR0 仅承载 BADDR (本内核恒以 ASID=0 切表), 故 x2 可直接作地址基.
+    ldr  x4, [x2, #8]
+    cbz  x4, 3f
+    dsb  ish
+    msr  ttbr0_el1, x4
+    isb
+    tlbi vmalle1is
+    dsb  ish
+    isb
+3:
 
     // 检查 ESR_EL1.EC 判断异常类型
     mrs  x0, esr_el1
@@ -242,40 +275,7 @@ handle_el0_sync:
     // 其他 EL0 同步异常 → sync_exception_handler
     mov  x0, sp
     bl   sync_exception_handler
-
-    // ── KPTI: 切换 TTBR1_EL1 到 trampoline 页表 ──────────────────
-    // 返回 EL0 前, 读取 TRAMP_TTBR1, 若非 0 则写入 TTBR1_EL1.
-    adrp x0, TRAMP_TTBR1
-    ldr  x0, [x0, #:lo12:TRAMP_TTBR1]
-    cbz  x0, 2f
-    dsb  ish
-    msr  ttbr1_el1, x0
-    isb
-2:
-    // 恢复上下文并返回 EL0
-    ldr  x1, [sp, #(8 * 33)]
-    msr  sp_el0, x1
-    ldr  x30, [sp, #(8 * 30)]
-    ldp  x0, x1, [sp, #(8 * 31)]
-    msr  elr_el1, x0
-    msr  spsr_el1, x1
-    ldp  x0, x1, [sp, #(8 * 0)]
-    ldp  x2, x3, [sp, #(8 * 2)]
-    ldp  x4, x5, [sp, #(8 * 4)]
-    ldp  x6, x7, [sp, #(8 * 6)]
-    ldp  x8, x9, [sp, #(8 * 8)]
-    ldp  x10, x11, [sp, #(8 * 10)]
-    ldp  x12, x13, [sp, #(8 * 12)]
-    ldp  x14, x15, [sp, #(8 * 14)]
-    ldp  x16, x17, [sp, #(8 * 16)]
-    ldp  x18, x19, [sp, #(8 * 18)]
-    ldp  x20, x21, [sp, #(8 * 20)]
-    ldp  x22, x23, [sp, #(8 * 22)]
-    ldp  x24, x25, [sp, #(8 * 24)]
-    ldp  x26, x27, [sp, #(8 * 26)]
-    ldp  x28, x29, [sp, #(8 * 28)]
-    add  sp, sp, #(8 * 35)
-    eret
+    b    el0_return
 
 handle_svc:
     // SVC #0: x0 = 系统调用号, x1-x5 = 参数
@@ -284,16 +284,31 @@ handle_svc:
 
     // 把返回值存入帧内 x0
     str  x0, [sp, #(8 * 0)]
+    // fallthrough → el0_return
 
-    // ── KPTI: 切换 TTBR1_EL1 到 trampoline 页表 ──────────────────
-    // SVC 返回 EL0 前, 读取 TRAMP_TTBR1, 若非 0 则写入 TTBR1_EL1.
-    adrp x0, TRAMP_TTBR1
-    ldr  x0, [x0, #:lo12:TRAMP_TTBR1]
-    cbz  x0, 3f
+// -------- EL0 统一出口: 切回 (用户表 + tramp 表) 后 eret --------
+// 必须在高半区 (.vectors) 内切 TTBR0 —— 切换后低半区代码即不可取指.
+// 异常帧位于内核栈首页 (低半区), 用户表以 EL1-only 映射该页, 故 ldp 可读.
+el0_return:
+    adrp x3, {kpti_globals}
+    add  x3, x3, #:lo12:{kpti_globals}
+    ldr  x5, [x3, #0]                   // tramp_ttbr1
+    ldr  x4, [x3, #24]                  // user_ttbr0
+    cbz  x5, 3f
     dsb  ish
-    msr  ttbr1_el1, x0
+    msr  ttbr1_el1, x5
     isb
 3:
+    cbz  x4, 4f
+    dsb  ish
+    msr  ttbr0_el1, x4
+    isb
+4:
+    tlbi vmalle1is
+    dsb  ish
+    isb
+
+    // 恢复上下文并返回 EL0
     ldr  x1, [sp, #(8 * 33)]
     msr  sp_el0, x1
     ldr  x30, [sp, #(8 * 30)]
@@ -339,42 +354,64 @@ handle_el0_irq:
     mrs  x1, sp_el0
     str  x1, [sp, #(8 * 33)]
 
-    // ── KPTI: 切换 TTBR1_EL1 到完整内核页表 ──────────────────────
-    adrp x0, KERNEL_TTBR1
-    ldr  x0, [x0, #:lo12:KERNEL_TTBR1]
-    cbz  x0, 4f
+    // ── KPTI 入口 (同 handle_el0_sync): 记录用户 TTBR0, 切本进程 EL1 视图 ──
+    mrs  x2, ttbr0_el1
+    adrp x3, {kpti_globals}
+    add  x3, x3, #:lo12:{kpti_globals}
+    str  x2, [x3, #24]                  // user_ttbr0
+    ldr  x4, [x3, #16]                  // 第一步: kernel_ttbr0 (完整内核表)
+    cbz  x4, 5f
     dsb  ish
-    msr  ttbr1_el1, x0
-    isb
-4:
-    mov  x0, sp
-    bl   irq_handler_el0
-
-    // ── KPTI: 切换 TTBR1_EL1 到 trampoline 页表 ──────────────────
-    adrp x0, TRAMP_TTBR1
-    ldr  x0, [x0, #:lo12:TRAMP_TTBR1]
-    cbz  x0, 5f
-    dsb  ish
-    msr  ttbr1_el1, x0
+    msr  ttbr0_el1, x4
     isb
 5:
-    ldr  x1, [sp, #(8 * 33)]
-    msr  sp_el0, x1
-    ldr  x30, [sp, #(8 * 30)]
-    ldp  x0, x1, [sp, #(8 * 31)]
-    msr  elr_el1, x0
-    msr  spsr_el1, x1
-    ldp  x0, x1, [sp, #(8 * 0)]
-    ldp  x2, x3, [sp, #(8 * 2)]
-    ldp  x4, x5, [sp, #(8 * 4)]
-    ldp  x6, x7, [sp, #(8 * 6)]
-    ldp  x8, x9, [sp, #(8 * 8)]
-    ldp  x10, x11, [sp, #(8 * 10)]
-    ldp  x12, x13, [sp, #(8 * 12)]
-    ldp  x14, x15, [sp, #(8 * 14)]
-    ldp  x16, x17, [sp, #(8 * 16)]
-    ldp  x18, x19, [sp, #(8 * 18)]
-    add  sp, sp, #(8 * 35)
+    ldr  x5, [x3, #8]                   // kernel_ttbr1
+    cbz  x5, 6f
+    dsb  ish
+    msr  ttbr1_el1, x5
+    isb
+6:
+    tlbi vmalle1is
+    dsb  ish
+    isb
+    ldr  x4, [x2, #8]                   // 第二步: 保留槽 = 本进程 EL1 视图根
+    cbz  x4, 7f
+    dsb  ish
+    msr  ttbr0_el1, x4
+    isb
+    tlbi vmalle1is
+    dsb  ish
+    isb
+7:
+
+    mov  x0, sp
+    bl   irq_handler_el0
+    b    el0_return
+
+// ============================================================
+// KPTI 进入 EL0 trampoline (必须位于 .vectors: 由 TTBR1 高半区取指)
+// 入参: sp_el0 / elr_el1 / spsr_el1 / sp_el1 已由 Rust 侧写好, x0 = 用户参数
+// 出口: 切 TTBR0 → 用户页表, TTBR1 → tramp 表后 eret
+// ============================================================
+.global kpti_enter_user_trampoline
+kpti_enter_user_trampoline:
+    adrp x9, {kpti_globals}
+    add  x9, x9, #:lo12:{kpti_globals}
+    ldr  x11, [x9, #24]                 // user_ttbr0
+    ldr  x10, [x9, #0]                  // tramp_ttbr1 (切 TTBR1 前必须读出)
+    cbz  x11, 7f
+    dsb  ish
+    msr  ttbr0_el1, x11
+    isb
+7:
+    cbz  x10, 8f
+    dsb  ish
+    msr  ttbr1_el1, x10
+    isb
+8:
+    tlbi vmalle1is
+    dsb  ish
+    isb
     eret
 
 // -------- 未预期异常处理 --------
@@ -384,7 +421,8 @@ unexpected_exception:
     mrs  x2, far_el1
     wfi
     b    unexpected_exception
-"#
+"#,
+    kpti_globals = sym crate::framework::mm::kpti::KPTI_GLOBALS,
 );
 
 // ============================================================================
@@ -439,6 +477,23 @@ pub struct ExceptionFrame {
 unsafe extern "C" {
     /// 异常向量表起始地址 (定义在 asm)
     pub static exception_vector_table: u8;
+}
+
+// SAFETY: C ABI 互操作，符号由本文件 global_asm 定义 (.vectors 段)
+unsafe extern "C" {
+    /// KPTI 进入 EL0 的 trampoline 入口 (低半区链接地址)
+    static kpti_enter_user_trampoline: u8;
+}
+
+/// 返回 KPTI 进入 EL0 trampoline 的**高半区别名**地址.
+///
+/// 该 trampoline 位于 `.vectors` 段 (低半区 VA==PA 链接), 但进入 EL0 前
+/// `TTBR0` 仍指向内核恒等表、`TTBR1` 指向 tramp 表, 故必须以高半区别名取指,
+/// 保证切换 `TTBR0` 后当前指令流不被 Prefetch Abort.
+pub fn kpti_enter_user_trampoline_high() -> u64 {
+    // SAFETY: 符号由 global_asm 定义, 取地址不读取内容
+    let low = unsafe { &raw const kpti_enter_user_trampoline as u64 };
+    low + crate::framework::mm::kpti::HIGH_ALIAS_BASE
 }
 
 // ============================================================================

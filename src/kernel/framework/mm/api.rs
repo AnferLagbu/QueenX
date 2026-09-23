@@ -394,6 +394,18 @@ pub extern "C" fn vmm_create_user_page_table() -> u64 {
     get_vmm().create_user_page_table().unwrap_or(0)
 }
 
+/// 为 `user_root` 页表建立配套的 EL1 视图 (KPTI 方案 S3, aarch64 专属)。
+///
+/// `create_user_page_table` 已自行建视图; 本入口供 **fork 路径** 使用 —— 子进程
+/// 页表由 COW 克隆产生 (只搬用户半区, 保留槽位 `[1:0] = 00` 被过滤), 需补建视图,
+/// 否则子进程 EL0→EL1 入口只能回退到全局内核表, 内核态将无法访问其用户页。
+///
+/// 返回视图根表物理地址; 失败返回 `None`, 调用方须按 fail-closed 处理。
+#[cfg(target_arch = "aarch64")]
+pub fn vmm_build_el1_view(user_root: u64) -> Option<u64> {
+    get_vmm().build_el1_view(user_root)
+}
+
 /// 在指定页表中映射 (用于用户态)
 ///
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

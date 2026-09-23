@@ -28,7 +28,11 @@ SECTIONS
 
     . = ALIGN(2048);
     .vectors : {
+        _vectors_start = .;
         *(.vectors)
+        /* KPTI 以页级粒度映射向量表段, 故段长对齐到 4KB (末页完整计入) */
+        . = ALIGN(4096);
+        _vectors_end = .;
     } :kernel
 
     . = ALIGN(4096);

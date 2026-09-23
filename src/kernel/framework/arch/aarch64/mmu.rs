@@ -4,7 +4,7 @@
 //!   - TTBR0_EL1: 用户空间 (0x0000_0000_0000_0000 - 0x0000_FFFF_FFFF_FFFF)
 //!   - TTBR1_EL1: 内核空间 (0xFFFF_0000_0000_0000 - 0xFFFF_FFFF_FFFF_FFFF)
 //!
-//! 使用 4KB 页粒度, 48-bit VA, 3-level 或 2-level 页表。
+//! 使用 4KB 页粒度, 48-bit VA, 4-level 页表 (T0SZ=T1SZ=16 ⇒ 硬件从 level 0 起遍历)。
 //!
 //! QEMU virt 内存布局:
 //!   - DRAM: 0x40000000 - ?
@@ -70,18 +70,6 @@ static mut L2_DEVICE: AlignedPageTable = AlignedPageTable([0; 512]);
 // ============================================================================
 // MMU 初始化
 // ============================================================================
-
-/// TTBR1 内核 L1 页表 (覆盖 0xFFFF_0000_0000_0000 - 0xFFFF_0000_8000_0000, 2GB)
-///
-/// T1SZ=16 时硬件从 level 1 开始遍历，TTBR1_EL1 直接指向此表，无需 L0。
-///
-/// # Safety 不变量
-///
-/// - **写入时机**: 仅在 `init()` 函数中写入 (启动最早期, MMU 启用前)
-/// - **运行时**: MMU 启用后硬件直接使用, 软件不可写入
-/// - **并发**: 写入时系统单线程 (AP 未启动), 无竞争
-/// - **对齐**: 4KB 对齐 (ARM MMU 硬件要求)
-static mut TTBR1_L1: AlignedPageTable = AlignedPageTable([0; 512]);
 
 /// 初始化 identity mapping (覆盖 0-2GB) 并启用 MMU。
 ///
@@ -149,8 +137,12 @@ pub unsafe fn init() {
         // 定义: PT_ATTR_NORMAL = (0b0100<<2)|(0b0100<<8) → AttrIndx=4
         // 定义: PT_ATTR_DEVICE = (0b0000<<2)|(0b0000<<8) → AttrIndx=0
         // MAIR[0] = 0x44 (Device-nGnRnE, 对应 PT_ATTR_DEVICE)
+        // MAIR[1] = 0xFF (Normal IWBWA OWBWA, 对应 vmm_aarch64::MAIR_NORMAL_WBWA):
+        //   KPTI trampoline 表以该索引映射 `.vectors` (需可取指) 与 KPTI 全局量页,
+        //   未定义索引 (0x00) 会被硬件按 Device-nGnRnE 解释.
         // MAIR[4] = 0xFF (Normal IWBWA OWBWA, 对应 PT_ATTR_NORMAL)
         let mair: u64 = 0x44                     // Attr0: Device
+                   | (0xFFu64 << 8)          // Attr1: Normal
                    | (0xFFu64 << 32); // Attr4: Normal
         set_mair(mair);
 
@@ -173,30 +165,30 @@ pub unsafe fn init() {
 
 /// 初始化 TTBR1_EL1 内核页表。
 ///
-/// 将 0xFFFF_0000_0000_0000 - 0xFFFF_0000_8000_0000 (2GB) 映射到
-/// 物理地址 0x0000_0000 - 0x8000_0000 (2GB)。
+/// TTBR1 覆盖高半区 VA `0xFFFF_0000_0000_0000 - 0xFFFF_FFFF_FFFF_FFFF`。
+/// TCR 中 T1SZ=16 + TG1=4KB ⇒ 高半区 VA 宽 48-bit ⇒ 硬件**从 level 0 开始**遍历,
+/// 因而 TTBR1_EL1 必须指向 4 级根表。
 ///
-/// T1SZ=16 时硬件从 level 1 开始遍历，TTBR1_EL1 直接指向 TTBR1_L1。
-/// 页表层级:
-///   TTBR1_L1`[0]` → L2_DEVICE (0-1GB, Device memory, 2MB 粒度)
-///   TTBR1_L1`[1]` → 1GB 块 (1-2GB, Normal memory)
+/// 本函数复用 TTBR0 使用的同一 4 级根 [`L0_TABLE`], 依据是:
+/// 高半区别名 `VA = 0xFFFF_0000_0000_0000 + PA` 把 PA 放在 VA`[38:0]`,
+/// VA`[47:39]` 恒为 0 ⇒ L0 索引恒为 0, 而 L1/L2/L3 索引与恒等映射 `VA = PA`
+/// 完全相同。故别名与恒等走同一条遍历路径, 得到:
+///   - `0xFFFF_0000_0000_0000 - 0xFFFF_0000_4000_0000` → 低 1GB MMIO (Device, 2MB 粒度)
+///   - `0xFFFF_0000_4000_0000 - 0xFFFF_0000_8000_0000` → DRAM 1GB 块 (Normal;
+///     含内核代码/数据/BSS/内核栈/异常向量表)
+///
+/// 历史: 旧实现基于「T1SZ=16 时硬件从 level 1 开始遍历」的错误认知, 令 TTBR1_EL1
+/// 直接指向一张 L1 形态表 (仅填 `[0]`/`[1]`)。实测 (`AT S1E1R` + 根表转储) 表明
+/// 该表被硬件当作 L0 消费: 高半区 DRAM 别名的物理基址被截断为 0
+/// (`0xFFFF_0000_401B_F000` 解析到 PA `0x1BF000` 而非 `0x401BF000`), 导致
+/// VBAR_EL1 指向的异常向量表不可取指 —— 内核从未进入过任何异常/中断处理
+/// (串口日志中 `TIMER IRQ` 恒为 0 次)。归因与验证见
+/// docs/plan/kpti-complete-project.md。
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn init_kernel_ttbr1() {
     unsafe {
-        ptr::write_bytes(TTBR1_L1.0.as_mut_ptr(), 0, 512);
-
-        // L1 块映射 (每项 1GB, 4KB 粒度):
-        // L1[0]: VA 0xFFFF_0000_0000_0000 → 指向 L2_DEVICE 表 (2MB 粒度, Device memory)
-        //   QEMU virt 0-1GB 全为 MMIO (GIC, UART 等), 无 DRAM,
-        //   必须以 Device-nGnRnE 属性访问, 否则 Normal cacheable 会导致数据异常/挂死.
-        // L1[1]: VA 0xFFFF_0000_4000_0000 → PA 0x40000000 (1-2GB, kernel @ 0x40080000)
-        TTBR1_L1.0[0] = (L2_DEVICE.0.as_ptr() as u64) | PT_TYPE_TABLE;
-        TTBR1_L1.0[1] = 0x40000000 | PT_TYPE_BLOCK | PT_AF | PT_ATTR_NORMAL | PT_AP_EL1_RW;
-
-        // 设置 TTBR1_EL1
-        // T1SZ=16 时, 硬件从 level 1 开始遍历 (跳过 level 0).
-        // 因此 TTBR1_EL1 必须直接指向 L1 表 (TTBR1_L1).
-        set_ttbr1(TTBR1_L1.0.as_ptr() as u64);
+        // 与 TTBR0 共用 4 级根: 高半区别名与恒等映射的各级索引一致, 无需独立表。
+        set_ttbr1(L0_TABLE.0.as_ptr() as u64);
 
         // 刷新 TLB: MMU 启用后到 TTBR1_EL1 设置前的窗口期,
         // CPU 可能投机翻译 TTBR1 地址 (TTBR1_EL1 旧值为 0),

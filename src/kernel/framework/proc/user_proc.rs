@@ -1088,6 +1088,10 @@ impl UserProcManager {
         );
         crate::framework::proc::kernel_stack_write_canary(kstack_top);
 
+        // KPTI (aarch64): 让用户页表具备 EL0→EL1 异常入口压帧所需的栈页映射
+        #[cfg(target_arch = "aarch64")]
+        crate::framework::mm::map_kernel_stack_top_page(cr3_val, kstack_top);
+
         // ✅ PID 分配延后到所有内存/页表/栈资源就绪后:
         //   避免 `alloc_kernel_process` 或 `alloc_user_process` 失败时, 已分配
         //   的 PID 留在 next_pid 计数器中造成 PID 泄漏. 早期失败 (页表/栈分配)
@@ -1608,42 +1612,6 @@ impl UserProcManager {
                         }
                     }
                 }
-            }
-        }
-
-        // aarch64 页表诊断: 验证用户代码页和栈页的映射
-        #[cfg(target_arch = "aarch64")]
-        {
-            let vmm = crate::framework::mm::get_vmm();
-            let code_page = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page))
-            {
-                crate::klog_boot_info!(
-                    "[USER] A64-SELF-CHECK: code_page virt={:#X} -> phys={:#X} ✓",
-                    code_page,
-                    phys.0
-                );
-            } else {
-                crate::klog_boot_info!(
-                    "[USER] A64-SELF-CHECK: code_page virt={:#X} NOT MAPPED ✗",
-                    code_page
-                );
-            }
-            let stack_page = (rsp_val - 8) & !(PAGE_SIZE - 1);
-            if let Some(phys) =
-                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(stack_page))
-            {
-                crate::klog_boot_info!(
-                    "[USER] A64-SELF-CHECK: stack_page virt={:#X} -> phys={:#X} ✓",
-                    stack_page,
-                    phys.0
-                );
-            } else {
-                crate::klog_boot_info!(
-                    "[USER] A64-SELF-CHECK: stack_page virt={:#X} NOT MAPPED ✗",
-                    stack_page
-                );
             }
         }
 

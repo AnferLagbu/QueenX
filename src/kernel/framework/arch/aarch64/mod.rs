@@ -287,41 +287,55 @@ impl MmuArch for Aarch64 {
         }
     }
 
-    /// 进入 EL0 (eret)。
-    fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, _kstack: u64) -> ! {
+    /// 进入 EL0 (KPTI 全切换模型).
+    ///
+    /// 除装载用户态入口寄存器外, 还必须完成三件事:
+    /// 1. 记录用户 `TTBR0` 到 `KPTI_GLOBALS.user_ttbr0` (异常出口据此切回);
+    /// 2. 设置 `SP_EL1 = kstack` —— EL0→EL1 异常入口在切换 `TTBR0` **之前**
+    ///    就把 280 字节异常帧压入内核栈, 故内核栈顶页必须提前就位;
+    /// 3. 跳转到 `.vectors` 内的高半区 trampoline 完成 `TTBR0/TTBR1` 切换后 eret
+    ///    (切换必须在高半区执行, 否则切 `TTBR0` 后低半区代码立即 Prefetch Abort).
+    fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
         // SPSR_EL1: EL0t (M[3:0]=0000), DAIF 全屏蔽 (F=1,I=1,A=1,D=1).
         // 0x3C0 = (0b1111 << 6) | 0b0000.
         let spsr: u64 = 0x3C0;
 
-        // SAFETY: 进入 EL0 标准序列:
-        // 1. TTBR1_EL1 保持 mmu::init 设置的 TTBR1_L1 表不动 (含高半区映射),
-        //    用于 VBAR_EL1 高地址访问异常向量表. KPTI 激活后由异常入口
-        //    汇编切换 TTBR1_EL1.
-        // 2. 设置 TTBR0_EL1 到用户页表 (user_cr3)
-        // 3. 设置 sp_el0/elr_el1/spsr_el1 后 eret 跳转到 EL0
-        // entry/stack/arg 由调用方提供合法用户态值；options(noreturn)。
-        unsafe {
-            // 切换 TTBR0_EL1 到用户页表
-            core::arch::asm!(
-                "dsb ish",
-                "msr ttbr0_el1, {ttbr0}",
-                "isb",
-                ttbr0 = in(reg) user_cr3,
-            );
-            // 刷新 TLB: 旧 identity mapping 的 TLB 条目 (AP=EL1 only) 可能
-            // 与用户页表条目 (AP=EL1+EL0) 冲突, 导致 EL0 取指权限错误.
-            core::arch::asm!("tlbi vmalle1is", "dsb ish", "isb",);
+        // 内核 MMIO 统一走 TTBR1 高别名 (KPTI 方案 S3: EL1 视图刻意不含 Device 段).
+        // 进入 EL0 后 TTBR0 即为用户视图, 内核态 (EL1) 若仍按低半区地址 0x0900_0000
+        // 访问 PL011 会触发 L2 翻译故障; 故在用户态初始化前把 PL011_BASE 切到高别名 —
+        // EL1 入口汇编已把 TTBR1 切回完整内核表, 其 L1_IDMAP[0] → L2_DEVICE 覆盖 0-1 GiB.
+        uart::switch_to_high_half();
 
+        // 记录用户页表: 异常出口 (el0_return) 与 trampoline 均从 KPTI_GLOBALS 读取
+        crate::framework::mm::kpti::kpti_set_user_ttbr0(user_cr3);
+        let tramp = exception::kpti_enter_user_trampoline_high();
+
+        // SAFETY: 进入 EL0 的最后一步:
+        // - sp_el0/elr_el1/spsr_el1 均为 EL1 可写系统寄存器, 取值由调用方保证合法;
+        // - 内核栈经 "SPSel=1 + mov sp" 写入 SP_EL1 (见下);
+        // - x0 承载用户态首个参数; `br` 目标为 .vectors 内 trampoline 的高半区别名,
+        //   该地址在切换前 (完整内核 TTBR1) 与切换后 (tramp 表) 均可取指;
+        // - trampoline 完成切换后 eret 到 EL0, 不会返回.
+        // options(noreturn): 本函数不会返回.
+        unsafe {
             asm!(
                 "msr sp_el0, {sp}",
                 "msr elr_el1, {entry}",
                 "msr spsr_el1, {spsr}",
-                "mov x0, {arg}",
-                "eret",
+                // SP_EL1 不用 `msr sp_el1` 写: 该编码 (S3_4_C4_C1_0) 在 EL1 为
+                // UNDEFINED (EL2 已实现时的既有行为, QEMU `max`/`cortex-a72` 实测
+                // 均报 Undefined Instruction). 架构等价写法是先置 PSTATE.SP=1,
+                // 此时 `mov sp` 即写入 SP_EL1. 该 `mov sp` 会切换当前栈, 故必须
+                // 位于本 asm 块最后一条 (其后只剩纯寄存器操作的 `br`).
+                "msr spsel, #1",
+                "mov sp, {kstack}",
+                "br  {tramp}",
                 sp = in(reg) stack as u64,
                 entry = in(reg) entry as u64,
                 spsr = in(reg) spsr,
-                arg = in(reg) arg as u64,
+                kstack = in(reg) kstack,
+                in("x0") arg as u64,
+                tramp = in(reg) tramp,
                 options(noreturn),
             );
         }

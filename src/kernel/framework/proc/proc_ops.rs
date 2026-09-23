@@ -890,6 +890,23 @@ pub extern "C" fn sys_fork() -> Pid {
             );
         }
     }
+    // KPTI (aarch64): 子进程页表来自 COW 克隆 (只带父进程内核栈页映射),
+    // 需为子进程自己的内核栈顶页补映射, 否则其 EL0→EL1 入口压帧将不可写.
+    #[cfg(target_arch = "aarch64")]
+    crate::framework::mm::map_kernel_stack_top_page(
+        child_cr3,
+        child.kernel_stack.load(Ordering::SeqCst),
+    );
+    // KPTI 方案 S3: COW 克隆只搬用户半区 (保留槽 `[1:0] = 00` 被过滤), 子进程页表
+    // 不含 EL1 视图 ⇒ 须补建, 否则子进程的 EL0→EL1 入口只能回退到全局内核表,
+    // 内核态将无法访问其用户页 (copy_from_user 触发同 EL 数据异常). fail-closed:
+    // 视图建不起来则子进程不可投运, 回滚 (cr3 由 `Process::drop` 按帧持有计数销毁).
+    #[cfg(target_arch = "aarch64")]
+    if crate::framework::mm::vmm_build_el1_view(child_cr3).is_none() {
+        raw::drop_boxed_process(child_ptr);
+        PROCESS_TABLE.free_pid(child_pid);
+        return 0;
+    }
     // 上下文 RAX=0 (fork 返回值)
     // child_cr3 是 COW 克隆出的子进程页表 (克隆失败时已在上面回滚返回)
     if let Some(ctx) = PROCESS_TABLE.with_process(parent_pid, |p| *p.context.lock()) {
