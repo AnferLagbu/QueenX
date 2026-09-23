@@ -84,6 +84,9 @@ pub use safety::{
 
 pub use idt::IdtManager;
 
+#[cfg(target_arch = "x86_64")]
+pub use idt::idt_entries_base_lma;
+
 /// 将已初始化的 IDT 加载到当前 CPU (`lidt`).
 ///
 /// BSP 在 `idt_init()` 内完成 IDT 表构建后加载; AP 在自身 `ap_entry` 中于

@@ -330,7 +330,8 @@ impl VirtualMemoryManager {
 
         super::api::kernel_pml4.store(cr3, Ordering::Release);
 
-        // P1 C7: KPTI 实际页表隔离 — 分配 USER_PML4, 复制内核高半区并清 USER 位
+        // P1 C7: KPTI 实际页表隔离 — 分配 USER_PML4 并逐页装配入口依赖面
+        // (KPTI-08 起不再复制内核高半区; 未激活时退化为整段复制)。
         // 完整功能需要汇编 entry/exit trampoline, 见 kpti.rs 模块顶部文档
         if !super::kpti::kpti_is_active()
             && crate::framework::config::KernelCapabilities::detect().kpti
@@ -425,11 +426,11 @@ impl VirtualMemoryManager {
         // SAFETY: pml4_base = CR3 value, KERNEL_BASE offset produces valid kernel VA
         let pml4_virt = PhysAddr(pml4_base).to_virt();
 
-        // 安全门: KPTI 共享页表防护
+        // 安全门: 内核高半区防护
         // 禁止修改 PML4[256..511] (kernel high half).
-        // KPTI init 时复制 PML4[256..512], 底层 PDPT/PD 页物理共享.
-        // 此处 unmap 清零 PDE/PTE 会同时破坏 kernel 和 user 页表,
-        // 导致 PMM free list 等内核数据结构不可访问, 触发 Triple Fault.
+        // 内核高半区翻译只由内核自身/KPTI 入口依赖面装配 (KPTI-08 后为逐页映射,
+        // 不再与用户页表共享下层表页), 用户态页表修改路径无正当理由触碰该区间;
+        // 触碰即破坏隔离边界或以错误语义改写内核翻译 ⇒ fail-closed 跳过.
         if virt.pml4_idx() >= 256 {
             crate::klog_boot_info!(
                 "[VMM] unmap_page: skip kernel-half virt={:#X} pml4_idx={}",
@@ -513,10 +514,10 @@ impl VirtualMemoryManager {
         // SAFETY: pml4_base = CR3 value, KERNEL_BASE offset produces valid kernel VA
         let pml4_virt = PhysAddr(pml4_base).to_virt();
 
-        // 安全门: KPTI 共享页表防护
+        // 安全门: 内核高半区防护
         // 禁止修改 PML4[256..511] (kernel high half).
-        // KPTI init 时复制 PML4[256..512], 底层 PDPT/PD 页物理共享.
-        // 此处修改权限位会同时影响 kernel 和 user 页表.
+        // 内核高半区翻译只由内核自身/KPTI 入口依赖面装配, 用户态页表修改路径
+        // 无正当理由触碰该区间 ⇒ fail-closed 跳过.
         if virt.pml4_idx() >= 256 {
             crate::klog_boot_info!(
                 "[VMM] protect_page: skip kernel-half virt={:#X} pml4_idx={}",
@@ -612,10 +613,10 @@ impl VirtualMemoryManager {
             return;
         }
 
-        // 安全门: KPTI 共享页表防护
+        // 安全门: 内核高半区防护
         // 禁止修改 PML4[256..511] (kernel high half).
-        // KPTI init 时复制 PML4[256..512], 底层 PDPT/PD 页物理共享.
-        // 此处修改权限位会同时影响 kernel 和 user 页表.
+        // 内核高半区翻译只由内核自身/KPTI 入口依赖面装配, 进程用户页表的权限
+        // 修改路径无正当理由触碰该区间 ⇒ fail-closed 跳过.
         if virt.pml4_idx() >= 256 {
             crate::klog_boot_info!(
                 "[VMM] protect_page_in_table: skip kernel-half virt={:#X} pml4_idx={}",
@@ -891,7 +892,8 @@ impl VirtualMemoryManager {
         }
     }
 
-    /// 创建新的用户进程页表: 复制内核高半区, 并映射 KPTI 所需的低半区页 (GDT/IDT/TSS 等).
+    /// 创建新的用户进程页表: 装配内核"入口依赖面"必需页 (KPTI 激活时逐页显式映射,
+    /// 未激活时退化为复制内核高半区), 低半区留待用户地址空间按需映射.
     ///
     /// # Panics
     /// 正常情况下不会 panic; 唯一存在的 unwrap 是
@@ -902,10 +904,6 @@ impl VirtualMemoryManager {
     #[expect(
         clippy::used_underscore_binding,
         reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "函数体超 100 行 (复杂度阈值); 拆分需追改调用链且增加间接层, 当前任务优先 expect 兑底"
     )]
     pub fn create_user_page_table(&self) -> Option<u64> {
         let pmm = get_pmm();
@@ -918,31 +916,27 @@ impl VirtualMemoryManager {
         }
 
         let kernel_pml4 = KERNEL_PML4.load(Ordering::Acquire);
-        // SAFETY: kernel_pml4 valid (set in init), phys_to_virt valid
-        let kernel_pml4_virt = PhysAddr(kernel_pml4).to_virt();
 
-        // SAFETY: 将内核空间项 (256..511) 复制到用户 PML4.
-        // src 与 dst 都是合法的页对齐内核 VA.
+        // 装配内核映射 (KPTI-08 统一入口):
+        // - KPTI 激活: 逐页装配"入口依赖面"必需内核页 (不再复制高半区整段别名);
+        // - KPTI 未激活: 退化为复制 `KERNEL_PML4[256..511]` (无隔离语义不变).
+        //
+        // 入口代码 (`enter_user_asm` / `isr_common` / `irq_common` / `syscall_entry` /
+        // KPTI 出口 stub) 在 CR3 切到本页表后仍需取指, 且切换前要访问
+        // USER_CR3_SAVE / IDT / GDT 头区 / 各栈顶页 ⇒ 这些页必须在**每进程页表**
+        // 中同样映射 (`kpti_init` 只覆盖共享模板). 不映射会导致 Ring 3 下首个时钟
+        // 中断在 `irq_common` 写 USER_CR3_SAVE 时 #PF → Double Fault → 死锁.
+        //
+        // 低半部分 (PML4[0..256]) 保持全零: enter_user 在高半部分内核地址中切换
+        // CR3, 不依赖低半部分映射; 用户进程的 ELF 段由加载器按需映射, 不应继承
+        // 内核恒等映射.
+        //
+        // 每任务的内核栈顶页 (`TSS.RSP0` / 内核栈) 不在此装配: 该页随任务变化,
+        // 由上下文切换路径 (`kpti::map_rsp0_page`) 在切换到该任务时追加.
+        //
+        // SAFETY: pml4_phys 由 PMM 分配并已清零; boot/进程创建路径, 无并发修改本页表.
         unsafe {
-            let src = kernel_pml4_virt.0 as *const u64;
-            let dst = pml4_virt.0 as *mut u64;
-
-            // 复制高半部分 (内核空间: PML4[256..511])
-            core::ptr::copy_nonoverlapping(src.add(256), dst.add(256), 256);
-
-            // 低半部分 (PML4[0..256]) 保持全零:
-            // enter_user 在高半部分内核地址中切换 CR3, 不依赖低半部分映射.
-            // 用户进程的 ELF 段由加载器按需映射, 不应继承内核恒等映射.
-
-            crate::arch!(tlb_flush_page(dst.add(256) as usize));
-
-            // 通过回读项 256 验证复制
-            let e256_src = src.add(256).read_volatile();
-            let e256_dst = dst.add(256).read_volatile();
-            if e256_src != e256_dst || (e256_src & 1) == 0 {
-                pmm.free_page(pml4_phys);
-                return None;
-            }
+            crate::framework::mm::kpti::assemble_kernel_half(pml4_phys.as_u64(), kernel_pml4);
         }
 
         let _flags = self.acquire_lock();
@@ -960,185 +954,13 @@ impl VirtualMemoryManager {
 
         self.release_lock(&_flags);
 
-        // 符号桩化 (host-test): host 无 _kernel_text_* / USER_CR3_SAVE 链接脚本
-        // 汇编符号且无页表上下文, 进程页表文本区间映射整段跳过.
-        #[cfg(not(feature = "host-test"))]
-        {
-        // 关键修复: 在进程页表中恒等映射 trampoline 物理页 (USER+RX)
-        // enter_user_asm 在低半区 LMA 地址执行, mov cr3 切换到进程页表后
-        // CPU 继续取指执行, 因此 trampoline 代码页必须在进程页表低半区有映射.
-        // 权限: USER (Ring 3 可访问) + RX (可执行, 不可写).
-        if crate::framework::mm::kpti::kpti_is_active() {
-            // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
-            unsafe {
-                let text_start =
-                    core::ptr::addr_of!(crate::framework::mm::kpti::_kernel_text_start)
-                        as u64;
-                let text_end =
-                    core::ptr::addr_of!(crate::framework::mm::kpti::_kernel_text_end)
-                        as u64;
-                crate::framework::mm::kpti::map_text_region_in_user_pml4(
-                    pml4_virt.0 as *mut u64,
-                    text_start,
-                    text_end,
-                );
-
-                // 映射 KPTI 入口数据页 (USER_CR3_SAVE, SyscallPerCpu) 到进程用户页表.
-                //
-                // 原因: KPTI 中断/异常入口 (isr_common/irq_common/syscall_entry) 在
-                // CR3 切换前访问 USER_CR3_SAVE (.bss) 和 SyscallPerCpu (.data),
-                // 这些页面必须在用户页表中有 USER 位映射, 否则触发 #PF → Triple Fault.
-                //
-                // kpti_init() 只映射了全局 USER_PML4, 每个进程的独立页表也需要映射.
-                // 不映射会导致 Ring 3 下第一个时钟中断 (IRQ 0) 在 irq_common 中
-                // mov [USER_CR3_SAVE], rax → #PF (写入不存在的页) → Double Fault → 死锁.
-                crate::framework::mm::kpti::map_kpti_data_pages(pml4_virt.0 as *mut u64);
-            }
-        }
-        }
-
-        // 映射 GDT / IDT / TSS 所在的低半部分页到用户页表.
-        // iretq 和段寄存器加载需要访问 GDT, 中断入口需要 IDT,
-        // 用户态中断触发时 CPU 需要从 TSS 读取 RSP0/IST 栈指针.
-        // 这些结构体位于低半部分物理内存, 用户页表不继承恒等映射,
-        // 因此必须显式映射.
-        // 注意: 必须在 release_lock 之后调用, 因为 map_page_in_table 内部也会获取锁.
-        {
-            let sgdt = crate::framework::arch::gdt::get_gdt_ptr();
-            let gdt_start = sgdt.base as u64 & !(PAGE_SIZE as u64 - 1);
-            let gdt_end = (sgdt.base as u64 + u64::from(sgdt.limit) + PAGE_SIZE as u64)
-                & !(PAGE_SIZE as u64 - 1);
-
-            // 同时用 sgdt 指令读取实际 GDTR 值进行对比
-            let actual_gdt_base: u64;
-            // SAFETY: sgdt 是特权指令, 仅读取 GDTR 到栈上缓冲区, 不修改任何状态.
-            unsafe {
-                let mut buf: [u8; 10] = core::mem::zeroed();
-                core::arch::asm!("sgdt [{}]", in(reg) buf.as_mut_ptr() as u64, options(nostack));
-                actual_gdt_base = u64::from_le_bytes(buf[2..10].try_into().unwrap());
-            }
-            crate::klog_boot_info!(
-                "[VMM] GDT ptr base={:#x} vs sgdt base={:#x}",
-                sgdt.base as u64,
-                actual_gdt_base
-            );
-
-            // 读取 IDT 基地址和限制 (sidt 指令).
-            // IDTR 格式: 2 字节 limit + 8 字节 base (小端序).
-            // 修复 (TRACK-INIT-RING3-SYSCALL): 原栈操作 inline asm 中
-            // 读出的 idt_limit 为 0xFF (实际为 0x0FFF), 导致 idt_end 只覆盖
-            // 1 页, IRQ 向量 (0x20+) 的 IDT 条目落在第 2 页未映射 → #PF.
-            // 改用栈缓冲区 + 字节解码, 消除栈操作与编译器冲突.
-            let mut idtr_buf: [u8; 10] = [0; 10];
-            // SAFETY: sidt 是特权指令, 仅读取 IDTR 到缓冲区, 不修改其他状态.
-            unsafe {
-                core::arch::asm!(
-                    "sidt [{}]",
-                    in(reg) idtr_buf.as_mut_ptr(),
-                    options(nostack, preserves_flags),
-                );
-            }
-            let idt_limit = u16::from_le_bytes([idtr_buf[0], idtr_buf[1]]);
-            let idt_base = u64::from_le_bytes([
-                idtr_buf[2],
-                idtr_buf[3],
-                idtr_buf[4],
-                idtr_buf[5],
-                idtr_buf[6],
-                idtr_buf[7],
-                idtr_buf[8],
-                idtr_buf[9],
-            ]);
-            let idt_start = idt_base & !(PAGE_SIZE as u64 - 1);
-            let idt_end =
-                ((idt_base + u64::from(idt_limit)) & !(PAGE_SIZE as u64 - 1)) + PAGE_SIZE as u64;
-            crate::klog_boot_info!(
-                "[VMM] IDT raw: base={:#x} limit={:#x} start={:#x} end={:#x}",
-                idt_base,
-                idt_limit,
-                idt_start,
-                idt_end
-            );
-
-            // 读取 TSS 基地址 (从 GDT TSS 描述符)
-            let tss_start =
-                crate::framework::arch::gdt::get_tss_base() & !(PAGE_SIZE as u64 - 1);
-            // TSS 结构约 128 字节, 最多跨 2 页
-            let tss_end = tss_start + 2 * PAGE_SIZE as u64;
-
-            // 收集需要映射的低半部分页 (去重)
-            let mut pages = [0u64; 16];
-            let mut count = 0;
-            let ranges: [(u64, u64); 3] = [
-                (gdt_start, gdt_end),
-                (idt_start, idt_end),
-                (tss_start, tss_end),
-            ];
-
-            crate::klog_boot_info!(
-                "[VMM] GDT/IDT/TSS mapping: gdt={:#x}-{:#x}, idt={:#x}-{:#x}, tss={:#x}-{:#x}",
-                gdt_start,
-                gdt_end,
-                idt_start,
-                idt_end,
-                tss_start,
-                tss_end
-            );
-
-            for &(start, end) in &ranges {
-                let mut addr = start;
-                while addr < end {
-                    if !pages[..count].contains(&addr) {
-                        if count < pages.len() {
-                            pages[count] = addr;
-                            count += 1;
-                        }
-                    }
-                    addr += PAGE_SIZE as u64;
-                }
-            }
-
-            for &page_phys in &pages[..count] {
-                // B05-55 修复: 不用 USER 位. GDT/IDT/TSS 是内核数据, 用户态异常入口
-                // (isr_common 等) 在 CR3 切换前以 CPL=0 访问它们 (读 IDT/IST/RSP0),
-                // supervisor 权限即可. 原实现带 USER 位, 且 tss 范围 (含 SyscallPerCpu
-                // 所在页 0x27b000) 会覆盖 map_kpti_data_pages 的 U=0 映射 → PERCPU 变
-                // USER 可写 → fork COW clone 误清 WRITABLE → 内核写 SyscallPerCpu #PF.
-                // 同时避免向用户态暴露内核 GDT/IDT/TSS 内容 (信息泄漏面).
-                self.map_page_in_table(
-                    pml4_phys.as_u64(),
-                    VirtAddr(page_phys),
-                    PhysAddr(page_phys),
-                    PageFlags::PRESENT | PageFlags::WRITABLE,
-                );
-            }
-
-            // 注: 此处**不再**把 IST 栈页恒等映射进用户页表 (取代原 B05-55 修复).
-            //
-            // TSS.ist[] 现为高半区 VA (KERNEL_BASE + 恒等地址, 见
-            // `arch::x86_64::gdt::gdt_init`), 用户页表继承内核 PML4[256..511]
-            // 已含该高半区别名, 交付路径 (CPU 在切 CR3 前用 IST 压栈) 无需额外映射.
-            // 若恢复低半区恒等映射, 内核 IST 栈页会与用户 ELF 装载区 (0x400000)
-            // 争用同一 VA: ELF 装载器按"已有映射即复用"跳过映射 → 代码段 U=0 →
-            // Ring 3 取指 #PF. 因此该映射不得恢复.
-
-            // 映射内核栈页 (TSS.RSP0) 到用户页表.
-            // 注意: RSP0 在 create_user_page_table 调用时可能尚未设置,
-            // 实际映射在 enter_user 的 set_kernel_stack 之后完成.
-            // 这里仅做尝试, 如果 RSP0 为 0 则跳过.
-            // 使用 map_kernel_page_in_table 绕过 KPTI 安全门 (pml4_idx >= 256).
-            let rsp0 = crate::framework::arch::tss::tss_get_kernel_stack();
-            if rsp0 != 0 {
-                let rsp0_page = rsp0 & !(PAGE_SIZE as u64 - 1);
-                let rsp0_phys = rsp0_page - crate::framework::mm::KERNEL_BASE as u64;
-                self.map_kernel_page_in_table(
-                    pml4_phys.as_u64(),
-                    VirtAddr(rsp0_page),
-                    PhysAddr(rsp0_phys),
-                    PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER,
-                );
-            }
-        }
+        // GDT / IDT / TSS 头区 / 各栈顶页的内核映射已由上方 `assemble_kernel_half`
+        // 统一装配 (KPTI 激活时逐页; 未激活时由复制的高半区条目覆盖), 故此前紧跟
+        // 其后的内联映射块 (sgdt/sidt/get_tss_base + 逐页 map_page_in_table + RSP0
+        // 的 USER 映射) 已整体删除 —— 它与 `map_kpti_data_pages` 的映射面重复, 且
+        // `get_tss_base` 依赖 TSS 描述符的运行时读取 (在 `create_user_page_table`
+        // 早于 `gdt_init` 的时序下不可用). RSP0/内核栈顶页改由
+        // `kpti::map_rsp0_page` 在上下文切换到该任务时按任务映射.
 
         Some(pml4_phys.as_u64())
     }
@@ -1156,11 +978,11 @@ impl VirtualMemoryManager {
             return;
         }
 
-        // 安全门 1: KPTI 共享页表防护
+        // 安全门 1: 内核高半区防护
         // 禁止修改 PML4[256..511] (kernel high half).
-        // KPTI init 时仅复制 PML4 顶层, USER_PDPT/USER_PD/USER_PT 仍与 KERNEL_ 共享
-        // 同一物理页. 此处 map 会把共享的 2MB huge PDE 拆成 4KB PT 指针,
-        // 污染 kernel page table, 触发 Triple Fault.
+        // 该区间在进程用户页表中只由 KPTI 入口依赖面装配 (KPTI-08 后为逐页映射,
+        // 不再共享下层表页), 用户态映射路径在此处 map 会以错误的权限/语义改写
+        // 装配面 ⇒ fail-closed 跳过.
         // user half (PML4[0..255]) 不在此限制内, 由 user 自己的 PDPT/PD 承载.
         if virt.pml4_idx() >= 256 {
             crate::klog_boot_info!(
@@ -1209,7 +1031,7 @@ impl VirtualMemoryManager {
             if flags.contains(PageFlags::USER) {
                 // SAFETY: ptr.add(idx) stays within the 512-entry table.
                 // 此处 pml4_idx < 256 (上方门检查保证), pdpt/PD 是 user 自己的页表,
-                // 不与 kernel 共享, 设 USER 位安全.
+                // 不与 kernel 共享 (低半区从不共享), 设 USER 位安全.
                 (*pml4_ptr.add(virt.pml4_idx())).set_user(true);
                 (*pdpt.add(virt.pdpt_idx())).set_user(true);
                 (*pd.add(virt.pd_idx())).set_user(true);
@@ -1233,107 +1055,6 @@ impl VirtualMemoryManager {
     }
 
     #[expect(
-        clippy::used_underscore_binding,
-        reason = "下划线前缀表示私有约定或局部清理; 重命名需追改所有访问点, 风险高"
-    )]
-    /// 映射内核高半区页到用户页表 (绕过 KPTI 安全门)
-    ///
-    /// 用于映射 RSP0 等内核结构到用户页表,使其在用户态可访问.
-    /// 该函数绕过 `map_page_in_table` 的 KPTI 安全门 (`pml4_idx` >= 256),
-    /// 因为 RSP0 等内核结构位于高半区,但仍需在用户页表中可见.
-    ///
-    /// # Safety
-    ///
-    /// 调用方保证:
-    /// - `pml4` 是有效的用户页表物理地址
-    /// - `virt` 是内核高半区虚拟地址 (`pml4_idx` >= 256)
-    /// - `phys` 是对应的物理地址
-    /// - 仅用于映射内核栈 (RSP0) 等必要内核结构
-    #[expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )]
-    pub fn map_kernel_page_in_table(
-        &self,
-        pml4: u64,
-        virt: VirtAddr,
-        phys: PhysAddr,
-        flags: PageFlags,
-    ) {
-        if pml4 == 0 {
-            return;
-        }
-
-        // 仅允许内核高半区地址
-        if virt.pml4_idx() < 256 {
-            crate::klog_boot_info!(
-                "[VMM] map_kernel_page_in_table: reject user-half virt={:#X} pml4_idx={}",
-                virt.0,
-                virt.pml4_idx()
-            );
-            return;
-        }
-
-        let _flags = self.acquire_lock();
-
-        // SAFETY: pml4 is a valid PML4 address; VMM_LOCK held
-        let pml4_virt = PhysAddr(pml4).to_virt();
-
-        // SAFETY: 完整 4 级页表遍历与按需创建.
-        unsafe {
-            let pml4_ptr = pml4_virt.0 as *mut PageTableEntry;
-
-            let (pdpt, split_pdpt) =
-                self.get_or_create_table_entry(pml4_ptr.add(virt.pml4_idx()), true, 0);
-            if pdpt.is_null() {
-                self.release_lock(&_flags);
-                return;
-            }
-
-            let (pd, split_pd) =
-                self.get_or_create_table_entry(pdpt.add(virt.pdpt_idx()), true, HUGE_PAGE_2M_SIZE);
-            if pd.is_null() {
-                self.release_lock(&_flags);
-                return;
-            }
-
-            let (pt, split_pt) =
-                self.get_or_create_table_entry(pd.add(virt.pd_idx()), true, PAGE_SIZE);
-            if pt.is_null() {
-                crate::klog_boot_info!(
-                    "[VMM] map_kernel_page_in_table: failed to get/create PT for {:#x}",
-                    virt.0
-                );
-                self.release_lock(&_flags);
-                return;
-            }
-
-            if flags.contains(PageFlags::USER) {
-                // 设置 USER 位: 允许用户态访问
-                (*pml4_ptr.add(virt.pml4_idx())).set_user(true);
-                (*pdpt.add(virt.pdpt_idx())).set_user(true);
-                (*pd.add(virt.pd_idx())).set_user(true);
-            }
-
-            let pte = &mut *pt.add(virt.pt_idx());
-            let leaf_was_present = pte.is_present();
-            pte.set_frame(phys);
-            pte.set_flags(flags);
-
-            // 内核高半区 VA 在进程页表中的映射: 该 VA 的中间级与内核页表**共享**
-            // (KPTI 只复制 PML4 顶层), 故本次拆分巨页即改动共享结构 ⇒ 必须远程失效;
-            // 仅当叶项此前不存在且未拆分时才是纯新建 (S-9).
-            if split_pdpt || split_pd || split_pt || leaf_was_present {
-                self.flush_tlb_remote(virt.0);
-            } else {
-                self.flush_tlb_local(virt.0);
-            }
-        }
-
-        self.release_lock(&_flags);
-    }
-
-    #[expect(
         clippy::similar_names,
         reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
     )]
@@ -1346,11 +1067,11 @@ impl VirtualMemoryManager {
             return;
         }
 
-        // 安全门 1: KPTI 共享页表防护
+        // 安全门 1: 内核高半区防护
         // 禁止修改 PML4[256..511] (kernel high half).
-        // KPTI init 时仅复制 PML4 顶层, USER_PDPT/USER_PD/USER_PT 仍与 KERNEL_ 共享
-        // 同一物理页. 此处 unmap 的"递归释放空中间页表"会把共享的 PDE 写 0,
-        // 污染 kernel page table, 触发 Triple Fault.
+        // 内核高半区在进程用户页表中的条目只由 KPTI 入口依赖面装配 (KPTI-08 后
+        // 为逐页映射, 不再共享下层表页), 此处 unmap 的"递归释放空中间页表"会
+        // 拆除该装配面 ⇒ fail-closed 跳过.
         if virt.pml4_idx() >= 256 {
             crate::klog_boot_info!(
                 "[VMM] unmap_page_in_table: skip kernel-half virt={:#X} pml4_idx={}",
@@ -1418,8 +1139,10 @@ impl VirtualMemoryManager {
                     self.flush_tlb_remote(virt.0);
 
                     // §8.1 规则 3: 拆除 USER leaf 即注销该映射持有的一份帧引用,
-                    // 归零才延迟释放. **必须过滤 USER 位**: KPTI supervisor 页
-                    // (GDT/IDT/TSS/IST) 与内核页表共享同一物理帧, 参与计数会误释放;
+                    // 归零才延迟释放. **必须过滤 USER 位**: KPTI 入口依赖面的
+                    // supervisor 页 (GDT/IDT/TSS/IST/trampoline/内核栈顶) 以
+                    // PRESENT|WRITABLE (无 USER) 逐页映射进每个用户页表, 这些页的
+                    // 物理帧归内核所有, 参与计数会被计入零 → 误释放内核页;
                     // 设备/MMIO 映射的 pfn 越界, frame_dec 侧 fail-closed 拒绝.
                     if old_pte & PAGE_PRESENT != 0 && old_pte & PAGE_USER != 0 {
                         let user_phys = old_pte & 0x000FFFFFFFFFF000;
@@ -1476,7 +1199,7 @@ impl VirtualMemoryManager {
         let pml4_virt = PhysAddr(pml4).to_virt();
 
         // SAFETY: 遍历 4 级释放页表.
-        // 仅用户空间项 (0..255); 内核项共享.
+        // 仅用户空间项 (0..255); 内核项由内核自身/KPTI 入口依赖面装配, 本函数不动.
         //
         // 帧持有计数处理 (现由 PMM 计数面承载, 原 COW_REFS 已删除, 契约见
         // docs/plan/cr3-lifetime-ownership.md §8.1 文档的计数规则):
@@ -1519,9 +1242,10 @@ impl VirtualMemoryManager {
                                     //
                                     // §8.1 规则 3: 每个 USER leaf 持有其帧一份引用 ⇒ 拆除即
                                     // frame_dec, 归零才延迟释放. **必须过滤 USER 位**:
-                                    // KPTI 把 GDT/IDT/TSS/IST 等 supervisor 页以
-                                    // PRESENT|WRITABLE (无 USER) 映射进每个用户页表, 这些页与
-                                    // 内核页表共享同一物理帧, 若参与计数会被计入零 → 误释放内核页.
+                                    // KPTI 入口依赖面的 supervisor 页 (GDT/IDT/TSS/IST/
+                                    // trampoline/内核栈顶) 以 PRESENT|WRITABLE (无 USER)
+                                    // 逐页映射进每个用户页表, 这些页的物理帧归内核所有,
+                                    // 若参与计数会被计入零 → 误释放内核页.
                                     for l in 0..512usize {
                                         // SAFETY: pt.add(l) within the 4KB PT page
                                         let pte = &*pt.add(l);
@@ -1684,24 +1408,16 @@ impl VirtualMemoryManager {
         // SAFETY: 2MB huge page mapping at PD level. VMM_LOCK held by caller.
         unsafe {
             let pml4 = pml4_virt.0 as *mut PageTableEntry;
-            let pml4_idx = virt.pml4_idx();
 
-            // 记录 PML4E 是否已存在 — 新建的 PDPT 需同步到 USER_PML4
-            let pml4e_existed = (*pml4.add(pml4_idx)).is_present();
-
-            let (pdpt, _) = self.get_or_create_table_entry(pml4.add(pml4_idx), true, 0);
+            let (pdpt, _) = self.get_or_create_table_entry(pml4.add(virt.pml4_idx()), true, 0);
             if pdpt.is_null() {
                 return Err("Failed to allocate PDPT");
             }
 
-            // 内核高半区: 新建 PML4 条目需同步到 USER_PML4 (KPTI)
-            if pml4_idx >= 256 && !pml4e_existed {
-                // SAFETY: VMM_LOCK 已持有, pml4_idx 在 [256, 512) 内, KERNEL_PML4 已初始化
-                super::kpti::kpti_sync_pml4_entry(pml4_idx);
-            }
-
             // 安全门: 如果 PDPT 条目是 1GB 大页且已映射, 禁止覆盖
-            // (2MB 映射到已有 1GB 页的区域会拆分共享页表, KPTI 下导致 Triple Fault)
+            // (2MB 映射到已有 1GB 页的区域需拆分该 PDPTE; 拆分只改 KERNEL_PML4 的
+            //  下一级表页, 与用户页表无共享关系 (KPTI-08 后 USER_PML4 只含入口
+            //  依赖面逐页映射), 但拆分会改变内核自身翻译, 仍按不变更处理.)
             let pdpte = &*pdpt.add(virt.pdpt_idx());
             if pdpte.is_present() && pdpte.is_huge() {
                 // 已有 1GB 大页覆盖此范围, 无需再映射 2MB
@@ -1720,7 +1436,7 @@ impl VirtualMemoryManager {
                 return Err("PD entry already split to PT, cannot map 2MB page");
             }
             if pde.is_present() && pde.is_huge() {
-                // 已有 2MB 映射, 不覆盖 (避免破坏 KPTI 共享页表)
+                // 已有 2MB 映射, 不覆盖 (保持既有翻译不变)
                 return Ok(());
             }
             pde.set_frame(phys);
@@ -1750,20 +1466,10 @@ impl VirtualMemoryManager {
         // SAFETY: 1GB huge page mapping at PDPT level. VMM_LOCK held by caller.
         unsafe {
             let pml4 = pml4_virt.0 as *mut PageTableEntry;
-            let pml4_idx = virt.pml4_idx();
 
-            // 记录 PML4E 是否已存在 — 新建的 PDPT 需同步到 USER_PML4
-            let pml4e_existed = (*pml4.add(pml4_idx)).is_present();
-
-            let (pdpt, _) = self.get_or_create_table_entry(pml4.add(pml4_idx), true, 0);
+            let (pdpt, _) = self.get_or_create_table_entry(pml4.add(virt.pml4_idx()), true, 0);
             if pdpt.is_null() {
                 return Err("Failed to allocate PDPT");
-            }
-
-            // 内核高半区: 新建 PML4 条目需同步到 USER_PML4 (KPTI)
-            if pml4_idx >= 256 && !pml4e_existed {
-                // SAFETY: VMM_LOCK 已持有, pml4_idx 在 [256, 512) 内, KERNEL_PML4 已初始化
-                super::kpti::kpti_sync_pml4_entry(pml4_idx);
             }
 
             let pdpte = &mut *pdpt.add(virt.pdpt_idx());
@@ -1888,7 +1594,7 @@ impl VirtualMemoryManager {
     ///
     /// # Errors
     /// 当 VMM 未初始化时返回 `Err("VMM not initialized")`;
-    /// 当目标地址位于内核高半区 (PML4[256..511], KPTI 共享页表) 时返回
+    /// 当目标地址位于内核高半区 (PML4[256..511]) 时返回
     /// `Err("Cannot split kernel-half 2MB page (KPTI shared)")`;
     /// 当 PDPT/PD 不存在或 PD 条目未映射时分别返回 `Err("PDPT not present")`,
     /// `Err("PD not present")`, `Err("PD entry not present")`;
@@ -1913,10 +1619,11 @@ impl VirtualMemoryManager {
             return Err("VMM not initialized");
         }
 
-        // 安全门: KPTI 共享页表防护
+        // 安全门: 内核高半区防护
         // 禁止拆分内核高半区的 2MB 巨页 (PML4[256..511]).
-        // KPTI 下 USER_PML4 与 KERNEL_PML4 共享底层 PDPT/PD 物理页,
-        // 拆分内核 2MB 页会修改共享 PDE, 同时破坏 kernel 和 user 页表.
+        // 该区间由 boot.asm 建立的 1GB 恒等映射与内核自身装配承载, 拆分它会改变
+        // 内核自身翻译; 且用户页表**不**继承该巨页映射 (KPTI-08 后入口依赖面为
+        // 逐页映射), 无任何调用方需要拆分内核巨页 ⇒ fail-closed 拒绝.
         if VirtAddr(virt).pml4_idx() >= 256 {
             crate::klog_boot_info!(
                 "[VMM] split_2mb_page: skip kernel-half virt={:#X} pml4_idx={}",
@@ -2107,14 +1814,15 @@ impl VirtualMemoryManager {
         }
 
         let kernel_pml4 = KERNEL_PML4.load(Ordering::Acquire);
-        // SAFETY: kernel_pml4 valid; both src and dst are page-aligned kernel VAs
-        let kernel_pml4_virt = PhysAddr(kernel_pml4).to_virt().0 as *const u64;
+        // 装配内核高半区 (KPTI-08 统一入口): 与 `create_user_page_table` / COW fork
+        // 同源 —— KPTI 激活时逐页装配"入口依赖面"必需内核页, 未激活时整段复制
+        // `KERNEL_PML4[256..511]`. 此前本处直接整段复制, 在 KPTI 激活下会把完整
+        // 内核高半区别名重新注入子进程页表 (Meltdown 隔离缺口), 故统一到同一入口.
+        //
+        // SAFETY: kernel_pml4 由 vmm_init 写入; child_pml4_phys 由 PMM 分配并已清零;
+        // 本函数持 VMM_LOCK, 无并发修改子页表.
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                kernel_pml4_virt.add(256),
-                child_pml4_base.add(256),
-                256,
-            );
+            crate::framework::mm::kpti::assemble_kernel_half(child_pml4_phys.as_u64(), kernel_pml4);
         }
 
         // SAFETY: parent_pml4 is a valid user PML4; VMM_LOCK held

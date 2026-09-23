@@ -14,7 +14,8 @@
 //! # 现状 (本轮 PR)
 //!
 //! - **已完成**:
-//!   - 用户页表初始化 (复制 `KERNEL_PML4` 256..511 项, 清 USER 位, 标记 trampoline 页保留 USER)
+//!   - 用户页表内核映射装配: **逐页显式映射"入口依赖面"必需页** (KPTI-08 移除
+//!     高半区整段复制), 见 `map_kernel_pages_in_user_pml4`
 //!   - `switch_to_user_pml4` / `switch_to_kernel_pml4` CR3 切换原语
 //!   - 公共 API: `kpti_init`, `kpti_is_active`, `kpti_user_pml4`, `kpti_enter_kernel`,
 //!     `kpti_exit_to_user`
@@ -156,17 +157,20 @@ pub fn pcid_is_enabled() -> bool {
 }
 
 // ── 链接脚本符号 (x86_64.ld) ──────────────────────────────────────
-// KPTI trampoline 代码范围: _kernel_text_start ~ _kernel_text_end
-// 这些页在 USER_PML4 中需要保持可执行 (X), 其余代码页设为 NX.
-// (_kpti_trampoline_end 曾为独立边界符号, 全仓零 Rust 引用, 声明已删除)
+// KPTI 用户页表只需 `.text` 的**入口区段**: `_kernel_text_start ~ _kpti_trampoline_end`.
+// 链接脚本把 `*(.kpti_trampoline)` 与 `build/isr.o(.text)` 排在 `_kpti_trampoline_end`
+// 之前 ⇒ 全部入口 stub (isr0-31/irq0-15/isr_common/irq_common/syscall_entry)、
+// `enter_user_asm` 与 `.kpti_trampoline` 内的 Rust 处理函数都在该区段内可取指.
+// `_kernel_text_end` 仅用于诊断统计与"收窄不变式"断言 (不得作为用户页表映射上界).
 
 // SAFETY: 链接脚本定义的符号, 地址有效 (只读引用).
-// 符号桩化 (host-test): host 无 x86_64.ld 符号, 两处引用点 (本文件 `kpti_init` step 4.5、
-// `vmm_x86_64::create_user_page_table` KPTI 同步段) 均受 not(host-test) 门控; 声明门控与之
-// 严格同构 (本模块已受 target_arch = "x86_64" 门控, 不重复 arch 条件).
+// 符号桩化 (host-test): host 无 x86_64.ld 符号, 引用点 (`map_kernel_pages_in_user_pml4`)
+// 受 not(host-test) 门控; 声明门控与之严格同构 (本模块已受 target_arch = "x86_64" 门控,
+// 不重复 arch 条件).
 #[cfg(not(feature = "host-test"))]
 unsafe extern "C" {
     pub(super) static _kernel_text_start: u8;
+    pub(super) static _kpti_trampoline_end: u8;
     pub(super) static _kernel_text_end: u8;
 }
 
@@ -177,8 +181,10 @@ static KPTI_READY: AtomicBool = AtomicBool::new(false);
 
 /// `USER_PML4` 物理地址 (在 `vmm_init` 阶段被初始化)。
 ///
-/// 此 PML4 与 `KERNEL_PML4` 共享 entries 256..511 的内核高半区,
-/// 但**清除了 USER 位**, 仅保留 trampoline + 必要内核数据条目的 USER 位。
+/// KPTI-08 后本表**不**复制 `KERNEL_PML4[256..511]`: 其高半区只包含
+/// `map_kernel_pages_in_user_pml4` 逐页映射的"入口依赖面"必需页
+/// (entry 区段代码 + USER_CR3_SAVE + per-CPU GDT/TSS/SyscallPerCpu 头页
+/// + IDT + per-CPU IST/trampoline 栈顶页), 其余内核页对用户态完全不可见。
 static USER_PML4: AtomicU64 = AtomicU64::new(0);
 
 /// 上一份 PML4 物理地址 (供 `switch_to_kernel_pml4` 切回时使用)。
@@ -215,39 +221,21 @@ pub fn kpti_kernel_pml4() -> u64 {
     LAST_KERNEL_PML4.load(Ordering::Acquire)
 }
 
-/// 将 `KERNEL_PML4` `[`pml4_idx`]` 同步到 `USER_PML4` `[`pml4_idx`]`.
-///
-/// 当 VMM 在内核高半区创建新的 PML4 条目 (如帧缓冲 MMIO 映射) 时,
-/// 必须同步到 `USER_PML4`, 否则 KPTI 模式下 CPU 使用 user CR3 时
-/// 访问该地址会触发 Page Fault.
-///
-/// # Safety
-///
-/// 调用方保证: `KERNEL_PML4` 已初始化; `pml4_idx` 在 [256, 512) 范围内;
-/// `VMM_LOCK` 已持有 (防止并发修改).
-pub unsafe fn kpti_sync_pml4_entry(pml4_idx: usize) {
-    if !KPTI_READY.load(Ordering::Acquire) {
-        return;
-    }
-    let user_pml4_phys = USER_PML4.load(Ordering::Acquire);
-    if user_pml4_phys == 0 {
-        return;
-    }
-    // SAFETY: KERNEL_PML4 和 USER_PML4 均已初始化, phys_to_virt 产生有效内核 VA.
-    // VMM_LOCK 由调用方持有, 防止并发修改页表.
-    unsafe {
-        let kernel_pml4_phys =
-            crate::framework::mm::vmm::KERNEL_PML4.load(Ordering::Acquire);
-        let src = crate::framework::mm::PhysAddr(kernel_pml4_phys)
-            .to_virt()
-            .0 as *const u64;
-        let dst = crate::framework::mm::PhysAddr(user_pml4_phys)
-            .to_virt()
-            .0 as *mut u64;
-        let entry = core::ptr::read_volatile(src.add(pml4_idx));
-        core::ptr::write_volatile(dst.add(pml4_idx), entry);
-    }
-}
+// ── [已移除] `kpti_sync_pml4_entry` (KPTI-08) ─────────────────────
+//
+// 原实现把 `KERNEL_PML4[pml4_idx]` (idx ≥ 256) 单项复制到共享 `USER_PML4`,
+// 用于"内核高半区新增映射 (如帧缓冲 MMIO) 后让 user CR3 也能访问"。
+//
+// KPTI-08 移除高半区整段复制后, 该操作的前提整体失效且**危险**:
+// - 它复制的是 PML4 顶层指针, 使 `USER_PML4` 与 `KERNEL_PML4` 共享该 PML4 项下的
+//   整棵子树 (PDPT/PD/PT), 等于把内核高半区的一整段映射面重新注入用户页表 ——
+//   正是本工程要消除的 Meltdown 隔离缺口;
+// - 用户页表已不再需要内核高半区 MMIO: 内核访问 MMIO 全部发生在内核 CR3 下
+//   (syscall/中断入口在第一条指令即切 `KERNEL_PML4`), 而用户态访问帧缓冲走
+//   低半区**用户**映射 (`fb_mmap_syscall` → `map_page_in_table`, 受"安全门 1"
+//   约束, 不复用内核高半区条目)。
+//
+// 原两处调用点 (`map_2mb_page` / `map_1gb_page`) 已同步删除其同步分支。
 
 // ── 切换原语 (entry/exit trampoline 调用) ────────────────────────
 
@@ -301,10 +289,19 @@ pub unsafe fn kpti_exit_to_user() {
 
 // ── 初始化 ────────────────────────────────────────────────────────
 
-/// 初始化 KPTI: 分配 `USER_PML4` 页, 从 `KERNEL_PML4` 复制内核高半区,
-/// 清除 USER 位, 保留 trampoline 区域。
+/// 初始化 KPTI: 分配 `USER_PML4` 页 (共享模板), 逐页装配"入口依赖面"所需内核页,
+/// 启用 PCID, 并广播 per-CPU `kernel_pml4` / `user_pml4`。
+///
+/// KPTI-08 后**不再**复制 `KERNEL_PML4[256..512]` (高半区整段复制), 用户页表只含
+/// `map_kernel_pages_in_user_pml4` 显式映射的最小内核面 (见 `USER_PML4` 文档)。
 ///
 /// 必须在 `vmm::Vmm::init` 之后调用 (依赖 `KERNEL_PML4` 已初始化)。
+///
+/// **时序约束**: 本函数早于 `gdt_init` / `idt_init` (见 `lib.rs` 的 `vmm_init` →
+/// `interrupt_late_init` 顺序), 故装配时**不得**读 `TSS.ist[]` / `SyscallPerCpu` /
+/// `sidt` 等尚未初始化的运行时值: 待映射页一律由静态布局推导 (gdt.rs
+/// `ist_tops_virt` / `trampoline_top_virt` / `per_cpu_gdt_head_range`, idt.rs
+/// `idt_entries_base_lma`)。
 ///
 /// # Safety
 ///
@@ -338,13 +335,12 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
         core::ptr::write_bytes(user_pml4_virt.0 as *mut u8, 0, PAGE_SIZE as usize);
     }
 
-    // 3. 复制 KERNEL_PML4[256..512] (内核高半区) 到 USER_PML4[256..512]
-    // SAFETY: kernel_pml4 由 vmm_init 写入, user_pml4 由 pmm 分配, 均有效
-    unsafe {
-        let src = PhysAddr(kernel_pml4).to_virt().0 as *const u64;
-        let dst = user_pml4_virt.0 as *mut u64;
-        core::ptr::copy_nonoverlapping(src.add(256), dst.add(256), 256);
-    }
+    // 3. [已移除] 原 `USER_PML4[256..512] = KERNEL_PML4[256..512]` 高半区整段复制。
+    //
+    // 该复制使共享模板持有内核高半区的**全量**别名映射 (收窄前 353 页), 是 Meltdown
+    // 侧信道可利用面 —— CPU 在用户态下仍能通过缓存探测命中这些内核地址的 TLB/页表项。
+    // KPTI-08 改由 step 4.5 的 `map_kernel_pages_in_user_pml4` 逐页显式映射"入口依赖面"
+    // 必需页; 用户页表中其余内核页无任何条目 (不存在的 PTE 无法被缓存探测).
 
     // 4. [已移除] 原清除 [0..256] USER 位的循环.
     //
@@ -355,51 +351,19 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
     // KPTI 安全性由高半区加固 (step 4.5) 保证: 仅 trampoline 代码页保留 RX,
     // 其余内核代码页设为 RO+NX, 数据页限制权限.
 
-    // 4.5 映射整个 .text 区域到 USER_PML4 (PRESENT only, SMEP-safe)
+    // 4.5 装配 KPTI 用户页表所需的内核映射 (KPTI-07 收窄 + KPTI-10 统一)
     //
-    // 策略: 将 _kernel_text_start ~ _kernel_text_end 的所有页面映射到用户页表,
-    // 权限 PRESENT (Ring 0 可执行, SMEP 兼容). 不设 USER 位.
+    // 与 `VirtualMemoryManager::create_user_page_table` 共用同一函数,
+    // 映射面 = `.text` 入口区段 (`_kernel_text_start ~ _kpti_trampoline_end`)
+    // + 入口路径必需数据页 (USER_CR3_SAVE / SyscallPerCpu, 见该函数文档).
+    // 其余内核 `.text`/`.data`/`.bss` 不进本页表.
     //
-    // 原因: 异常处理代码 (isr0-isr31, irq0-irq15) 和 syscall_entry 位于 .text,
-    // 用户态触发异常/系统调用时 CPU 使用 USER_PML4 寻址取指, 必须能执行这些代码页.
-    // SMEP 启用时, 若页面设 USER 位, Ring 0 取指触发 #PF.
-    // 此前仅映射 trampoline 子范围 (_kernel_text_start ~ _kpti_trampoline_end)
-    // 导致异常处理代码不可执行或未映射 → #PF → Triple Fault.
-    //
-    // 安全性: .text 为只读代码, 不设 USER 位防止 Ring 3 访问,
-    // 同时满足 SMEP 要求 (Ring 0 可执行非 USER 页).
-    // KPTI 核心保护 (数据页隔离) 不受影响.
-    //
-    // 符号桩化 (host-test): host 无 _kernel_text_* 链接脚本符号且无页表上下文,
-    // 文本区间映射整段跳过.
+    // 符号桩化 (host-test): host 无链接脚本符号且无页表上下文, 整段跳过.
     #[cfg(not(feature = "host-test"))]
-    {
-    // SAFETY: user_pml4_virt 有效, 映射操作只修改 USER_PML4, 不影响 KERNEL_PML4.
+    // SAFETY: user_pml4_phys 由 pmm 分配并已清零; boot 阶段单线程执行,
+    // 无并发修改页表 (KERNEL_PML4 不受影响, 仅改 USER_PML4).
     unsafe {
-        let text_start = core::ptr::addr_of!(_kernel_text_start) as u64;
-        let text_end = core::ptr::addr_of!(_kernel_text_end) as u64;
-
-        // 诊断: 打印 .text 地址范围 (LMA)
-        crate::klog_boot_info!(
-            "[KPTI] text region: start={:#X} end={:#X} ({} pages)",
-            text_start,
-            text_end,
-            (text_end - text_start + PAGE_SIZE as u64 - 1) / PAGE_SIZE as u64
-        );
-
-        // 映射整个 .text 区域到 USER_PML4 (高半区 VMA + 低半区 LMA)
-        map_text_region_in_user_pml4(user_pml4_virt.0 as *mut u64, text_start, text_end);
-    }
-    }
-
-    // 4.6 映射 KPTI 入口数据页 (.data/.bss) 到 USER_PML4
-    //
-    // KPTI 入口代码 (isr_common/irq_common/syscall_entry) 在 CR3 切换前
-    // 访问 USER_CR3_SAVE (.bss) 和 SyscallPerCpu (.data), 这些页面
-    // 在用户页表中没有 USER 位, 会导致 #PF → Triple Fault.
-    // SAFETY: user_pml4_virt 有效, 数据页映射只修改 USER_PML4.
-    unsafe {
-        map_kpti_data_pages(user_pml4_virt.0 as *mut u64);
+        map_kernel_pages_in_user_pml4(user_pml4_phys);
     }
 
     // 5. 启用 PCID (如果 CPU 支持 INVPCID)
@@ -486,55 +450,182 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
     KPTI_READY.store(true, Ordering::Release);
 }
 
-// ── .text 区域映射 ──────────────────────────────────────────────
+// ── 用户页表内核映射装配 (KPTI-07 收窄 / KPTI-10 统一) ──────────────
 
 // 符号桩化 (host-test): 调用点 (kpti_init step 4.5 / create_user_page_table) 已整段
 // cfg, host 下无调用者, 函数整体不编译 (避免 dead_code).
+#[cfg(not(feature = "host-test"))]
+/// 把 KPTI 用户页表所需的**全部内核映射**装配到给定页表.
+///
+/// 统一两条调用路径 (KPTI-10), 保证共享模板与每进程页表的映射面恒等:
+/// - `kpti_init` —— 共享 `USER_PML4` 模板;
+/// - `VirtualMemoryManager::create_user_page_table` / COW fork (经 `assemble_kernel_half`)
+///   —— 每进程用户页表.
+///
+/// 映射面 (KPTI-08 移除高半区整段复制后) 即"入口依赖面":
+/// 1. `.text` 的**入口区段** `_kernel_text_start ~ _kpti_trampoline_end`
+///    (低半区恒等 + `KERNEL_BASE` 直映别名 + 链接脚本镜像别名,
+///    见 `map_text_region_in_user_pml4`). 链接脚本把 `*(.kpti_trampoline)` 与
+///    `build/isr.o(.text)` 排在该区段内 ⇒ 入口 stub / `syscall_entry` /
+///    `enter_user_asm` / KPTI 出口 stub 均可取指; 其余内核代码页不进用户页表.
+/// 2. 入口路径必需数据页 `map_kpti_data_pages`:
+///    `USER_CR3_SAVE` + IDT 条目表 + 每 CPU 的 GDT 头区 / IST0..3 栈顶页 /
+///    KPTI trampoline 栈顶页.
+/// 3. 每任务的内核栈顶页由 `map_rsp0_page` 在上下文切换时按需追加.
+///
+/// # Safety
+///
+/// 调用方保证 `user_pml4_phys` 是已清零的有效 4 级页表根物理地址;
+/// 在 boot 阶段单线程执行或持 `VMM_LOCK`, 无并发修改页表.
+pub unsafe fn map_kernel_pages_in_user_pml4(user_pml4_phys: u64) {
+    let user_pml4 = PhysAddr(user_pml4_phys).to_virt().0 as *mut u64;
+
+    // SAFETY: 三个链接脚本符号仅做地址取值 (不读内容); user_pml4 由 PMM 分配的
+    // 页表根物理地址转换而来, 有效; 调用方保证无并发修改.
+    unsafe {
+        let text_start = core::ptr::addr_of!(_kernel_text_start) as u64;
+        let trampoline_end = core::ptr::addr_of!(_kpti_trampoline_end) as u64;
+        let text_end = core::ptr::addr_of!(_kernel_text_end) as u64;
+        let pages = |from: u64, to: u64| (to - from + PAGE_SIZE as u64 - 1) / PAGE_SIZE as u64;
+
+        // 诊断: 打印收窄前后的映射面 (QEMU 日志据此判定收窄生效).
+        crate::klog_boot_info!(
+            "[KPTI] user pml4={:#X} kernel mappings: entry {:#X}-{:#X} ({} pages); excluded kernel text {:#X}-{:#X} ({} pages)",
+            user_pml4_phys,
+            text_start,
+            trampoline_end,
+            pages(text_start, trampoline_end),
+            trampoline_end,
+            text_end,
+            pages(trampoline_end, text_end)
+        );
+
+        map_text_region_in_user_pml4(user_pml4, text_start, trampoline_end);
+        map_kpti_data_pages(user_pml4);
+    }
+}
+
+// ── 其它用户页表的装配入口 + 每任务 RSP0 页 (KPTI-08) ─────────────
+
+/// 把内核映射装配到一份新建 (或 COW 克隆) 的用户页表.
+///
+/// 统一 `create_user_page_table` 与 `clone_user_page_table_cow_inner` 两条路径的调用
+/// 形态, 避免两处各自维护"KPTI 激活/未激活"分支:
+/// - KPTI 激活: 逐页装配"入口依赖面"必需内核页 (`map_kernel_pages_in_user_pml4`);
+/// - KPTI 未激活: 退化为原 `KERNEL_PML4[256..512]` 整段复制 (无隔离语义不变).
+///
+/// KPTI 未激活时**必须**保留整段复制: 该模式下不存在"入口依赖面"概念, 内核高半区
+/// 全靠继承的别名映射可达; 收窄会直接破坏内核态访问.
+///
+/// # Safety
+///
+/// `user_pml4_phys` 必须是已清零的有效 4 级页表根物理地址; `kernel_pml4_phys`
+/// 必须是当前内核页表物理地址; 调用方需保证无并发修改 `user_pml4_phys` 指向的页表.
+pub unsafe fn assemble_kernel_half(user_pml4_phys: u64, kernel_pml4_phys: u64) {
+    // SAFETY: 两个 PML4 物理地址均由调用方保证有效; 本函数只改 user 页表.
+    unsafe {
+        // 符号桩化 (host-test): host 无链接脚本符号与页表上下文, 跳过真机分支.
+        #[cfg(not(feature = "host-test"))]
+        if kpti_is_active() {
+            map_kernel_pages_in_user_pml4(user_pml4_phys);
+            return;
+        }
+
+        let src = PhysAddr(kernel_pml4_phys).to_virt().0 as *const u64;
+        let dst = PhysAddr(user_pml4_phys).to_virt().0 as *mut u64;
+        core::ptr::copy_nonoverlapping(src.add(256), dst.add(256), 256);
+    }
+}
+
+/// 把给定任务的内核栈**顶页**映射进指定用户页表 (KPTI-08, 上下文切换路径调用).
+///
+/// 触发场景: 用户态 → 内核态的入口在**切换 CR3 之前**就要用 `TSS.RSP0` /
+/// `[gs:kernel_rsp]` 指向的内核栈压入内容 (5 项 iretq 帧 / 保存现场).
+/// KPTI-08 移除高半区别名复制后, 该栈顶页不再自动可见 ⇒ 必须显式映射.
+///
+/// 页选择: `(kernel_stack_top - 1) & !0xFFF` —— 内核栈自顶向下增长, 首次压入必然
+/// 落在栈顶页内, 故 1 页足够 (与 aarch64 侧 `map_kernel_stack_top_page` 同构).
+/// 入参 `kernel_stack_top` 系 `Process::allocate_kernel_stack` 产物, 恒为高半区 VA
+/// 且页对齐 (`PhysAddr::to_virt() + KERNEL_STACK_SIZE`).
+///
+/// 权限: `PRESENT | WRITABLE`, **不设 USER** —— 访问路径 CPL 恒为 0, 设 USER 等于
+/// 把内核栈暴露给用户态 (提权风险).
+///
+/// **不做远程 TLB 失效**: 该 VA 由内核栈分配唯一确定 (`KERNEL_BASE + phys`, 每次
+/// 分配得唯一 phys), 故一个用户页表内同一 VA 的 PTE 值恒定; 重复映射写回相同值,
+/// 旧 TLB 条目依旧有效. 首次映射时不存在旧条目. (页表遍历 + 幂等写入属可接受代价:
+/// 仅在切换目标为不同任务的第一次发生实际分配.)
+///
+/// # Safety
+///
+/// 调用方保证 `user_pml4_phys` 是有效用户页表根物理地址 (低 12 位可为 PCID 编码,
+/// 本函数自行去掉); `kernel_stack_top` 是该任务内核栈顶的高半区 VA.
+pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
+    // 符号桩化 (host-test): host 无页表上下文与 PMM, 真机分支整段跳过.
+    #[cfg(feature = "host-test")]
+    let _ = (user_pml4_phys, kernel_stack_top);
+
+    #[cfg(not(feature = "host-test"))]
+    // SAFETY: 调用方保证 user_pml4_phys 有效; 目标 VA 属该进程私有页表,
+    // 每次切换 PA 值恒定, 无并发写冲突 (见本函数文档).
+    unsafe {
+        let top_page = (kernel_stack_top - 1) & !(PAGE_SIZE as u64 - 1);
+        let user_pml4 =
+            PhysAddr(user_pml4_phys & !(PAGE_SIZE as u64 - 1)).to_virt().0 as *mut u64;
+        map_text_page(
+            user_pml4,
+            top_page,
+            top_page - KERNEL_BASE,
+            0x3,
+            "RSP0 top page",
+        );
+    }
+}
+
+// ── .text 入口区段映射 ────────────────────────────────────────────
+
+// 符号桩化 (host-test): 唯一调用点 (`map_kernel_pages_in_user_pml4`) 已整段 cfg,
+// host 下无调用者, 函数整体不编译 (避免 dead_code).
 #[cfg(not(feature = "host-test"))]
 #[expect(
     clippy::unreadable_literal,
     reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
-/// 在 `USER_PML4` 中映射整个 .text 区域 (PRESENT only, SMEP-safe).
+/// 在用户页表中映射 `.text` 入口区段 (PRESENT only, SMEP-safe).
 ///
-/// 映射 _`kernel_text_start` ~ _`kernel_text_end` 的所有页面到用户页表,
-/// 包括高半区 VMA (CPU 实际取指地址) 和低半区 LMA (恒等映射, 备用).
+/// 对区段内每个物理页映射 **3 个别名**, 三者分别被不同路径使用 (KPTI-08 实证):
+/// 1. **低半区恒等** `phys`: 链接脚本 `.text` 的 VMA = LMA (低地址), 故内核取指/
+///    函数指针走低地址 (内核线程首切 `jmp [rsi+56]` 取的就是链接低地址);
+/// 2. **`KERNEL_BASE` 直映别名** `KERNEL_BASE + phys`: `LSTAR` (syscall 入口) 与
+///    IDT 全部门目标都用该别名 —— `gdt_init` 写 `LSTAR`、`idt_init` 的 `addr!`
+///    宏均取 `lo + KERNEL_BASE`。**KPTI-08 前该别名靠继承的高半区副本才可达**,
+///    移除副本后必须显式映射, 否则 Ring 3 的 syscall/中断入口即刻 #PF;
+/// 3. **链接脚本镜像别名** `0xFFFF800001000000 + phys`: 链接脚本声明的
+///    `_kernel_text_vma` 偏移, 保留以免误伤未识别的使用点 (其去留需独立验证,
+///    不以"试删后能启动"为依据).
 ///
-/// 原因: 异常处理代码 (isr0-isr31, irq0-irq15, `syscall_entry`) 位于 .text 区域,
-/// 用户态触发异常/系统调用时 CPU 使用 `USER_PML4` 寻址, 必须能取指执行这些代码页.
-/// 此前仅映射 trampoline 子范围导致异常处理代码不可执行或未映射 → Triple Fault.
+/// 原因: 异常处理代码 (isr0-isr31, irq0-irq15, `syscall_entry`) 位于该区段,
+/// 用户态触发异常/系统调用时 CPU 使用用户页表寻址, 必须能取指执行这些代码页.
 ///
 /// 权限: PRESENT (Ring 0 可执行, SMEP 兼容). 不设 USER 位:
 /// SMEP 启用时 Ring 0 不能执行 USER 页, 设 USER 会导致 `syscall_entry` #PF.
 /// 不设 WRITABLE → 只读. 不设 NX → 可执行.
 ///
+/// 收窄不变式 (KPTI-07): `text_end_phys` 不得越过 `_kpti_trampoline_end`, 越界即
+/// fail-closed 停机 (防止调用点重新放大映射面而静默扩大隔离缺口).
+///
 /// # Safety
 ///
-/// 调用方保证: `user_pml4` 是有效的 `USER_PML4` 虚拟地址指针;
-/// `text_start`/`text_end` 是 .text 物理地址范围;
+/// 调用方保证: `user_pml4` 是有效的用户页表虚拟地址指针;
+/// `text_start_phys`/`text_end_phys` 是 `.text` 物理地址范围;
 /// 在 boot 阶段单线程执行, 无并发修改页表.
 pub(super) unsafe fn map_text_region_in_user_pml4(
     user_pml4: *mut u64,
     text_start_phys: u64,
     text_end_phys: u64,
 ) {
-    // LMA 转 VMA (链接脚本定义: VMA = LMA + 0xFFFF800001000000)
-    let vma_offset = 0xFFFF800001000000u64;
-    let text_start_vma = text_start_phys + vma_offset;
-    let text_end_vma = text_end_phys + vma_offset;
-
-    // 页对齐: 向下对齐起始地址, 向上对齐结束地址
-    let page_start_vma = text_start_vma & !(PAGE_SIZE as u64 - 1);
-    let page_end_vma = (text_end_vma + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
-
-    crate::klog_boot_info!(
-        "[KPTI] map_text_region: lma={:#X}-{:#X}, vma={:#X}-{:#X} ({} pages)",
-        text_start_phys,
-        text_end_phys,
-        page_start_vma,
-        page_end_vma,
-        (page_end_vma - page_start_vma) / PAGE_SIZE as u64
-    );
+    // 链接脚本镜像别名偏移 (`_kernel_text_vma = 0xFFFF800001000000 + .`).
+    const LINKER_VMA_OFFSET: u64 = 0xFFFF800001000000;
 
     // 权限位: PRESENT (bit 0) = 0x1
     // 不设置 USER (bit 2): SMEP 启用时 Ring 0 不能执行 USER 页,
@@ -542,26 +633,49 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
     // USER 标志会导致 #PF (instruction fetch).
     // 不设置 WRITABLE (bit 1) → 只读
     // 不设置 NX (bit 63) → 可执行
-    #[expect(
-        clippy::items_after_statements,
-        reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
-    )]
     const FLAGS: u64 = 0x1; // 仅 PRESENT 位 (SMEP 安全)
+
+    // 收窄不变式 (KPTI-07): 映射上界不得越过 `_kpti_trampoline_end`.
+    // 越界说明某调用点重新放大了用户页表的代码映射面 ⇒ fail-closed 停机,
+    // 而非静默扩大隔离缺口 (Meltdown 面随映射面增长).
+    // SAFETY: `_kpti_trampoline_end` 是链接脚本符号, 仅做地址取值 (不读内容).
+    let trampoline_end = unsafe { core::ptr::addr_of!(_kpti_trampoline_end) as u64 };
+    assert!(
+        text_end_phys <= trampoline_end,
+        "[KPTI] .text 映射越界: requested end={text_end_phys:#X} > _kpti_trampoline_end={trampoline_end:#X}"
+    );
+
+    let page_start_phys = text_start_phys & !(PAGE_SIZE as u64 - 1);
+    let page_end_phys = (text_end_phys + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+
+    crate::klog_boot_info!(
+        "[KPTI] map_text_region: lma={:#X}-{:#X}, aliases=identity/KERNEL_BASE/linker-vma ({} pages)",
+        text_start_phys,
+        text_end_phys,
+        (page_end_phys - page_start_phys) / PAGE_SIZE as u64
+    );
 
     // SAFETY: 调用方保证 user_pml4 有效; text_start/text_end 是合法地址范围;
     // boot 阶段单线程执行, 无并发修改页表. PMM 分配的页已对齐且属于内核.
     unsafe {
-        let mut vma_addr = page_start_vma;
-        let mut phys_addr = text_start_phys & !(PAGE_SIZE as u64 - 1);
-        while vma_addr < page_end_vma {
-            // 映射高半区 VMA (CPU 实际取指地址)
-            map_text_page(user_pml4, vma_addr, phys_addr, FLAGS, "high-half VMA");
-
-            // 同时映射低半区恒等映射 (物理地址, 备用)
-            map_text_page(user_pml4, phys_addr, phys_addr, FLAGS, "low-half identity");
-
-            vma_addr += PAGE_SIZE as u64;
-            phys_addr += PAGE_SIZE as u64;
+        let mut phys = page_start_phys;
+        while phys < page_end_phys {
+            map_text_page(user_pml4, phys, phys, FLAGS, "low-half identity");
+            map_text_page(
+                user_pml4,
+                KERNEL_BASE + phys,
+                phys,
+                FLAGS,
+                "KERNEL_BASE alias (LSTAR/IDT gates)",
+            );
+            map_text_page(
+                user_pml4,
+                LINKER_VMA_OFFSET + phys,
+                phys,
+                FLAGS,
+                "linker _kernel_text_vma alias",
+            );
+            phys += PAGE_SIZE as u64;
         }
     }
 }
@@ -627,16 +741,15 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
         let pd = (pd_phys + KERNEL_BASE) as *mut u64;
 
         // 确保 PD[pd_idx] 存在 (分配 PT 页)
-        // 修复 (TRACK-INIT-RING3-SYSCALL): 处理 2MB 大页 (PS=1).
-        // KPTI 下 USER_PML4[256..511] 从 KERNEL_PML4 复制, 底层 PDPT/PD 页
-        // 物理共享. 内核 PD 中可能包含 2MB 大页条目 (PS=1), map_text_page
-        // 此前将大页 PDE 误读为 PT 物理指针, 导致 PTE 写入错误物理地址,
-        // CPU 仍使用原始大页映射读取到全零页 → syscall_entry 解码为
-        // add [rax],al → 读 [RAX=1] → #PF CR2=0x1.
+        // 历史 (TRACK-INIT-RING3-SYSCALL): 当时 `USER_PML4[256..511]` 是从
+        // `KERNEL_PML4` 复制的, 底层 PDPT/PD 物理页与内核共享, 内核 PD 里存在
+        // 2MB 大页条目 (PS=1); 若把大页 PDE 误读为 PT 指针, PTE 会写到错误物理页,
+        // CPU 仍按原大页读到全零页 → syscall_entry 解码为 add [rax],al → #PF CR2=0x1.
         //
-        // 修复策略: 在共享 PD 中直接拆分 2MB 大页为 512 个 4KB PTE.
-        // 这修改了共享 PD, 同时影响内核页表 (该区间从 2MB 大页变为 4KB 页).
-        // 功能正确, 仅有轻微 TLB 性能影响. 不 fork 页表层级, 保持 KPTI 隔离.
+        // KPTI-08 现状: 用户页表的整棵子树 (PDPT/PD/PT) 全部由本模块私有分配, 从未
+        // 写入大页条目 (本模块只用 4KB 叶项) ⇒ PS=1 分支**实际上不可达**. 保留该分支
+        // 作为防御: 一旦将来有代码把大页映射进用户页表, 拆分语义仍是唯一正确解,
+        // 且拆的是本页表私有的 PD, 不再污染内核页表.
         let pde = core::ptr::read_volatile(pd.add(pd_idx as usize));
         let pt_phys = if pde & 1 != 0 {
             if pde & (1 << 7) != 0 {
@@ -689,136 +802,179 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
 
 // ── KPTI 入口数据页映射 ──────────────────────────────────────────
 
-// 符号桩化 (host-test): 函数体整段被 cfg 排除, 触发下面两个 lint 的代码
-// (相似局部变量 / 长数字常量) 在 host-test 维不存在, expect 须同步收窄
-// (否则 unfulfilled_lint_expectations 阻断 host-test 维 clippy).
-#[cfg_attr(
-    not(feature = "host-test"),
-    expect(
-        clippy::similar_names,
-        reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
-    )
+// 符号桩化 (host-test): 唯一调用点 (`map_kernel_pages_in_user_pml4`) 与
+// USER_CR3_SAVE 汇编符号在 host 维均不存在, 函数整体不编译 (避免 dead_code).
+#[cfg(not(feature = "host-test"))]
+#[expect(
+    clippy::unreadable_literal,
+    reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
 )]
-#[cfg_attr(
-    not(feature = "host-test"),
-    expect(
-        clippy::unreadable_literal,
-        reason = "unreadable_literal: 长数字常量无下划线分隔; 内核硬件常量 (MMIO 地址/位掩码) 已知精确值, 当前优先 expect"
-    )
-)]
-/// KPTI 中断/系统调用入口代码在 CR3 切换前需要访问的数据页面。
+/// KPTI 中断/系统调用入口在 CR3 切换前需要访问的数据页面。
 ///
-/// 当 CPU 在用户态触发中断/异常时, `isr_common/irq_common/syscall_entry`
-/// 在切换到内核页表前需要:
-/// 1. `mov [USER_CR3_SAVE], rax` — 保存用户 CR3 到 .bss 变量
-/// 2. `mov rax, [gs:KERNEL_PML4_OFF]` — 从 `SyscallPerCpu` 读内核 PML4
+/// 当 CPU 在用户态触发中断/异常/系统调用时, `isr_common / irq_common /
+/// syscall_entry` 在切换到内核页表前需要:
+/// 1. `mov [USER_CR3_SAVE], rax` — 保存用户 CR3 到 .bss 变量 (绝对寻址 = 链接低地址);
+/// 2. CPU 经 `IDTR.BASE` 取门描述符 (IDT 条目表);
+/// 3. CPU 经 `GDTR.BASE` 取门目标 CS 的描述符, 经 TSS 描述符取 `RSP0` / `IST[]`;
+/// 4. `mov rax, [gs:KERNEL_PML4_OFF]` — swapgs 后从 `SyscallPerCpu` 读内核 PML4
+///    (`GS_BASE` = `&gdt.syscall` 的链接低地址);
+/// 5. CPU 用 `TSS.ist[N-1]` 压入异常帧; `process_switch_asm` 出口用
+///    `SyscallPerCpu.trampoline_top` 压 iretq 帧。
 ///
-/// 这些访问发生在 CR3 切换前 (此时仍为用户页表), 因此这些数据页面
-/// 必须在用户页表中有 PRESENT | WRITABLE 映射, 否则触发 #PF → Triple Fault。
+/// 上述访问全部发生在 CR3 切换前 (此时仍为用户页表), 故相关页必须在用户页表中
+/// 有 PRESENT | WRITABLE 映射, 否则触发 #PF → Double Fault。
+///
+/// 映射别名 (KPTI-08 实证, 与被访问方的寻址方式严格对应):
+/// - `USER_CR3_SAVE` / IDT / GDT 头区: **低半区恒等** (汇编绝对寻址 / `IDTR.BASE` /
+///   `GDTR.BASE` / TSS 描述符基址 / `GS_BASE` 全部是链接低地址) + 两高半区别名;
+/// - IST / trampoline / RSP0 栈顶页: **仅 `KERNEL_BASE` 高半区别名**
+///   (`TSS.ist[]` 与 `trampoline_top` 由 `init_stack_tops` 写成
+///   `KERNEL_BASE + phys`, 而 CPU/stub 正是按该 VA 压栈)。
 ///
 /// # 安全性
 ///
 /// 不设 USER 位. 访问路径 CPL 全部为 0 (syscall 指令强制 CPL=0,
 /// 中断入口 CPU 自动加载内核 CS), 因此不需要 USER 位即可访问.
 /// 用户态 (CPL=3) 无法读写这些数据页, 不暴露内核 PML4 物理地址
-/// 与 per-CPU 内核 RSP.
+/// 与 per-CPU 内核栈.
 ///
-/// 根本修复方向: 重构 KPTI 入口 trampoline, 将内核 PML4 地址嵌入
+/// 根本修复方向: 重构 KPTI 入口 trampoline, 将内核 PML4 地址与栈顶地址嵌入
 /// 代码本身 (立即数), 使 CR3 切换前不依赖 .data/.bss 中的数据.
+///
+/// **时序约束**: 本函数在 `kpti_init` (早于 `gdt_init` / `idt_init`) 中即被调用,
+/// 故待映射地址一律由**静态布局推导** (`per_cpu_gdt_head_range` /
+/// `ist_tops_virt` / `trampoline_top_virt` / `idt_entries_base_lma`),
+/// 不得读 TSS / `sidt` 等尚未初始化的运行时值。
 ///
 /// # Safety
 ///
 /// 调用方保证: `user_pml4` 是有效的 `USER_PML4` 虚拟地址指针;
 /// 在 boot 阶段单线程执行或持 `VMM_LOCK`, 无并发修改页表.
 pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
-    // 符号桩化 (host-test): host 无 USER_CR3_SAVE 汇编符号且无页表上下文,
-    // 整段跳过 (不执行任何映射).
-    #[cfg(not(feature = "host-test"))]
-    {
     // 权限: PRESENT (bit 0) + WRITABLE (bit 1) = 0x3
     //
     // 安全: 不设 USER 位. 访问路径 CPL 全部为 0:
     //   - syscall 指令入口: CPU 强制 CPL=0 (Intel SDM SYSCALL)
     //   - isr_common/irq_common: CPU 自动加载内核 CS from TSS, CPL=0
     // 移除 USER 位防止用户态 (CPL=3) 读 USER_CR3_SAVE / SyscallPerCpu,
-    // 避免暴露内核 PML4 物理地址与 per-CPU 内核 RSP.
+    // 避免暴露内核 PML4 物理地址与 per-CPU 内核栈.
     const FLAGS: u64 = 0x3; // PRESENT | WRITABLE
+    // 链接脚本镜像别名偏移 (与 `map_text_region_in_user_pml4` 同源).
+    const LINKER_VMA_OFFSET: u64 = 0xFFFF800001000000;
 
-    // 1. 映射 USER_CR3_SAVE 所在页面
-    //    USER_CR3_SAVE 位于 .bss 段, isr.asm 使用绝对寻址 mov [USER_CR3_SAVE], rax
-    //    访问的虚拟地址是 LMA (低半区物理地址), 需要恒等映射
+    // 1. USER_CR3_SAVE 所在页
+    //    USER_CR3_SAVE 位于 .bss 段, isr.asm 用绝对寻址 `mov [USER_CR3_SAVE], rax`,
+    //    访问的虚拟地址是链接低地址 (LMA), 需恒等映射; 另映射两高半区别名.
     // SAFETY: USER_CR3_SAVE 是链接器符号, 地址有效 (只读引用)
-    let user_cr3_save_lma =
-        unsafe { core::ptr::addr_of!(super::super::mm::USER_CR3_SAVE_ASM) as u64 };
-    let user_cr3_page = user_cr3_save_lma & !(PAGE_SIZE as u64 - 1);
-    let vma_offset = 0xFFFF800001000000u64;
+    let user_cr3_page = unsafe { core::ptr::addr_of!(super::super::mm::USER_CR3_SAVE_ASM) as u64 }
+        & !(PAGE_SIZE as u64 - 1);
 
-    // SAFETY: user_pml4 有效; USER_CR3_SAVE 地址来自链接器符号, 合法;
-    // boot 阶段单线程执行, 无并发修改.
+    // SAFETY: user_pml4 有效; 页地址来自链接器符号 / 静态布局, 合法;
+    // boot 阶段单线程执行或持 VMM_LOCK, 无并发修改.
     unsafe {
+        map_text_page(user_pml4, user_cr3_page, user_cr3_page, FLAGS, "USER_CR3_SAVE LMA");
         map_text_page(
             user_pml4,
-            user_cr3_page,
+            KERNEL_BASE + user_cr3_page,
             user_cr3_page,
             FLAGS,
-            "USER_CR3_SAVE LMA",
+            "USER_CR3_SAVE KERNEL_BASE",
         );
         map_text_page(
             user_pml4,
-            user_cr3_page + vma_offset,
+            LINKER_VMA_OFFSET + user_cr3_page,
             user_cr3_page,
             FLAGS,
-            "USER_CR3_SAVE VMA",
+            "USER_CR3_SAVE linker VMA",
         );
     }
 
-    // 2. 映射 PER_CPU_GDT 所在页面 (含 SyscallPerCpu)
-    //    swapgs 后 [gs:KERNEL_PML4_OFF] 访问 GS_BASE + offset,
-    //    GS_BASE = IA32_GS_BASE (swapgs 后) = per_cpu_addr (LMA, 低半区)
-    //
-    //    注意: gdt_init 中 write_msr(IA32_GS_BASE, &gdt.syscall as *const _ as u64)
-    //    写入的是 Rust 链接器分配的 LMA (低半区, 如 0x278000), 而非 VMA.
-    //    内核态下低半区通过高半区大页 (KERNEL_BASE + LMA) 恒等映射可访问.
-    //    但用户页表不继承该恒等映射, 必须显式映射 LMA 页面.
-    //
-    //    同时映射高半区 VMA (LMA + vma_offset) 以备高半区访问路径.
-    let per_cpu_gdt_lma =
-        crate::framework::arch::gdt::get_syscall_per_cpu_base() & !(PAGE_SIZE as u64 - 1);
-    let per_cpu_gdt_vma = per_cpu_gdt_lma + vma_offset;
+    // 2. IDT 条目表所在页 (仅低半区恒等: `lidt` 装载的 `IDTR.BASE` 就是条目表链接地址,
+    //    用户态触发中断时 CPU 在切 CR3 前按该地址取门描述符).
+    //    IDT 表 256 项 × 16B = 4KB, 但 `IdtState.entries` 之前还有其它字段, 故可能跨页;
+    //    这里以区间方式逐页映射.
+    let idt_base = crate::framework::idt::idt_entries_base_lma();
+    let idt_page_start = idt_base & !(PAGE_SIZE as u64 - 1);
+    let idt_len =
+        crate::framework::idt::IDT_ENTRIES as u64 * core::mem::size_of::<crate::framework::idt::IdtEntry>() as u64;
+    let idt_page_end = (idt_base + idt_len + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
 
-    // SAFETY: user_pml4 有效; per_cpu_gdt 地址来自 GDT 初始化, 合法;
-    // boot 阶段单线程执行, 无并发修改.
+    // SAFETY: user_pml4 有效; IDT 表位于内核静态区, 地址合法; 无并发修改.
     unsafe {
-        // LMA 恒等映射: 这是 swapgs 后 CPU 实际访问的地址 (GS_BASE = LMA)
-        map_text_page(
-            user_pml4,
-            per_cpu_gdt_lma,
-            per_cpu_gdt_lma,
-            FLAGS,
-            "SyscallPerCpu LMA",
-        );
-        // VMA 映射: 高半区访问路径
-        map_text_page(
-            user_pml4,
-            per_cpu_gdt_vma,
-            per_cpu_gdt_lma,
-            FLAGS,
-            "SyscallPerCpu VMA",
-        );
+        let mut p = idt_page_start;
+        while p < idt_page_end {
+            map_text_page(user_pml4, p, p, FLAGS, "IDT entries");
+            p += PAGE_SIZE as u64;
+        }
+    }
+
+    // 3. 逐 CPU: GDT 头区 (GDT entries + TSS + SyscallPerCpu) 与各栈顶页
+    //
+    //    GDT 头区页: CPU 取段描述符 / TSS 里的 RSP0/IST 需要; `GS_BASE` 指向
+    //    `SyscallPerCpu` 的链接低地址 ⇒ 需恒等映射.
+    //    栈顶页: IST0..3 与 trampoline 栈均由 CPU/stub 按 `KERNEL_BASE + phys`
+    //    的高半区 VA 压栈 ⇒ 只需该别名 (1 页/栈).
+    let cpu_count = crate::framework::smp::get_cpu_count().max(1);
+    let mut gdt_head_pages = 0u64;
+
+    // SAFETY: user_pml4 有效; 各地址由静态布局推导, 页对齐且属内核; 无并发修改.
+    unsafe {
+        for cpu in 0..cpu_count {
+            let (head_start, head_end) = crate::framework::arch::gdt::per_cpu_gdt_head_range(cpu);
+            let mut p = head_start & !(PAGE_SIZE as u64 - 1);
+            let end = (head_end + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+            while p < end {
+                map_text_page(user_pml4, p, p, FLAGS, "GDT head LMA");
+                map_text_page(
+                    user_pml4,
+                    KERNEL_BASE + p,
+                    p,
+                    FLAGS,
+                    "GDT head KERNEL_BASE",
+                );
+                map_text_page(
+                    user_pml4,
+                    LINKER_VMA_OFFSET + p,
+                    p,
+                    FLAGS,
+                    "GDT head linker VMA",
+                );
+                gdt_head_pages += 1;
+                p += PAGE_SIZE as u64;
+            }
+
+            // IST0..3 栈顶页: 栈顶页对齐, 故页 = top - PAGE_SIZE.
+            for top in crate::framework::arch::gdt::ist_tops_virt(cpu) {
+                map_text_page(
+                    user_pml4,
+                    top - PAGE_SIZE as u64,
+                    top - PAGE_SIZE as u64 - KERNEL_BASE,
+                    FLAGS,
+                    "IST top page",
+                );
+            }
+
+            // KPTI trampoline 栈顶页 (`process_switch_asm` 出口用).
+            let tramp_top = crate::framework::arch::gdt::trampoline_top_virt(cpu);
+            map_text_page(
+                user_pml4,
+                tramp_top - PAGE_SIZE as u64,
+                tramp_top - PAGE_SIZE as u64 - KERNEL_BASE,
+                FLAGS,
+                "trampoline top page",
+            );
+        }
     }
 
     crate::klog_boot_info!(
-        "[KPTI] data pages mapped: USER_CR3_SAVE={:#X}, SyscallPerCpu LMA={:#X} VMA={:#X}",
+        "[KPTI] data pages mapped: USER_CR3_SAVE={:#X}, IDT={:#X}-{:#X} ({} pages), GDT head {} page(s)/cpu, {} cpu(s)",
         user_cr3_page,
-        per_cpu_gdt_lma,
-        per_cpu_gdt_vma
+        idt_page_start,
+        idt_page_end,
+        (idt_page_end - idt_page_start) / PAGE_SIZE as u64,
+        gdt_head_pages / u64::from(cpu_count),
+        cpu_count
     );
-    }
-    #[cfg(feature = "host-test")]
-    {
-        // E-04: host 桩分支消费参数, 保持与裸机分支结构对称
-        let _ = user_pml4;
-    }
 }
 
 // ── 测试辅助 (host-tests) ────────────────────────────────────────

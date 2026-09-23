@@ -115,6 +115,9 @@ pub use swap::{kswapd_wakeup, set_page_locked};
 // kpti 公共接口 re-export — 避免跨子系统直接访问 mm::kpti 内部
 #[cfg(target_arch = "aarch64")]
 pub use kpti::{kpti_trampoline_ttbr1_or_kernel, map_kernel_stack_top_page};
+// x86_64 侧对应接口: 把任务内核栈顶页映射进该进程用户页表 (KPTI-08)
+#[cfg(target_arch = "x86_64")]
+pub use kpti::map_rsp0_page;
 
 // KPTI 方案 S3 公共接口 re-export (aarch64 专属) — fork 路径补建子进程 EL1 视图
 #[cfg(target_arch = "aarch64")]

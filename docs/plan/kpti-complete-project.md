@@ -17,7 +17,7 @@
   - 描述：用户态运行的页表（x86 `USER_PML4` / 每进程用户页表；aarch64 `TRAMP_TTBR1`）只含：用户空间 + 异常/中断/syscall 入口 trampoline 代码 + 入口路径必需内核数据页（含内核栈首页）——不含其余内核 `.text`/`.data`/`.bss` 映射。
   - 方案：x86 收敛到 `_kernel_text_start ~ _kpti_trampoline_end`（链接脚本 [x86_64.ld](../../src/kernel/framework/link/x86_64.ld#L46-L56) 已划出该区域）；aarch64 收敛到异常向量表所在 L1 条目。
   - 状态：[]
-  - 详情：**aarch64 侧已达成**——EL0 视图（用户页表 + TTBR1 trampoline 表）现只含用户映射、`.vectors` 全部页、`KPTI_GLOBALS` 页与内核栈顶页（EL1-only）；其余内核 `.text`/`.data`/`.bss` 在 EL0 下不可见（见 KPTI-04/KPTI-13/KPTI-15）。x86_64 侧待 Phase 2。
+  - 详情：**aarch64 侧已达成**——EL0 视图（用户页表 + TTBR1 trampoline 表）现只含用户映射、`.vectors` 全部页、`KPTI_GLOBALS` 页与内核栈顶页（EL1-only）；其余内核 `.text`/`.data`/`.bss` 在 EL0 下不可见（见 KPTI-04/KPTI-13/KPTI-15）。x86_64 侧**亦已达成**（KPTI-07：低半区代码映射面 353 → 1 页；KPTI-08：`KERNEL_PML4[256..511]` 高半区整段复制已移除，改逐页显式映射"入口依赖面"）⇒ 两架构完整收敛达成。
 
 ### 前置调研（Phase 0）
 
@@ -25,7 +25,7 @@
   - 描述：枚举 x86_64（isr/irq/syscall/int 0x80）与 aarch64（EL0 sync/irq/svc）入口在 CR3/TTBR 切换前访问的全部代码页/数据页/栈页。**含 aarch64 用户态首个 SVC 陷入路径卡死定位**（来源：分册 2 B02-25 调研根因问题 1——init `_start` 第一动作 `print_char` = `fs_write` = `svc #0` 未返回，卡点在 handle_el0_sync → KERNEL_TTBR1 切换 → svc_handler 路径）。
   - 方案：逐入口静态分析汇编（isr.asm / mod.rs enter_user_asm / exception.rs global_asm），输出"入口 → 依赖内存"矩阵。已知起点：x86 依赖 USER_CR3_SAVE（.bss）+ SyscallPerCpu（per-CPU）+ GDT/IDT/TSS（用户态中断 CPU 硬件访问）+ TSS.RSP0/IST 内核栈页（CPU 在用户 CR3 下推帧）；aarch64 依赖异常向量表页 + KERNEL_TTBR1 数据页 + SP_EL1 内核栈页。
   - 状态：[X]
-  - 详情：aarch64 侧依赖矩阵已在 Phase 1 实施中实证收敛（"入口 → 依赖内存"见表下"aarch64 EL0↔EL1 边界依赖面"）。结论：入口切换**前**仅依赖三处——异常向量表页（`.vectors`，取指面）、`KPTI_GLOBALS` 所在页（入口汇编读全局量）、内核栈**顶页**（压 280 字节异常帧，经 EL1-only 映射进用户页表）；切换**后**还需内核镜像/数据（低半区恒等 DRAM 块）。x86_64 侧依赖清单待 Phase 2（KPTI-07/08）落实。
+  - 详情：aarch64 侧依赖矩阵已在 Phase 1 实施中实证收敛（"入口 → 依赖内存"见表下"aarch64 EL0↔EL1 边界依赖面"）。结论：入口切换**前**仅依赖三处——异常向量表页（`.vectors`，取指面）、`KPTI_GLOBALS` 所在页（入口汇编读全局量）、内核栈**顶页**（压 280 字节异常帧，经 EL1-only 映射进用户页表）；切换**后**还需内核镜像/数据（低半区恒等 DRAM 块）。x86_64 侧依赖面已随 KPTI-07 收敛并落实：**入口代码面** = `_kernel_text_start ~ _kpti_trampoline_end`（收窄 + fail-closed 断言）；**入口数据面** = USER_CR3_SAVE / SyscallPerCpu（`map_kpti_data_pages`）+ GDT/IDT/TSS/RSP0（`create_user_page_table`）；**高半区别名依赖面**已由 KPTI-08 显式化（逐页映射入口依赖面，不再复制高半区）。
 
 #### aarch64 EL0↔EL1 边界依赖面（Phase 0 产出，Phase 1 实证）
 
@@ -92,12 +92,68 @@
 - **KPTI-07. .text 映射收窄到 trampoline 区域**
   - 描述：[kpti.rs:482-551](../../src/kernel/framework/mm/kpti.rs#L482-L551) `map_text_region_in_user_pml4` 当前映射 `_kernel_text_start ~ _kernel_text_end`（整个内核代码），应收窄到 `_kernel_text_start ~ _kpti_trampoline_end`（含 .kpti_trampoline + isr.o 全部入口代码，链接脚本已保证入口代码位于该区域）。
   - 方案：`kpti_init` 与 `create_user_page_table`（vmm_x86_64.rs:636）同步收窄；映射后断言其余内核代码页在用户页表中不存在。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：实现于 `map_kernel_pages_in_user_pml4`（统一装配入口，见 KPTI-10）——以 `_kpti_trampoline_end` 为映射上界，映射 `_kernel_text_start ~ _kpti_trampoline_end`（入口 stub isr0-31/irq0-15 + `isr_common`/`irq_common`/`syscall_entry` + `enter_user_asm` + `.kpti_trampoline`；三者排序由 [x86_64.ld](../../src/kernel/framework/link/x86_64.ld#L46-L56) 保证）。`_kernel_text_end` 降级为诊断统计与收窄断言用，**不再**作为用户页表映射上界。
+    - **收窄不变式（fail-closed）**：`map_text_region_in_user_pml4` 内 `assert!(text_end_phys <= trampoline_end, ...)` —— 越界即停机，防某调用点重新放大映射面而静默扩大隔离缺口。
+    - **QEMU 实测判据**（[qemu_boot_x86_64.log](../../build/log/qemu_boot_x86_64.log)）：`kpti_init`（共享模板）与 `create_user_page_table`（每进程）**两路径输出一致**——`entry 0x12B000-0x12BA00 (1 pages); excluded kernel text 0x12BA00-0x284DE1 (346 pages)` ⇒ 代码映射面由 353 页收窄至 **1 页**；无 Triple Fault / #PF，Ring 3 init 正常启动（里程碑 `VFS ready`）。
+    - **边界（如实说明）**：收窄只消除**低半区恒等**的非入口代码映射；**高半区别名**（`0xFFFF800001xxxxxx`）的内核镜像仍经 `KERNEL_PML4[256..511]` 复制（`kpti_init` step 3）而在用户页表可见 ⇒ Meltdown 面**完全收敛仍依赖 KPTI-08**。故收窄断言判据限定低半区，未对高半区做"不存在"断言。
+    - **后续更新（KPTI-08 落地后）**：上述高半区别名复制**已移除**——`kpti_init` step 3 / `create_user_page_table` / 深拷贝 `clone_user_page_table` / COW fork **四处**统一改为逐页装配入口依赖面（见 KPTI-08 详情）。本处判据（限定低半区）作为 KPTI-07 的历史口径**保留不变**。
+
+#### x86_64 入口依赖面（Phase 0 补齐；KPTI-08 前置）
+
+移除 `KERNEL_PML4[256..511]` 复制后，用户 CR3 下可达的内核页必须逐项显式映射。**仅"CR3 切换前"被访问的页**有此要求（切换后一切在内核页表下运行）。
+
+| 依赖对象 | 访问时机 | 当前承载 | KPTI-08 后 |
+|---|---|---|---|
+| `.text` 入口区段 | 前（取指） | KPTI-07 显式映射 | 已满足 |
+| `USER_CR3_SAVE` | 前（`isr_common:82` / `syscall_entry:193` 写） | `map_kpti_data_pages` 显式 | 已满足 |
+| SyscallPerCpu 页（`[gs:*]`） | 前（入口读内核 PML4 / 栈顶） | `map_kpti_data_pages` 显式 | 已满足 |
+| GDT / IDT / TSS | 前（iretq 段加载、中断取门描述符、CPU 读 RSP0/IST） | 仅 `create_user_page_table` 内联（**共享模板未覆盖**） | 并入统一映射 |
+| **IST 栈 ×4（每 CPU）**：`#DF→ist[0]`、`NMI→ist[1]`、`int 0x82→ist[2]`、**`#PF→ist[3]`** | 前（硬件压帧） | 高半区别名隐式 | **显式（每 CPU 静态可枚举）** |
+| **`TSS.RSP0` 栈顶页**（当前线程内核栈顶） | 前（中断/异常硬件压帧 ~56 B） | 高半区别名 + [user_proc.rs](../../src/kernel/framework/proc/user_proc.rs) 显式 1 页 | **显式（每线程）** |
+| 内核镜像其余段 / 全部 RAM | 后（内核态运行期） | 高半区别名（待移除） | 由 `KERNEL_PML4` 承载 |
+
+- 依据：[isr.asm:69-89](../../src/kernel/framework/boot/isr.asm#L69-L89)（`isr_common` 入口）、[isr.asm:165-204](../../src/kernel/framework/boot/isr.asm#L165-L204)（`syscall_entry`）、[gdt.rs:512-529](../../src/kernel/framework/arch/x86_64/gdt.rs#L512-L529)（IST 高半区 VA）、[idt.rs:292-342](../../src/kernel/framework/idt/idt.rs#L292-L342)（IST 索引分配）、[process.rs:397-411](../../src/kernel/framework/proc/process.rs#L397-L411)（内核栈高半区 VA）。
+- 要点 ①：**syscall 路径不需要内核栈页进用户页表** —— `syscall_entry` 先切 CR3 再切 RSP（[isr.asm:201-204](../../src/kernel/framework/boot/isr.asm#L201-L204)），故只有中断/异常路径的硬件压帧窗口有要求。
+- 要点 ②：**`#PF` 走 IST**（[idt.rs:307-313](../../src/kernel/framework/idt/idt.rs#L307-L313)），而用户态缺页（COW）常见 ⇒ IST 页必须映射。
+
+#### KPTI-08 实现方案对比
+
+| 维度 | 方案 A：静态集中映射 | 方案 B：per-CPU trampoline 栈（`cpu_entry_area` 式） |
+|---|---|---|
+| 核心思路 | 每进程页表映射自身入口依赖面；RSP0/IST 栈页在建表/建线程时**静态**显式映射 | 入口先落每 CPU 固定 trampoline 栈，切 CR3 后再切任务内核栈 |
+| 用户页表新增 | 入口文本 1 页 + 数据 ~3 页 + IST 4×nCPU + 每线程栈顶 1 页 | 入口文本 1 页 + 数据 ~3 页 + trampoline 栈 1×nCPU（**不含任务栈**） |
+| 改动面 | `kpti.rs` 统一映射器 + `vmm_x86_64.rs`（删复制 + 并入 GDT/IDT/TSS）+ `user_proc.rs`/`process.rs`（RSP0 迁至创建期）+ `gdt.rs`（暴露 IST 地址） | 上者 + `isr.asm` 入口时序 + 异常帧**搬迁**（trampoline 栈 → 任务栈） |
+| 复杂度 / 风险 | 中 | 高（帧搬迁牵动全部陷核路径，等价 Linux `sync_regs`/`fixup_bad_iret`） |
+| 隔离收益 | 大（映射面由"内核镜像 + 全部 RAM"降至十几页）；残留每线程栈顶页（仅用 ~56 B） | 更大（无任务栈页）；相对 A 的增量收益有限 |
+| 验证成本 | 中（依赖面清单逐项核对 + QEMU 双架构往返 + host-tests 静态断言） | 高（逐指令验证 + 异常/中断/syscall/信号全路径回归） |
+| 与 DECISION-057 | 契合（渐进收敛第二/三步） | 更"完整"但违背"渐进"，宜作 A 之后的优化 |
+
+**推荐：方案 A**。理由：当下系统实质单线程/进程（`create_thread` 无生产调用者、非测试 `Thread` 仅 idle，见 DECISION-063），故"每线程栈顶页"实际 ≈1 页/进程，A 的隔离收益已接近 B，而风险与验证成本显著更低，契合 DECISION-057。方案 B 登记为 A 之后的可选优化。
+
+> **后续更新（用户裁定，见 DECISION-067）**：实施前用户改裁定取**出口侧方案 B**（`process_switch_asm` 用户态出口改用 per-CPU trampoline 栈 + `.kpti_trampoline` 内出口 stub 切 CR3），入口侧仍取方案 A（`TSS.RSP0` 栈顶页按任务映射）——即**混合形态**。原因：收窄后 prev 内核栈不在 next 用户页表中，出口侧若照旧在 prev 栈上构建 iretq 帧会直接 #PF；而入口侧（中断/异常硬件压帧）改 per-CPU 栈需异常帧搬迁（方案 B 完整形态），本轮不实施。
+
+**前置与发现（实施前需处理）**：
+
+1. 预存不一致：[cow.rs:246-249](../../src/kernel/framework/mm/cow.rs#L246-L249) 注释称 RSP0 栈页"无 USER 位"，但 [user_proc.rs:1212-1214](../../src/kernel/framework/proc/user_proc.rs#L1212-L1214) 与 [vmm_x86_64.rs:1116-1120](../../src/kernel/framework/mm/vmm_x86_64.rs#L1116-L1120) 实以 `PRESENT|WRITABLE|USER` 映射 RSP0。二者矛盾，影响隔离面与 COW 权限处理。**已随 KPTI-08 落地澄清**：统一为**不设 USER 位**（见 KPTI-08 详情 8），原两处 `USER` 映射点均已移除。
+2. 待确认：共享 `USER_PML4` 模板的运行期使用窗口（若其可在某任务栈为 RSP0 时成为当前 CR3，则 RSP0 规则需同样覆盖它）。
+3. 实施步骤：抽"必需内核页清单"集中管理 → `map_kernel_pages_in_user_pml4` 并入 GDT/IDT/TSS + IST×4×nCPU → RSP0 栈顶页迁移到"线程内核栈分配时登记并映射"（覆盖 fork 子进程）→ 移除两处 `KERNEL_PML4[256..511]` 复制 + 调整 `kpti_sync_pml4_entry` 语义 → fail-closed 校验（host-tests 静态断言 + QEMU 运行时判据）。
 
 - **KPTI-08. USER_PML4 高半区复制移除**
-  - 描述：`kpti.rs:333-338` 不再复制 `KERNEL_PML4[256..512]`，改为按 KPTI-03 依赖清单显式映射必需数据页（USER_CR3_SAVE、SyscallPerCpu、GDT/IDT/TSS、TSS.RSP0/IST 内核栈页）。
-  - 方案：新增"必需内核页清单"集中管理（链接脚本符号 + 运行时枚举）；`kpti_sync_pml4_entry` 语义调整（高半区新增映射不再自动同步，改显式登记）。
-  - 状态：[]
+  - 描述：`kpti.rs:333-338` 不再复制 `KERNEL_PML4[256..512]`，改为按上方"x86_64 入口依赖面"逐项显式映射必需页（USER_CR3_SAVE、SyscallPerCpu、GDT/IDT/TSS、IST 栈、TSS.RSP0 栈顶页）。
+  - 方案：新增"必需内核页清单"集中管理（链接脚本符号 + 运行时枚举）；`kpti_sync_pml4_entry` 语义调整（高半区新增映射不再自动同步，改显式登记）。实现路径已裁定取**方案 B（per-CPU trampoline 栈）**（见上方对比表 + DECISION-066/067）。
+  - 状态：[X]
+  - 详情（实现形态：**出口侧方案 B + 入口侧方案 A** 的混合，逐项落地）：
+    1. **入口侧（方案 A）**：`map_kpti_data_pages` 重写为"逐页显式映射入口依赖面"——USER_CR3_SAVE 页 / IDT 条目表区间 / 逐 CPU 的 GDT 头区（`per_cpu_gdt_head_range`：entries+ptr+tss+syscall，因 `SyscallPerCpu` 起于偏移 0x620 故按**区间**而非"基址页"枚举）/ IST0..3 栈顶页（`ist_tops_virt`）/ trampoline 栈顶页（`trampoline_top_virt`）；`map_text_region_in_user_pml4` 改为每物理页映射 **3 个别名**（LMA 恒等 / `KERNEL_BASE` 直映 / 链接脚本镜像），LSTAR 与 IDT 门目标走 `KERNEL_BASE` 别名。每任务内核栈顶页由新增 **`map_rsp0_page`** 在（a）上下文切换（`scheduler.rs`，覆盖 COW fork 子进程页表）与（b）用户态入口（`user_proc.rs::enter`，init 不经调度器）两处按任务追加，权限 `PRESENT|WRITABLE` **不设 USER**。
+    2. **出口侧（方案 B）**：`process_switch_asm` 的用户态出口**不再**在 prev 内核栈上构建 iretq 帧（该栈不在 next 用户页表中）——原依赖的"高半区共享直接映射天然可达"这一 D5 前提已随收窄失效。改为在 `swapgs` 前经 `[gs:TRAMPOLINE_TOP_OFF]` 读本 CPU `SyscallPerCpu.trampoline_top`，切到 per-CPU trampoline 栈构建 6 槽 iretq 帧（末槽为 CR3），`jmp` 新增 `.kpti_trampoline` 段内 `kpti_exit_trampoline` stub，由 stub 在用户页表恒映射的段内切 CR3 后 `iretq`。CR3 切换位置在两条分支各自**最后一次**访问 `[rsi]`（内核堆高半区别名）之后。
+    3. **四处复制统一**：新增 `kpti::assemble_kernel_half(user_pml4_phys, kernel_pml4_phys)` 作为唯一装配入口，**四处**调用点全部改经它——`kpti_init` step 4.5、`create_user_page_table`、`clone_user_page_table_cow_inner`（COW fork）、**深拷贝 `VirtualMemoryManager::clone_user_page_table`**（经 `vmm_clone_user_page_table` 公开导出；全仓无调用者，但属 framework → services 公开 API，KPTI 激活下会重新注入完整内核高半区 ⇒ 同源处理）。KPTI 未激活时统一入口**保留**整段复制（该模式无"入口依赖面"概念，收窄会破坏内核态访问）。
+    4. **删除项**（F9 死代码零容忍）：`kpti.rs::kpti_sync_pml4_entry`（复制 PML4 顶层指针 = 与 `KERNEL_PML4` 共享整棵子树，正是要消除的隔离缺口；两处调用点 `map_2mb_page`/`map_1gb_page` 同步删除）、`vmm_x86_64.rs::map_kernel_page_in_table`（唯一调用者迁至 `map_rsp0_page`）、`gdt.rs::get_syscall_per_cpu_base` / `gdt.rs::get_tss_base`、`tss.rs::tss_get_kernel_stack`、`process_switch_asm` 中已成死分支的第二个 `0x23` 判断。
+    5. **入口时序（关键约束）**：`kpti_init` 早于 `gdt_init`/`idt_init`（`lib.rs` 的 `vmm_init` → `interrupt_late_init` 顺序）⇒ 装配时 `TSS.ist[]`/`trampoline_top` 仍为 0、`sidt` 只读到 boot 临时 IDT。故新增全部访问器均由**静态布局推导**：`ist_tops_virt` / `trampoline_top_virt` / `per_cpu_gdt_head_range`（gdt.rs）、`idt_entries_base_lma`（idt.rs），与写入方（`init_stack_tops` / `lidt`）共用同一公式。
+    6. **页对齐前提**：`AlignedStack<4096>` 强制 IST 栈与 trampoline 栈 4KB 对齐 ⇒ 栈顶页可用单页公式 `top - PAGE_SIZE` 精确映射；否则帧跨页需映射 2 页、映射面与公式不再确定。
+    7. **RSP0 页不做远程 TLB 失效**：该 VA 由内核栈分配唯一确定，同一用户页表内 PTE 值恒定，重复映射写回相同值 ⇒ 走 lockless `map_text_page`（规避 `VMM_LOCK` 与远程 TLB IPI）。
+    8. **预存不一致澄清**（DECISION-066 前置项 1）：RSP0 栈页统一裁定为**不设 USER 位**（访问路径 CPL 恒为 0，设 USER 即内核栈暴露给用户态）；原 `user_proc.rs` 内联块的 `USER` 映射随迁移消除，`cow.rs` 注释口径随之成立。
+  - 验证门槛（§2.3 五条全过，2026-09-23）：`./ci/build.sh all`（双架构 0 error / 0 warning）、`./ci/audit.sh quick`（AUDIT_RC=0，0 处 ✗）、`make test-host`（全部通过，含新增 `host-tests/tests/kpti_x86_user_table_test.rs` 9 项静态断言）、`make test-unit`（QEMU 33：ALL TESTS PASSED）、`./scripts/qemu_boot_test.sh x86_64`（1/1，`VFS ready` + Ring 3 init）与 `aarch64`（1/1）。
+  - QEMU 运行时判据（[qemu_boot_x86_64.log](../../build/log/qemu_boot_x86_64.log)）：`kpti_init` 的共享模板（`0x4071000`）与三份每进程页表（`0x547E000` / `0x651E000` / `0x7FC5000`）输出**完全一致**——`entry 0x12B000-0x12BA10 (1 pages); excluded kernel text 0x12BA10-0x28B969 (352 pages)` + `data pages mapped: USER_CR3_SAVE=0x2605000, IDT=0x3EF4000-0x3EF6000 (2 pages), GDT head 1 page(s)/cpu, 1 cpu(s)` ⇒ 四路径装配面恒等，且为"十几页"量级（对照收窄前 353 页 + 整段高半区别名）；内核栈顶页自检 `rsp0_stack virt=0xFFFF80000651B000 -> phys=0x651B000 ✓`。
 
 - **KPTI-09. x86_64 验证**
   - 描述：QEMU x86_64 Ring 3 + syscall/中断往返 + 隔离断言。
@@ -110,12 +166,15 @@
 - **KPTI-10. 每进程页表与共享模板统一**
   - 描述：[vmm_x86_64.rs:623-659](../../src/kernel/framework/mm/vmm_x86_64.rs#L623-L659) `create_user_page_table` 与 `kpti_init` 的映射逻辑保持同步（Phase 2 收窄后两者都只映射 trampoline + 必需数据页）。
   - 方案：抽公共函数；host-tests 对任意进程页表断言隔离属性。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：抽出 `pub unsafe fn map_kernel_pages_in_user_pml4(user_pml4_phys: u64)`（[kpti.rs](../../src/kernel/framework/mm/kpti.rs)）为**唯一装配入口**，`kpti_init`（共享 `USER_PML4` 模板）与 `create_user_page_table`（每进程页表，受 `kpti_is_active()` 门控）均只调用它，不再各自内联 `map_text_region_in_user_pml4` / `map_kpti_data_pages`。三个内部步骤（`map_text_region_in_user_pml4` / `map_kpti_data_pages` / `map_text_page`）降为模块内 `pub(super)` 并整函数 `#[cfg(not(feature = "host-test"))]` 门控（消除 host 维死代码，符合 F9）。QEMU 实测两路径映射面恒等（entry 1 页 / excluded 346 页，见 KPTI-07 详情）。
 
 - **KPTI-11. 页表内容断言 host-tests**
   - 描述：当前无任何测试验证用户页表"不含内核映射"（分册 2 审查已指出 B02-39 仅表层检查）。
   - 方案：新增 host-tests 遍历用户页表（每进程 + 共享模板），断言高半区仅含 trampoline 区域与白名单数据页。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：新增 [kpti_x86_user_table_test.rs](../../../host-tests/tests/kpti_x86_user_table_test.rs)，6 项静态断言（源码文本断言风格，沿用仓库既有模式，如 `sched_current_type_consistency_test.rs`）：(1) `kpti.rs` 声明 `_kpti_trampoline_end`；(2) `map_kernel_pages_in_user_pml4` 以 `_kpti_trampoline_end` 为映射上界；(3) `map_text_region_in_user_pml4` 含 `text_end_phys <= trampoline_end` 收窄断言；(4) `kpti_init` 与 `create_user_page_table` 均调用统一入口且**不再**直接调用内部步骤；(5) 链接脚本 `*(.kpti_trampoline)` / `build/isr.o(.text)` 排在 `_kpti_trampoline_end` 之前、`*(.trampoline)`（AP 启动，不进用户页表）之后；(6) `create_user_page_table` 仍映射 GDT/IDT/TSS/RSP0 白名单。
+    - **边界（如实说明）**：本测试为**静态源码/链接脚本断言**（host 无 x86_64 页表上下文，无法运行时遍历页表）；运行时映射面判据由 QEMU 日志承担（见 KPTI-07 详情）。aarch64 侧 trampoline 表内容断言仍属未覆盖项（见 KPTI-06 未覆盖项）。
 
 - **KPTI-12. 完整回归 + 文档同步**
   - 描述：双架构 QEMU 完整回归（Ring 3 到达 + 用户态陷入/返回）+ docs 同步。
@@ -163,6 +222,36 @@
     2. **KPTI-18b（长期最优，本轮不实施）**：不是候选 ①②③ 任一（全量保存 / lazy FPU / 仅 caller-saved），而是**"内核零隐式 FP/SIMD"**（对齐 Linux arm64 `fpsimd`）：内核不得隐式执行 FP/SIMD，用户 FP 状态由线程上下文承载并按需（懒式）保存；内核确需 FP 时须显式声明并使用独立的内核状态。理由：根因是"内核在 EL1 执行 FP/SIMD 却无声明"（实测 `CPACR_EL1.FPEN=0b11` 放开 EL1 + 内核产物 913 `fmov` / 337 `stp q*`），①②③ 均为逐次进出边界的代价补偿；且"内核不隐式用 FP"是内核工程惯例（x86_64 侧正因 `x86_64-unknown-none` 目标禁用 SSE/MMX 而天然无此问题）。
   - 落地路径（登记）：(1) `-C target-feature=-neon` 抑制隐式 NEON；(2) 消除内核 `f64/f32`（`services/mm/pmm_policy.rs`、`services/fs/procfs_core.rs`、`services/fs/nestfs/arc_trait.rs` 等）+ 反汇编审计白名单；(3) 线程 FP 懒式保存（`TIF_FOREIGN_FPSTATE` 式）。**工具链限制（实测）**：Rust/LLVM aarch64 不识别 `+general-regs-only` ⇒ Linux `-mgeneral-regs-only` 等价路径不存在；`aarch64-unknown-none-softfloat` 仅改 ABI + 去 `-neon`，标量 FP 仍在。
   - 状态：[X]（18a 已修 + 回归测试；18b 长期方案已裁定并登记，性质判定为**契约级缺陷、暂不可观测**）
+
+- **DECISION-065（x86_64 渐进收敛第一步：收窄 + 统一 + 断言）**
+  - 描述：2026-09-23 用户就本轮范围裁定为"收窄+统一+断言"，即 **KPTI-07 + KPTI-10 + KPTI-11**（KPTI-08/09/12 延后），落地 DECISION-057「渐进收敛」的第一步。关键决策：
+    1. **运行时收窄校验取链接脚本符号级 fail-closed 断言**，而非页表遍历：`kpti_init` 处于 `VirtualMemoryManager::init()`（`GLOBAL_VMM.get_or_init`）过程中调用，此时 `get_vmm()` 必 panic（全局 VMM 尚未落定），且不宜在内核内引入第二套页表遍历实现。
+    2. **页表内容验证下放 KPTI-11 host-tests**（静态源码/链接脚本断言）；运行时映射面判据由 QEMU 日志承担（`entry 1 页 / excluded 346 页`）。
+    3. **收窄判据范围限定低半区恒等映射**，不对高半区做"不存在"断言（高半区别名收敛属 KPTI-08，且 IST 栈页依赖高半区别名，贸然断言会误伤）。
+  - 理由：收窄（KPTI-07）风险最低且可独立验证；统一（KPTI-10）把两处易发散的映射逻辑收敛为单一入口，是 KPTI-08 改动的必要前置；断言（KPTI-11）锁定不变式防回归。三者构成可独立交付、可回归验证的闭环，避免与 KPTI-08/09 的复杂依赖面混淆归因。
+  - 状态：[X]
+
+- **DECISION-066（KPTI-08 实现路径：先调研定方案，推荐方案 A「静态集中映射」）**
+  - 描述：2026-09-23 用户就 KPTI-08（移除 `USER_PML4` 高半区复制）的实现路径裁定为"**先调研出方案对比**"，即本轮仅对依赖面做专项源码调研并产出方案对比、写入文档，**不改代码**。原则：安全敏感项（Meltdown 隔离面 / 入口时序 / TCB 边界）不靠试删兜底。
+  - 调研结论（详见上方"x86_64 入口依赖面"与"KPTI-08 实现方案对比"）：
+    1. 移除高半区别名后，须显式映射的仅"**CR3 切换前**被访问"的内核页：`.text` 入口区段（KPTI-07 已满足）、`USER_CR3_SAVE`、SyscallPerCpu 页（以上已满足）、GDT/IDT/TSS（须并入统一映射，**共享模板未覆盖**）、IST 栈 ×4×nCPU（每 CPU 静态可枚举）、`TSS.RSP0` 栈顶页（每线程）。切换后一切运行于内核页表，内核镜像其余段与全部 RAM 由 `KERNEL_PML4` 承载。
+    2. 两处关键发现：**syscall 路径不需要内核栈页**（`syscall_entry` 先切 CR3 再切 RSP）；**`#PF` 走 IST** 且用户态缺页（COW）常见 ⇒ IST 栈页必须映射。
+    3. 中断/异常路径仅在硬件压帧窗口（~56 B）需要 `TSS.RSP0` 栈顶页可用 ⇒ 只映射内核栈**顶页**即可。
+  - 裁定：**推荐方案 A（静态集中映射）** —— 每进程页表静态显式映射自身入口依赖面，RSP0/IST 栈页在建表/建线程时登记。理由：当下系统实质单线程/进程（DECISION-063：`create_thread` 无生产调用者、非测试 `Thread` 仅 idle），"每线程栈顶页"实际 ≈1 页/进程，A 的隔离收益已接近方案 B，而风险与验证成本显著更低，契合 DECISION-057「渐进收敛」。**方案 B（per-CPU trampoline 栈）登记为 A 之后的可选优化**（需异常帧搬迁，等价 Linux `sync_regs`/`fixup_bad_iret`）。
+  - 实施前待处理（见"前置与发现"）：(1) **预存不一致**——[cow.rs:246-249](../../src/kernel/framework/mm/cow.rs#L246-L249) 注释称 RSP0 栈页"无 USER 位"，实装却以 `PRESENT|WRITABLE|USER` 映射（[user_proc.rs:1212-1214](../../src/kernel/framework/proc/user_proc.rs#L1212-L1214) / [vmm_x86_64.rs:1116-1120](../../src/kernel/framework/mm/vmm_x86_64.rs#L1116-L1120)），须先澄清（影响隔离面与 COW 权限处理）；(2) **待确认共享 `USER_PML4` 模板的运行期使用窗口**（若可在某任务栈为 RSP0 时成为当前 CR3，则 RSP0 规则须同样覆盖它）。
+  - 状态：[X]（本轮为纯调研/文档轮，未改源码，无 §2.3 门槛可跑。**后续更新**：KPTI-08 实施已于同日完成，用户改裁定取出口侧方案 B，条目状态已置 `[X]`，见 DECISION-067）
+
+- **DECISION-067（KPTI-08 实施形态：出口侧方案 B + 入口侧方案 A 的混合；四处复制统一到单一入口）**
+  - 描述：2026-09-23 用户就 KPTI-08 实施裁定：**出口侧取方案 B（per-CPU trampoline 栈）**，优先于 DECISION-066 推荐的方案 A。落地形态为混合：
+    1. **出口侧（方案 B）**：`process_switch_asm` 的用户态出口不能再用 prev 内核栈（prev 栈不在 next 用户页表中，收窄后必然 #PF）⇒ 在 `swapgs` 前经 `[gs:TRAMPOLINE_TOP_OFF]` 读 per-CPU `SyscallPerCpu.trampoline_top`，切到该栈构建 6 槽 iretq 帧（末槽 CR3），`jmp` 新增 `.kpti_trampoline` 段内 `kpti_exit_trampoline` stub 完成"切 CR3 后 iretq"。新增 `PER_CPU_TRAMPOLINE_SIZE = 4096` 与 `AlignedStack<4096>`；`SyscallPerCpu` 新增 `trampoline_top` 字段（偏移 32，`isr.asm` 加 `TRAMPOLINE_TOP_OFF` 作布局锚点）。CR3 切换位置下移到两条分支各自"最后一次访问 `[rsi]`"之后。
+    2. **入口侧（方案 A，未升级为完整方案 B）**：用户态中断/异常由 CPU 硬件按 `TSS.RSP0`/`TSS.ist[]` 压帧，发生在 `isr_common` 切 CR3 **之前**，改 per-CPU 栈需异常帧搬迁（等价 Linux `sync_regs`/`fixup_bad_iret`）⇒ 超出本轮范围，仍按任务映射内核栈顶页（`map_rsp0_page`）。
+  - 理由：出口侧是**必须**改（旧路径的"高半区共享直接映射天然可达"前提已随收窄失效，不改即崩）；入口侧的完整方案 B 属风险与验证成本更高的独立工程，留在登记项中。
+  - 三项关键发现（实施中实证，均写入代码注释）：
+    1. **入口时序**：`kpti_init` 早于 `gdt_init`/`idt_init`（`lib.rs` 的 `vmm_init` → `interrupt_late_init` 顺序）⇒ 装配时 `TSS.ist[]`/`trampoline_top` 仍为 0、`sidt` 只读到 boot 临时 IDT。故所有待映射地址必须由**静态布局推导**，新增 `ist_tops_virt`/`trampoline_top_virt`/`per_cpu_gdt_head_range`（gdt.rs）与 `idt_entries_base_lma`（idt.rs），与写入方共用同一公式（`init_stack_tops` / `lidt`）。
+    2. **寻址别名却是三种**：LSTAR（syscall 入口）与 IDT 全部门目标走 `KERNEL_BASE + LMA`；汇编绝对寻址（`[USER_CR3_SAVE]`）、`IDTR.BASE`/`GDTR.BASE`/TSS 描述符基址/`GS_BASE` 走 **LMA 恒等**；链接脚本 `_kernel_text_vma` 镜像别名保留待独立验证 ⇒ `.text` 入口区段每物理页须映射 **3 个别名**（原实现只映射低半区恒等一条，靠继承的高半区副本才补齐 `KERNEL_BASE` 别名）。
+    3. **GDT 侧须按区间枚举**：`SyscallPerCpu` 起于 `PerCpuGdt` 偏移 0x620，故不能只映射"基址页"；改 `per_cpu_gdt_head_range(cpu) -> (start, end)`（entries+ptr+tss+syscall），由调用方逐页映射，并同时映射 `KERNEL_BASE + 区间` 与区间本身。
+  - 超范围发现（本轮一并处置）：**第四处高半区整段复制** —— `vmm_x86_64.rs::VirtualMemoryManager::clone_user_page_table`（深拷贝，经 `vmm_clone_user_page_table` 公开导出；全仓无调用者，但属 framework → services 公开 API）。KPTI 激活下调用它会重新注入完整内核高半区 ⇒ 同属本工程要消除的隔离缺口，与另三处一并通过 `assemble_kernel_half` 统一（fail-closed 断言在 host-tests 中以"不得出现 `add(256)` 复制指纹"锁定）。
+  - 状态：[X]（KPTI-08 已实施并全门槛通过，详见该条目"详情"与"验证门槛"）
 
 ### 遗留与登记项（Phase 1 收口后深度排查完成；KPTI-18a / KPTI-19 已修复）
 
@@ -234,6 +323,7 @@
 - §2.3 5 条门槛全过（双架构 cargo build / clippy / make / host-tests / QEMU）
 - 专项：QEMU 双架构 + Ring 3 往返（补分册 2 B02-25）；页表内容 host-tests（KPTI-11）
 - 隔离断言：用户态访问内核高半区（x86 高半区 VMA、aarch64 TTBR1 空间）触发异常而非可读
+- 记录（KPTI-07/10/11 轮次）：`./ci/build.sh all` Passed 5 / Failed 0；`./ci/audit.sh quick` RC=0（TCB 边界 / 6 不变式 / SAFETY 覆盖 / clippy pedantic + feature 维）；`make test-host` 全 ok（含新增 `kpti_x86_user_table_test` 6 项）；`make test-unit` `✅ ALL TESTS PASSED (QEMU exit: 33)`；QEMU 双架构 **2/2** 通过（x86_64 里程碑 `VFS ready` + Ring 3 init；aarch64 `VFS ready` + `进入 EL0 启动 init 进程`）。
 
 ### 风险与回退
 

@@ -702,13 +702,17 @@ impl Scheduler {
             return None;
         }
 
-        PROCESS_TABLE.with_process(next, |proc| {
-            let _ = proc.set_state_safe(ProcessState::Running);
-            let next_kernel_stack = proc.kernel_stack.load(Ordering::SeqCst);
-            if next_kernel_stack != 0 {
-                crate::framework::cpu::arch::set_kernel_stack(next_kernel_stack);
-            }
-        });
+        // 内核栈顶同步必须 hoist 到闭包外: 该值随后要交给
+        // `kpti::map_rsp0_page` 映射进切换目标的用户页表 (KPTI-08).
+        let next_kernel_stack = PROCESS_TABLE
+            .with_process(next, |proc| {
+                let _ = proc.set_state_safe(ProcessState::Running);
+                proc.kernel_stack.load(Ordering::SeqCst)
+            })
+            .unwrap_or(0);
+        if next_kernel_stack != 0 {
+            crate::framework::cpu::arch::set_kernel_stack(next_kernel_stack);
+        }
 
         per_cpu.current.store(next, Ordering::SeqCst);
 
@@ -740,8 +744,18 @@ impl Scheduler {
             unsafe {
                 let user_cr3 = (*user_proc).process().cr3.load(Ordering::SeqCst);
                 #[cfg(target_arch = "x86_64")]
-                crate::framework::arch::gdt::gdt_set_user_cr3(user_cr3);
-                let _ = user_cr3;
+                {
+                    crate::framework::arch::gdt::gdt_set_user_cr3(user_cr3);
+                    // KPTI-08: 切换目标的用户页表必须含其内核栈顶页 ——
+                    // 该页随任务变化, 不在 `assemble_kernel_half` 的统一装配面内,
+                    // 故在此 (上下文切换) 按目标任务追加. COW fork 出的子进程页表
+                    // 只经 `assemble_kernel_half` 装配, 必须靠此处补齐.
+                    // SAFETY: user_cr3 是目标进程有效用户页表 PML4 物理地址;
+                    // next_kernel_stack 是该进程内核栈顶高半区 VA (页对齐);
+                    // 该 VA 在目标页表内 PTE 值恒定 (见 map_rsp0_page 文档).
+                    crate::framework::mm::map_rsp0_page(user_cr3, next_kernel_stack);
+                }
+                let _ = (user_cr3, next_kernel_stack);
             }
         }
 

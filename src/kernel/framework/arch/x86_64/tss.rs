@@ -239,13 +239,9 @@ pub fn tss_set_kernel_stack(rsp0: u64) {
     }
 }
 
-pub fn tss_get_kernel_stack() -> u64 {
-    // SAFETY: 只读访问 TSS
-    unsafe {
-        let tss = super::gdt::get_tss_mut();
-        tss.get_kernel_stack()
-    }
-}
+// [已删除] `tss_get_kernel_stack`: 原唯一调用者 (VMM `create_user_page_table`
+// 的 RSP0 内联映射块) 已随 KPTI-08 迁移到 `kpti::map_rsp0_page`, 该访问器失去
+// 全部调用者 (F9 死代码零容忍)。
 
 // ============================================================================
 // 单元测试

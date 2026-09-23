@@ -9,6 +9,13 @@ extern user_entry_cr3
 ; O-04 (proc/switch.asm:113 `mov ax, 0x23` 硬编码) 同期处理.
 extern SELECTOR_USER_CODE
 
+; KPTI-08: SyscallPerCpu.trampoline_top 的偏移 (须与 gdt.rs SyscallPerCpu 字段顺序
+; 及 isr.asm TRAMPOLINE_TOP_OFF 保持一致).
+; 该字段由 gdt_init/gdt_init_ap 写入本 CPU KPTI 出口栈顶 VA (高半区), 其栈顶页已在
+; 每个用户页表中显式映射 (kpti::map_kernel_pages_in_user_pml4), 供本文件用户态出口
+; 在切 CR3 前后构建/读取 iretq 帧.
+TRAMPOLINE_TOP_OFF equ 32
+
 ; void process_switch_asm(ProcessContext* prev, const ProcessContext* next);
 ; RDI = *mut ProcessContext (save current register state here)
 ; RSI = *const ProcessContext (load next register state from here)
@@ -84,9 +91,13 @@ process_switch_asm:
     mov rbx, [rsi + 32]
     mov rbp, [rsi + 40]
 
-    ; Set cr3
-    mov rax, [rsi + 80]
-    mov cr3, rax
+    ; KPTI-08: CR3 切换位置下移 (原先在此处立即切到 next 的页表).
+    ; 收窄后 next 用户页表只含"入口依赖面"内核页 (出口 trampoline 段/入口 text/
+    ; GDT/IDT/TSS/栈顶页), 而下方仍需访问 next 的 ProcessContext ([rsi + ...],
+    ; 位于内核堆高半区别名) 并装载段寄存器 (读 GDT 描述符). 若提前切到 next
+    ; 用户页表, 这些访存将 #PF. 故改为: 两条分支各自在**最后一次**访问 [rsi]
+    ; 之后才切 CR3 —— 内核线程分支切后仅使用已取到的栈/rip; 用户分支由出口
+    ; stub 在 `.kpti_trampoline` 段内完成切换.
 
     ; Restore segment registers (ds, es, fs, gs)
     ; cs and ss are restored via iretq frame
@@ -102,6 +113,12 @@ process_switch_asm:
     ; 正需 base=0, 且此时 KERNEL_GS_BASE 已在 swapgs 后为 per-CPU 地址; 而内核态恢复
     ; 路径 (任务阻塞在 syscall 内被换回) 若照搬装载, 会把 per-CPU 基址清零, 使随后
     ; 内核态 [gs:...] 访问 (KPTI 出口读 USER_PML4) 落到物理低地址 → 读垃圾 CR3 挂起.
+    ;
+    ; KPTI-08: 先读本 CPU KPTI 出口栈顶 (借用 rdi; rdi 在保存路径后即空闲, 用户态
+    ; 路径末尾由 extra_regs 重载). 必须在 swapgs **之前**读: swapgs 后 GS base 换为
+    ; 0 (用户 GS), `[gs:TRAMPOLINE_TOP_OFF]` 会落到线性地址 32. 取到的是高半区 VA,
+    ; 其栈顶页已在每个用户页表中显式映射, 供出口 stub 在切 CR3 后压/弹 iretq 帧.
+    mov rdi, [gs:TRAMPOLINE_TOP_OFF]
     cmp word [rsi + 88], 0x23
     jne .no_swapgs_next
     swapgs
@@ -121,9 +138,8 @@ process_switch_asm:
     fxrstor [rax]
 
     ; ── 路径分派: 内核线程 (cs=0x08) vs 用户态 (cs=0x23) ─────────────
-    ; 这是本文件的第一个 0x23 判断, 作用是**选择栈切换方式**;
-    ; 下方 caller-saved 恢复处还有第二个 0x23 判断, 作用是**决定是否恢复
-    ; rdi/rsi/rdx/rcx/r8-r11** (见该处注释). 两者读同一字段, 目的不同.
+    ; 本判断唯一作用是**选择栈切换方式** (KPTI-08 前在 caller-saved 恢复处还有
+    ; 第二个 0x23 判断, 因内核线程分支已在此提前跳离而恒为真, 已作为死分支删除).
     ;
     ; iretq 在同特权级下只弹 RIP/CS/RFLAGS, 不加载 RSP/SS (x86 SDM),
     ; 因此不能靠 iretq 完成内核线程的栈切换.
@@ -134,44 +150,47 @@ process_switch_asm:
     ; 内核内存, 换栈后依旧可读.
     cmp word [rsi + 88], 0x23
     je .switch_user_path
+    ; 内核线程: next 的 CR3 即内核 PML4 (全内核映射, 无收窄), 切换后仍可继续
+    ; 读 [rsi] 取 rax/rsp/rip, 故在此切 CR3 无映射面风险.
+    mov rax, [rsi + 80]         ; cr3
+    mov cr3, rax
     mov rax, [rsi + 48]         ; 内核线程仅需恢复 rax
     mov rsp, [rsi + 64]         ; 切到 next 的栈
     jmp qword [rsi + 56]        ; 跳到 next 的 rip (首次为 idle_entry)
 .switch_user_path:
 
-    ; 统一内核栈契约 (D5): 任务内核栈 (prev 的 syscall/中断栈) 已是高半区 VA
-    ; (phys + KERNEL_BASE, 见 cpu::arch::set_kernel_stack), 经用户页表共享的
-    ; 高半区直接映射 (pd_high) 天然可达, 无需别名转换; 仅"首个任务进入用户态
-    ; 之前"的运行栈 (boot 低半区栈) 需要转 KERNEL_BASE 别名后才能在用户页表中
-    ; push/iretq. 故此处按 RSP 实际所处半区条件转换, 避免对高半区栈重复偏移.
-    mov rax, 0xFFFF800000000000    ; KERNEL_BASE
-    cmp rsp, rax
-    jae .rsp_already_high          ; 已是高半区 (任务内核栈) → 不再偏移
-    add rsp, rax                   ; 低半区 (boot 栈) → 转高半区别名
-.rsp_already_high:
+    ; ── KPTI-08 方案 B: 用户态出口改用 per-CPU trampoline 栈 ──────────
+    ; 收窄后 next 用户页表不再复制内核高半区别名, prev 的内核栈 (本函数当前
+    ; 运行栈) 在 next 页表中不可达, 故**不能**再在原栈上 push/iretq —— 此前
+    ; 依赖的"高半区共享直接映射 (pd_high) 天然可达"这一 D5 前提已随 KPTI-08
+    ; 失效. 改为切到本 CPU 出口栈 (rdi = gdt.rs 写入的 trampoline_top, 高半区
+    ; VA): 此刻仍在内核页表下, 该栈经高半区直接映射可写; 切 CR3 后其**栈顶页**
+    ; 由 kpti::map_kernel_pages_in_user_pml4 显式映射进每份用户页表, 出口 stub
+    ; 方能 pop/iretq.
+    mov rsp, rdi                ; rsp = trampoline_top
 
-    ; Build iretq frame
+    ; Build iretq frame (低→高: RIP, CS, RFLAGS, RSP, SS, CR3).
+    ; CR3 **先**压入, 使其落在 SS 之上: 出口 stub 在自身 `push rax` 后经
+    ; [rsp+48] 取回该值 (此时 rsp = RIP 槽 - 8). 帧共 6 槽 (48 字节), 全部落在
+    ; trampoline 栈顶页内 (页对齐栈顶, 见 gdt.rs AlignedStack).
+    push qword [rsi + 80]       ; cr3
     push qword [rsi + 128]      ; ss
     push qword [rsi + 64]       ; rsp
     push qword [rsi + 72]       ; rflags
     push qword [rsi + 88]       ; cs
     push qword [rsi + 56]       ; rip
 
-    ; B05-55 修复: 恢复 caller-saved 寄存器 (rdi/rsi/rdx/rcx/r8-r11) — 仅用户态.
+    ; B05-55 修复: 恢复 caller-saved 寄存器 (rdi/rsi/rdx/rcx/r8-r11).
     ; ProcessContext 布局: fpu_state[64] @ 144 (512B), fpcr @ 656, fpsr @ 664,
     ; extra_regs[8] @ 672 (B05-55 新增, 见 services/proc/types.rs).
     ; 已运行过的进程返回用户态时, 寄存器由 syscall/中断栈的 InterruptFrame
     ; (schedule 后 iretq) 覆盖恢复, 此处不影响. 首次被调度的进程 (fork 子进程)
     ; 用这些继承的寄存器值 (fork 时父进程的 rdi 等) 进入用户态.
-    ; ⚠ 必须放在所有 [rsi] (ProcessContext) 访问之后、iretq 之前, 且恢复 rax
+    ; ⚠ 必须放在所有 [rsi] (ProcessContext) 访问之后、切 CR3 之前, 且恢复 rax
     ; 之后 (rax 是 fork 返回值, 不能被覆盖).
-    ; 这是本文件的第二个 0x23 判断: 仅用户态恢复 caller-saved 寄存器
-    ; (第一个 0x23 判断在 fxrstor 之后, 作用是选择内核线程/用户态的栈切换方式;
-    ; 内核线程分支已在此前 jmp 走, 不会到达本处).
-    cmp word [rsi + 88], 0x23
-    jne .no_restore_callersaved
+    ; 内核线程分支已在 fxrstor 后 jmp 走, 到达本处必为用户态, 无需再判 cs.
     mov rax, rsi                ; rax 暂存 ctx 指针 (rsi 即将被覆盖)
-    mov rdi, [rax + 672]        ; rdi
+    mov rdi, [rax + 672]        ; rdi (覆盖此前暂存的 trampoline_top, 已用完)
     mov rsi, [rax + 680]        ; rsi (从 [rax+...] 读, rax 保持 ctx)
     mov rdx, [rax + 688]
     mov rcx, [rax + 696]
@@ -180,13 +199,31 @@ process_switch_asm:
     mov r10, [rax + 720]
     mov r11, [rax + 728]
     mov rax, [rax + 48]         ; rax = fork 返回值 (最后恢复)
-    jmp .iretq_now
-.no_restore_callersaved:
-    ; Restore rax before iretq (内核线程切换)
-    mov rax, [rsi + 48]
-.iretq_now:
-    iretq
 
+    ; KPTI-08: 帧已在 trampoline 栈上建好, 且此后不再访问 [rsi] (内核堆) 与
+    ; prev 的内核栈. 转出口 stub —— 由它在 `.kpti_trampoline` 段 (用户页表恒
+    ; 映射) 内切 CR3 并 iretq. 此处尚未切 CR3, 跳入 stub 时取指仍在内核页表内.
+    jmp kpti_exit_trampoline
+
+; ── KPTI-08 用户态出口 stub ────────────────────────────────────────────
+; 位于 `.kpti_trampoline` 段: 链接脚本 (link/x86_64.ld) 把 `*(.kpti_trampoline)`
+; 与 `build/isr.o(.text)` 排在 `_kernel_text_start ~ _kpti_trampoline_end`,
+; 该区段被 kpti::map_kernel_pages_in_user_pml4 映射进**每份**用户页表, 故切
+; CR3 之后本段仍可取指.
+;
+; 入参: rsp = per-CPU trampoline 栈上的 iretq 帧, 低→高:
+;   [rsp+0]=RIP [rsp+8]=CS [rsp+16]=RFLAGS [rsp+24]=RSP [rsp+32]=SS [rsp+40]=CR3
+; 此时除 rax (fork 返回值) 外全部通用寄存器已是用户值, 不可再借作中间量,
+; 故 CR3 由帧内取回.
+section .kpti_trampoline progbits alloc exec nowrite
+kpti_exit_trampoline:
+    push rax                    ; 暂存入口 rax (rsp -= 8, CR3 落到 [rsp+48])
+    mov rax, [rsp + 48]         ; rax = 帧内 CR3 槽 (SS 之上那一格)
+    mov cr3, rax                ; 切到 next 用户页表 (本段/栈顶页均已映射)
+    pop rax                     ; 恢复入口 rax, rsp 回到 RIP 槽
+    iretq                       ; 用户页表下弹出 RIP/CS/RFLAGS/RSP/SS
+
+section .text
 user_entry_trampoline:
     ; P2.B + F-13 (DECISION-051 简化方案): CS = 用户代码段 (DPL=3).
     ; 字节长度与原 mov ax, 0x23 一致 (4 字节), 避免 label 偏移重定义.

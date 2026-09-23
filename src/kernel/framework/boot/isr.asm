@@ -160,6 +160,10 @@ KERNEL_RSP_OFF  equ 0
 KERNEL_PML4_OFF equ 8
 USER_PML4_OFF   equ 16
 USER_RSP_OFF    equ 24
+; TRAMPOLINE_TOP_OFF: 本文件不使用, 仅作 SyscallPerCpu 布局锚点 —— 消费方是
+; proc/switch.asm 的用户态出口 (KPTI-08 方案 B), 二者偏移必须与 gdt.rs 字段
+; 顺序严格一致; 在此列出以免新增字段时遗漏同步.
+TRAMPOLINE_TOP_OFF equ 32
 
 global syscall_entry
 syscall_entry:

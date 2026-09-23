@@ -1173,47 +1173,19 @@ impl UserProcManager {
             let _ = cr3;
         }
 
-        // 将 RSP0 栈页映射到用户页表 (添加 USER 位).
-        // 用户态中断触发时 CPU 从 TSS 读取 RSP0 并切换到该栈,
-        // 但内核大页映射没有 USER 位, 需要显式映射为 USER 可访问.
-        // 使用 map_kernel_page_in_table 绕过 KPTI 安全门 (pml4_idx >= 256),
-        // 因为 RSP0 位于内核高半区但仍需在用户页表中可见.
-        // 仅 x86_64 需要 (TSS RSP0 机制); aarch64 使用 sp_el0 切换, 无需此映射.
+        // 将本任务的内核栈顶页映射到其用户页表 (KPTI-08).
+        // 用户态→内核态入口在切换 CR3 **之前**就要用 TSS.RSP0 压入 5 项 iretq 帧,
+        // 故内核栈顶页必须在用户页表中可见. 映射面收窄后不再继承高半区别名,
+        // 必须显式映射 —— 统一走 `kpti::map_rsp0_page` (与调度器切换路径同源).
+        // 权限 PRESENT|WRITABLE 且**不设 USER** (访问路径 CPL 恒为 0, 设 USER 即提权).
+        // 仅 x86_64 需要 (TSS RSP0 机制); aarch64 用 sp_el0 切换, 创建时已由
+        // `map_kernel_stack_top_page` 覆盖.
         #[cfg(target_arch = "x86_64")]
-        {
-            // 关键修复: iretq 帧位于 kstack - 40 (5 个 8 字节值: SS, RSP, RFLAGS, CS, RIP)
-            // 必须映射包含 iretq 帧的页面, 而非 kstack 顶部页面
-            let iretq_frame_addr = kstack - 40;
-
-            // 检测 iretq_frame_addr 是物理地址还是虚拟地址
-            // 物理地址 < KERNEL_BASE，虚拟地址 >= KERNEL_BASE
-            let (rsp0_virt, rsp0_phys) =
-                if iretq_frame_addr < crate::framework::mm::KERNEL_BASE as u64 {
-                    // iretq_frame_addr 是物理地址，转换为虚拟地址
-                    let virt = iretq_frame_addr + crate::framework::mm::KERNEL_BASE as u64;
-                    (virt & !(PAGE_SIZE - 1), iretq_frame_addr & !(PAGE_SIZE - 1))
-                } else {
-                    // iretq_frame_addr 是虚拟地址，转换为物理地址
-                    let phys = iretq_frame_addr - crate::framework::mm::KERNEL_BASE as u64;
-                    (iretq_frame_addr & !(PAGE_SIZE - 1), phys & !(PAGE_SIZE - 1))
-                };
-
-            crate::klog_boot_info!(
-                "[USER] RSP0 mapping: kstack={:#X} iretq_frame={:#X} rsp0_virt={:#X} rsp0_phys={:#X}",
-                kstack,
-                iretq_frame_addr,
-                rsp0_virt,
-                rsp0_phys
-            );
-
-            crate::framework::mm::get_vmm().map_kernel_page_in_table(
-                cr3,
-                crate::framework::mm::VirtAddr(rsp0_virt),
-                crate::framework::mm::PhysAddr(rsp0_phys),
-                crate::framework::mm::PageFlags::PRESENT
-                    | crate::framework::mm::PageFlags::WRITABLE
-                    | crate::framework::mm::PageFlags::USER,
-            );
+        // SAFETY: cr3 是本进程有效用户页表 PML4 物理地址 (低 12 位可为 PCID);
+        // kstack 是本进程内核栈顶的高半区 VA (页对齐). 当前在调度器上下文,
+        // 独占访问 per-CPU 数据.
+        unsafe {
+            crate::framework::mm::map_rsp0_page(cr3, kstack);
         }
 
         // 注意: 不再需要低地址恒等映射。

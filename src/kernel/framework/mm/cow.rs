@@ -111,10 +111,21 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         core::ptr::write_bytes(child_pml4_virt as *mut u8, 0, PAGE_SIZE as usize);
     }
 
+    // 装配内核高半区 (KPTI-08 统一入口):
+    // - x86_64 且 KPTI 激活: 逐页装配"入口依赖面"必需内核页 (不再整段复制);
+    // - x86_64 且 KPTI 未激活 / aarch64: 整段复制内核高半区条目 (行为同此前).
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: kernel_pml4 由 vmm_init 写入, child_pml4_phys 刚由 PMM 分配并已清零;
+    // 本函数外层持 VMM_LOCK, 无并发修改子页表.
+    unsafe {
+        super::kpti::assemble_kernel_half(child_pml4_phys.as_u64(), kernel_pml4);
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
     // SAFETY: kernel_pml4 由 vmm_init 写入, 指向有效页表;
     // 复制高半区 (索引 256-511) 使子进程页表共享内核映射
-    let kernel_pml4_virt = PhysAddr(kernel_pml4).to_virt().0 as *const u64;
     unsafe {
+        let kernel_pml4_virt = PhysAddr(kernel_pml4).to_virt().0 as *const u64;
         core::ptr::copy_nonoverlapping(kernel_pml4_virt.add(256), child_pml4_virt.add(256), 256);
     }
 
@@ -244,10 +255,10 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     // 与拆除侧 (unmap / destroy_page_table 的逐用户 leaf frame_dec) 严格同集 ——
     // 判据统一走 `is_user_leaf` 分派, 不用裸位掩码.
     //
-    // COW 标记只对"用户可写页"且只在具备缺页恢复路径的架构上做. 用户页表低半区还含
-    // KPTI 映射的 supervisor 页 (USER_CR3_SAVE, SyscallPerCpu, GDT/IDT/TSS, IST 栈,
-    // RSP0 栈), 这些页无 USER 位; 若对其清 WRITABLE, 用户态异常入口写 USER_CR3_SAVE
-    // → 写保护 #PF → 死循环/Triple Fault.
+    // COW 标记只对"用户可写页"且只在具备缺页恢复路径的架构上做. 用户页表高半区还含
+    // KPTI 入口依赖面映射的 supervisor 页 (USER_CR3_SAVE, SyscallPerCpu, GDT/IDT/TSS,
+    // IST 栈, trampoline 栈, RSP0 栈), 这些页无 USER 位; 若对其清 WRITABLE, 用户态
+    // 异常入口写 USER_CR3_SAVE → 写保护 #PF → 死循环/Triple Fault.
     for_each_cow_leaf(
         parent_pml4,
         child_pml4_phys.as_u64(),

@@ -203,6 +203,20 @@ pub struct IdtManager {
 // 全局单例实例
 static IDT_MANAGER_INSTANCE: OnceLock<IdtManager> = OnceLock::new();
 
+/// 返回 IDT 条目表的低半区线性地址 (LMA, 与 `lidt` 装载的 `IDTR.BASE` 同源)。
+///
+/// KPTI 收窄后用户页表须显式映射该页: 用户态触发中断/异常时, CPU 在切换 CR3
+/// **之前**就经 `IDTR.BASE` 取门描述符, 故该地址必须恒等可见 (低半区, 无
+/// `KERNEL_BASE` 别名, 因为 `load_idt` 装载的就是 `entries` 的链接地址)。
+///
+/// 可在 `idt_init` 之前调用: 单例存储位于静态区, 地址链接期确定, 本函数只取
+/// 地址 (不依赖门已填充, `get_or_init` 此处仅做零值初始化)。
+#[cfg(target_arch = "x86_64")]
+pub fn idt_entries_base_lma() -> u64 {
+    let state = IdtManager::instance().state.lock();
+    core::ptr::from_ref(&state.entries).cast::<u8>() as u64
+}
+
 impl IdtManager {
     #[expect(
         clippy::unreadable_literal,

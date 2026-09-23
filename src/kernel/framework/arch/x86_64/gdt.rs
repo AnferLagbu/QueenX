@@ -42,6 +42,23 @@ const PER_CPU_MAX: usize = 256;
 /// Per-CPU IST 栈大小 (16KB)
 const PER_CPU_IST_SIZE: usize = 16384;
 
+/// Per-CPU KPTI 用户态出口 trampoline 栈大小 (4KB, 单页)
+///
+/// KPTI-08 收窄后用户页表不再复制内核高半区别名, `process_switch_asm` 的用户态
+/// 出口**不能**再在 prev 内核栈上构建 iretq 帧 (该栈不在 next 用户页表中).
+/// 改用本栈: 其栈顶页由 `kpti::map_kernel_pages_in_user_pml4` 显式映射进每份
+/// 用户页表, 出口 stub 在切 CR3 后仍能 pop/iretq.
+const PER_CPU_TRAMPOLINE_SIZE: usize = 4096;
+
+/// 页对齐栈容器 (KPTI-08)
+///
+/// IST 栈与 KPTI trampoline 栈必须 4KB 对齐: `TSS.ist[]` 与 `trampoline_top`
+/// 取的都是"栈顶"地址, 而 CPU (中断交付) / 出口 stub 会在切换 CR3 **之前**
+/// 用该地址压入帧; 栈顶页须能以单一页面精确映射 (公式 `top - PAGE_SIZE`).
+/// 栈顶若非页对齐, 帧会跨页 ⇒ 必须映射 2 页, 映射面与公式均不再确定.
+#[repr(C, align(4096))]
+struct AlignedStack<const N: usize>([u8; N]);
+
 /// 空选择子值 (必须为 0)
 pub const SELECTOR_NULL: u16 = 0x00;
 
@@ -309,16 +326,22 @@ pub struct GdtPtr {
 /// | 8    | kernel_pml4 | KERNEL_PML4_OFF   |
 /// | 16   | user_pml4   | USER_PML4_OFF     |
 /// | 24   | user_rsp    | USER_RSP_OFF      |
+/// | 32   | trampoline_top | TRAMPOLINE_TOP_OFF |
 ///
 /// `user_rsp` (TRACK-INIT-RING3-SYSCALL-RET): syscall 入口保存当前用户 RSP,
 /// 供 iretq 帧的 RSP 槽位使用. 与 `kernel_rsp` 分离, 避免覆盖 (原实现复用
 /// [gs:0], 导致首次 syscall 后 kernel_rsp 丢失, 后续 syscall 用错内核栈).
+///
+/// `trampoline_top` (KPTI-08): 本 CPU KPTI trampoline 栈顶 VA (高半区).
+/// `process_switch_asm` 的用户态出口在 `swapgs` 前读入该值, 切换到 trampoline
+/// 栈后再构建 iretq 帧 (该栈页已映射进 next 的用户页表).
 #[repr(C)]
 pub struct SyscallPerCpu {
     pub kernel_rsp: u64,
     pub kernel_pml4: u64,
     pub user_pml4: u64,
     pub user_rsp: u64,
+    pub trampoline_top: u64,
 }
 
 /// 每个 CPU 独立的 syscall 内核栈大小 (64KB, syscall 入口与调度切换共用).
@@ -345,10 +368,11 @@ struct PerCpuGdt {
     tss: super::tss::TaskStateSegment,
     syscall: SyscallPerCpu,
     syscall_stack: [u8; PER_CPU_SYSCALL_STACK_SIZE],
-    ist0: [u8; PER_CPU_IST_SIZE],
-    ist1: [u8; PER_CPU_IST_SIZE],
-    ist2: [u8; PER_CPU_IST_SIZE],
-    ist3: [u8; PER_CPU_IST_SIZE],
+    ist0: AlignedStack<PER_CPU_IST_SIZE>,
+    ist1: AlignedStack<PER_CPU_IST_SIZE>,
+    ist2: AlignedStack<PER_CPU_IST_SIZE>,
+    ist3: AlignedStack<PER_CPU_IST_SIZE>,
+    trampoline_stack: AlignedStack<PER_CPU_TRAMPOLINE_SIZE>,
 }
 
 impl PerCpuGdt {
@@ -363,12 +387,14 @@ impl PerCpuGdt {
                 kernel_pml4: 0,
                 user_pml4: 0,
                 user_rsp: 0,
+                trampoline_top: 0,
             },
             syscall_stack: [0u8; PER_CPU_SYSCALL_STACK_SIZE],
-            ist0: [0u8; PER_CPU_IST_SIZE],
-            ist1: [0u8; PER_CPU_IST_SIZE],
-            ist2: [0u8; PER_CPU_IST_SIZE],
-            ist3: [0u8; PER_CPU_IST_SIZE],
+            ist0: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+            ist1: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+            ist2: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+            ist3: AlignedStack([0u8; PER_CPU_IST_SIZE]),
+            trampoline_stack: AlignedStack([0u8; PER_CPU_TRAMPOLINE_SIZE]),
         }
     }
 }
@@ -454,6 +480,53 @@ unsafe fn init_gdt_entries(entries: &mut [GdtEntry; GDT_MAX_ENTRIES]) {
     );
 }
 
+/// 初始化本槽位的 IST 栈顶、KPTI trampoline 栈顶 (均为高半区 VA).
+///
+/// 二者必须取高半区 VA: 用户态异常交付时 CPU 在 `isr_common` 切内核页表**之前**
+/// 就用 `TSS.ist[N-1]` 压入异常帧; `process_switch_asm` 的用户态出口同样在切 CR3
+/// 之前 (以及之后) 使用 `trampoline_top`. 因此这些栈顶页必须能在**用户页表**中
+/// 按同一 VA 访问 —— 由 `kpti::map_kernel_pages_in_user_pml4` 逐 CPU 显式映射
+/// 栈顶页 (KPTI-08: 用户页表不再复制内核高半区别名).
+///
+/// 若改用低半区恒等 VA, 就必须把内核栈页恒等映射进用户页表低半区, 那份映射会与
+/// 用户 ELF 装载区 (0x400000) 争用同一 VA — 内核静态布局一旦漂移到该地址, ELF
+/// 代码段便无法映射 → Ring 3 取指 #PF. 故统一走高半区 VA.
+fn init_stack_tops(gdt: &mut PerCpuGdt) {
+    let tops = ist_tops_of(gdt);
+    for (i, top) in tops.iter().enumerate() {
+        gdt.tss.set_ist(i, *top);
+    }
+    gdt.syscall.trampoline_top = trampoline_top_of(gdt);
+}
+
+/// 由静态布局推导指定槽位的 IST0..3 栈顶 VA (高半区, 页对齐).
+///
+/// 与 `init_stack_tops` 共用同一公式: 该函数写入 `TSS.ist[]`, 本函数供 KPTI 在
+/// **`gdt_init` 之前** (见 `kpti_init` 的调用时序) 计算待映射的栈顶页 —— 那时
+/// `TSS.ist[]` 仍为 0, 不能读运行时字段.
+#[inline]
+fn ist_tops_of(gdt: &PerCpuGdt) -> [u64; 4] {
+    let bias = crate::framework::mm::KERNEL_BASE;
+    let top = |s: &AlignedStack<PER_CPU_IST_SIZE>| {
+        bias + s.0.as_ptr() as u64 + s.0.len() as u64
+    };
+    [
+        top(&gdt.ist0),
+        top(&gdt.ist1),
+        top(&gdt.ist2),
+        top(&gdt.ist3),
+    ]
+}
+
+/// 由静态布局推导指定槽位的 KPTI trampoline 栈顶 VA (高半区, 页对齐).
+///
+/// 同 `ist_tops_of`: 公式与 `init_stack_tops` 一致, 可在 `gdt_init` 之前调用.
+#[inline]
+fn trampoline_top_of(gdt: &PerCpuGdt) -> u64 {
+    let s = &gdt.trampoline_stack.0;
+    crate::framework::mm::KERNEL_BASE + s.as_ptr() as u64 + s.len() as u64
+}
+
 // ============================================================================
 // 公共 API
 // ============================================================================
@@ -509,24 +582,8 @@ pub fn gdt_init() -> i32 {
 
         gdt.tss = super::tss::TaskStateSegment::zeroed();
 
-        // IST 栈顶使用高半区 VA (KERNEL_BASE + 恒等地址).
-        //
-        // 原因: 用户态异常/中断交付时, CPU 在 isr_common 切换到内核页表**之前**
-        // 就用 TSS.ist[N-1] 压入异常帧, 因此该 VA 必须在用户页表中可达.
-        // 用户页表继承内核 PML4[256..511] (高半区别名), 高半区 VA 天然可达;
-        // 反之若用低半区恒等 VA, 就必须把内核 IST 栈页恒等映射进用户页表低半区,
-        // 那份映射会与用户 ELF 装载区 (0x400000) 争用同一 VA — 内核静态布局一旦
-        // 漂移到该地址, ELF 代码段便无法映射 → Ring 3 取指 #PF.
-        // RSP0 早已采用高半区 VA, 此处与之统一.
-        let ist_bias = crate::framework::mm::KERNEL_BASE;
-        gdt.tss
-            .set_ist(0, ist_bias + gdt.ist0.as_ptr() as u64 + gdt.ist0.len() as u64);
-        gdt.tss
-            .set_ist(1, ist_bias + gdt.ist1.as_ptr() as u64 + gdt.ist1.len() as u64);
-        gdt.tss
-            .set_ist(2, ist_bias + gdt.ist2.as_ptr() as u64 + gdt.ist2.len() as u64);
-        gdt.tss
-            .set_ist(3, ist_bias + gdt.ist3.as_ptr() as u64 + gdt.ist3.len() as u64);
+        // IST 栈顶 / KPTI trampoline 栈顶统一取高半区 VA (理由见 init_stack_tops).
+        init_stack_tops(gdt);
 
         gdt.tss.iomap_base = core::mem::size_of::<super::tss::TaskStateSegment>() as u16;
 
@@ -544,8 +601,9 @@ pub fn gdt_init() -> i32 {
         // 任务内核栈更新, 与 TSS.RSP0 同值; 此处初值指向本 CPU `syscall_stack`
         // 的高半区别名, 仅覆盖"首个任务被调度之前"这一窗口 —— 该窗口内不可能
         // 出现用户态 syscall (用户态首次进入由 `enter_user` / 调度器完成).
-        gdt.syscall.kernel_rsp =
-            ist_bias + gdt.syscall_stack.as_ptr() as u64 + gdt.syscall_stack.len() as u64;
+        gdt.syscall.kernel_rsp = crate::framework::mm::KERNEL_BASE
+            + gdt.syscall_stack.as_ptr() as u64
+            + gdt.syscall_stack.len() as u64;
 
         // 读取当前 CR3 作为 PML4 初始值
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
@@ -650,16 +708,8 @@ pub fn gdt_init_ap(cpu_index: u32) {
 
         ap.tss = super::tss::TaskStateSegment::zeroed();
 
-        // IST 栈顶使用高半区 VA, 与 BSP 路径 (gdt_init) 保持一致, 理由见该处注释.
-        let ist_bias = crate::framework::mm::KERNEL_BASE;
-        ap.tss
-            .set_ist(0, ist_bias + ap.ist0.as_ptr() as u64 + ap.ist0.len() as u64);
-        ap.tss
-            .set_ist(1, ist_bias + ap.ist1.as_ptr() as u64 + ap.ist1.len() as u64);
-        ap.tss
-            .set_ist(2, ist_bias + ap.ist2.as_ptr() as u64 + ap.ist2.len() as u64);
-        ap.tss
-            .set_ist(3, ist_bias + ap.ist3.as_ptr() as u64 + ap.ist3.len() as u64);
+        // IST 栈顶 / KPTI trampoline 栈顶与 BSP 路径 (gdt_init) 一致, 理由见 init_stack_tops.
+        init_stack_tops(ap);
 
         ap.tss.iomap_base = core::mem::size_of::<super::tss::TaskStateSegment>() as u16;
 
@@ -681,8 +731,9 @@ pub fn gdt_init_ap(cpu_index: u32) {
 
         // 统一内核栈契约 (D5): 与 BSP 路径 (gdt_init) 一致, `kernel_rsp` 取高半区 VA,
         // 理由见该处注释.
-        ap.syscall.kernel_rsp =
-            ist_bias + ap.syscall_stack.as_ptr() as u64 + ap.syscall_stack.len() as u64;
+        ap.syscall.kernel_rsp = crate::framework::mm::KERNEL_BASE
+            + ap.syscall_stack.as_ptr() as u64
+            + ap.syscall_stack.len() as u64;
 
         // 读取当前 CR3 作为 PML4 初始值
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
@@ -707,18 +758,43 @@ pub fn gdt_init_ap(cpu_index: u32) {
     }
 }
 
-/// 获取当前 CPU 的 `SyscallPerCpu` 结构的线性地址 (VMA)。
+/// 获取指定 CPU 的 `PerCpuGdt` **头区** [start, end) 低半区线性地址 (LMA)。
 ///
-/// KPTI 入口代码通过 `[gs:KERNEL_PML4_OFF]` 访问 `SyscallPerCpu`,
-/// swapgs 后 `GS_BASE` = `IA32_GS_BASE` = 此函数返回的地址。
-/// 需要在用户页表中映射此地址所在的页面, 否则 KPTI 入口会触发 #PF。
-#[inline]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
-pub fn get_syscall_per_cpu_base() -> u64 {
-    &per_cpu_gdt(0).syscall as *const _ as u64
+/// 头区 = `entries` + `ptr` + `tss` + `syscall`, 是 KPTI 用户页表在中断交付
+/// 路径上必须可达的全部 GDT 侧对象: CPU 读 IDT 门目标 CS 的描述符 (GDT entries)、
+/// RSP0/IST 栈指针 (TSS), swapgs 后读内核 PML4 (`SyscallPerCpu`)。
+///
+/// 这里**不**返回单个"基址页": `SyscallPerCpu` 起始于结构体偏移 0x620 处, 若
+/// `PerCpuGdt` 基址非页对齐, 头区会跨两页 —— 故返回区间, 由调用方按页逐页映射。
+///
+/// 调用方须同时映射 `KERNEL_BASE + 区间` (VMA) 与区间本身 (LMA 恒等): `GS_BASE`
+/// 直接取自 `&gdt.syscall` 的 LMA (见 `gdt_init` 的 `IA32_GS_BASE` 写入), 而
+/// 高半区访问走 VMA。
+pub fn per_cpu_gdt_head_range(cpu: u32) -> (u64, u64) {
+    let g = per_cpu_gdt(cpu);
+    let start = core::ptr::from_ref(g) as u64;
+    let end = core::ptr::from_ref(&g.syscall) as u64 + core::mem::size_of::<SyscallPerCpu>() as u64;
+    (start, end)
+}
+
+/// 获取指定 CPU 的 IST0..3 栈顶 VA (高半区, 页对齐)。
+///
+/// 供 KPTI 逐页映射其**栈顶页**: 用户态异常交付时 CPU 在切内核页表之前就用
+/// `TSS.ist[N-1]` 压入异常帧。由**静态布局推导** (而非读 `TSS.ist[]`), 使
+/// `kpti_init` 能在 `gdt_init` 之前调用本函数 —— 那时 `TSS.ist[]` 仍为 0。
+/// 公式与写入 `TSS.ist[]` 的 `init_stack_tops` 同源 (见 `ist_tops_of`)。
+pub fn ist_tops_virt(cpu: u32) -> [u64; 4] {
+    ist_tops_of(per_cpu_gdt(cpu))
+}
+
+/// 获取指定 CPU 的 KPTI trampoline 栈顶 VA (高半区, 页对齐)。
+///
+/// 汇编出口 (`process_switch_asm`) 在 swapgs 前经 `[gs:TRAMPOLINE_TOP_OFF]` 读取
+/// `SyscallPerCpu.trampoline_top`, 而本函数由静态布局推导同一值 (见
+/// `trampoline_top_of`), 故"映射的页"与"汇编使用的栈"同源, 且可在 `gdt_init`
+/// 之前调用。
+pub fn trampoline_top_virt(cpu: u32) -> u64 {
+    trampoline_top_of(per_cpu_gdt(cpu))
 }
 
 /// 获取 GDT 表的引用 (调试用途)
@@ -745,19 +821,6 @@ pub fn get_gdt_ptr() -> &'static GdtPtr {
 #[inline]
 pub unsafe fn get_tss_mut() -> &'static mut super::tss::TaskStateSegment {
     &mut current_per_cpu_gdt_mut().tss
-}
-
-/// 获取当前 CPU 的 TSS 线性地址 (用于 KPTI 用户页表映射)
-///
-/// 用户态中断触发时 CPU 需要从 TSS 读取 RSP0/IST 栈指针,
-/// 用户页表必须映射 TSS 所在的页面.
-#[inline]
-#[expect(
-    clippy::borrow_as_ptr,
-    reason = "borrow_as_ptr: &var as *const T 是已知安全 (Rust 2024 可用 &raw const; 替换需追改调用点, 当前优先 expect"
-)]
-pub fn get_tss_base() -> u64 {
-    &per_cpu_gdt(0).tss as *const _ as u64
 }
 
 /// 更新指定 CPU 的 KPTI PML4 字段
