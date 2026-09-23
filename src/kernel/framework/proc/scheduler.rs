@@ -712,9 +712,17 @@ impl Scheduler {
 
         per_cpu.current.store(next, Ordering::SeqCst);
 
-        super::scheduler_ex::SCHEDULER_EX
-            .current
-            .store(u64::from(next), Ordering::SeqCst);
+        // 注意: 此处**不得**同步写 `SCHEDULER_EX.current`.
+        //
+        // 该字段语义为 `*mut Thread` (由 `SchedulerEx` 独占写: `init`/`schedule`),
+        // 而本函数持有的是进程号 `Pid` ⇒ 写入即造成类型混用: 下一 tick 的
+        // `SCHEDULER_EX.tick_accounting` (aarch64 定时器 IRQ 路径) 会把 pid 当
+        // 指针解引用, 触发非法访问 (aarch64 对齐异常 / x86 低地址静默写坏).
+        // 另: `ThreadManager::create_thread` 当前无调用者, 进程无对应 `Thread`
+        // 可供解析, 故不存在"查询后同步"的合法实现.
+        // SIMPLIFIED: 直接省略跨层同步; 影响面 = `SCHEDULER_EX` 的线程级记账只
+        // 作用于其自身 idle 线程 (进程级记账由 `proc_account_tick` 独立承担, 不受
+        // 影响); 何时需扩展 = 线程层接线后由"双调度器合并"工程统一承载.
 
         if let Some(next_ptr_raw) = next_ptr {
             // SAFETY: next_ptr_raw is valid from PROCESS_TABLE.get()

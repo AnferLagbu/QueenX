@@ -1,18 +1,27 @@
 //! AArch64 上下文切换
 //!
 //! AAPCS64 callee-saved 寄存器: x19-x30, SP
-//! 系统寄存器: TTBR0_EL1, SPSR_EL1, ELR_EL1
+//! 系统寄存器: TTBR0_EL1, SP_EL0, SPSR_EL1, ELR_EL1
 //!
-//! 上下文布局 (复用 ProcessContext 偏移, 17×8 + 64×8 = 648 bytes):
-//!   +0x00: x19       +0x40: x24       +0x80: x29 (FP)
-//!   +0x08: x20       +0x48: x25       +0x88: lr  (x30)
-//!   +0x10: x21       +0x50: x26       +0x90: sp
-//!   +0x18: x22       +0x58: x27       +0x98: ttbr0_el1
-//!   +0x20: x23       +0x60: x28       +0xA0: spsr_el1
-//!   +0x28: rbx(未用/0)               +0xA8: elr_el1
-//!   +0x30: rbp(未用/0)               +0xB0: ss(未用/0)
-//!   +0x38: rax(未用/0)
-//!   +0xD8: fpu_state`[64]` (512 bytes, Phase 1 预留)
+//! ## `ProcessContext` 字段语义 (aarch64 复用 x86_64 字段偏移, 偏移以本文件汇编为权威)
+//!
+//! | 偏移 | 字段 | aarch64 语义 |
+//! |------|------|--------------|
+//! | 0..72    | r15..rflags | x19..x28 |
+//! | 80       | cr3         | x29 (FP) |
+//! | 88       | cs          | x30 (LR) |
+//! | 96       | ds          | SP_EL1 (内核栈指针) |
+//! | 104      | es          | EL1 侧 TTBR0 (内核可用表: EL1 视图根 / 内核表) |
+//! | 112      | fs          | SPSR_EL1 |
+//! | 120      | gs          | ELR_EL1 |
+//! | 128      | ss          | SP_EL0 (用户栈指针) |
+//! | 136      | _fpu_pad    | 用户页表 (EL0 的 TTBR0) |
+//! | 144..656 | fpu_state   | V0-V31 |
+//! | 656, 664 | fpcr, fpsr  | FPCR / FPSR |
+//! | 672..728 | extra_regs  | x0..x7 |
+//!
+//! 恢复侧按目标 `SPSR_EL1.M[3:0]` 分派两条路径 (见 `context_switch_asm` 注释):
+//! 内核续跑 (`M != 0`) 与首次进入 EL0 (`M == 0`).
 
 use core::arch::global_asm;
 
@@ -37,7 +46,8 @@ context_switch_asm:
     //   x19→r15(0)   x20→r14(8)   x21→r13(16)  x22→r12(24)
     //   x23→rbx(32)  x24→rbp(40)  x25→rax(48)  x26→rip(56)
     //   x27→rsp(64)  x28→rflags(72)  x29→cr3(80)  x30→cs(88)
-    //   sp→ds(96)  TTBR0→es(104)  SPSR→fs(112)  ELR→gs(120) 0→ss(128)  (系统寄存器映射)
+    //   sp→ds(96)  TTBR0→es(104)  常量0x3C5→fs(112)  x30→gs(120)
+    //   SP_EL0→ss(128)  用户页表→_fpu_pad(136)  (系统寄存器映射)
 
     str  x19, [x0, #0]
     str  x20, [x0, #8]
@@ -56,14 +66,28 @@ context_switch_asm:
     str  x2, [x0, #96]
 
     // 读系统寄存器
+    // @104: EL1 侧 TTBR0. 本函数运行于 EL1 ⇒ 该值必为内核可用表
+    // (EL1 视图根或完整内核表), 恢复侧内核路径据此切回.
     mrs  x2, ttbr0_el1
     str  x2, [x0, #104]
-    mrs  x2, spsr_el1
+    // @112: SPSR_EL1. **不存 live SPSR**: syscall/异常中途取出的是"被打断的
+    // EL0 状态" (0x3C0 + 用户 PC), 不是 EL1 续跑点. 本函数入口已 daifset #0xF
+    // ⇒ 续跑点必为 EL1h (M=0b0101) + DAIF 屏蔽, 故写常量 0x3C5; 恢复侧据
+    // SPSR.M[3:0] != 0 走"内核续跑"路径.
+    movz x2, #0x3C5
     str  x2, [x0, #112]
-    mrs  x2, elr_el1
-    str  x2, [x0, #120]
-    // ss field (128): write 0
-    str  xzr, [x0, #128]
+    // @120: ELR_EL1 = 返回地址 (恢复侧内核路径 eret 回本函数调用点之后)
+    str  x30, [x0, #120]
+    // @128: SP_EL0 (用户栈指针), 供 EL0 进入路径恢复
+    mrs  x2, sp_el0
+    str  x2, [x0, #128]
+    // @136: 用户页表 (EL0 的 TTBR0). 异常入口汇编已把当前用户页表记录到
+    // KPTI_GLOBALS.user_ttbr0 (偏移 24), 此处快照进 ctx, 供 EL0 进入路径
+    // 与 fork 子进程继承使用.
+    adrp x2, {kpti_globals}
+    add  x2, x2, #:lo12:{kpti_globals}
+    ldr  x2, [x2, #24]
+    str  x2, [x0, #136]
 
     // 保存 FPU/SIMD 状态 (V0-V31, FPCR, FPSR)
     // fpu_state 在 offset 144 (18 * 8 = 144 bytes)
@@ -85,11 +109,13 @@ context_switch_asm:
     stp  q26, q27, [x2, #416]
     stp  q28, q29, [x2, #448]
     stp  q30, q31, [x2, #480]
-    // FPCR 和 FPSR 保存在 fpu_state[62] 和 fpu_state[63] (offset 144+496=640, 144+504=648)
+    // FPCR / FPSR 落在 ProcessContext 的专用字段 fpcr(@656) / fpsr(@664).
+    // 不能写 fpu_state[62]/[63] (= offset 640/648): 那是 q31 的高 16 字节,
+    // 会覆盖 V31 并在恢复侧把 q31 残值写进 FPCR/FPSR (双向污染).
     mrs  x2, fpcr
-    str  x2, [x0, #640]
+    str  x2, [x0, #656]
     mrs  x2, fpsr
-    str  x2, [x0, #648]
+    str  x2, [x0, #664]
 
     // === 从 [x1] 恢复下一个上下文 ===
     ldr  x19, [x1, #0]
@@ -104,23 +130,10 @@ context_switch_asm:
     ldr  x28, [x1, #72]
     ldr  x29, [x1, #80]
     ldr  x30, [x1, #88]
-    // SP
+    // SP_EL1 (内核栈). 两条恢复路径都需要: 内核路径用它续跑, EL0 路径用它
+    // 保证目标进程下次陷入 EL1 时压帧落在自己的内核栈上.
     ldr  x2, [x1, #96]
     mov  sp, x2
-
-    // 恢复系统寄存器
-    ldr  x2, [x1, #104]
-    msr  ttbr0_el1, x2
-    isb
-
-    // P1.B + F-07: ARM ARM 规定 SPSR/ELR 写入后必须 isb 才能 eret,
-    // 否则 CPU 可能用旧值 eret 导致上下文错位. 同步插入 isb.
-    ldr  x2, [x1, #112]
-    msr  spsr_el1, x2
-    isb
-    ldr  x2, [x1, #120]
-    msr  elr_el1, x2
-    isb
 
     // 恢复 FPU/SIMD 状态 (V0-V31, FPCR, FPSR)
     add  x2, x1, #144
@@ -142,16 +155,98 @@ context_switch_asm:
     ldp  q30, q31, [x2, #480]
     // P1.B + F-07: FPCR/FPSR 修改后必须 isb 同步才能生效,
     // 否则 eret 切换 PSTATE 时 FPU 控制位可能延后生效.
-    ldr  x2, [x1, #640]
+    // 落点与保存侧一致: fpcr(@656) / fpsr(@664), 不得读 640/648 (q31 高 16 字节).
+    ldr  x2, [x1, #656]
     msr  fpcr, x2
     isb
-    ldr  x2, [x1, #648]
+    ldr  x2, [x1, #664]
     msr  fpsr, x2
     isb
 
+    // === 恢复路径分派 (按目标 SPSR_EL1.M[3:0]) ===
+    //
+    // 保存侧把"内核续跑点"写成常量 0x3C5 (EL1h), 把"首次进入 EL0"的时间点
+    // 由 `proc_save_user_regs_aarch64` 写成用户的 0x3C0 (EL0t). 故此处以
+    // SPSR.M 是否为 0 区分两条语义完全不同的恢复路径:
+    //
+    // - M != 0 (EL1): **内核续跑**. 本任务是"在内核里被换出"的 (schedule 调用点),
+    //   恢复 x19-x30/sp 后直接 eret 回调用点之后继续执行. 必须先把 TTBR0 换回
+    //   本任务自己的 EL1 页表 (@104 = 保存时的 live TTBR0 = 本进程 EL1 视图根),
+    //   否则会用上一个任务的用户半区视图访问本任务的内核栈/镜像.
+    // - M == 0 (EL0): **首次进入 EL0** (fork 子进程首次被调度). 目标地址是用户
+    //   代码, 必须切到 (用户表 + tramp 表) 后才能 eret, 且切表代码只能在
+    //   `.vectors` 高别名上执行 —— 故跳到 trampoline 而非就地 eret.
+    ldr  x2, [x1, #112]
+    and  x3, x2, #0xF
+    cbz  x3, .Lctx_enter_el0
+
+    // ---- 内核续跑路径 ----
+    // 恢复 TTBR0 = 本任务 EL1 页表.
+    // SIMPLIFIED: 不比较新值与 live 值, 一律 tlbi vmalle1is 冲刷; 影响面 = 每次
+    // 同进程线程间切换多一次全表失效 (少量性能损失); 何时需扩展 = 若切换开销成为
+    // 瓶颈, 可按 (@104 != 当前 TTBR0) 条件跳过.
+    ldr  x2, [x1, #104]
+    dsb  ish
+    msr  ttbr0_el1, x2
+    isb
+    tlbi vmalle1is
+    dsb  ish
+    isb
+    // 刷新 KPTI_GLOBALS.user_ttbr0 = 本任务的用户页表 (@136).
+    // 必需: 被换出期间别的任务会把该全局槽改写成它们自己的用户表, 而本任务
+    // 续跑后必经 `el0_return` (它读该槽切 TTBR0 回 EL0) ⇒ 不刷新会 eret 到
+    // EL0 时用错页表.
+    ldr  x4, [x1, #136]
+    adrp x3, {kpti_globals}
+    add  x3, x3, #:lo12:{kpti_globals}
+    str  x4, [x3, #24]
+    // P1.B + F-07: ARM ARM 规定 SPSR/ELR 写入后必须 isb 才能 eret,
+    // 否则 CPU 可能用旧值 eret 导致上下文错位. 同步插入 isb.
+    ldr  x2, [x1, #112]
+    msr  spsr_el1, x2
+    isb
+    ldr  x2, [x1, #120]
+    msr  elr_el1, x2
+    isb
     // eret 恢复 SPSR_EL1 → PSTATE (含 DAIF), 无需显式 msr daif.
     eret
-"#
+
+    // ---- EL0 首次进入路径 ----
+.Lctx_enter_el0:
+    // 刷新 KPTI_GLOBALS.user_ttbr0 = 本任务的用户页表 (@136); trampoline 读该槽
+    // 切 TTBR0.
+    ldr  x4, [x1, #136]
+    adrp x3, {kpti_globals}
+    add  x3, x3, #:lo12:{kpti_globals}
+    str  x4, [x3, #24]
+    // 用户栈指针 / 用户返回 PC / 用户 PSTATE.
+    ldr  x2, [x1, #128]
+    msr  sp_el0, x2
+    ldr  x2, [x1, #120]
+    msr  elr_el1, x2
+    ldr  x2, [x1, #112]
+    msr  spsr_el1, x2
+    isb
+    // 用户参数 x0-x7 (fork 子进程 x0 = 0, 由创建方写入 extra_regs[0]).
+    // extra_regs 位于偏移 672, 超出 ldp 的 ±504 立即数范围 ⇒ 先用基址寄存器定位.
+    add  x12, x1, #672
+    ldp  x0, x1, [x12, #0]
+    ldp  x2, x3, [x12, #16]
+    ldp  x4, x5, [x12, #32]
+    ldp  x6, x7, [x12, #48]
+    // 跳 trampoline 的**高半区别名**: 该 trampoline 会切 TTBR0 → 用户表,
+    // 切换后低半区代码即不可取指, 故必须在高别名上执行.
+    // 低半区链接符号 (bit63 == 0) 需加 HIGH_ALIAS_BASE; 已是高地址则直接用.
+    adrp x11, {tramp}
+    add  x11, x11, #:lo12:{tramp}
+    tbnz x11, #63, .Lctx_tramp_hi
+    movz x10, #0xFFFF, lsl #48
+    add  x11, x11, x10
+.Lctx_tramp_hi:
+    br   x11
+"#,
+    kpti_globals = sym crate::framework::mm::kpti::KPTI_GLOBALS,
+    tramp = sym crate::framework::arch::aarch64::exception::kpti_enter_user_trampoline,
 );
 
 // ============================================================================
@@ -161,23 +256,24 @@ context_switch_asm:
 /// AArch64 上下文布局 (对应 ProcessContext 偏移)
 #[repr(C)]
 pub struct Aarch64Context {
-    pub x19: u64,   // offset 0 → r15
-    pub x20: u64,   // offset 8 → r14
-    pub x21: u64,   // offset 16 → r13
-    pub x22: u64,   // offset 24 → r12
-    pub x23: u64,   // offset 32 → rbx
-    pub x24: u64,   // offset 40 → rbp
-    pub x25: u64,   // offset 48 → rax
-    pub x26: u64,   // offset 56 → rip
-    pub x27: u64,   // offset 64 → rsp
-    pub x28: u64,   // offset 72 → rflags
-    pub x29: u64,   // offset 80 → cr3  (FP)
-    pub lr: u64,    // offset 88 → cs   (x30)
-    pub sp: u64,    // offset 96 → ds
-    pub ttbr0: u64, // offset 104 → es
-    pub spsr: u64,  // offset 112 → fs
-    pub elr: u64,   // offset 120 → gs
-    pub _pad: u64,  // offset 128 → ss
+    pub x19: u64,        // offset 0 → r15
+    pub x20: u64,        // offset 8 → r14
+    pub x21: u64,        // offset 16 → r13
+    pub x22: u64,        // offset 24 → r12
+    pub x23: u64,        // offset 32 → rbx
+    pub x24: u64,        // offset 40 → rbp
+    pub x25: u64,        // offset 48 → rax
+    pub x26: u64,        // offset 56 → rip
+    pub x27: u64,        // offset 64 → rsp
+    pub x28: u64,        // offset 72 → rflags
+    pub x29: u64,        // offset 80 → cr3  (FP)
+    pub lr: u64,         // offset 88 → cs   (x30)
+    pub sp_el1: u64,     // offset 96 → ds   (内核栈指针)
+    pub ttbr0_el1: u64,  // offset 104 → es  (EL1 侧 TTBR0: 视图根 / 内核表)
+    pub spsr: u64,       // offset 112 → fs  (恢复路径分派依据)
+    pub elr: u64,        // offset 120 → gs
+    pub sp_el0: u64,     // offset 128 → ss  (用户栈指针)
+    pub user_ttbr0: u64, // offset 136 → _fpu_pad (EL0 的 TTBR0)
 }
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致

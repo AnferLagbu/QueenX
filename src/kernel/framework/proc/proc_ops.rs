@@ -778,6 +778,60 @@ pub fn proc_save_user_regs(pid: Pid, f: &crate::framework::idt::InterruptFrame) 
     });
 }
 
+/// 保存 aarch64 syscall 入口的用户寄存器到进程 `p.context` (KPTI-17 D1).
+///
+/// # 背景
+/// x86_64 侧在 `syscall_dispatch_from_frame` 内调 `proc_save_user_regs` 捕获
+/// 用户寄存器 (B05-55); aarch64 侧 `svc_handler` 直接调架构中立的
+/// `syscall_dispatch` (无 frame) ⇒ `p.context` 恒全 0 ⇒ fork/clone 复制出零
+/// 上下文的子进程. 本函数在 aarch64 SVC 入口补齐同一职责.
+///
+/// # 字段语义 (aarch64, 见 `arch/aarch64/context.rs` 头注释)
+/// - `@0..72`   ← x19..x28      - `@80` ← x29 (FP)      - `@88` ← x30 (LR)
+/// - `@112` ← SPSR_EL1 (EL0 状态)  - `@120` ← ELR_EL1 (用户返回 PC)
+/// - `@128` ← SP_EL0 (用户栈指针)  - `@136` ← 用户页表 (EL0 的 TTBR0)
+/// - `extra_regs[@672..728]` ← x0..x7
+///
+/// **不写** `@96` (SP_EL1) 与 `@104` (EL1 侧 TTBR0): 二者由调度切换保存侧维护,
+/// 未调度过的新任务由创建方 (fork / init) 预置.
+#[cfg(target_arch = "aarch64")]
+pub fn proc_save_user_regs_aarch64(
+    pid: Pid,
+    f: &crate::framework::arch::aarch64::exception::ExceptionFrame,
+) {
+    if pid == 0 {
+        return;
+    }
+    PROCESS_TABLE.with_process(pid, |p| {
+        let mut ctx = p.context.lock();
+        ctx.r15 = f.x19;
+        ctx.r14 = f.x20;
+        ctx.r13 = f.x21;
+        ctx.r12 = f.x22;
+        ctx.rbx = f.x23;
+        ctx.rbp = f.x24;
+        ctx.rax = f.x25;
+        ctx.rip = f.x26;
+        ctx.rsp = f.x27;
+        ctx.rflags = f.x28;
+        ctx.cr3 = f.x29;
+        ctx.cs = f.x30;
+        ctx.fs = f.spsr;
+        ctx.gs = f.elr;
+        ctx.ss = f.sp;
+        // 用户页表 (本进程页表的权威来源); @136 复用 _fpu_pad 槽位.
+        ctx._fpu_pad = p.cr3.load(Ordering::SeqCst);
+        ctx.extra_regs[0] = f.x0;
+        ctx.extra_regs[1] = f.x1;
+        ctx.extra_regs[2] = f.x2;
+        ctx.extra_regs[3] = f.x3;
+        ctx.extra_regs[4] = f.x4;
+        ctx.extra_regs[5] = f.x5;
+        ctx.extra_regs[6] = f.x6;
+        ctx.extra_regs[7] = f.x7;
+    });
+}
+
 /// fork 系统调用实现 (COW 页表克隆 + namespace 继承)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -902,18 +956,41 @@ pub extern "C" fn sys_fork() -> Pid {
     // 内核态将无法访问其用户页 (copy_from_user 触发同 EL 数据异常). fail-closed:
     // 视图建不起来则子进程不可投运, 回滚 (cr3 由 `Process::drop` 按帧持有计数销毁).
     #[cfg(target_arch = "aarch64")]
-    if crate::framework::mm::vmm_build_el1_view(child_cr3).is_none() {
-        raw::drop_boxed_process(child_ptr);
-        PROCESS_TABLE.free_pid(child_pid);
-        return 0;
-    }
-    // 上下文 RAX=0 (fork 返回值)
-    // child_cr3 是 COW 克隆出的子进程页表 (克隆失败时已在上面回滚返回)
+    let child_el1_view = match crate::framework::mm::vmm_build_el1_view(child_cr3) {
+        Some(view) => view,
+        None => {
+            raw::drop_boxed_process(child_ptr);
+            PROCESS_TABLE.free_pid(child_pid);
+            return 0;
+        }
+    };
+    // 上下文初始化 (分架构: x86_64 的 cr3/rax/rsp 与 aarch64 的 x29/x25/x27 复用
+    // 同一偏移, 见 `arch/aarch64/context.rs` 头注释, 故必须按架构分别写).
     if let Some(ctx) = PROCESS_TABLE.with_process(parent_pid, |p| *p.context.lock()) {
         let mut child_ctx = child.context.lock();
         *child_ctx = ctx;
-        child_ctx.cr3 = child_cr3;
-        child_ctx.rax = 0;
+        #[cfg(target_arch = "x86_64")]
+        {
+            child_ctx.cr3 = child_cr3;
+            child_ctx.rax = 0;
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // KPTI-17: 子进程首次被调度时必须能正确进入 EL0 (恢复侧按 SPSR.M == 0
+            // 走 EL0 路径), 故预置:
+            //   `_fpu_pad`(@136) = 子进程用户页表 (EL0 的 TTBR0)
+            //   `es`(@104)       = 子进程 EL1 视图根 (EL1 侧 TTBR0)
+            //   `ds`(@96)        = 子内核栈顶 (SP_EL1: 首次陷入 EL1 时压帧的落点;
+            //                      沿用父进程的值会写进父进程的栈页)
+            //   `extra_regs[0]`  = x0 = 0 (fork 返回值; 恢复侧 EL0 路径恢复 x0-x7)
+            child_ctx._fpu_pad = child_cr3;
+            child_ctx.es = child_el1_view;
+            child_ctx.ds = child.kernel_stack.load(Ordering::SeqCst) & !0xF;
+            child_ctx.extra_regs[0] = 0;
+            // `fs`(@112) = 父进程 SVC 入口快照的 EL0 状态 (0x3C0, 由
+            // `proc_save_user_regs_aarch64` 写入) ⇒ 子进程走 EL0 恢复路径;
+            // `gs`(@120) / `ss`(@128) = 用户返回 PC / 用户栈指针, 随 ctx 复制而来.
+        }
     }
     PROCESS_TABLE.insert(child as *const Process as *mut Process);
     PROCESS_TABLE.with_process(parent_pid, |p| {

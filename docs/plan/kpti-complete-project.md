@@ -140,14 +140,88 @@
   - 描述：EL1 视图根与用户表的关联方式 = **用户表保留槽 `EL1_VIEW_SLOT = 1`**（存物理地址，不置 `bits[1:0]`），而非全局槽。理由：关联随页表一起切换，杜绝"调度后忘记更新全局槽 ⇒ 用错视图"的陈旧值风险。保留槽所在 VA 段（512 GiB~1 TiB）用户态从不使用。
   - 状态：[X]
 
-### 遗留与登记项（本轮不修）
+- **DECISION-060**
+  - 描述：KPTI-17 修复取**方案 B（统一上下文模型）**（用户 2026-09-23 裁定）：aarch64 侧 `Process.context` 为唯一上下文载体，删除 `enter_user` 直进与 ctx 双轨，首进程与 fork 子进程统一经"预置 ctx + 调度器首切"进入 EL0；`context_switch_asm` 按目标 `SPSR.M[3:0]` 分派内核续跑/EL0 进入两条路径（单一恢复模型）。`ProcessContext` 的 aarch64 字段语义随之固定为：`@96 = SP_EL1`、`@104 = TTBR0`、`@112 = SPSR_EL1`、`@120 = ELR_EL1`、`@128 = SP_EL0`、`extra_regs[0..7] = x0..x7`。
+  - 状态：[X]
+
+- **DECISION-061**
+  - 描述：aarch64 `SP_EL1` 不通过 `cpu::arch::set_kernel_stack` 管理（该路径的 `msr spsel,#1; mov sp` 会破坏调度器自身栈），而由 `Process.context.@96` 承载：调度切换时保存/恢复，未调度过的新任务由创建方预置。`set_kernel_stack` 的 aarch64 分支保持空实现。
+  - 状态：[X]
+
+- **DECISION-062**
+  - 描述：`ProcessContext` aarch64 的 `@104`/`@136` 语义按**实施可行性**细分（补充 DECISION-060 的字段表，非替代）：`@104` = **EL1 侧 TTBR0**（保存侧写 live `TTBR0_EL1` = 本进程 EL1 视图根 / 内核表），`@136`（复用 `_fpu_pad`）= **用户页表**（EL0 的 TTBR0）。理由：（a）内核续跑路径必须以 `@104` 切回"EL1 可用的表"——若 `@104` 存用户表，内核低半区 `.text`/栈经 TTBR0 不可达（TTBR1 只映射高别名）⇒ 恢复即崩；（b）内核任务（idle）的 `@104` 必须为内核表，取 live 值天然安全；若改存 `KPTI_GLOBALS.user_ttbr0`，内核任务会被写入陈旧值 ⇒ 恢复时可能命中已销毁页表（UAF）。配套两点：内核续跑路径把 `@136` 回写 `KPTI_GLOBALS.user_ttbr0`（被抢占期间该槽被别的任务改写，而本任务续跑后必经 `el0_return` 读它切表回 EL0，不刷新会用错页表），且 `TTBR0` 变更后补 `tlbi vmalle1is`。
+  - 状态：[X]
+
+- **DECISION-063（KPTI-19 修复路径：删除跨层写入 + 长期消除双调度器）**
+  - 描述：2026-09-23 用户就 KPTI-19 反问"长期最优是哪个"，裁定为"给出长期最优判断并落地不返工的前置步骤"。结论：**长期最优 = 方案 C（消除 `SCHEDULER` / `SCHEDULER_EX` 双调度器）**；**本轮落地 = 删除 `SCHEDULER::schedule()` 中对 `SCHEDULER_EX.current` 的 pid 语义写入**（恢复净写者不变式）。
+  - 理由：（a）`SCHEDULER_EX.current` 的权威语义为 `*mut Thread`（`init`/`schedule` 及 4 处读点均按此使用），而进程级调度器持有的是 `Pid` ⇒ 写入即类型混用，`tick_accounting` 把 pid 当指针解引用（aarch64 对齐异常崩溃 / x86 低地址静默写坏）；（b）替代方案"经 `find_by_pid` 解析后同步"**不可行**——`create_thread` 无生产调用者、非测试 `Thread` 对象仅 idle 一个，按 AGENTS §9 禁止为无意义调用造实现；（c）"统一为 pid"（方案 B）会与 `run_queues` 的 `*mut Thread` 节点反复互转，改动面与出错面更大；（d）消除双调度器属调度器核心重构，**不阻塞**本次崩溃修复，且删除该写入与未来合并方向一致（合并后不再存在跨调度器写入）。
+  - 状态：[X]（本轮删除写入 + 回归测试 + 端到端 QEMU 判据均已达成；方案 C 登记为后续工程）
+
+- **DECISION-064（KPTI-18a 落点修复 + KPTI-18b 长期方案：内核零隐式 FP/SIMD）**
+  - 描述：2026-09-23 用户就 KPTI-18 反问"长期最优是什么"。裁定分两层：
+    1. **KPTI-18a（本轮已修）**：`arch/aarch64/context.rs` 的 FPCR/FPSR 保存/恢复落点由 **640/648 改为 656/664**，与 `ProcessContext.fpcr/fpsr` 字段、`proc/switch.asm:36-37` 注释、`context.rs` 文件头布局表三方一致；640/648 属 `fpu_state` 的 `q31` 高 16 字节，原实现造成双向污染（覆盖 V31 + 用 q31 残值写 FPCR/FPSR）。
+    2. **KPTI-18b（长期最优，本轮不实施）**：不是候选 ①②③ 任一（全量保存 / lazy FPU / 仅 caller-saved），而是**"内核零隐式 FP/SIMD"**（对齐 Linux arm64 `fpsimd`）：内核不得隐式执行 FP/SIMD，用户 FP 状态由线程上下文承载并按需（懒式）保存；内核确需 FP 时须显式声明并使用独立的内核状态。理由：根因是"内核在 EL1 执行 FP/SIMD 却无声明"（实测 `CPACR_EL1.FPEN=0b11` 放开 EL1 + 内核产物 913 `fmov` / 337 `stp q*`），①②③ 均为逐次进出边界的代价补偿；且"内核不隐式用 FP"是内核工程惯例（x86_64 侧正因 `x86_64-unknown-none` 目标禁用 SSE/MMX 而天然无此问题）。
+  - 落地路径（登记）：(1) `-C target-feature=-neon` 抑制隐式 NEON；(2) 消除内核 `f64/f32`（`services/mm/pmm_policy.rs`、`services/fs/procfs_core.rs`、`services/fs/nestfs/arc_trait.rs` 等）+ 反汇编审计白名单；(3) 线程 FP 懒式保存（`TIF_FOREIGN_FPSTATE` 式）。**工具链限制（实测）**：Rust/LLVM aarch64 不识别 `+general-regs-only` ⇒ Linux `-mgeneral-regs-only` 等价路径不存在；`aarch64-unknown-none-softfloat` 仅改 ABI + 去 `-neon`，标量 FP 仍在。
+  - 状态：[X]（18a 已修 + 回归测试；18b 长期方案已裁定并登记，性质判定为**契约级缺陷、暂不可观测**）
+
+### 遗留与登记项（Phase 1 收口后深度排查完成；KPTI-18a / KPTI-19 已修复）
 
 - **KPTI-17. aarch64 fork 子进程零上下文崩溃（预存缺陷，非本轮 KPTI 改动直接导致）**
   - 描述：Phase 1 跑通后（首次让 aarch64 真正到达 EL0 并发出 `fork`），`Entering EL0` 后 4 次 SVC 成功往返，随后调度切到 pid=5 时崩溃：`sched CSW prev_pid=4 next_pid=5 next_ctx=0x444BC050 sp=0x0 ttbr0=0x0 spsr=0x0 elr=0x0` → `Exception return from AArch64 EL1 to AArch64 EL0 PC 0x0` → Prefetch Abort（`SPSR 0x0`/`ELR 0x0`）→ `SP_EL1=0` ⇒ `handle_el1h_sync` 压帧失败（`FAR 0xfffffffffffffee8`）反复级联。
   - 方案：三段因果链已确证——（a）`enter_user` 直接改写 `SP_EL0/ELR_EL1/SPSR_EL1` 进入 EL0，**从不写 `Process.context`** ⇒ pid=4（父）上下文恒全 0（`git diff` 确认**改动前同样如此**，非本轮引入）；（b）`clone.rs` `*child_ctx = parent_ctx` ⇒ pid=5 零上下文；（c）`cfs_enqueue(5)` + `Scheduler::schedule()` 切到它 ⇒ `context_switch_asm` 以 `SPSR=0/ELR=0` `eret`。
-  - 状态：[]
-  - 详情：修复牵涉 aarch64 上下文切换语义——`context_switch_asm` 不保存 x0–x18，`fork` 子进程"返回 0"无法经 `Process.context` 表达，与 **k3g 待办**（`context_switch_asm` 用户表语义 + 目标 EL0 时切 TTBR1=TRAMP + aarch64 `set_kernel_stack` 空实现）**重叠**，须与之合并设计。登记位置：k3g 待办 + 本工程。本轮按"最保守路径"仅登记不修。
-  - 附带观察：`scheduler.rs:715-717` 把 pid（`u64::from(next)`）写入 `SCHEDULER_EX.current`，而其语义为 `Thread` 指针；`scheduler_ex::tick_accounting` 会 `ThreadRef::new_unchecked(current)` 解引用 ⇒ 潜在类型混用缺陷（本轮未改动、未登记为独立项）。
+  - 状态：[X]（D1–D4 已实施并实测通过；D5 未实施，理由见下）
+  - 修复路线：**方案 B（统一上下文模型）**，2026-09-23 用户裁定。以 aarch64 侧 `Process.context` 为唯一上下文载体，删除"`enter_user` 直进"与"ctx"双轨，首进程与 fork 子进程统一经"预置 ctx + 调度器首切"进入 EL0。分五组实施：
+    - **D1 用户态快照捕获（根因 ①）**：`framework/syscall/dispatch.rs::syscall_dispatch_from_frame` 的 B05-55 捕获是 `#[cfg(x86_64)]`，aarch64 侧 `svc_handler` 只调架构中立的 `syscall_dispatch(num,a0..a5)`（无 frame）⇒ ctx 恒全 0。修法：在 `arch/aarch64/exception.rs::svc_handler` 入口（SVC 后、dispatch 前）调新增 `proc_save_user_regs_aarch64(pid, frame)`，把 `ExceptionFrame` 全量写入当前进程 `Process.context`。
+    - **D2 `context_switch_asm` 路径分派（根因 ③④）**：保存侧不再存 live `SPSR_EL1/ELR_EL1`（syscall 中途取出的是**被打断的 EL0 状态** 0x3C0 + 用户 PC，非 EL1 续跑点），改存 `SPSR = 0x3C5`（EL1h + DAIF 屏蔽；本函数开头已 `daifset #0xF`）+ `ELR = x30`（返回地址），并新增存 `SP_EL0`。恢复侧按目标 `SPSR.M[3:0]` 分派：
+      - **内核路径**（`M != 0`）：保持既有 `eret`，语义等价 x86 `mov rsp,[rsi+64]; jmp qword [rsi+56]`。**不改用 `br x30`**：`init_kernel_idle_context`（aarch64）以 `SPSR=0x5`（EL1h + 中断使能）+ `ELR=idle_entry` 预置 idle，靠 `eret` 打开中断，否则 `wfi` 永不被唤醒。
+      - **用户路径**（`M == 0`，即 EL0t）：读 ctx 的 用户表/`SP_EL0`/`ELR`/`SPSR` → 写入 `KPTI_GLOBALS.user_ttbr0` → 设 `SP_EL0/ELR_EL1/SPSR_EL1` → 恢复 `extra_regs[0..7]`（x0–x7）→ `br` 到 `.vectors` 内高别名 `kpti_enter_user_trampoline`（切 TTBR0=用户表 / TTBR1=tramp 后 `eret`）。**所有 ctx 读取必须在切 TTBR0 之前完成**（切后 ctx 所在内核堆在用户表下不可达）。**实施按 DECISION-062 落地**（与本节早期草图的偏差）：`@104` 存 **EL1 侧 TTBR0**（live `TTBR0_EL1`，非用户表），用户表移存 `@136`（复用 `_fpu_pad`）；用户路径读 `@136`，内核路径读 `@104` 并把 `@136` 回写 `KPTI_GLOBALS.user_ttbr0`。另：保存侧额外存 `@112 = 0x3C5`、`@120 = x30`、`@128 = SP_EL0`、`@136 = KPTI_GLOBALS[24]`；恢复侧两条路径均先恢复 `x19–x30` 与 `sp`（`@96`）再分派，FPU 恢复块保持在分派前。
+    - **D3 `SP_EL1` 归属（根因 ④）**：**不**实装 `cpu::arch::set_kernel_stack` 的 aarch64 分支——`msr spsel,#1; mov sp` 会破坏调度器自身栈。改由 `ctx` 承载目标任务内核栈顶（`@96`）：运行中任务由保存侧自动维护，未调度过的新任务（fork 子进程 / init）由创建方显式预置。
+    - **D4 fork/clone 子进程 ctx 初始化（根因 ②）**：`proc/proc_ops.rs::sys_fork` 与 `syscall/clone.rs` 的子 ctx 初始化拆为分架构分支。aarch64 侧须写 `es`(@104)=子进程用户表、`ds`(@96)=子内核栈顶、`extra_regs[0]`=0（fork 返回值走 **x0**）；**禁止**沿用 `child_ctx.cr3 = cr3`（@80 在 aarch64 是 x29/FP）与 `child_ctx.rax = 0`（@48 是 x25）。**实施结果**：`sys_fork` 的 aarch64 分支写 `_fpu_pad`(@136)=`child_cr3`（子用户页表）、`es`(@104)=`vmm_build_el1_view` 返回的子视图根（原 fail-closed 检查改为绑定返回值，不重复调用）、`ds`(@96)=子内核栈顶、`extra_regs[0]`=x0=0；x86_64 分支保持原 `cr3`/`rax`。`clone.rs`（CLONE_VM 共享父页表）aarch64 分支写 `extra_regs[0]`=0、`ss`(@128)=`child_stack`、`ds`(@96)=子内核栈顶，并**新增** `map_kernel_stack_top_page(parent_cr3, 子内核栈顶)`——超出早期草图：EL0→EL1 入口在切 TTBR0 **之前**就把异常帧压入 `SP_EL1` 顶页，子线程自己的栈顶页不映射则首次陷入即 Data Abort（原 `clone.rs` 无任何 aarch64 KPTI 补建）。
+    - **D5 首进程进入时序统一**：aarch64 侧 init 不再走 `proc/user_proc.rs::enter` 尾部的 `crate::arch!(enter_user(...))` 直进，改为预置 init 的 ctx（入口/用户栈/`SP_EL0`/用户表/内核栈顶/`SPSR=0x3C0`）后交调度器首切进入 EL0；随后移除 aarch64 的 `MmuArch::enter_user` 直进实现。**本轮未实施**：触面为 init 首切时序 + `MmuArch::enter_user` 契约 + `proc/user_proc.rs` 与 `usermode.rs` 调用方，属架构关键路径，且不影响本轮验收判据（init 仍经 `enter_user` 直进、其 ctx 由首次抢占的保存侧补齐）；与 KPTI-19 调查不宜并行（避免归因混淆）。
+  - 详情：aarch64 `ProcessContext` 字段语义（以 `arch/aarch64/context.rs` 汇编为权威）：`x19..x28`@0..72、`x29`@80、`x30`@88、`sp`(=`SP_EL1`)@96、`ttbr0`@104、`spsr`@112、`elr`@120、`ss`@128 **改用作 `SP_EL0`**（原写 0）、`extra_regs[0..7]`@672..728 **改用作 x0–x7**（x86 语义为 rdi…r11）。`context.rs` 第 6–15 行文件头布局注释与代码不符（陈旧），随本轮一并纠正。原登记的"k3g 三项"经全仓检索确认**无对应仓库条目**（仅本工程文档自述），故直接以源码事实驱动设计，不再引用为待办。
+  - 未覆盖项：aarch64 异常帧（`ExceptionFrame`）不含 V0–V31，`context_switch_asm` 保存的是**内核态** FPU ⇒ 用户态 FPU 上下文跨 syscall 不保留，登记为 KPTI-18，本轮不修（init 不使用 FP）。
+  - 附带观察：`scheduler.rs:715-717` 把 pid（`u64::from(next)`）写入 `SCHEDULER_EX.current`，而其语义为 `Thread` 指针；`scheduler_ex::tick_accounting` 会 `ThreadRef::new_unchecked(current)` 解引用 ⇒ 类型混用缺陷。**已于 2026-09-23 定位为 KPTI-19 的唯一根因**（见该条目"根因"），不再作为独立观察项。
+  - 实施记录（本轮改动面，共 5 文件）：`framework/proc/proc_ops.rs`（新增 `proc_save_user_regs_aarch64`；`sys_fork` 子 ctx 分架构 + 视图根绑定）、`framework/arch/aarch64/exception.rs`（`svc_handler` 入口接线；`kpti_enter_user_trampoline` 改 `pub(crate)` 供 `sym` 引用）、`framework/arch/aarch64/context.rs`（保存侧改存 `0x3C5`/`x30`/`SP_EL0`/用户表；恢复侧路径分派 + EL0 路径 + trampoline 高别名跳转；文件头与 `Aarch64Context` 字段语义表纠正）、`framework/syscall/clone.rs`（aarch64 子 ctx 语义修正 + 栈顶页补映射）。
+  - 实测证据（2026-09-23，QEMU aarch64 25s 运行，日志 `build/log/qemu_boot_aarch64.log`）：`Entering EL0 (init pid=4)` → 串口出现 `X` → `exit: pid=5 code=0` → `Y` → `exit: pid=6 code=0`，即 **fork 双子进程各自从正确用户返回点续跑并以 0 退出**（改动前 aarch64 在 `enter_user_asm` 即崩，从未进入 EL0）。收集到的遗留项见 KPTI-19。
+  - 验证门槛：`./ci/build.sh all`（双架构 0 error / 0 warning）、`./ci/audit.sh quick`（AUDIT_RC=0，0 处 ✗）、`make test-host`（11 passed）、`make test-unit`（QEMU 33：ALL TESTS PASSED）、`./scripts/qemu_boot_test.sh x86_64`（1/1 通过，`X`/`Y`/`exit code=0`，无 SYNC）、`./scripts/qemu_boot_test.sh aarch64`（1/1 通过，判据达成）。
+
+- **KPTI-18. aarch64 用户态 FPU 上下文跨 syscall 不保留**
+  - 描述：`ExceptionFrame`（35×8，x0–x30 + elr/spsr/sp）不含浮点/SIMD 寄存器；`context_switch_asm` 的 `stp q0..q31` 保存的是**内核态** FPU 状态。故 EL0 使用 V0–V31 后经 SVC/IRQ 往返，用户 FPU 上下文不保证保留。
+  - 方案：或在异常入口增存 V0–V31（帧膨胀 512 字节），或引入 lazy FPU（对齐 `ProcessContext.fpu_state` Phase 3 预留）。属独立工程，与 KPTI-17 无耦合。
+  - 状态：[]（KPTI-18a 已修复并入本轮；KPTI-18b 为独立工程，长期方案已裁定见下）
+  - 详情：当前用户态程序（`src/user/init`）不使用浮点，故不影响 Phase 1 验收判据；aarch64 用户态线程库/浮点应用出现前必须解决。**另发现（本轮读汇编时确认，未修）**：`context_switch_asm` 把 `FPCR`/`FPSR` 存入偏移 640/648，而该区间属 `fpu_state` 的 `q31`（`fpu_state` 占 144..656，`q31` = 640..656）⇒ 每次保存都会覆盖 `q31`；结构体内偏移 656/664 的 `fpcr`/`fpsr` 字段从未被汇编引用（等于死字段）。
+  - 深度排查结论（2026-09-23，与代码逐行核对）：
+    - 覆盖链路（双向）：保存侧 `arch/aarch64/context.rs:95-116` 先 `stp q30,q31,[x2,#480]`（写 624..655，`q31` = 640..655）再 `str x2,[x0,#640]`（FPCR）/`str x2,[x0,#648]`（FPSR）⇒ **`q31` 上半（640..647）与下半（648..655）分别被 FPCR/FPSR 覆盖**；`context.rs:112` 注释"FPCR/FPSR 保存在 `fpu_state[62]/[63]`"实际就是 `q31` 的两半。恢复侧 `:153-161` 先 `ldp q30,q31,[x2,#480]` 再从 640/648 读 FPCR/FPSR ⇒ 用被污染的 `q31` 恢复 SIMD 寄存器、又用被 `q31` 污染的值写 FPCR/FPSR（双向污染）。
+    - 权威口径不一致（三方）：`context.rs:19-20` 文件头布局表写 `144..656 fpu_state` + `656, 664 fpcr, fpsr`（**正确**）；`proc/switch.asm:36-37` 注释写 `+656 fpcr` / `+664 fpsr`（**正确**，x86 侧口径）；`arch/aarch64/context.rs` 汇编实装写 640/648（**错误**）⇒ 仅 aarch64 汇编偏离。
+    - 死字段确认：`proc/types.rs:210-223` 的 `fpcr: u64`(@656) / `fpsr: u64`(@664) 全仓仅 `types.rs` 初始化处引用，汇编从未读写 ⇒ 与 AGENTS §5 F9（死代码零容忍）冲突，修法落地即自然消除。
+  - 修复规划（架构关键路径）：
+    - **KPTI-18a（机械修复）— 已完成（2026-09-23）**：`arch/aarch64/context.rs` 保存侧 `str x2,[x0,#640/#648]` → `#656/#664`、恢复侧 `ldr x2,[x1,#640/#648]` → `#656/#664`，注释同步改为"落在 `ProcessContext` 专用字段 `fpcr`(@656)/`fpsr`(@664)，不得写 `fpu_state[62]/[63]`（= q31 高 16 字节）"。落地后与 `ProcessContext.fpcr/fpsr`、`proc/switch.asm:36-37`、`context.rs` 文件头布局表三方一致，656/664 死字段（F9 冲突）自然消除。回归测试：`host-tests/tests/aarch64_fpu_ctx_offset_test.rs`（断言汇编使用 656/664 且不含 640/648）。
+    - **KPTI-18b（语义修复）— 长期方案已裁定（DECISION-064）**：候选与取舍——①全量保存（每 SVC/IRQ +528B 帧，语义最简）；②lazy FPU（实现复杂度最高）；③仅 caller-saved（成本约 ① 的 3/4，但偏离 `context_switch_asm` 全量口径）。**长期最优 = 上述三者之外的第 ④ 条："内核零隐式 FP/SIMD"（对齐 Linux arm64 `fpsimd` 模型）**：根因不是"边界没保存"，而是"内核在 EL1 执行 FP/SIMD 却无声明"，①②③ 都只是"每次进出边界付代价"的补偿。实测证据：(a) `CPACR_EL1.FPEN=0b11` 放开 EL1 FP 访问（`boot/aarch64/start.S:74-76`、`boot/aarch64/entry.rs:30-32`）；(b) aarch64 内核产物实测含 **913 `fmov` / 337 `stp q*`**（编译期 NEON 用于 memset/memcpy/结构体清零 + `services` 侧显式 `f64`），函数级抽样命中 `Framebuffer::draw_line_aa`、`Ext2Bitmap::count_used`、`Ext2SuperBlock::from_bytes`、`FallbackPmmPolicy::fragmentation_score`、`zerocopy::f32_ext::to_be_bytes`；(c) EL0 入口 `ExceptionFrame` 不含 V0–V31/FPCR/FPSR；(d) `context_switch_asm` 只覆盖"切换时刻"的 live 寄存器 ⇒ 内核一旦执行 FP/SIMD，用户 V0–V31 即被破坏。落地三层：(1) 编译期 `-C target-feature=-neon` 抑制隐式 NEON 代码生成；(2) 源码消除内核 `f64/f32`（`services/mm/pmm_policy.rs:52`、`services/fs/procfs_core.rs:179-207`、`services/fs/nestfs/arc_trait.rs:82` 等改整数运算）并加反汇编审计脚本（FP/SIMD 指令白名单仅 `context_switch_asm`）；(3) 线程 FP 状态懒式保存（对齐 `TIF_FOREIGN_FPSTATE`）。**Rust 侧限制（实测）**：`-C target-feature=+general-regs-only` 不被 rustc/LLVM aarch64 识别（Linux `-mgeneral-regs-only` 的等价路径**不存在**）；`aarch64-unknown-none-softfloat` 仅改 ABI + 去 `-neon`（`features: +v8a,+strict-align,-neon`），仍保留标量 FP ⇒ 只能走上述三层。**本轮不实施**（独立工程），理由：当前用户程序不使用 FP，不影响任何验收判据。
+  - 性质判定：**契约级缺陷（非"潜在风险"）**——内核确实在 EL1 执行 FP/SIMD 且边界不保存 ⇒ "用户 FP 上下文跨 SVC/IRQ 保留"的契约已被破坏；仅因当前用户态不使用 FP 而**暂不可观测**。
+
+- **KPTI-19. aarch64 双进程退出后 EL1 数据异常（根因已定位：`SCHEDULER_EX.current` 被写入 pid 而非 `*mut Thread`）**
+  - 描述：KPTI-17 D1–D4 落地后，aarch64 QEMU 运行达验收判据（`X`/`Y`/`exit code=0`）约 2 ms 后崩于 EL1 数据异常：`SYNC! ESR=0000000096000061 FAR=000000000000002A ELR=FFFF000040111CC0`。ESR 解码：EC=0x25（同 EL 数据异常），DFSC=0x21（对齐异常）。
+  - 方案：**已定位唯一根因并完成修复（DECISION-063）**。根因与实施记录见下；原"aarch64 特有""归因未定论"结论已被证伪并纠正。
+  - 状态：[X]
+  - 根因（2026-09-23 静态 + 运行时双重证据锁死；**纠正**：原登记称 ELR 落在 outlined `Arc::clone`，实为 outliner 生成的 64 位 `fetch_add(1)` 共享出口，与 `Arc` 无关）：
+    - 崩溃点 = `framework/proc/scheduler_ex.rs::SchedulerEx::tick_accounting`（L604-609）：`let current = self.current.load()` → `ThreadRef::new_unchecked(current as *mut Thread)` → `fetch_sub_time_slice()`（`Thread.time_slice` @32）/ `fetch_add_cpu_time()`（`Thread.cpu_time` @40）。
+    - ELR `0x40111CC0` 反汇编（`aarch64-linux-gnu-objdump`）= `ldaxr x9,[x8]; add x9,x9,#1; stlxr w10,x9,[x8]; ret`；结合 `FAR=0x2A` ⇒ `x8 = self.current + 0x28`，即 `self.current` 被当作 `*mut Thread` 解引用后访问 `cpu_time`。
+    - QEMU `-s -S` + gdb 实测（断在共享出口 `0x40111CC0`，条件 `x8 < 0x100000`）：`x21 = self.current = 2`、`x19 = &SCHEDULER_EX`、`x30` 落在 `tick_accounting` 内 ⇒ **`SCHEDULER_EX.current` 的取值是一个 pid（2），不是 `*mut Thread`**；`x8 = x21 + 0x28 = 0x2A` 与日志 `FAR` 完全吻合。
+    - 写入方唯一性（全仓 `SCHEDULER_EX` 共 16 处引用）：语义为 `*mut Thread` 的有 `scheduler_ex.rs:564`（init 存 idle `Thread`）、`:693`（`schedule()` 存 next `Thread`）、读点 `:604/663/784/832` 与 `sched_ops.rs:24`（`scheduler_current_cputime` 读 `Thread.cpu_time`）；**唯一以 pid 语义写入的是 `scheduler.rs:714-716`**（`SCHEDULER::schedule()` 内 `SCHEDULER_EX.current.store(u64::from(next), SeqCst)`）。
+    - 触发链：`SCHEDULER::schedule()` 切换任务（写 pid）→ 下一个定时器 tick → `scheduler_tick()`（`sched_ops.rs:95` → `SCHEDULER_EX.tick()` → `tick_accounting()`）⇒ 解引用 pid ⇒ 崩溃。`SCHEDULER_EX.schedule()` 在生产路径无独立调用者（仅 `tick()`/`yield_current()` 内部触发），故 `SCHEDULER_EX.current` 实际取值几乎恒为这条错误写入的 pid。
+  - 为何 x86 未复现（2026-09-23 实测确认，**证伪"aarch64 特有代码"假设**）：
+    - x86 执行同一条缺陷路径：gdb 断点实测 `timer_irq0_handler` 与 `scheduler_tick` 均命中；`Scheduler::schedule` 内 `0x217a8e: xchg %rax,0x60(%rcx)`（`rcx = &SCHEDULER_EX`）实测 `rax = 0x5` ⇒ **x86 同样把 pid 写进 `SCHEDULER_EX.current`**；`tick_accounting`（`0x1a3d30`）的字段偏移与 aarch64 一致（`mov 0x60(%rdi),%r14` → `lock xadd %ebp,0x20(%r14)` / `lock incq 0x28(%r14)`）。
+    - 差异在体系结构对**非对齐原子访问**的容忍度：aarch64 独占访问要求自然对齐 ⇒ DFSC=0x21（Alignment fault）直接陷入；x86 允许非对齐 `lock` 访问，且实测 VA `0x22`/`0x2A` 在 x86 内核页表中**已映射**（gdb 读 `0x2a` 返回 `0xd422f000d422f000`）⇒ 原子写成功、不陷入。
+    - **结论**：x86 表现为**静默内存破坏**（向低地址 VA `0x22`/`0x2A` 写时间片与 CPU 时间），比 aarch64 的显式崩溃更隐蔽 ⇒ 两架构都必须修，修法同源。
+  - 修复实施（方案 A′：「删除跨层写入」，2026-09-23 完成；DECISION-063）：
+    - 落地改动：删除 `framework/proc/scheduler.rs` 中 `SCHEDULER::schedule()` 内的 `super::scheduler_ex::SCHEDULER_EX.current.store(u64::from(next), SeqCst)`（3 行），并在原址留中文注释说明"此处不得写 + 原因 + SIMPLIFIED 标记"。`SchedulerEx::current` 恢复**净写者不变式**（仅 `init` 写 idle / `schedule` 写 next 两处），`tick_accounting` 的 `// SAFETY: current 由调度器自管理, 必指向有效 Thread` 重新成立。
+    - **与早期草图的偏差（重要）**：原"方案 A"拟经 `THREAD_MANAGER::find_by_pid(pid)` 解析出 `*mut Thread` 后写入。本轮核实**该方案不可行**：`ThreadManager::create_thread`（唯一 `THREAD_TABLE` 插入点）在全仓**无生产调用者**，非测试代码中 `Thread` 对象仅 `SchedulerEx::init` 的 idle 一个 ⇒ 进程没有对应 `Thread` 可解析，`find_by_pid` 恒返回 `None`；按 AGENTS §9"找不到调用点的虚项必须退「未来功能」，禁止为无意义调用造实现"，改为直接删除跨层写入。
+    - 语义影响：`SCHEDULER_EX` 的线程级记账只作用于其自身 idle 线程（进程级 `user_time`/`sys_time` 记账由 `proc_account_tick` 经 `CURRENT_PROCESS_PTR` 独立承担，不受影响，`TD-10` 契约测试仍通过）；`sched_ops::scheduler_current_cputime` 由"读 pid 解引用（未定义行为）"变为"读 idle 的 `cpu_time`（有定义）"。`credo_proc_cputime` 忽略 `target_pid` 的既有质量问题不属本项，未动。
+    - 回归测试：`host-tests/tests/sched_current_type_consistency_test.rs` —— (a) `scheduler.rs` 去注释后不得访问 `SCHEDULER_EX.current`；(b) `scheduler_ex.rs` 中 `self.current.store(` 恰为 2 处。
+    - 端到端判据（aarch64 QEMU 实测，2026-09-23）：修复前"达判据后约 2ms 出现 `SYNC! ESR=0x96000061 FAR=0x2A`"；修复后 `build/log/qemu_boot_aarch64.log` 共 1649 行、`SYNC|panic|ESR=|Data Abort|EXCEPTION` 匹配数 **0**，时间线由 0.102s（`Entering EL0`）推进至 3.486s（`[NET] DHCP deconfigured` 计时器循环）⇒ 崩溃消除。
+  - 长期方案（登记，超本轮范围）：**方案 C —— 消除双调度器**：`SCHEDULER`（per-CPU + `PROCESS_TABLE`，pid 为主键，含 CFS/RT/DL 与负载均衡）与 `SCHEDULER_EX`（`run_queues` + `*mut Thread`，含 5 级 MLFQ/冻结/僵尸回收）并存且**各自独立做硬件上下文切换**，是 `current` 双语义的结构性来源（方案 B「统一为 pid」因 `run_queues` 节点为 `*mut Thread` 而需反复互转，取舍更差）。消解方式为"线程为调度实体、进程为容器"的单一调度器；前置条件是先完成线程层接线（`create_thread` 无调用者）。
+  - 详情：`framework/proc/scheduler.rs` 的 `SCHEDULER::schedule()` 曾以 pid 语义写 `SCHEDULER_EX.current`，是两套调度器 `current` 双语义的**唯一泄漏点**（已于本轮删除）。**本项与"调度器 pid/Thread 指针双语义"为同一根因，合并处置，不另立条目。**
+  - 验证门槛（2026-09-23，本轮修复后全量复跑）：`./ci/build.sh all` → `Passed: 5 Failed: 0`；`./ci/audit.sh quick` → `AUDIT_RC=0`（含 clippy pedantic 与 kernel_test / host-test 两维）；`make test-host` → 全绿（含新增 2 个回归测试文件）；`make test-unit` → `✅ ALL TESTS PASSED (QEMU exit: 33)`；`./scripts/qemu_boot_test.sh all` → **2/2 通过**（x86_64 252 行 / 里程碑 `VFS ready` + Ring 3；aarch64 1649 行 / `VFS ready` + `virtio-net` 桥 + `Entering EL0`），两架构日志致命异常匹配数均为 0。
 
 - **L1（aarch64 高半区内核迁移）——已擢升为独立 plan 工程**
   - 描述：aarch64 内核当前驻留**低半区恒等映射**（`KERNEL_BASE = 0`，镜像 @ `0x40080000`），因而 EL1 视图必须以 DRAM 1 GiB 块把内核镜像/数据/栈一并纳入 `TTBR0` 视图。这是 S3 的"大映射面"来源。

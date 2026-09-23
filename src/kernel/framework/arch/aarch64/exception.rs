@@ -482,7 +482,7 @@ unsafe extern "C" {
 // SAFETY: C ABI 互操作，符号由本文件 global_asm 定义 (.vectors 段)
 unsafe extern "C" {
     /// KPTI 进入 EL0 的 trampoline 入口 (低半区链接地址)
-    static kpti_enter_user_trampoline: u8;
+    pub(crate) static kpti_enter_user_trampoline: u8;
 }
 
 /// 返回 KPTI 进入 EL0 trampoline 的**高半区别名**地址.
@@ -509,6 +509,16 @@ pub fn kpti_enter_user_trampoline_high() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     let syscall_num = frame.x0;
+
+    // KPTI-17 D1: 把 EL0 用户寄存器快照写入当前进程 Process.context.
+    // aarch64 的 syscall 路径不经 `syscall_dispatch_from_frame` (x86_64 B05-55
+    // 捕获点), 故在此补齐: fork/clone 复制 context 时才能得到真实用户状态,
+    // 子进程首次被调度时从正确的用户返回点继续.
+    // 必须在 rt_sigreturn 处理前捕获 (sigreturn 会恢复 signal 帧).
+    let cur_pid = crate::framework::proc::process_get_current_pid();
+    if cur_pid != 0 {
+        crate::framework::proc::proc_save_user_regs_aarch64(cur_pid, frame);
+    }
 
     // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch.
     // aarch64: SYS_rt_sigreturn = 139
