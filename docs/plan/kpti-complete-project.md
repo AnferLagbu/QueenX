@@ -11,12 +11,13 @@
 - **KPTI-01. 半 KPTI 证据（已复核）**
   - 描述：x86_64 `kpti.rs:333-338` `USER_PML4[256..512] = KERNEL_PML4[256..512]` 完整复制内核高半区；`kpti.rs:350-380` 整个 `.text` 映射进用户页表（PRESENT only）。aarch64 `kpti_aarch64.rs:158-167` `TRAMP_TTBR1` 复制完整 L0[256..511]；`arch/aarch64/mod.rs:272-310` `enter_user` 只切 TTBR0 未激活 trampoline。
   - 方案：本工程按 Phase 0-3 完整化两架构 KPTI 隔离。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：本条所记录的"半 KPTI"缺口已由本工程 Phase 0-3 全部修复 —— aarch64 侧（KPTI-04/05/13/14/15：`TRAMP_TTBR1` 最小化 + `enter_user` 激活 trampoline + EL1 视图 S3 + L0 槽位同步）、x86_64 侧（KPTI-07 `USER_PML4[256..512]` 复制移除 + 整段 `.text` 映射收窄；KPTI-08 装配面统一）均不再复现描述中的原始形态。
 
 - **KPTI-02. 目标架构**
   - 描述：用户态运行的页表（x86 `USER_PML4` / 每进程用户页表；aarch64 `TRAMP_TTBR1`）只含：用户空间 + 异常/中断/syscall 入口 trampoline 代码 + 入口路径必需内核数据页（含内核栈首页）——不含其余内核 `.text`/`.data`/`.bss` 映射。
   - 方案：x86 收敛到 `_kernel_text_start ~ _kpti_trampoline_end`（链接脚本 [x86_64.ld](../../src/kernel/framework/link/x86_64.ld#L46-L56) 已划出该区域）；aarch64 收敛到异常向量表所在 L1 条目。
-  - 状态：[]
+  - 状态：[X]
   - 详情：**aarch64 侧已达成**——EL0 视图（用户页表 + TTBR1 trampoline 表）现只含用户映射、`.vectors` 全部页、`KPTI_GLOBALS` 页与内核栈顶页（EL1-only）；其余内核 `.text`/`.data`/`.bss` 在 EL0 下不可见（见 KPTI-04/KPTI-13/KPTI-15）。x86_64 侧**亦已达成**（KPTI-07：低半区代码映射面 353 → 1 页；KPTI-08：`KERNEL_PML4[256..511]` 高半区整段复制已移除，改逐页显式映射"入口依赖面"）⇒ 两架构完整收敛达成。
 
 ### 前置调研（Phase 0）
@@ -157,9 +158,20 @@
 
 - **KPTI-09. x86_64 验证**
   - 描述：QEMU x86_64 Ring 3 + syscall/中断往返 + 隔离断言。
-  - 方案：`./scripts/qemu_boot_test.sh x86_64`（含 Ring 3 到达，顺带闭合分册 2 B02-25）；host-tests 断言进程用户页表不含内核 `.text`/`.data` 映射。
-  - 状态：[]
+  - 方案：`./scripts/qemu_boot_test.sh x86_64`（含 Ring 3 到达，顺带闭合分册 2 B02-25）；host-tests 断言进程用户页表不含内核 `.text`/`.data` 映射。**实现路径已裁定取"路径 A：扩展 `init` 的 fork 探针"**，并按要求**双架构一起做**（见 DECISION-068）。
+  - 状态：[X]
   - **前置依赖（已解除）**：[x86-init-probe-project.md](./x86-init-probe-project.md) 已收口 —— X86IP-06 实测达成 x86_64 Ring 3 到达（`[USER] Entering Ring 3 (init pid=4)` + init 打印 `X`/`Y` + `exit: pid=5/6 code=0`，登记时的启动阻塞现象不复现），本条的 QEMU 验证**不再被阻塞**。
+  - 详情：
+    1. **三条判据的落点**：①Ring 3 到达 + syscall/中断往返 —— 由现有 QEMU 里程碑承担（`VFS ready` + `Entering Ring 3`）；②用户页表不含内核 `.text`/`.data` 映射 —— 由 KPTI-11 的**装配面静态断言**承担（[kpti_x86_user_table_test.rs](../../host-tests/tests/kpti_x86_user_table_test.rs)）；③**"用户态访问内核高半区触发异常而非可读"** —— 本轮新增的**运行期探针**承担（此前无任何运行期探测，是全新交付项）。三判据形态互补：②锁"页表里没有"，③证"即便尝试访问也不可得"，二者任一退化都会被拦。
+    2. **探针形态（路径 A）**：[init/src/main.rs](../../src/user/init/src/main.rs) 在既有 fork/wait 序列之后新增第三个 fork —— 子进程以 `core::ptr::read_volatile` 读取**内核镜像基址的高半区(高别名)映射**，父进程按 `wait_pid` 退出码判定：非 0 ⇒ 隔离生效（打印里程碑 `[KPTI] EL0 kernel high-half access denied`）；读到值 ⇒ 子进程显式打印 `FAIL` 并以 0 退出，父进程亦判定不通过。选址理由见 DECISION-068。
+    3. **aarch64 侧同步交付（前置阻塞及处置）**：aarch64 的 [exception.rs](../../src/kernel/framework/arch/aarch64/exception.rs) `sync_exception_handler` 对 EL0 非 SVC 同步异常**仅打印 `SYNC! ESR/FAR/ELR` 后 `loop { wfi }`**（既不终止进程也不返回 `el0_return`）⇒ 探针会挂死内核，与 KPTI-12 要求的"用户态陷入/返回"回归直接冲突。本轮按用户裁定一并补齐：以 `frame.spsr` 的 `M[3:0] == 0` 识别 EL0 来源，走 `process_exit(pid)` + `scheduler_yield()`（与 x86_64 `idt::execute_recovery_action` 的 `TerminateProcess` 同口径，退出码 = pid），EL1 内核态异常**仍保留**"打印现场 + 停机"（内核缺陷必须暴露，不得被当作进程故障掩盖 —— 对照 KPTI-19 的 `ESR=0x96000061` 即 EC=0x25 同 EL 数据异常）。SIMPLIFIED 标记（不按 `ESR.EC/DFSC` 细分故障语义、不投递具体信号）已写入代码注释。
+    4. **fail-closed 断言**：新增 [kpti_el0_fault_isolation_test.rs](../../host-tests/tests/kpti_el0_fault_isolation_test.rs) 4 项静态断言 —— (a) x86_64 用户态 #PF 必须收敛到 `TerminateProcess` 且 `Recovered` 路径恰为 3 条（新增恢复路径必须论证不会命中内核高半区）、内核态 not-present #PF 仍 `Panic`；(b) aarch64 EL0 终止分支必须**早于**停机循环且含 `process_exit` + `scheduler_yield`；(c) `init` 探针的双架构地址常量（须与 `framework/mm/mod.rs` 的 `KERNEL_BASE` / `kpti_aarch64.rs` 的 `HIGH_ALIAS_BASE` 一致）+ `read_volatile` + 退出码判定 + 里程碑串；(d) `qemu_boot_test.sh` **双架构分支各一处**判定同一里程碑（缺判据 = 运行期验收空转）。
+  - 验证门槛（§2.3 五条全过）：`./ci/build.sh all`（`Passed: 5 Failed: 0`）、`./ci/audit.sh quick`（`AUDIT_RC=0`）、`make test-host`（全绿，含新增 4 项断言）、`make test-unit`（`✅ ALL TESTS PASSED (QEMU exit: 33)`）、`FAIL_OK=0 ./scripts/qemu_boot_test.sh`（**2/2 通过**）。
+  - QEMU 运行时判据（双架构实测）：
+    - x86_64（[qemu_boot_x86_64.log](../../build/log/qemu_boot_x86_64.log)）：`[IDT] user exception: vec=14 err=0x4 rip=0x4000E7 cr2=0xFFFF800000100000` → `exit: pid=7 code=7` → `[KPTI] EL0 kernel high-half access denied (pid=7)`。`err=0x4`（USER 位置位、PRESENT 位清零）与 `cr2` = 探针地址精确吻合。同批日志显示四份用户页表（`0x4064000`/`0x5471000`/`0x546A000`/`0x7FC7000`）装配面恒等：`entry 0x12B000-0x12BA00 (1 pages); excluded kernel text 0x12BA00-0x2845B9 (345 pages)`。
+    - aarch64（[qemu_boot_aarch64.log](../../build/log/qemu_boot_aarch64.log)）：`SYNC! ESR=0000000092000007 FAR=FFFF000040080000 ELR=0000000000400138` → `[ERR] [BOOT] EL0 sync fault: pid=7 ESR=0x92000007 FAR=0xFFFF000040080000 -> terminate` → `exit: pid=7 code=7` → 里程碑。`ESR=0x92000007` 解码 EC=0x24（**lower EL 数据异常**）、DFSC=0x07（level 3 翻译失败），`FAR` = 探针地址 ⇒ 证明 EL0 对高别名不可达而非"读到了值"。
+    - **往返证据（关键）**：两架构均在探针子进程被终止**之后**由父进程继续执行并打印里程碑 ⇒ 完成"EL0 陷入 → 内核处理 → 调度切走 → 另一进程继续运行"的完整往返；aarch64 日志继续推进至 3.49s 的 `[NET] DHCP deconfigured` 计时器循环（1649+ 行），内核未挂起 ⇒ 顺带闭合分册 2 B02-25 的"用户态完整陷入/返回往返"缺口。
+    - 注：分册 2（[archive/audit-fix-02-framework-arch-asm.md](./archive/audit-fix-02-framework-arch-asm.md)）按 AGENTS §6 为**冻结历史快照**（不再修改），B02-39 / B02-25 的收口以本工程文档为准。
 
 ### 每进程一致性与强化验证（Phase 3）
 
@@ -179,7 +191,12 @@
 - **KPTI-12. 完整回归 + 文档同步**
   - 描述：双架构 QEMU 完整回归（Ring 3 到达 + 用户态陷入/返回）+ docs 同步。
   - 方案：§2.3 门槛 + 专项 QEMU；本工程文档与分册 2 B02-39 状态联动更新。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：
+    1. **双架构 QEMU 完整回归**：`FAIL_OK=0 ./scripts/qemu_boot_test.sh` → **2/2 通过**。x86_64 达 `VFS ready` + `[USER] Entering Ring 3 (init pid=4)`；aarch64 达 `VFS ready` + `Entering EL0 (init pid=4)`。
+    2. **用户态陷入/返回往返**（本条的关键判据）：由 KPTI-09 探针承担 —— 两架构的探针子进程（pid=7）在 EL0 触发异常 → 内核处理（x86_64 `#PF` → `TerminateProcess`；aarch64 同步异常 → `process_exit`）→ 调度切走 → **父进程继续执行并打印里程碑** `[KPTI] EL0 kernel high-half access denied`。aarch64 日志继续推进至 3.49s 的 `[NET] DHCP deconfigured` 计时器循环（1649+ 行，致命异常匹配数 0）⇒ 内核未挂起、往返闭合。该往返同时**闭合分册 2 B02-25** 的"用户态完整陷入/返回"缺口。
+    3. **docs 同步**：本工程文档 KPTI-07～KPTI-12 状态与详情、DECISION-065～068 均已回写；分册 2（[archive/audit-fix-02-framework-arch-asm.md](./archive/audit-fix-02-framework-arch-asm.md)）按 AGENTS §6 为**冻结历史快照（不再修改）**，其 B02-39 / B02-25 的收口状态**以本工程文档为准**，不在 archive 内改动。
+  - 验证门槛（§2.3 五条全过）：`./ci/build.sh all`（`Passed: 5 Failed: 0`）、`./ci/audit.sh quick`（`AUDIT_RC=0`）、`make test-host`（全绿）、`make test-unit`（`✅ ALL TESTS PASSED (QEMU exit: 33)`）、`FAIL_OK=0 ./scripts/qemu_boot_test.sh`（2/2）。
 
 ### 决策记录
 
@@ -253,6 +270,14 @@
   - 超范围发现（本轮一并处置）：**第四处高半区整段复制** —— `vmm_x86_64.rs::VirtualMemoryManager::clone_user_page_table`（深拷贝，经 `vmm_clone_user_page_table` 公开导出；全仓无调用者，但属 framework → services 公开 API）。KPTI 激活下调用它会重新注入完整内核高半区 ⇒ 同属本工程要消除的隔离缺口，与另三处一并通过 `assemble_kernel_half` 统一（fail-closed 断言在 host-tests 中以"不得出现 `add(256)` 复制指纹"锁定）。
   - 状态：[X]（KPTI-08 已实施并全门槛通过，详见该条目"详情"与"验证门槛"）
 
+- **DECISION-068（KPTI-09 实现路径：扩展 `init` 的 fork 探针；aarch64 EL0 同步异常终止进程）**
+  - 描述：KPTI-09 的"用户态访问内核高半区触发异常而非可读"判据此前无任何运行期探测，本轮需新增。用户裁定两点：(1) **实现路径由 AI 依业界惯例判定** —— 取**路径 A（扩展 `init` 的 fork 探针）**；(2) **双架构一起做**（同时补 aarch64 侧同类隔离探测）。落地中暴露 aarch64 阻塞，用户再裁定"**补齐 EL0 异常→终止进程**"。
+  - 路径 A 的理由（业界惯例对照）：kselftest / LKDTM 一类运行期隔离测试均为"专用测试二进制 + 判据行 + 退出码"，但**都依赖执行 harness 加载它**；本仓**无任何 exec harness** —— `proctest` 虽被 Makefile 构建进 ISO，全仓**无调用者**（DECISION-063 同族判定口径），任何"新建测试二进制"路径都会停在"无人运行"。而 [init/src/main.rs](../../src/user/init/src/main.rs) 本身就是"fork/wait 测试"脚手架，即本仓事实上的**引导期测试 harness**；在其既有 fork 序列后追加探针是唯一能"默认运行 + 产出 QEMU 里程碑 + 不新增接线"的最简形态（契合 DECISION-057「渐进收敛」）。
+  - 探针选址：取**各架构内核镜像基址的高半区/高别名** —— x86_64 `KERNEL_BASE + 0x100000`、aarch64 `HIGH_ALIAS_BASE + 0x40080000`，分别源出各架构链接脚本 `. =` 的 LMA 基址（[x86_64.ld:13](../../src/kernel/framework/link/x86_64.ld#L13) / [aarch64.ld:13](../../src/kernel/framework/link/aarch64.ld#L13)）与内核常量 `KERNEL_BASE` / `HIGH_ALIAS_BASE`，非临时魔法数。即便链接布局漂移，高半区任何页都仍不可用户读 ⇒ 测试**不会产生假通过**（判据是"访问被拒"而非"读到特定值"）。
+  - aarch64 侧补齐（阻塞处置）：`sync_exception_handler` 原对 EL0 非 SVC 同步异常**仅打印 `SYNC! ESR/FAR/ELR` 后 `loop { wfi }`**（既不终止进程也不返回 `el0_return`），会使探针挂死内核，并与 KPTI-12 的"用户态陷入/返回"回归冲突。本轮补齐为：以 `frame.spsr & 0xF == 0` 识别 EL0 来源（覆盖全部 lower-EL 同步异常，不依赖 EC 白名单），走 `process_exit(pid)` + `scheduler_yield()` —— 与 x86_64 [idt.rs](../../src/kernel/framework/idt/idt.rs) 的 `execute_recovery_action` → `TerminateProcess`（`process_exit` + `scheduler_yield`）**同口径**，退出码 = pid。**EL1 内核态异常仍保留"打印现场 + 停机"**，内核缺陷必须暴露、不得被当作进程故障掩盖（对照 KPTI-19 的 `ESR=0x96000061` 即 EC=0x25 同 EL 数据异常）。因用户态 #PF 的既有 x86_64 路径本身即"终止而不投递具体信号"，aarch64 侧同样不细分 `ESR.EC/DFSC`、不投递具体信号（`SIMPLIFIED` 标记已写入代码注释）。
+  - 性质：本条**顺带修复一处真实现存健壮性缺口** —— aarch64 上任何用户态野指针同步异常原先都会挂死内核而非杀掉进程（x86_64 无此问题）。
+  - 状态：[X]（双架构探针 + aarch64 终止路径 + 双架构里程碑判据 + 4 项 fail-closed 静态断言均已落地，§2.3 五门槛全过；详见该条目"详情""验证门槛""QEMU 运行时判据"）
+
 ### 遗留与登记项（Phase 1 收口后深度排查完成；KPTI-18a / KPTI-19 已修复）
 
 - **KPTI-17. aarch64 fork 子进程零上下文崩溃（预存缺陷，非本轮 KPTI 改动直接导致）**
@@ -324,6 +349,8 @@
 - 专项：QEMU 双架构 + Ring 3 往返（补分册 2 B02-25）；页表内容 host-tests（KPTI-11）
 - 隔离断言：用户态访问内核高半区（x86 高半区 VMA、aarch64 TTBR1 空间）触发异常而非可读
 - 记录（KPTI-07/10/11 轮次）：`./ci/build.sh all` Passed 5 / Failed 0；`./ci/audit.sh quick` RC=0（TCB 边界 / 6 不变式 / SAFETY 覆盖 / clippy pedantic + feature 维）；`make test-host` 全 ok（含新增 `kpti_x86_user_table_test` 6 项）；`make test-unit` `✅ ALL TESTS PASSED (QEMU exit: 33)`；QEMU 双架构 **2/2** 通过（x86_64 里程碑 `VFS ready` + Ring 3 init；aarch64 `VFS ready` + `进入 EL0 启动 init 进程`）。
+- 记录（KPTI-08 轮次）：`./ci/build.sh all` Passed 5 / Failed 0；`./ci/audit.sh quick` RC=0；`make test-host` 全绿（含 `kpti_x86_user_table_test` 9 项）；`make test-unit` `✅ ALL TESTS PASSED (QEMU exit: 33)`；QEMU 双架构 **2/2**。
+- 记录（KPTI-09/12 轮次）：`./ci/build.sh all` Passed 5 / Failed 0；`./ci/audit.sh quick` RC=0；`make test-host` 全绿（含新增 `kpti_el0_fault_isolation_test` 4 项）；`make test-unit` `✅ ALL TESTS PASSED (QEMU exit: 33)`；`FAIL_OK=0 ./scripts/qemu_boot_test.sh` **2/2** 通过（两架构均达 `[KPTI] EL0 kernel high-half access denied` 里程碑，x86_64 `cr2=0xFFFF800000100000` / aarch64 `FAR=FFFF000040080000` 实证隔离生效，且父进程在子进程被终止后继续执行 ⇒ 陷入/返回往返闭合）。
 
 ### 风险与回退
 

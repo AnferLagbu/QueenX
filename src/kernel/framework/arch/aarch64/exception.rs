@@ -618,14 +618,24 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
     crate::framework::irq::do_softirq();
 }
 
-/// 默认同步异常处理 (EL1h)
+/// 默认同步异常处理 (EL1h / EL0)
+///
+/// 两条调用路径共用本函数: `handle_el1h_sync` (内核态同 EL 异常) 与
+/// `handle_el0_sync` (EL0 非 SVC 同步异常)。行为按异常来源分派:
+///
+/// - **EL0** (`frame.spsr` 的 `M[3:0] == 0`)：用户态越权访问 (翻译/权限失败)、
+///   未定义指令等 —— 一律**终止当前进程**并调度离去。不得返回 EL0: `ELR` 仍指向
+///   触发异常的那条指令, 返回即再次触发同一异常 (死循环)。
+/// - **EL1** (内核态)：保持"打印现场 + 停机"。内核态同步异常是内核缺陷, 必须
+///   暴露而不能被当作"某个进程的故障"掩盖 (对照 KPTI-17 的 `ESR=0x96000061`
+///   即 EC=0x25 同 EL 数据异常)。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 #[expect(
     clippy::no_effect_underscore_binding,
     reason = "DECISION-043 pedantic 兜底: aarch64 编译目标特有 lint, 当前批量 expect 兑底"
 )]
-pub extern "C" fn sync_exception_handler(_frame: &ExceptionFrame) {
+pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     let esr: u64;
     let far: u64;
     let elr: u64;
@@ -665,6 +675,35 @@ pub extern "C" fn sync_exception_handler(_frame: &ExceptionFrame) {
         exc_puthex(elr);
         super::uart::putc(b'\r');
         super::uart::putc(b'\n');
+    }
+
+    // ── EL0 同步异常 → 终止当前进程 (KPTI-09) ──────────────────────────────
+    // `SPSR_EL1.M[3:0] == 0` (EL0t) 即异常取自用户态。此时内核入口已完成
+    // TTBR0/TTBR1 切换到本进程 EL1 视图 (见 `handle_el0_sync` 前置段), 故可
+    // 直接复用 syscall 退出路径的终止原语 —— 与 x86_64 `idt::execute_recovery_action`
+    // 的 `TerminateProcess` 口径一致 (退出码 = pid)。
+    //
+    // `process_exit` 内部经 `SCHEDULER.exit` 末尾的 `schedule()` 切离本栈, 本函数
+    // 因此不会返回; 其后的 `scheduler_yield` 与停机循环为防御性兜底。
+    //
+    // SIMPLIFIED: 不按 ESR.EC/DFSC 细分故障语义 (翻译/权限/未定义指令一律同等对待),
+    // 也不向用户态投递具体信号; 影响: 用户态无法区分 SIGSEGV/SIGILL/SIGBUS (与
+    // x86_64 侧"终止而不投递具体信号"现状一致); 何时需扩展: 需要按信号语义投递
+    // (信号帧构建 + sigreturn 恢复) 时。
+    if frame.spsr & 0xF == 0 {
+        let pid = crate::framework::proc::process_get_current_pid();
+        crate::klog_err!(
+            Boot,
+            "EL0 sync fault: pid={} ESR={:#X} FAR={:#X} ELR={:#X} -> terminate",
+            pid,
+            esr,
+            far,
+            elr
+        );
+        if pid != 0 {
+            crate::framework::proc::process_exit(pid);
+            crate::framework::proc::scheduler_yield();
+        }
     }
 
     loop {

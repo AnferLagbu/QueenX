@@ -177,6 +177,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未到达 Network Subsystem Init"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+
+            # KPTI-09: init 的探针子进程以 Ring 3 读取内核镜像高半区别名,
+            # 预期被内核以 #PF -> TerminateProcess 终止 (读不到值), 父进程
+            # 以退出码判定并打印该里程碑. 缺失即隔离回归 (fail-closed).
+            if grep -q "\[KPTI\] EL0 kernel high-half access denied" "$X64_LOG"; then
+                ok "[x86_64] KPTI 隔离断言通过: EL0 读内核高半区被内核终止 (KPTI-09)"
+            else
+                warn "[x86_64] 未观察到 KPTI EL0 隔离断言 (KPTI-09)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
         else
             [ "$FAIL_OK" = "0" ] && RESULT=1
         fi
@@ -221,6 +231,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 PASSED=$((PASSED+1))
             else
                 warn "[aarch64] 未到达 EL0 (最后一行: $(tail -1 "$A64_LOG"))"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+
+            # KPTI-09: init 的探针子进程以 EL0 读取内核镜像高别名,
+            # 预期被内核以同步异常 -> process_exit 终止 (读不到值), 父进程
+            # 以退出码判定并打印该里程碑. 缺失即隔离回归 (fail-closed).
+            if grep -q "\[KPTI\] EL0 kernel high-half access denied" "$A64_LOG"; then
+                ok "[aarch64] KPTI 隔离断言通过: EL0 读内核高半区被内核终止 (KPTI-09)"
+            else
+                warn "[aarch64] 未观察到 KPTI EL0 隔离断言 (KPTI-09)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
         else
