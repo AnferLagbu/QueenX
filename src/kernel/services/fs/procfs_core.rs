@@ -176,9 +176,10 @@ impl ProcfsData {
                     write_str(buf, &mut pos, info.brand_name());
                     write_str(buf, &mut pos, "\nstepping\t: 10\nmicrocode\t: 0xf0\n");
                     write_str(buf, &mut pos, "cpu MHz\t\t: ");
-                    let mhz = info.tsc_frequency_hz as f64 / 1_000_000.0;
-                    let mhz_int = mhz as u64;
-                    let mhz_frac = ((mhz - mhz_int as f64) * 100.0) as u64;
+                    // 整数商余 (两位小数), 消除内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
+                    let hz = info.tsc_frequency_hz;
+                    let mhz_int = hz / 1_000_000;
+                    let mhz_frac = (hz % 1_000_000) / 10_000;
                     write_str(buf, &mut pos, &alloc::format!("{mhz_int}.{mhz_frac:02}"));
                     write_str(buf, &mut pos, "\ncache size\t: ");
                     let cache_kb = info.cache.l1d_size / 1024;
@@ -202,9 +203,10 @@ impl ProcfsData {
                         "flags\t\t: fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology cpuid pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm invpcid_single\n",
                     );
                     write_str(buf, &mut pos, "bogomips\t: ");
-                    let bogo = mhz * 2.0;
-                    let bogo_int = bogo as u64;
-                    let bogo_frac = ((bogo - bogo_int as f64) * 100.0) as u64;
+                    // bogomips = MHz × 2, 同样整数商余两位小数
+                    let bogo_hz = hz * 2;
+                    let bogo_int = bogo_hz / 1_000_000;
+                    let bogo_frac = (bogo_hz % 1_000_000) / 10_000;
                     write_str(buf, &mut pos, &alloc::format!("{bogo_int}.{bogo_frac:02}"));
                     write_str(
                         buf,

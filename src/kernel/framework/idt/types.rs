@@ -553,8 +553,10 @@ mod tests {
     #[test]
     fn test_idt_entry_creation() {
         let entry = IdtEntry::new(0xDEADBEEFCAFEBABE, GDT_KERNEL_CODE, IDT_TYPE_INTERRUPT);
-        assert_eq!(entry.offset_low, 0xBABE);
-        assert_eq!(entry.selector, GDT_KERNEL_CODE);
+        // IdtEntry 是 packed 结构: &entry.field 会构造未对齐引用 (E0793),
+        // 故先按值取出字段再断言.
+        assert_eq!({ entry.offset_low }, 0xBABE);
+        assert_eq!({ entry.selector }, GDT_KERNEL_CODE);
         assert!(entry.is_present());
         assert_eq!(entry.handler_address(), 0xDEADBEEFCAFEBABE);
     }
@@ -563,8 +565,9 @@ mod tests {
     fn test_idt_ptr_creation() {
         let base_addr = 0xFFFF800000001000;
         let ptr = IdtPtr::new(base_addr);
-        assert_eq!(ptr.base, base_addr);
-        assert_eq!(ptr.limit, (IDT_ENTRIES * 16 - 1) as u16);
+        // 理由同 test_idt_entry_creation: IdtPtr 是 packed 结构.
+        assert_eq!({ ptr.base }, base_addr);
+        assert_eq!({ ptr.limit }, (IDT_ENTRIES * 16 - 1) as u16);
     }
 
     #[test]

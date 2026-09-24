@@ -319,8 +319,11 @@ mod tests {
         assert!(ring.push(Trb::new(1, 0, 0)).is_ok());
         assert!(ring.push(Trb::new(2, 0, 0)).is_ok());
         assert!(ring.push(Trb::new(3, 0, 0)).is_ok());
-        // 第 4 次 push 应失败 (最后位置是 Link TRB)
-        assert!(ring.push(Trb::new(4, 0, 0)).is_err());
+        // 第 3 次 push 填满可用槽位后, CommandRing 自动写入 Link TRB 并回绕
+        // (cycle 翻转 + enqueue_index 归零), 故第 4 次 push 成功落在索引 0
+        // (原断言 is_err 与回绕语义矛盾; 2026-09-24 UT-06 修正).
+        assert!(ring.push(Trb::new(4, 0, 0)).is_ok());
+        assert_eq!(ring.enqueue_index, 1);
     }
 
     #[test]
@@ -349,7 +352,8 @@ mod tests {
         ring.reset();
         assert_eq!(ring.enqueue_index, 0);
         assert!(ring.cycle());
-        assert_eq!(ring.trbs[0].parameter, 0);
+        // Trb 是 packed 结构: u64 字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ ring.trbs[0].parameter }, 0);
     }
 
     #[test]
@@ -373,7 +377,7 @@ mod tests {
         // 手动写入一个 TRB, cycle = 1 (与 ring.cycle 匹配)
         ring.trbs[0] = Trb::new(0xCAFE_BABE, 0, TRB_CYCLE_BIT);
         let trb = ring.pop().unwrap();
-        assert_eq!(trb.parameter, 0xCAFE_BABE);
+        assert_eq!({ trb.parameter }, 0xCAFE_BABE);
         // dequeue 已推进
         assert_eq!(ring.dequeue_index, 1);
     }

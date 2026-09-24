@@ -1,0 +1,297 @@
+# 内核单元测试 harness 统一工程（孤儿测试复活 + 双轨收敛）
+
+> 本文件是**新立项**的独立工程文档，承接 [audit-fix-09-hard-rules-deadcode.md](./audit-fix-09-hard-rules-deadcode.md) 的 **B09-19（孤儿测试治理）** 条目，并**变更其技术方向**。
+>
+> B09-19 原文（含批次 1/波 1B 的历史验证记录）**保留不动**，作为交接依据与方向变更的依据链；本文件是当前唯一权威实施计划。
+
+## 1. 根因与普查数据
+
+**根因**：`src/kernel/` 下的 `#[cfg(test)] mod tests` 内联单元测试**从不编译、从不执行**。三条机制叠加：
+
+1. `src/kernel/Cargo.toml` 的 `[lib] test = false` —— kernel crate 自身不构建单元测试 harness（历史成因见 [archive/test-compile-issues-2026-07-31.md](./archive/test-compile-issues-2026-07-31.md) 的 DECISION-021：E0152 双 `core` lang item 冲突）；
+2. `make test-host` 走 `host-tests`，它以**普通依赖**引用 `queenx`（`src/rust`）→ `kernel`，依赖编译不设 `cfg(test)`；
+3. `make test-unit` 走 `cargo build --features kernel_test`（不是 `cargo test`），测试发现依靠 `framework/tests/mod.rs::register_all_tests()` 的**手工注册表**（115 个注册组），与 `#[cfg(test)]` 是两套互不相通的 harness。
+
+**实测规模（排除 vendored `src/kernel/services/net/smoltcp/`）**：
+
+| 口径 | 数值 | 取证方式 |
+|---|---|---|
+| `^#[cfg(test)]` 出现处 | **109 处 / 103 文件** | grep 计数 |
+| 另有变体 `#[cfg(all(test, target_arch))]` | 1 文件（`framework/timer/irq.rs`） | grep `mod tests` |
+| 死 `#[test]` 用例 | **770 例 / 104 文件** | grep `^\s*#\[test\]` 计数 |
+| 活测试（注册表侧） | 115 注册组，双端执行 | `register_all_tests()` |
+
+**普查结论（覆盖判定，口径：注册表中是否存在针对该模块/文件级命名空间的注册组）**：
+
+- **完全无覆盖：31 文件 / 342 例** —— 无任何门槛保护；
+- **部分覆盖：** 有同子系统注册组但覆盖范围不等价（`credo/*`、`barrier/*`、`services/sync/*`、`driver::ata`、`dcache`、`cfs`/`scheduler_ex`、`sysctl` 等）；
+- **有等价覆盖：** 同命名空间注册组存在（`sync/{spinlock,seqlock,rwlock,mutex,atomic,types,rcu}`、`idt/*`、`arch/{gdt,tss}`、`lib/{string,cstr}`、`ipc/*`、`mm/{cow,frame,slab,kmalloc_slab,page_fault}`、`nestfs/{arc,zil}`、`timer/*`、`net::e1000`、`cpu*`、`chitin/devtree` 等），其中含**迁移后未删的旧副本**（与 `framework/tests/*.rs` 断言重复）。
+
+**完全无覆盖清单（最高风险批，路径相对 `src/kernel/`；⚠ = 安全敏感或核心子系统）**：
+
+| framework/ | 例数 | services/ | 例数 |
+|---|---|---|---|
+| ⚠ mm/copy_user.rs | 13 | ⚠ net/smoltcp_impl.rs | 48 |
+| ⚠ sync/lockdep.rs | 10 | driver/display/dp.rs | 30 |
+| ⚠ userptr.rs | 5 | ⚠ debug/ebpf_verifier.rs | 27 |
+| chitin/mod.rs | 14 | driver/storage/nvme.rs | 14 |
+| net/iface_trait.rs | 27 | net/dhcp_policy.rs | 11 |
+| usb/mass_storage.rs | 19 | ⚠ mm/pmm_policy.rs | 6 |
+| usb/hid.rs | 18 | driver/storage/ahci.rs | 6 |
+| usb/xhci.rs | 12 | mm/slab_policy.rs | 5 |
+| usb/enumerate.rs | 12 | init.rs | 2 |
+| usb/ring.rs | 11 | debug/mod.rs | 2 |
+| net/init.rs | 11 | | |
+| net/save.rs | 5 | | |
+| net/wait_queue.rs | 4 | | |
+| driver/storage/{ahci,nvme}.rs | 4 / 4 | | |
+| driver/display/{framebuffer,controller}.rs | 6 / 5 | | |
+| usb/usb_core.rs | 5 | | |
+| chitin/{composite,user_driver}.rs | 2 / 2 | | |
+| error.rs | 2 | | |
+
+## 2. 实证（本轮探针，决定性）
+
+**E1：E0152 障碍已消失（B09-19 的立论基础失效）**
+
+`cd src/kernel && cargo test --features host-test --lib --no-run`（host 目标、无 build-std）实测：
+
+- **未出现任何 E0152**（`duplicate lang item ... core`），直接进入代码错误阶段；
+- 说明 `[lib] test = false` 的存在理由（DECISION-021）已随「构建模式显式化」（全局 build-std 从 `.cargo/config.toml` 移除，见 `src/rust/.cargo/config.toml` 注释）消失 ⇒ `cfg(test)` 在本仓**已可用**。
+
+**E2：死测试不只未执行，且已全量腐化 —— 122 处编译错误 / 43 文件**
+
+错误码分布：
+
+| 错误码 | 数量 | 含义 | 性质 |
+|---|---|---|---|
+| E0793 | 39 | packed 结构体字段引用未对齐 | 实现改 packed 后测试未跟随（`arch/x86_64/tss.rs` 等） |
+| E0599 | 24 | 方法不存在 | API 已改名/移除（如 `devtree_create_node` 返回 `u32` 后仍 `.unwrap()`） |
+| E0308 | 19 | 类型不匹配 | 签名漂移 |
+| E0277 | 9 | trait 约束不满足 | 同上 |
+| E0061 | 7 | 参数个数不符 | 同上 |
+| E0425 / E0433 | 6 / 3 | 名字 / 路径未解析 | 模块被删或改名 |
+| E0502 / E0596 | 6 / 3 | 借用冲突 | 行为演化 |
+| E0560 / E0609 | 4 / 1 | 缺字段 / 无该字段 | 结构体演化 |
+
+热点文件（错误数）：`chitin/devtree.rs`(16)、`usb/enumerate.rs`(11)、`lib/cstr.rs`(10)、`lib/string.rs`(10)、`barrier/attribution.rs`(10)、`chitin/mod.rs`(9)、`barrier/health_monitor.rs`(8)、`arch/x86_64/tss.rs`(7)、`credo/grants.rs`(7)、`fs/vfs/dcache.rs`(6)、`services/driver/storage/nvme.rs`(6)。
+
+**E3：双体系防腐化能力不对称**
+
+- 注册表侧断言一直在跑 ⇒ 未腐化；
+- `cfg(test)` 侧 770 例从不跑 ⇒ 全量腐化（E2）。
+- 机制差异：`#[test]` 由 **cargo 自动发现**（新增即执行，零登记负担）；注册表为**手工注册**（`register_all_tests()` 漏一行即静默不执行 —— B09-19 自身批次计划中即含「修 net.rs 死载」类处置项）。
+
+**E4：注册表体系不可替代的部分只有一个**
+
+裸机 target 无 test harness ⇒ **必须**裸机执行的硬件路径断言（MMIO / 中断 / STAC-CLAC / 页表实机行为）只能由 `kernel_test` 载体承载。纯逻辑断言在 QEMU 内执行无增量价值（同代码，host 更快、可过滤、可并行）。
+
+## DECISION-080（实施裁定）
+
+- **描述**：孤儿测试的终态归属与统一形态。
+- **方案（用户裁定）**：
+  1. **形态 = 方案 A 完整版**：删 `[lib] test = false` + 修复 122 处编译错误，使 `cargo test -p kernel --features host-test --lib` 全绿（770 例就地复活）。
+  2. **门槛 = 新增 AGENTS §2.3 第 6 条**：host 侧内核单元测试全绿。
+  3. **长期目标态 = 双轨，且每份断言只存在一处**：
+     - **纯逻辑（可在 host 编译）→ 源文件 `#[cfg(test)]` 唯一一份**（cargo 自动发现，无注册负担）；
+     - **硬件路径（需裸机）→ `kernel_test` 注册表载体**（QEMU 侧，不可替代）；
+     - 已有等价注册组中与 `cfg(test)` 重复的纯逻辑断言：**逐例收敛为一处**（详见 UT-07）。
+  4. **方向变更理由**：B09-19 的判据「源码零 `cfg(test)`」建立在「`cfg(test)` 不可用」的前提（DECISION-021/E0152）之上；该前提已由 E1 证伪。且其「私有断言必须改写为公共 API」判据在执行记录中造成覆盖弱化（`lockdep` 两个私有精确断言弱化、`dcache invalidate_entry` 断言丢弃），与 AGENTS §8（约束集成测试）的本意不符。
+- **状态**：[ ]
+- **详情（对 B09-19 的继承）**：B09-19 的**处置判据**（已覆盖 → 删副本；独特断言 → 保留）、**私有 API 边界登记**、**调研盲区登记**仍有效，作为 UT-07 收敛的输入；其**载体迁移批次计划（批次 2–5）不再执行**。
+
+## 任务清单
+
+- **UT-01. 门槛骨架落地**
+  - 描述：使 host 侧内核单元测试可被一条命令执行并进入门槛。
+  - 方案：
+    - 删 `src/kernel/Cargo.toml` 的 `[lib] test = false`（保留 `crate-type` 不变）；
+    - `AGENTS.md` §2.1 构建命令补 `cargo test -p kernel --features host-test --lib`（在 `src/kernel` 目录内执行），§2.3 验证门槛新增**第 6 条**「host 侧内核单元测试 0 failed」；
+    - Makefile 新增 `test-kernel-host` target（`test-host` 之外独立，避免拖慢既有门槛语义）；CI 侧接入方式在 UT-08 定稿。
+  - 状态：[X]
+  - 详情（本步骤**不要**同时修 122 错误 —— 骨架先落地，错误修复按 UT-02..UT-06 分批）。
+  - 详情（落地形态）
+    - `src/kernel/Cargo.toml`：删 `test = false`，`crate-type` 不动；原位留 4 行中文注释说明删除理由（DECISION-021 前提失效）与本文件指针，防止后人按旧结论重新加回。
+    - `AGENTS.md`：§2.1 构建命令增 `make test-kernel-host`；§2.3 新增第 6 条「host 侧内核单元测试 0 failed」。
+    - `Makefile`：新增 `test-kernel-host` target（`test-host` 之后、`test-unit` 之前），并在 `.PHONY` 登记；配方为 `cd src/kernel && cargo test --features host-test --lib`（**必须**在该目录内执行，以加载其 `.cargo/config.toml` 的 target-dir 与 curve25519 后端固化），日志落 `tests/reports/kernel_host_test_<时间戳>.log`；**未**并入 `test:` 聚合目标（保持既有门槛语义不变，CI 接入留 UT-08）。
+  - 详情（验证实测）
+    - 删除生效确认：`cd src/kernel && cargo test --features host-test --lib --no-run` 输出 `kernel (lib test)` 目标并报 **122 error / 13 warning**，与 E2 预测逐数吻合 ⇒ 骨架确实让 770 例进入编译；**`duplicate lang item` 命中 0** ⇒ E0152 未复现。
+    - 全量门槛复跑：`./ci/build.sh all` → **Passed: 5 / Failed: 0**（x86_64 build / aarch64 build / host-tests / forbidden patterns / x86_64 link 全过）⇒ 删 `test = false` 不破坏双架构构建、链接与既有 host-tests。
+  - 详情（前置条件 —— 与 UT-08 联动）
+    - 上条「Passed: 5」是在 `build/stage1.bin` **存在**时取得。首次复跑曾出现 x86_64 build 与 host-tests 双失败，根因是该裸机产物缺失（`build/` 被 gitignore，仅由 `make` 生成）。
+    - 机制：`framework/syscall/dispatch.rs` 的 `include_bytes!(".../build/stage1.bin")` 所在函数 gate 为 `all(not(feature = "kernel_test"), target_arch = "x86_64")`，**host 构建满足该条件** ⇒ host 侧编译硬依赖裸机产物。此即 build.rs G-06「消除隐式 make 耦合」未覆盖的残余项，详见下方「风险与回退」与 UT-08。
+    - **该项已于本轮处置完成**（判据改用 `target_os = "none"`，共两处产物引用），见 UT-10。
+
+- **UT-02. 修复批次 1 —— chitin + lib（实测 30 处）**
+  - 描述：`chitin/devtree.rs`(16)、`chitin/mod.rs`(9)、`chitin/composite.rs`(2)、`chitin/user_driver.rs`(2)、`lib/cstr.rs`(10)、`lib/string.rs`(10)。
+  - 方案：逐处判定「测试过时（改测试）」vs「实现回归（登记，不擅自改实现）」，按 §12.5 分级处置。
+  - 状态：[X]
+  - 详情（实测基数与清单修正）：探针中该批实际错误 **30 处**（非计划估算的 49 —— 原数值按 `-->` 行计数，含 note 内的重复行）。构成：`chitin/devtree.rs` 7、`chitin/mod.rs` 9、`lib/cstr.rs` 5、`lib/string.rs` 5、**`framework/idt/types.rs` 4（原批次清单未列入，本批一并处置）**。`chitin/composite.rs`、`chitin/user_driver.rs` 探针中 0 错误（其 `-->` 行来自别处 note）。
+  - 详情（新增错误大类 E0793）：本批及后续批次出现 **39 处 E0793「reference to field of packed struct is unaligned」**（`assert_eq!(packed.field, ..)` 展开为 `&packed.field`）。这是 `[lib] test = false` 期间从未编译过的测试代码首次暴露的**硬错误**，非实现回归。处置形态：改为按值取出字段再断言（`assert_eq!({ x.field }, ..)` 或先 bind 到局部变量），语义不变。
+  - 详情（逐处判定结论 —— 全部为「测试过时」，**0 处实现回归**）
+    - `lib/cstr.rs`：`CStrExt` 仅实现于 `*const u8` / `*mut u8`，测试用 `CString::as_ptr()`（`*const i8`）⇒ 补 `as *const u8` 转型。
+    - `lib/string.rs`：`strchr`/`strrchr`/`strstr` 形参为 `*const i8`，测试传 `*const u8` ⇒ 改用 `*const i8`。
+    - `chitin/devtree.rs`：测试调用的是**旧的原生 API** `devtree_create_node(&'static str, ChitinProto, Option<NodeId>) -> Option<NodeId>`，该 API 后续被改为 FFI 包装 `devtree_create_node(*const u8, u32, u32) -> u32`，原生实现移入 `devtree_create_node_impl` ⇒ 测试改调 `devtree_create_node_impl`（crate 内可见）。
+    - `chitin/mod.rs`：(a) `NetOps` 字面量仍用旧字段名 `recv` / `irq_ack`（现为 `try_receive` / `handle_irq: Option<NetIrqFn>`），且字段类型是 `extern "C" fn` 而**闭包不能强转为 C fn** ⇒ 改为具名 `extern "C" fn` 桩函数；(b) `chitin_register_block_dev` 形参为 `&'static mut dyn BlockDevice`，测试把 `&'static mut` 局部变量传入后仍读该变量（E0502 借用冲突）⇒ 改为 `Box::leak` 后以裸指针持有并加 `// SAFETY:` 读回观测字段。
+    - `idt/types.rs`：E0793 形态（`IdtEntry` / `IdtPtr` 为 packed）。
+  - 详情（验证实测）：`cargo test --features host-test --lib --no-run` 错误数 **121 → 91**（降幅 30，与本批改动数一致），批次内文件残留 `-->` 行为 0。剩余 91 条归 UT-03..UT-05。
+
+- **UT-03. 修复批次 2 —— usb + storage + arch（实测 41 处）**
+  - 描述：`usb/enumerate.rs`(11)、`usb/hid.rs`(3)、`usb/ring.rs`(2)、`usb/xhci.rs`(3)、`driver/storage/nvme.rs`(4)、`services/driver/storage/nvme.rs`(6)、`driver/mod.rs`(3)、`display/framebuffer.rs`(1)、`arch/x86_64/tss.rs`(7)。
+  - 状态：[X]
+  - 详情（实测基数修正）：该批实际 **41 处**（E0793 共 35：enumerate 11 / tss 7 / services nvme 6 / nvme 4 / xhci 3 / ring 2 / hid 2；其余 6：`driver/mod.rs` 3、`hid.rs` 1 字段缺失、`services/debug/ebpf_verifier.rs` 2 —— 末者原批次清单未列，本批一并处置）。`display/framebuffer.rs` 探针中**无 error**（其 `-->` 行来自 unused-variable warning），归入 warning 清理项。
+  - 详情（E0793 的判据特征 —— 用于后续批次识别）：仅**字段对齐要求高于 packed 对齐**时触发。故 u8 字段（`opcode` / `request` / `length` / `num_configurations`）不报错，而 u16/u32/u64 字段（`value` / `index` / `nsid` / `cdw*` / `usb_version` / `rsp*` / `iomap_base` / `parameter`）报错；`cmd.cdw10 & 0xFFFF` 这类「值上下文」表达亦不报错。处置形态统一为 `assert_eq!({ x.field }, ..)`（块表达式强制按值求值）或先 bind 局部变量；已用独立 `rustc` 探针验证该写法对 packed 结构合法。
+  - 详情（逐处判定结论 —— 全部为「测试过时」，**0 处实现回归**）
+    - `driver/usb/hid.rs`：`HidDriver` 已不含 `device_address` 字段（现存字段见结构体定义），断言随字段移除而删除。
+    - `framework/driver/mod.rs`：测试引用 `SerialPort` —— 该类已于 2026-09-12 随「x86_64 字符设备业务下沉 services」迁至 `services/driver/char/serial.rs`（见 `framework/driver/char/mod.rs` 顶部说明）。framework 测试**不得反向依赖 services**（架构方向约束），故改为在测试模块内定义本地 `MockCharDriver` 实现 `Driver`，保留 `DeviceType::Char` 的 trait 多态覆盖。注意实现 `init`/`shutdown` 须用本模块别名 `DriverResult<()>`（`Result` 名被 `core::result::Result` 占用）。
+    - `services/debug/ebpf_verifier.rs`：`BpfInsn` 已把 `dst`/`src` 打包进 `dst_reg`，构造统一走 `BpfInsn::new` ⇒ 测试 helper 改用构造器。
+    - 其余（usb/nvme/tss）均为 E0793 形态。
+  - 详情（验证实测）：`cargo test --features host-test --lib --no-run` 错误数 **91 → 50**（降幅 41，与本批改动数一致），批次内文件残留 `-->` 行为 0。剩余 50 条归 UT-04/UT-05。
+
+- **UT-04. 修复批次 3 —— barrier + credo + ipc + syscall（实测 18 处）**
+  - 描述：`barrier/attribution.rs`(10)、`barrier/health_monitor.rs`(8)、`credo/grants.rs`(7)、`credo/sessions.rs`(3)、`credo/policy.rs`(2)、`ipc/stress_tests.rs`(5)、`ipc/mod.rs`(1)、`ipc/dynamic.rs`(1)、`services/ipc/pipe.rs`(3)、`services/ipc/sem.rs`(1)、`services/syscall/mod.rs`(2)、`syscall/dispatch.rs`(1)。
+  - 状态：[X]
+  - 详情（实测基数修正）：该批实际 **18 处**，远低于计划估算的 43。原因是计划清单来自 E2 的 `-->` 行粗计（会把 note 块内的重复定位行计入，且部分条目实为 warning）—— 实测 18 处中：`barrier/health_monitor.rs` 8、`services/syscall/mod.rs` 1、`ipc/stress_tests.rs` 4、`services/credo/sessions.rs` 2、`services/credo/grants.rs` 1、`services/barrier/attribution.rs` 1、`framework/ipc/mod.rs` 1。清单中 `credo/policy.rs`、`syscall/dispatch.rs`、`services/ipc/pipe.rs`、`services/ipc/sem.rs`、`ipc/dynamic.rs` 实测 **0 error**（后两者为「测试过时」的**调用方**侧，被调用方签名本身无错），未做任何改动。
+  - 详情（新增错误大类 —— 非 Copy 类型不能用数组重复语法）：`DomainFailureRecord` 含 `AtomicU32/U64` 字段 ⇒ 非 `Copy` ⇒ `[DomainFailureRecord::new(1); N]` 与 `core::array::from_fn` 均不可用（后者因 `HealthMonitor::new` 取切片 `&mut [DomainFailureRecord]`，元素个数 N 无法从上下文推断）。处置形态统一为 `[(); N].map(|()| DomainFailureRecord::new(id))`。
+  - 详情（逐处判定结论 —— 全部为「测试过时」，**0 处实现回归**）
+    - `barrier/health_monitor.rs`：3 处 `record_failure(50)` 的签名已扩为 `(&self, current_tick: u64, heartbeat_gap: u64, dependents: u32) -> u32` ⇒ 补零；5 处数组重复改 `[(); N].map(..)`。
+    - `services/barrier/attribution.rs`：同因 —— 数组重复改 `[(); 16].map(|| DomainFailureRecord::new(0))`。
+    - `services/credo/grants.rs`：`is_valid` 经 `DelegationEngine` 的 `table` 字段访问（`eng.table.is_valid(gen2, 100)`），原 `table.is_valid(..)` 因 `table` 已被 `&mut` 借出而失效（NLL 下仅此一处冲突，末次 `eng.revoke` 之后的部分不报）。
+    - `services/credo/sessions.rs`：`get`/`set` 是 `CapabilityMatrix` 的 **trait 方法** ⇒ 测试模块需显式 `use crate::services::credo::policy::CapabilityMatrix;` 才能调用。
+    - `framework/ipc/mod.rs`：`MSG_MAX_SIZE` 的权威定义在 `ipc/types.rs` ⇒ 测试模块显式引入 `use super::types::MSG_MAX_SIZE;`。
+    - `framework/ipc/stress_tests.rs`：pipe 族 safe API 以 `fd: i32` 标识端点（资源 ID 为 `IpcId`，语义不同）⇒ 无效 ID 用例引入 `let invalid_fd: i32 = invalid_id as i32;`；`sem_create_safe` 现为 5 参（不收 `pid`）⇒ 删末参。
+    - `services/syscall/mod.rs`：`SyscallArgs::new` 需 6 参 ⇒ 4 参用例改走具名构造函数 `SyscallArgs::four(..)`。
+  - 详情（随批清理的编译警告）：本批文件内 9 处警告一并清零 —— `credo/grants.rs` 6 处 `variable does not need to be mutable`（`CapabilityMatrix::set` 取 `&self`，`let mut from` 的 `mut` 冗余）、`credo/sessions.rs` / `ipc/dynamic.rs` 各 1 处循环变量未用、`ipc/stress_tests.rs` 1 处未用写端句柄；另清 `display/framebuffer.rs`（UT-03 遗留）1 处未用 `red`、`sync/rcu.rs` 1 处未用回调参数、`proc/scheduler_ex.rs` 1 处未用 import。
+  - 详情（验证实测）：`cargo test --features host-test --lib --no-run` 错误数 **50 → 32**（降幅 18，与本批改动数一致），批次内文件残留 `-->` 行为 0，编译 warning **12 → 0**。剩余 32 条归 UT-05。
+
+- **UT-05. 修复批次 4 —— fs + mm + net + proc + sync + 其余（实测 32 处）**
+  - 描述：`proc/cfs.rs`(5)、`sync/spinlock.rs`(3)、`net/init.rs`(3)、`mm/page_fault.rs`(3)、`fs/vfs/dcache.rs`(3)、`sync/rcu.rs`(1)、`sync/mutex.rs`(1)、`mm/frame.rs`(2)、`mm/copy_user.rs`(2)、`net/iface_trait.rs`(2)、`cpu/mod.rs`(2)、`error.rs`(2)、`timer/mod.rs`(1)、`services/fs/nestfs/arc_trait.rs`(2)。
+  - 状态：[X]
+  - 详情（实测基数修正）：该批实际 **32 处**，计划清单的 16 文件/「约 25 处」为 E2 的 `-->` 行粗计（含 note 块内重复定位行）。精确口径（`^error` 行后紧随的 `-->` 行，逐条归属）合计 32，与错误总数一致。清单中 `proc/scheduler_ex.rs`、`net/init/query.rs` 实测 **0 error**（前者属 warning 清理项，见下；后者的 error 归属在调用方 `net/init.rs`，见下条）。错误码构成：E0599 13、E0308 6、E0425 5、E0277 3、E0596 3、E0061 2。
+  - 详情（逐处判定结论 —— 全部为「测试过时」，**0 处实现回归**）
+    - `net/init.rs`(3，E0425)：三处调用 `ipv4_from_atomic` 找不到函数 —— B04-09 拆分时该函数移入子模块 `net/init/query.rs` 并收窄为**私有**，测试留在父模块 `init`（经 `pub use query::*` 引入，私有项不被 re-export）。处置：可见性恢复为 `pub(crate)`（1 行生产改动解 3 处 error）。已排除「改测试引用 services 同名私有实现」——违反 framework 不得反向依赖 services。
+    - `fs/vfs/dcache.rs`(3)：① `invalidate_entry` 无此方法（E0599）⇒ 删 `test_dcache_invalidate_entry`（**断言删除，理由登记见下条**）；② 两处 `icache.insert` 实参个数 5 vs 8（E0061，签名已扩为 `ino, file_type, perm, size, mtime, ctime, owner_pwm, group_pwm`）⇒ 补零。
+    - `mm/frame.rs`(2，E0425)：`KERNEL_BASE` 权威定义在父模块 `framework::mm`，不在 `frame` 命名空间 ⇒ 测试模块显式引入。
+    - `mm/copy_user.rs`(2)：E0308 + E0277 同源 —— `USER_ADDR_MAX`（u64）与 `PAGE_SIZE`（usize）相减 ⇒ 统一转 `u64`。
+    - `mm/page_fault.rs`(3)：`stack_top`(2) / `stack_default_size`(1) 是 `PageFaultPolicy` 的 **trait 方法** ⇒ 测试模块显式引入 trait。
+    - `net/iface_trait.rs`(2，E0308)：`NetEndpoint::new` 已取统一 `IpAddr`（双栈），IPv4 字面量改走 `new_v4` 辅助。
+    - `proc/cfs.rs`(5)：`time_slice` → `time_slice_for`（后者为 `SchedDecision` trait 方法）；文档注释同步改名。
+    - `sync/mutex.rs`(1)：`trylock` → `try_lock`。
+    - `sync/rcu.rs`(1，E0308)：`call_rcu` 的 `func` 形参为 `unsafe fn(*mut RcuHead)`（**Rust ABI**），测试回调原为 `unsafe extern "C" fn` ⇒ 去 `extern "C"`。
+    - `sync/spinlock.rs`(3，E0596)：`raw_lock`/`raw_unlock` 取 `&mut self`（底层原语不提供共享访问）⇒ 三个用例的绑定改 `let mut lock`；第 4 个用例（`debug_assert` 路径）不动。
+    - `timer/mod.rs`(1，E0599)：`is_ok` 施于 `()` —— 模块自身 `pub extern "C" fn timer_sleep` 返回 `()`，带 `Result` 的是 re-export 别名 `timer_sleep_safe` ⇒ 改调别名。
+    - `cpu/mod.rs`(2，E0308)：`CpuVendor::from_vendor_string` 取**定长 12 字节**数组，原字面量为 13 字节；QEMU 分支判据是 `&vendor_str[..9] == b"TCGTCGTCG"` ⇒ 字面量截为 12 字节且保留前 9 字节前缀（`"TCGTCGTCGXYZ"`）。
+    - `error.rs`(2，E0277)：无 `From<KernelError> for i32` 实现 ⇒ 反向映射改经 `as_errno().as_i32()`。
+    - `services/fs/nestfs/arc_trait.rs`(2)：枚举变体真名为 `NestArcBufType::Metadata`（`Data = 0, Metadata = 1`）⇒ 测试的 `Meta` 改名。
+    - `proc/cfs.rs`（**合规修正，非编译修复**）：测试模块原 `use crate::services::config::{SCHED_LEVEL_*}`。该引用**不产生 error**（`services::config` 尚存 re-export 兼容层），但违反「framework 不得反向依赖 services」⇒ 改引 `framework::config`（DECISION-J 归属反转后的权威定义处）。登记为随批合规修正，取证为基线该文件 5 处 error 全为 `time_slice`。
+  - 详情（断言删除登记 —— `dcache::test_dcache_invalidate_entry`）
+    - 依据：`DCache::invalidate_entry` 已于 `dd5fa9c6`（refactor: eliminate dead code and implement pending features）**有意删除**，经 `git log -S 'invalidate_entry'` 溯源确认，当前**零调用方**。
+    - 判定：属「能力已不存在 ⇒ 断言无等价入口」，**非重复副本**。`as_errno` 式「改写为公共 API」路径不可用（无任何等价公共入口）。
+    - 与 DECISION-080 第 4 条的张力（如实登记）：该条把「dcache invalidate_entry 断言丢弃」列为 B09-19 造成**覆盖弱化**的依据之一；当时的弱化源于 B09-19 的「私有断言必须改写为公共 API」判据。本次丢弃的成因不同 —— **API 本身已从实现中移除**，故不构成同类弱化。此项交 UT-07 收敛清单时复核，如用户认为该能力应恢复则须单独立项（涉及生产代码，本轮不擅改）。
+  - 详情（link 期 164 个 undefined symbol 的处置 —— 本批暴露的第二层问题）
+    - 现象：编译 0 error 后链接失败，`rust-lld: error: undefined symbol` 共 **164 个**（`isr0..isr31` 32 + `irq0..irq127` 128 + `irq253` + `irq254` + `isr0x82` + `syscall_handler`）。lld 默认只报 20 条，须 `RUSTFLAGS="-C link-arg=-Wl,--error-limit=9999"` 才能枚举全量（注意不可写成 `-C link-arg=--error-limit=...`，该形态被直接传给 `cc` 而报 `unrecognized command-line option`）。
+    - 根因：全部符号由 `framework/idt/mod.rs` 的 `idt_init` 内 `unsafe extern "C"` 块声明（由 `framework/boot/isr.asm` 在裸机链接期提供），唯一 host 触发点是测试用例 `test_ffi_interface_compiles`。已确认无其它 host 可达代码引用（`mm/kpti.rs` 仅注释提及 `isr0`）。
+    - 该用例对 host **双重不适用**：① 链接期缺 isr/irq 汇编桩；② `idt_init` 路径经 `remap_pic`(outb) 与 `IdtManager::init` 末尾的 `load_idt`(lidt) 执行**特权指令**，ring 3 必炸；且 x86_64 host 会先命中 `IdtManager::init` 的 TSS IST 未初始化校验提前返回 `MODULE_INIT_FAILURE`，断言必失败。
+    - 处置（用户裁定前置 —— 合规性提问后确认）：**方案 B** —— 用例改名 `test_dump_functions_no_panic`，仅保留 host 适用的 `idt_dump_state` / `idt_print_interrupt_stats` 两项冒烟断言（klog 在 host-test 下为 no-op，见 `klog/mod.rs`），删去 `idt_init()` 断言。
+    - 未采纳方案及理由：**桩化 164 个符号违反「host-test 不平行实现」** —— 该纪律的权威口径是「桩体只允许常量中性返回或整段不执行，桩内无实现即无两份实现」（syscall-followup.md T1），而 164 个汇编 stub 的 host 替身是在 host 侧重造 `isr.asm` 的符号面；且 T1 已把方向定为「**消灭 host 占位符号，把守卫交还链接器**」（符号契约 7 → 0），桩化是反向回退。保留 dump 冒烟与删 `idt_init` 断言均**不新增任何 host 实现**，符合「同源双编译」（cfg 分叉一份源，非两份源副本）。
+    - 与 T1「gate 调用点无效」记录的差异（已实测澄清）：T1 场景的符号引用点（`kpti_init` / `handle_user_page_fault` 等）在 host 仍可达，符号随可达函数进入目标文件；本例移除唯一 host 引用后 `idt_init` 整函数被 `--gc-sections` 丢弃，**实测链接成功**。若将来被 host 误引用，将**链接期硬失败**（即 T1 想要的响亮守卫）。
+    - 覆盖归属（DECISION-080 第 3 条）：`idt_init` 属**硬件路径**，其载体是裸机轨 —— 真实覆盖来自 BSP 启动路径（`arch/x86_64/mod.rs` 的两处 `idt_init()` 调用，附带 AP 侧 `load_idt_on_current_cpu`）+ `./ci/build.sh all` 的链接阶段（缺任一符号即链接失败）+ QEMU boot。本轮**不新建** kernel_test 用例：在 kernel_test 内重调 `idt_init` 会在 `IF=1` 下重清 IDT 条目（`init` 先清后填），存在 #GP/#DF 风险，属生产风险且超出本工程范围。
+  - 详情（随批清理的编译警告，10 → 0）
+    - `warning[E0133]` ×1（`proc/scheduler_ex.rs:1069`）：edition 2024 下 `unsafe fn` 体内仍需 `unsafe` 块 ⇒ `drop(Box::from_raw(t))` 收进块内并补 `// SAFETY:`。
+    - `warning: comparison is useless due to type limits` ×9：`pit.rs`(1，`PIT_MAX_COUNT <= 65535`)、`tick.rs`(4)、`sleep.rs`(2)、`timer/mod.rs`(2)。处置统一为**删除恒真断言**并保留调用（冒烟：不 panic），先例为 `pit.rs` 内 J-01 对 registry 轨**同一条断言**的既有处置（本批 host 轨这份正是漏改的双胞胎）。连带消除变量未用：`timer/tick.rs` 解构改 `(_ticks, .., _uptime, ..)`、`timer/sleep.rs` 改 `(result, _duration_ns)` / `(result, _duration_ticks)`。
+  - 详情（验证实测）
+    - `cargo test --features host-test --lib --no-run`：错误数 **32 → 0**（降幅与本批改动数一致），编译 warning **10 → 0**，批次内文件残留 `-->` 行为 0，**链接成功**（输出 `Executable unittests lib.rs`）。
+    - 与 UT-04 收尾口径一致：探针 33 条 `^error` 行含 1 条 `could not compile ... due to 32 previous errors` 汇总行 ⇒ 权威口径取 32。
+  - 详情（转 UT-06 的运行期候裁项）
+    - `error.rs::round_trip_common_errnos`：raw 列表含 `95`，但 `as_errno()` 把 `NotSupported` 映射到 `Errno::ENOSYS`(38) 而非 `EOPNOTSUPP`(95)。该用例**编译通过、运行期必失败**。属「断言与实现不符」的运行期裁决，按 §12.5 **登记不擅改语义** ⇒ 转 UT-06 逐例裁决。
+
+- **UT-06. 全量编译全绿裁决**
+  - 描述：`cargo test -p kernel --features host-test --lib --no-run` 0 error 后，运行并裁决**运行期失败**。
+  - 方案：对运行期失败逐例判定 —— 「断言过时」（改断言）/「实现回归」（登记候裁清单）/「host 环境不适用」（标注理由后 `#[cfg]` 门控或迁 kernel_test，禁止静默 `#[ignore]`）。
+  - 状态：[X]
+  - 详情（等级裁定，施工前经用户确认）
+    - A 类（断言过时）→ 改测试；B 类（实现缺陷）→ **经用户裁定本轮一并修复实现侧**（原 §12.5 口径为登记候裁，本轮显式授权从宽）；C 类（host 环境不适用）→ 迁 `framework/tests` 注册表 + QEMU 裸机实跑。
+    - 单例裁定：B-12 → 用户选「accessor 改条目数」；B-14 → 用户答「最优是？」，由 AI 定为方案 (a)；C3 smoltcp socket 族 8 例 → 用户选「删除 + 登记为未来功能」。
+  - 详情（实测基数与收尾）
+    - 删 `test = false` 后首次真正执行 **763 例**（原预估 770）—— 初测 **693 OK / 68 FAIL / 2 HANG**；逐例裁决处置后收尾 **748 passed / 0 failed**，8 轮复跑零偶发。
+    - 计数差额 15 = C3 删除 8 例 + C 类迁出内联 7 例（3 端口 I/O 类 + 4 PMM 类）；`ipc::tests::test_signal_validation` 保留（转 A 类环境容差）。
+    - 逐例台账（分类/判据/行号）见施工期临时记录；本文只登记结论。
+  - 详情（A 类 34 例 —— 断言过时，只改测试侧）
+    - ① 类型推断陷阱（`framework/lib/string.rs` 4 例）：测试数组未标类型 ⇒ 被推断为 `[i32; N]`，`memmove`/`memcmp`/`secure_zero` 的字节语义随之偏移（gdb 实证）。
+    - ② 常量/口径过时：`arch/x86_64/tss.rs` 2 例（`TSS_SIZE=104`，`104 % 16 = 8` 取整断言不成立；iomap base 104 是「禁用」哨兵）、`cpu/mod.rs`（effective family 漏加 base family）、`sync/types.rs`（IF 位应 `0x2`）、`mm/cow.rs`（pml4_idx(0x7FFF_0000_0000)=255）、`net/iface_trait.rs`（IPv6 CIDR 按 u16 写）、`idt/handlers.rs`（PF 的 P 位）、`services/syscall/mod.rs` 2 例（零长语义已由 B03-21 改为 ptr 非 NULL；user_ptr 界换 `USER_ADDR_MAX`）、`services/credo/policy.rs`（改不含保护下界的位）、`services/mm/pmm_policy.rs`（order 截断，127 → 9）、`proc/cfs.rs` 3 例、`proc/scheduler_ex.rs`（`make_test_thread` 初值即 Ready）。
+    - ③ 实现侧已定契约：`chitin` 3 例（错误码 `-5`/`-22`）、`usb` 5 例（描述符偏移与 `device_data[4]`）、`usb/ring.rs`（Link 位置回绕 + 翻 cycle）、`timer` 2 例（hrtimer forward 边界、freq=0 未设）、`e1000`（`virt_to_phys` 仅对 `>= KERNEL_BASE` 有效）、`smoltcp_impl` dhcp 3 例。
+  - 详情（B 类 19 例 + 2 观察项 —— 实现缺陷，用户裁定本轮一并修复）
+    - 已修实现（代表性根因）：`services/debug/ebpf_verifier.rs`（ALU 分支先查 dst 已初始化再判 MOV ⇒ `MOV R0,1` 被拒，全部合法程序被拒，8 例同一根因）；`services/credo/audit.rs`（verify 用 buffer 全量重建 nodes，未写槽以 hash=0 覆盖 nodes[0] ⇒ verify 恒 false）；`services/driver/storage/nvme.rs` + `framework/driver/storage/nvme.rs` 2 例（SQE 尺寸与规范 64 不符、`cdw10` 断言自相矛盾）；`services/ipc/pipe.rs`（count==0 早退先于 fd 校验，违反自身 doc 与 POSIX EBADF）；`framework/error.rs`（`NotSupported` 映射 `ENOSYS`(38) → `ENOTSUP`(95)，errno 往返自洽）；`proc/cfs.rs`（min_vruntime 对齐）；`timer/tick.rs`（`ticks * 1000` 溢出 ⇒ `saturating_mul`，契约「不 panic」）；`proc/scheduler_ex.rs`（`boost_all` 活锁 —— 2 例 HANG 的根因）；`driver/net/e1000.rs`（`new()` 后 `is_ready()` expect panic）。
+    - B-12（`services/fs/nestfs/arc.rs` + `arc_trait.rs`）：用户选「accessor 改条目数」—— `max_size` 量纲由字节改条目数，消除与 `mru_size`/`mfu_size` 的单位冲突。
+    - B-14（`smoltcp_impl::record_dhcp_bound` 不更新 `dhcp_state`）：用户裁定取方案 (a) —— **不造调用点**，仅文档诚实化 + 测试意图修正 + 本文件登记（Bound 后 state 仍 Idle ⇒ `dhcp_decide_default` 恒 Continue，T1/T2 renew 分支当前不可达，属未实装路径）。
+    - B-1/B-15（`idt/handlers.rs` 未知 vector 回落默认处理器的命名口径）：随 A 类同步按实测实现侧取值，未改语义。
+    - B-13（`test_dhcp_handle_protects_one_slot`）：归入 C3 删除（socket 槽位依赖在 host/kernel_test 均不可满足）。
+  - 详情（C 类 15 例 —— host 环境不适用）
+    - 端口 I/O / 中断注册 3 例（`keyboard`/`ata` 的 `test_driver_trait_impl`、`timer/irq.rs::test_register_timer_irq_interface`）：host 执行 `init()` 触发端口 I/O ⇒ SIGSEGV；内联例删除，覆盖归 `framework/tests` 注册表（QEMU 裸机轨）。
+    - PMM 依赖 4 例（`ipc/dynamic.rs::test_dyn_shm_alloc_and_free`、`ipc/stress_tests.rs::boundary_tests::test_zero_permissions`、`ipc/stress_tests.rs::stress_tests::test_shm_rapid_attach_detach`、`ipc/mod.rs::test_shm_lifecycle`）：host 无 PMM init ⇒ panic；迁入 `framework/tests/test_ipc.rs` 并注册，host 侧以 `TestResult::Skip` 占位，真实逻辑在裸机轨执行。内联副本删除以避免双份维护（与注册表同名用例断言等价）。
+    - 环境容差 1 例（`ipc/mod.rs::test_signal_validation`）：`signal_send_safe(1,100)` 需目标进程存在，host/kernel_test 均无进程表 ⇒ 接受 `Ok || Err(-2)`（口径同 `framework/proc/signal.rs::kill_broadcast` 先例），但不得为范围错误 `Err(-1)`。内联保留。
+  - 详情（C3 重裁定 —— smoltcp socket 族 8 例改「删除 + 登记未来功能」）
+    - 原方案「迁注册表 + QEMU 裸机实跑」经实证**不可行**：`kernel_test` 下 `services/net/mod.rs` 把 `smoltcp_net_stack_socket_open` 替换为返回 `None` 的 no-op 桩，且 `kmalloc` 真实堆 init 被 `#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]` 门控 ⇒ host 与 kernel_test 两环境都只有 4 KiB `early_buffer`；`TCP_BUF_SIZE = 4096` + HeapHeader ⇒ `early_allocate` 必为 None。两环境均不满足。
+    - 依此重报用户，用户选「**删除 + 登记为未来功能**」。删除 8 例：`test_socket_open_returns_valid_handle_w32_stub` / `test_socket_open_all_kinds_succeed_w32_stub` / `test_socket_open_close_cycle` / `test_socket_open_until_full_returns_no_free` / `test_socket_close_frees_slot_for_reuse` / `test_dhcp_handle_protects_one_slot` / `test_socket_handle_allocated_distinct` / `test_socket_handle_invalid_id_skipped`（均为 socket_open 成功路径）。
+    - 保留失败路径 4 例：`test_socket_open_before_init_fails` / `test_socket_close_invalid_handle_is_idempotent` / `test_dhcp_handle_cannot_be_closed` / `test_socket_handle_invalid_zero`。
+    - **未来功能登记**：启用上述 8 例须先具备三项前置 —— 内核堆 (>4 KiB，供 TCP 双缓冲) + `framework::init_sockets()` + 非桩 `socket_open`；届时在裸机 `kernel_test` 轨恢复。源码处已同步登记（`smoltcp_impl.rs` §4 裁定注释）。
+  - 详情（D 类 5 处 —— 逐例裁决外新增的并行/顺序隔离修复）
+    - `services/net/unix.rs` **真实实现缺陷**：`uds_accept` 预分配 FD 后所有失败路径不回收 ⇒ 空队列 accept 每次泄漏 1 个 UDS FD（累积至 16 后 `alloc_fd` 恒 None，表现为并行 6 例 / 串行 3 例 `NoMem`）。已修失败路径回收 + `uds_reset_for_test()` 同步归零本子系统 FD 位图。
+    - `unix.rs` 用例互斥：用例共享 `UDS_STATE`/FD 位图，新增 `static UDS_TEST_LOCK`（口径同 `framework/timer/tick.rs::FREQ_TEST_LOCK`）。
+    - `framework/timer/hrtimer.rs` 顺序耦合 2 例：断言依赖「框架未初始化」，但同文件 `test_hrtimer_sleep_init` 会入队栈上定时器且 host 无 tick 消费 ⇒ 改为首行 `hrtimer_init()` 清队列。
+    - `framework/driver/usb/xhci.rs` MMIO 区间重叠：10 例共用 `0xFE000000`，`ALIAS_REGISTRY` 拒绝区间重叠（Drop 会注销故串行通过）⇒ 改为每例独立基址。
+    - `framework/chitin/mod.rs` 注册表错位：用例共享 `CHITIN_DEVICES` 且普遍以 `clear()` 开场并按返回的 `idx` 回查，并行 runner 下清表/注册互相错位下标 ⇒ 新增 `static CHITIN_TEST_LOCK`。
+  - 详情（验证实测 —— §2.3 六门槛 + 双架构启动）
+    - `./ci/build.sh all` **Passed: 5 / Failed: 0**；`./ci/audit.sh quick` 全绿（SAFETY 1994/1994、6 不变式、I-43/I-16/I-07/TD-22 0 违规、S-14、FP-06 0、双架构 check、clippy pedantic(lib) + kernel_test/host-test 两维）；`make test-host` exit 0；`make test-kernel-host` **748 passed / 0 failed**；`make test-unit` QEMU **ALL TESTS PASSED (exit 33)**；`./scripts/qemu_boot_test.sh x86_64` 与 `aarch64` 均「VFS ready + Ring 3 / EL0 + KPTI-09 断言通过」。
+    - FP-06 需 aarch64 产物：因双架构共用 `build/kernel.bin` 且 `build.sh all` 最后链接 x86_64，审计前须先跑 `./ci/build.sh aarch64`（脚本已注明该次序要求）。
+    - 连带修复（本轮新增注释/改动的自造问题）：TD-22 报 5 处英文段落（UT-06 删除清单的函数名续行）⇒ 改写为含中文描述；clippy `single_match_else` 2 处（`unix.rs`、`tests/test_ipc.rs`）⇒ 改 `let-else`；`error.rs` 的 `NotSupported` 注释由 `ENOSYS=95`（既存错误，名字与值不符）同步为 `EOPNOTSUPP/ENOTSUP=95`。
+  - 详情（错误基数修正）：E2 的 122 条含 1 条裸机产物缺失错误，已由 UT-10 消除 ⇒ UT-02..UT-05 实际待修 **121** 条。
+
+- **UT-07. 双轨收敛（消除双份断言）**
+  - 描述：对已有等价注册组的约 72 文件逐例收敛为「一处一份」。
+  - 方案：以 B09-19 的处置判据为输入 —— 纯逻辑断言以 `cfg(test)` 侧为准（删注册表副本或删源副本，取覆盖更强者）；硬件路径断言保留在 `kernel_test` 载体。
+  - 状态：[]
+  - 详情：**先出收敛清单再动手**（逐例标注保留侧与删除侧），避免历史那种「半成品」；本步可分批，且允许按用户裁定延期执行。
+
+- **UT-08. §2.3 六门槛全跑 + CI 接入**
+  - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。
+  - 方案：CI 侧接入点待定 —— 候选为 `ci/build.sh` 的 host tests 步骤内并联，或 `.github/workflows/ci-x86.yml` 新增一步；须先实测耗时再定，避免阻塞。
+  - 状态：[]
+
+- **UT-09. 文档回写**
+  - 描述：B09-19 补方向变更指针与状态；`docs/plan/progress-active-tasks.md` 同步；本文件 UT 状态回写。
+  - 状态：[]
+
+- **UT-10. host 侧编译裸机产物依赖消除（G-06 漏项，本轮插入项）**
+  - 描述：UT-01 验证过程中实测发现：host 侧编译（host-tests / 新第 6 条门槛 / `ci/audit.sh` 的两个 host clippy 维）**硬依赖裸机产物**。经用户裁定「本轮一并修复」。
+  - 方案：把两处裸机产物 `include_bytes!` 改为「绑定处 cfg 分叉 + 空切片桩」，判据用 `target_os = "none"`（而非 feature）。
+  - 状态：[X]
+  - 详情（两处点位与形态）
+    - `framework/syscall/dispatch.rs`（`sys_boot_install` 内的 `build/stage1.bin`）、`framework/proc/api.rs`（`launch_first_user_process` 的 `not(feature = "initramfs")` 块内的 `build/user/init.bin`）。
+    - 形态选定为**绑定处 cfg 分叉**（`#[cfg(target_os = "none")] let x = include_bytes!(..)` / `#[cfg(not(target_os = "none"))] let x: &[u8] = &[];`），**不能**改为「整块/整函数 cfg 排除」——`launch_first_user_process` 返回 `!`，须保留块内 `bin_size == 0 → qemu_exit(false)` 的分歧路径，否则 host 侧类型检查失败。
+    - 与既有 `mod.rs` 的「符号桩化」形态（`#[cfg(not(feature = "host-test"))]`）刻意不同，理由已写入源码注释：符号引用是「host 无该链接器符号」，产物引用是「非裸机构建不需要该产物」——后者用 `target_os` 一次覆盖**所有** host 维度（含 `kernel_test` 维），feature 判据只能覆盖 `host-test` 一维。
+  - 详情（判据覆盖面 —— 为什么不是 feature）
+    - `ci/audit.sh` 步骤 2b 以 `--features kernel_test` 与 `--features host-test` **在 host target 上**各跑一次 clippy（无 `--target`）。若判据取 `not(feature = "host-test")`，则 `kernel_test` 维仍会编译产物引用 ⇒ 该维在干净 checkout 上依旧失败。
+    - 未在 `kernel_test` 维上排除「裸机 kernel_test 构建」语义：`target_os = "none"` 在裸机构建为真，故 `build/kernel_test.bin`（`make test-unit`）的内嵌 init 行为**完全不变**；仅 host 维度走空切片。
+  - 详情（验证实测）
+    - 移走 `build/stage1.bin` + `build/user/init.bin` 后：① host-test 维 `--no-run` **无 `couldn't read`**（错误数 122 → **121**，降幅即被消除的产物缺失错误）；② `kernel_test` 维 host clippy 通过；③ `host-test` 维 host clippy 通过。
+    - 裸机路径回归：`./ci/build.sh all` 复跑 → **Passed: 5 / Failed: 0**（双架构 build + host-tests + forbidden patterns + link）⇒ `target_os = "none"` 判据未影响裸机构建与 `make test-unit` 语义；`./ci/audit.sh quick` 见 UT-08 全量复跑。
+
+## 验证门槛
+
+- **双架构 0 warning / 0 error**：`./ci/build.sh all`（删 `test = false` 不影响 `crate-type`，未验证前不得假设 —— 列为必跑项）。
+- **§2.3 第 6 条（新增）**：`cd src/kernel && cargo test --features host-test --lib` 0 failed。
+- **既有五条不回归**：`./ci/audit.sh quick` / `make test-host` / `make test-unit`（QEMU）/ `./scripts/qemu_boot_test.sh all`（双架构）。
+- **断言净增不净减**：复活的 770 例中被删除的断言须逐例登记理由（重复副本 / 私有 API 无等价 / host 不适用）。
+- **F9 死代码零容忍**：被收敛删除的注册组副本不得留空壳函数或 `#[allow(dead_code)]`。
+
+## 风险与回退
+
+- **E0152 可能以其他模式复现**：E1 只证伪了 `cargo test --features host-test --lib`（host 目标）这一模式。若删 `test = false` 后在 `cargo check --tests`、CI 既有 job 或其他 target 下复现，则保留 `test = false` 并改用**显式 test target**（`[[test]]`）或其他入口。**UT-01 必须以全量 CI 复跑收尾**。
+- **运行期失败面未知**：770 例首次真正执行，失败数未知；UT-06 专设裁决步。若失败集中于 host 环境不适用者，则按 `#[cfg]` 门控而非删断言。
+- **双份维护窗口期**：UT-07 未完成前，约 72 文件存在两份断言。窗口期内**修改任一契约必须同步两处**；该约定写入本文件，避免漏改。
+- **与 AGENTS §8 的关系**：本工程恢复「单元测试可测私有实现」，§8「测用户可见行为」的约束对象是集成测试（`host-tests/`）。若需在 AGENTS 中澄清，属 UT-09 的可选动作，须先经用户确认（不改用户规则文件原文）。
+- **§12.5 处置边界**：UT-02..UT-06 中凡判定为「实现回归」者**一律登记不擅改实现**（列入候裁清单交用户）。
+- **回退**：恢复 `[lib] test = false` + 撤销 UT-01 的门槛条目 ⇒ 回到当前状态；UT-02..UT-05 的测试侧改动为独立可回退项（不触生产代码）。
+- **host 侧编译隐式依赖裸机产物（本轮实测发现并已修复，预存缺陷）**：`framework/syscall/dispatch.rs`（`build/stage1.bin`）与 `framework/proc/api.rs`（`build/user/init.bin`）两处 `include_bytes!` 使 host 构建（既有门槛 4、新第 6 条门槛、`ci/audit.sh` 的两个 host clippy 维）**硬依赖** `build/` 下被 gitignore 的裸机产物 ⇒ 干净 checkout 上 host 侧编译失败。G-06（archive/audit-fix-08-user-build-docs.md）的目标正是「消除隐式 make 耦合」，但其修复只覆盖 `build.rs`，漏了这两处 `include_bytes` ⇒ 该耦合实际未消除，且随本工程新增第 6 条门槛而扩大影响面（门槛 4 → 6）。**已按用户裁定于本轮修复，判据 `target_os = "none"`，验证与形态见 UT-10。**
+- **同类残余（未纳入本轮，登记待裁）**：上述两处之外，`framework/proc/api.rs` 的 `initramfs` 分支引用 `build/user/initramfs.cpio`（`#[cfg(all(target_arch = "x86_64", feature = "initramfs"))]`）。该 feature 默认关闭、两个 host lint 维与 host-tests 均不启用，故当前不构成失败；但若将来在 host 上启用 `initramfs`，会重现同类缺陷。是否一并桩化待用户裁定。

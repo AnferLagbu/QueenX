@@ -84,10 +84,11 @@ pub fn storage_init() -> framework::Result<()> {
                 proto_block::register_block_device(dev_name, dev, None);
                 crate::klog_info!(
                     Driver,
-                    "ATA: drive {} registered, {} sectors ({:.1} MB)",
+                    "ATA: drive {} registered, {} sectors ({} MB)",
                     drive,
                     sectors,
-                    (sectors * 512) as f64 / (1024.0 * 1024.0)
+                    // 整数除法 (消除内核侧浮点, 见 docs/plan/aarch64-kernel-fp-free.md)
+                    sectors * 512 / (1024 * 1024)
                 );
             }
         }

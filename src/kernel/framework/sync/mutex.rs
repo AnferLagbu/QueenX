@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(*guard1, 100);
 
         // 第二次尝试应失败
-        assert!(mutex.trylock().is_none());
+        assert!(mutex.try_lock().is_none());
 
         drop(guard1);
         assert!(!mutex.is_locked());

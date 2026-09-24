@@ -95,18 +95,10 @@ impl SwapPolicy for FallbackSwapPolicy {
     }
 
     fn should_wakeup_kswapd(&self, ctx: SwapPolicyContext) -> bool {
-        // 空闲页低于总页数的 10% 或 swap 使用率超过 80%
-        let free_ratio = if ctx.total_pages > 0 {
-            ctx.free_pages as f64 / ctx.total_pages as f64
-        } else {
-            1.0
-        };
-        let swap_usage = if ctx.total_slots > 0 {
-            ctx.used_slots as f64 / ctx.total_slots as f64
-        } else {
-            0.0
-        };
-        free_ratio < 0.1 || swap_usage > 0.8
+        // 空闲页低于总页数的 10% 或 swap 使用率超过 80% (整数比较, 无浮点)
+        let free_low = ctx.total_pages > 0 && ctx.free_pages * 10 < ctx.total_pages;
+        let swap_high = ctx.total_slots > 0 && ctx.used_slots * 10 > ctx.total_slots * 8;
+        free_low || swap_high
     }
 
     fn should_demote_active(&self, active_count: usize, capacity: usize) -> bool {

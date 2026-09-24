@@ -573,7 +573,10 @@ pub fn create_handler(vector: u8) -> &'static dyn ExceptionHandler {
 }
 
 /// 默认处理器实例 (用于未知异常)
-static DEFAULT_HANDLER: DefaultHandler = DefaultHandler { vector: 0 };
+///
+/// vector 取 255 (超出 0..32 异常表范围), 使 `get_exception_name` 返回 "Unknown",
+/// 避免未知向量被误报为 vector 0 的 "Division By Zero" (B-1; 2026-09-24 UT-06 修复).
+static DEFAULT_HANDLER: DefaultHandler = DefaultHandler { vector: 255 };
 
 /// 异常统计收集器
 pub struct ExceptionStatisticsCollector {
@@ -729,7 +732,9 @@ mod tests {
 
     #[test]
     fn test_page_fault_analysis() {
-        let analysis = PageFaultHandler::analyze_error_code(0x05); // Read + Not Present + User
+        // 0x04 = bit2 (User) 置位, bit0 (Present) 清零 → 用户态读取不存在的页
+        // (原用 0x05, 其 bit0 已置位表示页存在, 与 "Not Present" 断言矛盾; 2026-09-24 UT-06 修正)
+        let analysis = PageFaultHandler::analyze_error_code(0x04); // Read + Not Present + User
         assert!(!analysis.present);
         assert_eq!(analysis.access_type, AccessType::Read);
         assert_eq!(analysis.mode, Mode::User);
@@ -738,8 +743,9 @@ mod tests {
 
     #[test]
     fn test_default_handler() {
-        let handler = DefaultHandler::new(7); // Device Not Available
-        assert_eq!(handler.name(), "Device Not Available");
+        let handler = DefaultHandler::new(7); // #NM
+        // 名称口径以 EXCEPTION_NAMES 表为准 (OSDev 命名 "No Coprocessor", 非 Intel "Device Not Available")
+        assert_eq!(handler.name(), "No Coprocessor");
         assert_eq!(handler.severity(), Severity::Warning);
     }
 

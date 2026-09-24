@@ -218,6 +218,20 @@ fn ata_disk_present_bounds() -> TestResult {
 }
 
 #[cfg(target_arch = "x86_64")]
+fn ata_driver_trait() -> TestResult {
+    // UT-06 (2026-09-24): 自 ata.rs::tests::test_driver_trait_impl 迁入 —
+    // controller.init() 走端口 I/O (host 不可用), 仅 kernel_test (QEMU 裸机) 执行.
+    let mut controller = AtaController::new();
+    assert_eq_test!(controller.name(), "ATA/IDE Controller", "name");
+    assert_eq_test!(controller.device_type(), DeviceType::Block, "type");
+    check!(!controller.is_ready(), "not ready");
+    // init 在真实硬件上的成败取决于设备在位, 只验证不 panic
+    let _ = controller.init();
+    check!(!controller.status().is_empty(), "status non-empty");
+    TestResult::Pass
+}
+
+#[cfg(target_arch = "x86_64")]
 pub fn register_ata_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -225,6 +239,7 @@ pub fn register_ata_tests() {
             "constants": ata_constants,
             "device_default": ata_device_default,
             "controller_creation": ata_controller_creation,
+            "driver_trait": ata_driver_trait,
             "io_base_calculation": ata_io_base_calculation,
             "disk_present_bounds": ata_disk_present_bounds,
         },

@@ -102,17 +102,9 @@ mod tests {
         // 如果编译通过，说明函数签名正确
     }
 
-    #[test]
-    fn test_register_timer_irq_interface() {
-        // 测试注册接口存在
-        // 实际注册需要在 IDT 初始化后进行
-
-        // 函数签名验证
-        let result = register_timer_irq();
-
-        // 可能成功或失败（取决于 IDT 状态），但不应该 panic
-        let _ = result;
-    }
+    // UT-06 (2026-09-24): test_register_timer_irq_interface 已迁出 —
+    // register_timer_irq() 依赖 IDT 就绪, host 下不可用; 等价断言迁至
+    // register_timer_irq_tests 的 "register_interface" 用例 (QEMU 裸机).
 }
 
 #[cfg(all(feature = "kernel_test", target_arch = "x86_64"))]
@@ -126,10 +118,19 @@ pub fn register_timer_irq_tests() {
         TestResult::Pass
     }
 
+    /// UT-06 (2026-09-24): 自 irq.rs::tests::test_register_timer_irq_interface 迁入 —
+    /// register_timer_irq() 依赖 IDT 就绪 (host 不可用), 仅 kernel_test (QEMU 裸机) 执行.
+    fn register_interface() -> TestResult {
+        // 可能因 IDT 状态返回 Err, 但不应 panic
+        let _ = register_timer_irq();
+        TestResult::Pass
+    }
+
     let r = runner();
     r.register(
         "timer::irq",
         "handler_signature",
         timer_irq0_handler_signature as TestFn,
     );
+    r.register("timer::irq", "register_interface", register_interface as TestFn);
 }

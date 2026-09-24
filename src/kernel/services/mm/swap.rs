@@ -66,12 +66,12 @@ impl SwapInfo {
         clippy::trivially_copy_pass_by_ref,
         reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是 API 约定 (如 impl trait); 当前优先 expect"
     )]
-    /// 使用率 (0.0 ~ 1.0)
-    pub fn usage_ratio(&self) -> f64 {
+    /// 使用率 (千分比, 0..=1000)
+    pub fn usage_ratio(&self) -> u64 {
         if self.total_bytes == 0 {
-            0.0
+            0
         } else {
-            self.used_bytes() as f64 / self.total_bytes as f64
+            self.used_bytes() * 1000 / self.total_bytes
         }
     }
 }

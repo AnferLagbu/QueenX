@@ -115,27 +115,9 @@ mod stress_tests {
         msgq::msgq_destroy_safe(&mut ns, id).unwrap();
     }
 
-    /// 测试共享内存频繁 attach/detach
-    #[test]
-    fn test_shm_rapid_attach_detach() {
-        let mut ns = create_test_namespace();
-        let mut next_id: IpcId = 1;
-        let pid: u32 = 700;
-
-        // 创建共享内存段
-        let id = shm::shm_create_safe(&mut ns, &mut next_id, 4096, 0o666, pid).unwrap();
-
-        // 快速 attach/detach 循环
-        for _ in 0..100 {
-            let addr = shm::shm_attach_safe(&mut ns, id, pid).unwrap();
-            assert_ne!(addr, 0);
-
-            shm::shm_detach_safe(&mut ns, id, pid).unwrap();
-        }
-
-        // 清理
-        shm::shm_destroy_safe(&mut ns, id).unwrap();
-    }
+    // UT-06 (2026-09-24): test_shm_rapid_attach_detach 已删除 — 与 framework 测试
+    // 注册表中同名用例 (register_ipc_tests 注册, 裸机执行真实逻辑 / host 侧 Skip)
+    // 断言完全等价, 属残留副本.
 
     /// 测试信号量高并发 P/V 操作
     #[test]
@@ -264,12 +246,14 @@ mod boundary_tests {
     fn test_invalid_ids() {
         let mut ns = create_test_namespace();
         let invalid_id: IpcId = 99999;
+        // 管道族 safe API 以 fd: i32 标识端点 (services 侧签名), 与资源 ID 类型不同.
+        let invalid_fd: i32 = invalid_id as i32;
         let pid: u32 = 1200;
 
         // 管道操作使用无效 ID
-        assert!(pipe::pipe_write_safe(&mut ns, invalid_id, &[], 0).is_err());
-        assert!(pipe::pipe_read_safe(&mut ns, invalid_id, &mut [], 0).is_err());
-        assert!(pipe::pipe_close_safe(&mut ns, invalid_id).is_err());
+        assert!(pipe::pipe_write_safe(&mut ns, invalid_fd, &[], 0).is_err());
+        assert!(pipe::pipe_read_safe(&mut ns, invalid_fd, &mut [], 0).is_err());
+        assert!(pipe::pipe_close_safe(&mut ns, invalid_fd).is_err());
 
         // 共享内存操作使用无效 ID
         assert!(shm::shm_attach_safe(&mut ns, invalid_id, pid).is_err());
@@ -294,8 +278,8 @@ mod boundary_tests {
         let mut next_id: IpcId = 1;
         let pid: u32 = 1300;
 
-        // 创建管道
-        let (rfd, wfd) = pipe::pipe_create_safe(&mut ns, &mut next_id, pid).unwrap();
+        // 创建管道 (本用例只校验读端重复关闭, 写端不需持有)
+        let (rfd, _wfd) = pipe::pipe_create_safe(&mut ns, &mut next_id, pid).unwrap();
 
         // 第一次关闭 - 应该成功
         assert!(pipe::pipe_close_safe(&mut ns, rfd).is_ok());
@@ -315,25 +299,9 @@ mod boundary_tests {
         assert!(result.is_err() || result.is_ok());
     }
 
-    /// 测试零值权限
-    #[test]
-    fn test_zero_permissions() {
-        let mut ns = create_test_namespace();
-        let mut next_id: IpcId = 1;
-        let pid: u32 = 1400;
-
-        // 创建零权限的共享内存
-        let result = shm::shm_create_safe(&mut ns, &mut next_id, 4096, 0o000, pid);
-        assert!(result.is_ok()); // 允许零权限 (内核可能忽略权限检查)
-
-        // 创建零权限的消息队列
-        let result = msgq::msgq_create_safe(&mut ns, &mut next_id, 0o000, pid);
-        assert!(result.is_ok());
-
-        // 创建零权限的信号量
-        let result = sem::sem_create_safe(&mut ns, &mut next_id, 1, 10, 0o000, pid);
-        assert!(result.is_ok());
-    }
+    // UT-06 (2026-09-24): test_zero_permissions 已迁出 — shm_create_safe 依赖裸机
+    // PMM (host 下不可用); 等价断言迁至 framework/tests/test_ipc.rs
+    // (register_ipc_tests 注册), 在 kernel_test (QEMU 裸机) 执行.
 }
 
 // ============================================================================

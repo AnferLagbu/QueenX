@@ -837,12 +837,13 @@ mod tests {
             CpuVendor::from_vendor_string(b"CentaurHauls"),
             CpuVendor::Via
         );
+        // from_vendor_string 取定长 12 字节数组; QEMU 分支只判前 9 字节前缀.
         assert_eq!(
-            CpuVendor::from_vendor_string(b"TCGTCGTCG????"),
+            CpuVendor::from_vendor_string(b"TCGTCGTCGXYZ"),
             CpuVendor::Qemu
         );
         assert_eq!(
-            CpuVendor::from_vendor_string(b"UnknownVendor"),
+            CpuVendor::from_vendor_string(b"Unrecognized"),
             CpuVendor::Unknown
         );
     }
@@ -868,7 +869,9 @@ mod tests {
             ext_model: 0x09,
             ..Default::default()
         };
-        assert_eq!(sig_ext.effective_family(), 0x0F); // 6 + 15
+        // Intel 规范: EffectiveFamily = ExtFamily + BaseFamily = 6 + 15 = 21
+        // (原用例断言 0x0F, 漏加 BaseFamily; UT-06 实测修正)
+        assert_eq!(sig_ext.effective_family(), 21);
         assert_eq!(sig_ext.effective_model(), 0x97); // (9 << 4) + 7
     }
 

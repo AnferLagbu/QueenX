@@ -752,22 +752,9 @@ mod tests {
         assert!(!controller.is_ready());
     }
 
-    #[test]
-    fn test_driver_trait_impl() {
-        let mut controller = AtaController::new();
-
-        // 测试 trait 方法
-        assert_eq!(controller.name(), "ATA/IDE Controller");
-        assert_eq!(controller.device_type(), DeviceType::Block);
-        assert!(!controller.is_ready());
-
-        // init 应该在真实硬件上工作，这里只验证不会 panic
-        // 注意: 在测试环境中可能无法访问硬件
-        let result = controller.init();
-        let _ = result; // 可能成功或失败
-
-        assert!(controller.status().len() > 0);
-    }
+    // UT-06 (2026-09-24): test_driver_trait_impl 已迁出 — controller.init() 走端口 I/O,
+    // host 下 SIGSEGV; 等价断言迁至 framework/tests/driver.rs::ata_driver_trait
+    // (register_ata_tests 注册), 在 kernel_test (QEMU 裸机) 执行.
 
     #[test]
     fn test_io_base_calculation() {

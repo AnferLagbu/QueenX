@@ -886,6 +886,12 @@ impl SchedulerEx {
         let ts = super::sched_trait::current_sched_decision().time_slice_for(target);
 
         for src in 0..4 {
+            // 跳过目标队列自身: boost_target() 返回 High (=3), 若继续对其 drain
+            // 并把元素 push_back 回同一队列, while let 永不终止 (活锁) —
+            // 2026-09-24 UT-06 实测修复 (原实现遍历 0..4 含目标队列).
+            if src == target_idx {
+                continue;
+            }
             while let Some(t) = self.run_queues[src].pop_front() {
                 // SAFETY: t 来自本调度器
                 let tr = unsafe { ThreadRef::new_unchecked(t) };
@@ -1044,7 +1050,6 @@ pub fn thread_dump_info(thread: ThreadRef) {
 mod tests {
     use super::*;
     use alloc::boxed::Box;
-    use alloc::vec::Vec;
 
     /// 辅助: 创建测试线程
     ///
@@ -1067,7 +1072,10 @@ mod tests {
     /// - `t` 必须由 `make_test_thread` 产生且未被释放
     unsafe fn free_test_thread(t: *mut Thread) {
         if !t.is_null() {
-            drop(Box::from_raw(t));
+            // SAFETY: 由调用方保证 `t` 由 make_test_thread 产生且未被释放 (见本函数 # Safety 契约).
+            unsafe {
+                drop(Box::from_raw(t));
+            }
         }
     }
 
@@ -1186,15 +1194,25 @@ mod tests {
 
         // SAFETY: t 由 make_test_thread 分配, 立即构造 ThreadRef
         let tr = unsafe { ThreadRef::new_unchecked(t) };
-        assert!(tr.set_state(ThreadState::Ready).is_err()); // Created → Ready
-        // 重置为 Created 以进行新的测试
-        tr.store_state(ThreadState::Created as u32);
-        assert!(tr.set_state(ThreadState::Ready).is_err()); // 其实 Created → Ready 应该是 OK
 
-        // 本测试验证状态机
-        let states = tr.load_state_raw();
-        // 仅验证状态已设置
-        assert!(states > 0);
+        // make_test_thread 初值即 Ready (store_state(Ready)), 故 Ready → Running 合法
+        assert!(tr.set_state(ThreadState::Running).is_ok());
+        assert_eq!(tr.load_state_raw(), ThreadState::Running as u32);
+
+        // Running → Ready 合法 (时间片耗尽)
+        assert!(tr.set_state(ThreadState::Ready).is_ok());
+        assert_eq!(tr.load_state_raw(), ThreadState::Ready as u32);
+
+        // 重置为 Created: Created → Ready 在白名单内, 应成功
+        // (原断言认为它非法, 与 Thread::set_state_safe 白名单不符; 2026-09-24 UT-06 修正)
+        tr.store_state(ThreadState::Created as u32);
+        assert!(tr.set_state(ThreadState::Ready).is_ok());
+        assert_eq!(tr.load_state_raw(), ThreadState::Ready as u32);
+
+        // 非法转换: Created → Running 不在白名单内, 应拒绝且不改状态
+        tr.store_state(ThreadState::Created as u32);
+        assert!(tr.set_state(ThreadState::Running).is_err());
+        assert_eq!(tr.load_state_raw(), ThreadState::Created as u32);
 
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {

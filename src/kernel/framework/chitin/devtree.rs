@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn test_devtree_create_and_find() {
         devtree_init();
-        let node_id = devtree_create_node("test", ChitinProto::Char, None).unwrap();
+        let node_id = devtree_create_node_impl("test", ChitinProto::Char, None).unwrap();
         assert!(node_id > 0);
 
         devtree_set_compatible(node_id, vec!["vendor,test-device"]);
@@ -429,8 +429,10 @@ mod tests {
     fn test_devtree_hierarchy() {
         devtree_init();
         let root = devtree_root_id();
-        let child = devtree_create_node("child", ChitinProto::Char, Some(root)).unwrap();
-        let grandchild = devtree_create_node("grandchild", ChitinProto::Char, Some(child)).unwrap();
+        let child =
+            devtree_create_node_impl("child", ChitinProto::Char, Some(root)).unwrap();
+        let grandchild =
+            devtree_create_node_impl("grandchild", ChitinProto::Char, Some(child)).unwrap();
 
         let children = devtree_children(child);
         assert_eq!(children.len(), 1);
@@ -440,7 +442,7 @@ mod tests {
     #[test]
     fn test_devtree_properties() {
         devtree_init();
-        let node = devtree_create_node("prop_test", ChitinProto::Block, None).unwrap();
+        let node = devtree_create_node_impl("prop_test", ChitinProto::Block, None).unwrap();
         devtree_add_prop(node, "reg", PropertyValue::U64(0xF0000000));
         devtree_add_prop(node, "interrupts", PropertyValue::U32(42));
 

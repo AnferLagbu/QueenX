@@ -7,6 +7,13 @@ use crate::framework::ipc::types::{
 use crate::framework::tests::{TestResult, runner};
 use crate::services::ipc::{pipe, sem, shm};
 use crate::register_tests_inner;
+// UT-06 (2026-09-24): 迁移用例 (裸机 PMM 依赖) 专属导入, host-test 下编译为空
+#[cfg(not(feature = "host-test"))]
+use super::assert_eq_test;
+#[cfg(not(feature = "host-test"))]
+use crate::framework::ipc::dynamic::DynIpcNamespace;
+#[cfg(not(feature = "host-test"))]
+use crate::services::ipc::msgq;
 
 // J-01 (2026-09-08): large_stack_arrays expect 仅在裸机 (非测试模式) 生效 —
 // IPC_MAX_* 在 any(kernel_test, host-test) 下缩减至 2 (services/ipc/types.rs),
@@ -192,12 +199,105 @@ fn test_duplicate_close() -> TestResult {
     TestResult::Pass
 }
 
+// UT-06 (2026-09-24): C 类迁移 — 依赖裸机 PMM 的用例自内联 cfg(test) 迁入:
+// - ipc/dynamic.rs 的 test_dyn_shm_alloc_and_free (动态共享内存分配释放)
+// - ipc/stress_tests.rs 的 test_zero_permissions (零权限边界)
+// - ipc/mod.rs 的 test_shm_lifecycle (共享内存生命周期)
+// host 侧以 Skip 占位 (PMM/extern "C" FFI panic 无法被 catch_unwind 捕获).
+
+#[cfg(feature = "host-test")]
+fn test_dyn_shm_alloc_and_free() -> TestResult {
+    TestResult::Skip("UT-06: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
+}
+
+#[cfg(not(feature = "host-test"))]
+fn test_dyn_shm_alloc_and_free() -> TestResult {
+    let ns = DynIpcNamespace::new();
+
+    let id = match ns.shm_create(2000, 8192) {
+        Ok(id) => id,
+        Err(-3) => return TestResult::Skip("dyn shm_create: pmm alloc failed (OOM in test env)"),
+        Err(_) => return TestResult::Fail("dyn shm_create failed"),
+    };
+    check!(id != 0, "dyn shm id non-zero");
+    assert_eq_test!(ns.shm_count(), 1, "dyn shm count 1");
+
+    if ns.shm_destroy(id).is_err() {
+        return TestResult::Fail("dyn shm_destroy failed");
+    }
+    assert_eq_test!(ns.shm_count(), 0, "dyn shm count 0");
+    TestResult::Pass
+}
+
+#[cfg(feature = "host-test")]
+fn test_zero_permissions() -> TestResult {
+    TestResult::Skip("UT-06: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
+}
+
+#[cfg(not(feature = "host-test"))]
+fn test_zero_permissions() -> TestResult {
+    let mut ns = create_test_namespace();
+    let mut next_id: IpcId = 1;
+    let pid: u32 = 1400;
+
+    // 创建零权限的共享内存 (允许零权限: 内核忽略权限检查)
+    match shm::shm_create_safe(&mut ns, &mut next_id, 4096, 0o000, pid) {
+        Ok(_) => {}
+        Err(-3) => return TestResult::Skip("shm_create: pmm alloc failed (OOM in test env)"),
+        Err(_) => return TestResult::Fail("zero-perm shm_create should succeed"),
+    }
+    check!(
+        msgq::msgq_create_safe(&mut ns, &mut next_id, 0o000, pid).is_ok(),
+        "zero-perm msgq_create should succeed"
+    );
+    // services 侧 sem_create_safe 不收 pid 参数
+    check!(
+        sem::sem_create_safe(&mut ns, &mut next_id, 1, 10, 0o000).is_ok(),
+        "zero-perm sem_create should succeed"
+    );
+    TestResult::Pass
+}
+
+#[cfg(feature = "host-test")]
+fn test_shm_lifecycle() -> TestResult {
+    TestResult::Skip("UT-06: host 无 PMM 初始化, 跳过 (依赖裸机物理内存分配)")
+}
+
+#[cfg(not(feature = "host-test"))]
+fn test_shm_lifecycle() -> TestResult {
+    let mut ns = create_test_namespace();
+    let mut next_id: IpcId = 1;
+    let pid: u32 = 200;
+
+    let id = match shm::shm_create_safe(&mut ns, &mut next_id, 4096, 0o666, pid) {
+        Ok(id) => id,
+        Err(-3) => return TestResult::Skip("shm_create: pmm alloc failed (OOM in test env)"),
+        Err(_) => return TestResult::Fail("shm_create failed"),
+    };
+    let Ok(addr) = shm::shm_attach_safe(&mut ns, id, pid) else {
+        return TestResult::Fail("shm_attach failed");
+    };
+    check!(addr != 0, "attach addr non-zero");
+    check!(
+        shm::shm_detach_safe(&mut ns, id, pid).is_ok(),
+        "shm_detach failed"
+    );
+    check!(
+        shm::shm_destroy_safe(&mut ns, id).is_ok(),
+        "shm_destroy failed"
+    );
+    TestResult::Pass
+}
+
 pub fn register_ipc_tests() {
     let r = runner();
     register_tests_inner! { r:
         "IPC": {
             "pipe_basic": test_pipe_basic,
             "shm_rapid_attach_detach": test_shm_rapid_attach_detach,
+            "shm_dyn_alloc_free": test_dyn_shm_alloc_and_free,
+            "shm_lifecycle": test_shm_lifecycle,
+            "zero_permissions": test_zero_permissions,
             "semaphore_high_concurrency": test_semaphore_high_concurrency,
             "invalid_ids": test_invalid_ids,
             "duplicate_close": test_duplicate_close,

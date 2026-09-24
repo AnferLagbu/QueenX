@@ -221,7 +221,8 @@ mod tests {
 
     #[test]
     fn monitor_tick_too_early_noop() {
-        let mut records = [DomainFailureRecord::new(1); MAX_MONITOR_DOMAINS];
+        // DomainFailureRecord 含原子字段非 Copy, 不能用数组重复语法; 逐元素构造.
+        let mut records = [(); MAX_MONITOR_DOMAINS].map(|()| DomainFailureRecord::new(1));
         let mut monitor = HealthMonitor::new(&mut records);
         monitor.last_check_tick = 100;
         let action = monitor.tick(150); // 间隔 50 < 100
@@ -230,7 +231,8 @@ mod tests {
 
     #[test]
     fn monitor_tick_records_healthy() {
-        let mut records = [DomainFailureRecord::new(1); MAX_MONITOR_DOMAINS];
+        // DomainFailureRecord 含原子字段非 Copy, 不能用数组重复语法; 逐元素构造.
+        let mut records = [(); MAX_MONITOR_DOMAINS].map(|()| DomainFailureRecord::new(1));
         let mut monitor = HealthMonitor::new(&mut records);
         monitor.check_interval_ticks = 0;
         let action = monitor.tick(100);
@@ -239,10 +241,11 @@ mod tests {
 
     #[test]
     fn monitor_tick_quarantine() {
-        let mut records = [DomainFailureRecord::new(1); MAX_MONITOR_DOMAINS];
+        // DomainFailureRecord 含原子字段非 Copy, 不能用数组重复语法; 逐元素构造.
+        let mut records = [(); MAX_MONITOR_DOMAINS].map(|()| DomainFailureRecord::new(1));
         // 制造 5 次连续失败 → 触发 quarantine
         for _ in 0..5 {
-            records[0].record_failure(50);
+            records[0].record_failure(50, 0, 0);
         }
         let mut monitor = HealthMonitor::new(&mut records);
         monitor.check_interval_ticks = 0;
@@ -252,9 +255,10 @@ mod tests {
 
     #[test]
     fn monitor_report_success_resets() {
-        let mut records = [DomainFailureRecord::new(7); MAX_MONITOR_DOMAINS];
-        records[0].record_failure(50);
-        records[0].record_failure(50);
+        let mut records = [(); MAX_MONITOR_DOMAINS].map(|()| DomainFailureRecord::new(7));
+        // record_failure 现签名为 (current_tick, heartbeat_gap, dependents).
+        records[0].record_failure(50, 0, 0);
+        records[0].record_failure(50, 0, 0);
         assert_eq!(records[0].consecutive_failures.load(Ordering::Acquire), 2);
 
         let monitor = HealthMonitor::new(&mut records);
@@ -264,7 +268,7 @@ mod tests {
 
     #[test]
     fn monitor_report_failure_increments() {
-        let mut records = [DomainFailureRecord::new(3); MAX_MONITOR_DOMAINS];
+        let mut records = [(); MAX_MONITOR_DOMAINS].map(|()| DomainFailureRecord::new(3));
         let monitor = HealthMonitor::new(&mut records);
         let new_tier = monitor.report_failure(3, 200);
         assert_eq!(new_tier, 0);

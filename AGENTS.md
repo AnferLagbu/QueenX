@@ -31,6 +31,7 @@
 ./ci/build.sh all                  # x86_64 + aarch64, 0 error / 0 warning
 ./ci/build.sh x86_64              # 单架构 (开发时)
 make test-host                     # host-tests
+make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] 内联用例)
 ./scripts/qemu_boot_test.sh x86_64 # QEMU 集成 (改动 boot 时必跑)
 ```
 
@@ -60,6 +61,7 @@ make test-host                     # host-tests
 3. 核心审计全部通过（见 §2.2）+ GitHub Actions
 4. host-tests 全部通过
 5. QEMU 集成测试通过（如改动 boot/架构相关）
+6. host 侧内核单元测试 0 failed（`make test-kernel-host`，等价 `cd src/kernel && cargo test --features host-test --lib`）
 
 ## 3. 工具链
 

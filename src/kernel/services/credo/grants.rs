@@ -476,7 +476,7 @@ mod tests {
     fn delegate_basic() {
         let mut table = GrantTable::new();
         let policy = PolicyEngine::new();
-        let mut from = make_matrix();
+        let from = make_matrix();
         let mut to = make_matrix();
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
 
@@ -501,7 +501,7 @@ mod tests {
     fn delegate_same_pwm() {
         let mut table = GrantTable::new();
         let policy = PolicyEngine::new();
-        let mut from = make_matrix();
+        let from = make_matrix();
         let mut to = make_matrix();
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
         let mut eng = DelegationEngine::new(&mut table, &policy);
@@ -524,7 +524,7 @@ mod tests {
     fn delegate_invalid_expiry() {
         let mut table = GrantTable::new();
         let policy = PolicyEngine::new();
-        let mut from = make_matrix();
+        let from = make_matrix();
         let mut to = make_matrix();
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
         let mut eng = DelegationEngine::new(&mut table, &policy);
@@ -573,7 +573,7 @@ mod tests {
     fn delegate_revoke() {
         let mut table = GrantTable::new();
         let policy = PolicyEngine::new();
-        let mut from = make_matrix();
+        let from = make_matrix();
         let mut to = make_matrix();
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
         let mut eng = DelegationEngine::new(&mut table, &policy);
@@ -604,7 +604,7 @@ mod tests {
     fn delegate_cascade_revoke() {
         let mut table = GrantTable::new();
         let policy = PolicyEngine::new();
-        let mut from = make_matrix();
+        let from = make_matrix();
         let mut to = make_matrix();
         let mut to2 = make_matrix();
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
@@ -623,7 +623,8 @@ mod tests {
             DelegationResult::Granted { r#gen } => r#gen,
             _ => panic!("expected Granted"),
         };
-        assert!(table.is_valid(gen2, 100));
+        // eng 仍持有 &mut table, 故经 eng.table 读取 (裸用 table 会触发 E0502).
+        assert!(eng.table.is_valid(gen2, 100));
 
         // 撤销父委托 gen1 → 子委托 gen2 也应被级联撤销
         assert!(eng.revoke(&mut to, gen1));
@@ -636,7 +637,7 @@ mod tests {
     fn delegate_dangling_parent_rejected() {
         let mut table = GrantTable::new();
         let policy = PolicyEngine::new();
-        let mut from = make_matrix();
+        let from = make_matrix();
         let mut to = make_matrix();
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
         let mut eng = DelegationEngine::new(&mut table, &policy);

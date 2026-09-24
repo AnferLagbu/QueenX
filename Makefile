@@ -7,6 +7,9 @@ ifeq ($(ARCH),aarch64)
     AS = aarch64-linux-gnu-as
     OBJCOPY = aarch64-linux-gnu-objcopy
     RUST_TARGET = aarch64-unknown-none
+    # 内核与用户态目标分离: 内核走 softfloat (等效 -neon, 使 EL1 零 FP/SIMD,
+    # 见 docs/plan/aarch64-kernel-fp-free.md); 用户态保持 +neon (用户程序可用 FP/SIMD).
+    RUST_TARGET_KERNEL = aarch64-unknown-none-softfloat
     QEMU = qemu-system-aarch64
     QEMU_MACHINE = virt
     QEMU_CPU := max
@@ -21,6 +24,8 @@ else
     AS = nasm
     OBJCOPY = objcopy
     RUST_TARGET = x86_64-unknown-none
+    # x86_64 无 softfloat/neon 之分, 内核与用户态共用同一目标.
+    RUST_TARGET_KERNEL = x86_64-unknown-none
     QEMU = qemu-system-x86_64
     QEMU_CPU ?= qemu64
     LDSCRIPT = src/kernel/framework/link/x86_64.ld
@@ -76,10 +81,10 @@ else
                   build/arch/x86_64/trampoline.o
 endif
 
-RUST_LIB = src/rust/target/$(RUST_TARGET)/release/libkernel.a
-RUST_LIB_TEST = src/rust/target/test-release/$(RUST_TARGET)/release/libkernel.a
-RUST_LIB_CHAOS = src/rust/target/chaos-release/$(RUST_TARGET)/release/libkernel.a
-RUST_LIB_TEST_DEBUG = src/rust/target/test-debug/$(RUST_TARGET)/test-debug/libkernel.a
+RUST_LIB = src/rust/target/$(RUST_TARGET_KERNEL)/release/libkernel.a
+RUST_LIB_TEST = src/rust/target/test-release/$(RUST_TARGET_KERNEL)/release/libkernel.a
+RUST_LIB_CHAOS = src/rust/target/chaos-release/$(RUST_TARGET_KERNEL)/release/libkernel.a
+RUST_LIB_TEST_DEBUG = src/rust/target/test-debug/$(RUST_TARGET_KERNEL)/test-debug/libkernel.a
 
 RUST_USER_DIR = src/user
 RUST_USER_TARGET = $(RUST_USER_DIR)/target/$(RUST_TARGET)/release
@@ -99,7 +104,7 @@ USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 STAGE1_BIN = build/stage1.bin
 DISK_IMAGE = build/antx.img
 
-.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-unit test-integration test-smoke test-stress \
+.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-unit test-integration test-smoke test-stress \
          test-all test-chaos test-smp test-smp-multicore
 
 all: build/kernel.bin build/kernel.flat
@@ -201,30 +206,30 @@ build/user/init.bin: $(USER_INIT_ELF)
 
 $(RUST_LIB): build/user/init.bin
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --target-dir ../rust/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../rust/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
 $(RUST_LIB): $(STAGE1_BIN) build/user/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --target-dir ../rust/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --target-dir ../rust/target
 endif
 
 # RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):
 # 否则 .a 已存在时 make 跳过 cargo 重建, kernel_test.bin 长期使用陈旧二进制 (E-06 验证踩坑, 2026-09-07)
 $(RUST_LIB_TEST): $(shell find src/kernel -name '*.rs' 2>/dev/null)
 	@echo "Building Rust test kernel..."
-	cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-release
+	cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-release
 
 $(RUST_LIB_CHAOS):
 	@echo "Building Rust chaos kernel (fault_injection enabled)..."
-	cd src/kernel && cargo build --release --target $(RUST_TARGET) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir ../rust/target/chaos-release
+	cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features "kernel_test fault_injection" --target-dir ../rust/target/chaos-release
 
 # 2026-06-29 新增: 调试构建 (LTO=false + debug info + opt-level=0), 用于排查 OnceLock 静态初始化 hang
 $(RUST_LIB_TEST_DEBUG):
 	@echo "Building Rust test kernel (debug profile)..."
-	cd src/kernel && cargo build --profile test-debug --target $(RUST_TARGET) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-debug
+	cd src/kernel && cargo build --profile test-debug --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) --features kernel_test --target-dir ../rust/target/test-debug
 
 build/%.o: src/kernel/framework/%.asm
 	@mkdir -p $(dir $@)
@@ -422,6 +427,18 @@ test-host:
 	@echo "╚══════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/tests/reports
 	@cd host-tests && { log=$(CURDIR)/tests/reports/host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --quiet > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
+	@echo ""
+
+# 内核单元测试（host 侧）: 执行 src/kernel 源文件内 `#[cfg(test)]` 内联用例.
+# 与 test-host 独立 (后者跑 host-tests/ 集成套件); 必须在 src/kernel 目录内执行,
+# 以便加载该目录 .cargo/config.toml 的 target-dir 与 curve25519 后端固化.
+# 详见 docs/plan/kernel-unit-test-harness-unification.md.
+test-kernel-host:
+	@echo "╔══════════════════════════════════════════════╗"
+	@echo "║   Running Kernel Host-Side Unit Tests        ║"
+	@echo "╚══════════════════════════════════════════════╝"
+	@mkdir -p $(CURDIR)/tests/reports
+	@cd src/kernel && { log=$(CURDIR)/tests/reports/kernel_host_test_$$(date +%Y%m%d_%H%M%S).log; cargo test --features host-test --lib > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 test-unit: build/kernel_test.bin user

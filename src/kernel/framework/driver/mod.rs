@@ -343,6 +343,29 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    /// 测试用字符设备驱动.
+    ///
+    /// x86_64 的字符设备业务 (serial/vga) 已下沉 services, framework 不再持有
+    /// 可供测试的 Char 驱动实例 (见 `framework/driver/char/mod.rs` 顶部说明);
+    /// framework 测试不得反向依赖 services, 故此处以本地 mock 覆盖
+    /// `DeviceType::Char` 的 trait 分发路径.
+    struct MockCharDriver;
+
+    impl Driver for MockCharDriver {
+        fn name(&self) -> &'static str {
+            "mock-char"
+        }
+        fn device_type(&self) -> DeviceType {
+            DeviceType::Char
+        }
+        fn init(&mut self) -> DriverResult<()> {
+            Ok(())
+        }
+        fn shutdown(&mut self) -> DriverResult<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn test_module_structure() {
         assert_eq!(DeviceType::Block.to_string(), "Block");
@@ -352,15 +375,15 @@ mod tests {
 
         let _driver = KeyboardDriver::new();
 
-        assert!(SerialPort::new(0).is_some());
-        assert!(SerialPort::new(5).is_none());
+        let char_driver = MockCharDriver;
+        assert_eq!(char_driver.device_type(), DeviceType::Char);
     }
 
     #[test]
     fn test_driver_trait_polymorphism() {
         let ata = AtaController::new();
         let kb = KeyboardDriver::new();
-        let com = SerialPort::new(0).unwrap();
+        let com = MockCharDriver;
 
         let drivers: Vec<&dyn Driver> = vec![&ata, &kb, &com];
 

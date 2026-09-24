@@ -505,8 +505,15 @@ mod tests {
 
     #[test]
     fn test_virt_index_functions() {
-        let v = VirtAddr(0x0000_7FFF_0000_0000u64);
-        assert_eq!(v.pml4_idx(), 0);
-        assert_eq!(v.pt_idx(), 0);
+        // 低半区低地址: PML4 索引 0, PT 索引 1
+        let low = VirtAddr(0x0000_0000_0000_1000u64);
+        assert_eq!(low.pml4_idx(), 0);
+        assert_eq!(low.pt_idx(), 1);
+
+        // 低半区顶端: 0x7FFF_0000_0000 >> 39 = 0xFF ⇒ PML4 索引 255
+        // (原用例对该地址断言 0, 与实现不符; UT-06 实测修正)
+        let high = VirtAddr(0x0000_7FFF_0000_0000u64);
+        assert_eq!(high.pml4_idx(), 255);
+        assert_eq!(high.pt_idx(), 0);
     }
 }

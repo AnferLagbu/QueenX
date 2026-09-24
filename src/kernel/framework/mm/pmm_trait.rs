@@ -53,11 +53,11 @@ pub trait PmmPolicy: Send + Sync {
     /// 策略可在此约束下自由决定阶数, 默认实现为向上取整到 2^n.
     fn count_to_order(&self, count: usize, max_order: u8) -> u8;
 
-    /// 碎片化评估: 返回 0.0~1.0 的碎片化程度
+    /// 碎片化评估: 返回千分比 (0..=1000) 的碎片化程度
     ///
-    /// 0.0 = 无碎片, 1.0 = 严重碎片化.
+    /// 0 = 无碎片, 1000 = 严重碎片化.
     /// 评估依据: 空闲比例、分配失败率等.
-    fn fragmentation_score(&self, ctx: PmmPolicyContext) -> f64;
+    fn fragmentation_score(&self, ctx: PmmPolicyContext) -> u64;
 
     /// 空闲页面回收阈值: 当空闲页低于此值时触发 kswapd 回收
     fn reclaim_threshold_pages(&self, total_pages: u64) -> u64;
@@ -87,18 +87,20 @@ impl PmmPolicy for FallbackPmmPolicy {
         if order > max_order { max_order } else { order }
     }
 
-    fn fragmentation_score(&self, ctx: PmmPolicyContext) -> f64 {
+    fn fragmentation_score(&self, ctx: PmmPolicyContext) -> u64 {
         if ctx.total_pages == 0 {
-            return 0.0;
+            return 0;
         }
-        let free_ratio = ctx.free_pages as f64 / ctx.total_pages as f64;
-        let fail_ratio = if ctx.total_allocs > 0 {
-            ctx.failed_allocs as f64 / ctx.total_allocs as f64
+        // 千分比整数运算 (0..=1000), 避免内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
+        let free_permille = ctx.free_pages * 1000 / ctx.total_pages;
+        let fail_permille = if ctx.total_allocs > 0 {
+            ctx.failed_allocs * 1000 / ctx.total_allocs
         } else {
-            0.0
+            0
         };
         // 碎片化评分: 空闲比例低 + 失败率高 = 高碎片化
-        (1.0 - free_ratio) * 0.7 + fail_ratio * 0.3
+        // (1 - free_ratio) × 0.7 + fail_ratio × 0.3 的整数展开
+        ((1000 - free_permille) * 7 + fail_permille * 3) / 10
     }
 
     fn reclaim_threshold_pages(&self, total_pages: u64) -> u64 {

@@ -838,7 +838,6 @@ mod tests {
 
     #[test]
     fn test_color_blend() {
-        let red = Color::new(255, 0, 0);
         let blue = Color::new(0, 0, 255);
         let half_red = Color::new_alpha(255, 0, 0, 128);
 

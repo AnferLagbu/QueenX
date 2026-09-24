@@ -450,10 +450,14 @@ pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
     )
     .ok_or(UdsError::NoMem)?;
 
-    let (_sub, new_slot) =
-        crate::services::proc::fd_alloc::idx_of(new_fd).ok_or(UdsError::BadFd)?;
+    // UT-06 (2026-09-24): 预分配 FD 后所有失败路径必须回收, 否则位图泄漏
+    // (实测: 空队列 accept 每次调用泄漏 1 个 UDS FD, 累积至 16 后 alloc_fd 恒 None).
+    let Some((_, new_slot)) = crate::services::proc::fd_alloc::idx_of(new_fd) else {
+        let _ = free_fd(FdSubsystem::Uds, new_fd);
+        return Err(UdsError::BadFd);
+    };
 
-    UDS_STATE.with_mut(|state| {
+    let accepted = UDS_STATE.with_mut(|state| {
         let listen_idx = fd_to_idx(fd)? as usize;
         let listen = &state.sockets[listen_idx];
         if listen.id == 0 {
@@ -484,7 +488,12 @@ pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
         state.sockets[listen_idx].listen_count -= 1;
         state.sockets[client_idx].peer = Some(id);
         Ok(new_fd)
-    })
+    });
+
+    if accepted.is_err() {
+        let _ = free_fd(FdSubsystem::Uds, new_fd);
+    }
+    accepted
 }
 
 /// 发起到指定路径 UDS 套接字的连接
@@ -1052,6 +1061,11 @@ pub fn uds_reset_for_test() {
         }
     });
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
+    // UT-06 (2026-09-24): 同步归零本子系统 FD 位图. 此前仅清 UDS_STATE,
+    // 未回收 fd_alloc 位, 导致跨用例位图残留 (占满 16 槽后 alloc_fd 恒 None).
+    for i in 0..MAX_UDS_FD as i32 {
+        let _ = free_fd(FdSubsystem::Uds, UDS_FD_BASE + i);
+    }
 }
 
 // ============================================================================
@@ -1250,8 +1264,16 @@ pub fn is_uds_fd(fd: i32) -> bool {
 mod tests {
     use super::*;
 
+    /// 模块内用例的互斥锁.
+    ///
+    /// 所有用例共享全局 `UDS_STATE` 与 UDS FD 位图, 且均以 `uds_reset_for_test()`
+    /// 开场; 并行 test runner 下重置会破坏其他用例正在使用的 socket, 故必须互斥
+    /// (2026-09-24 UT-06, 口径同 framework/timer/tick.rs 的 FREQ_TEST_LOCK).
+    static UDS_TEST_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
+
     #[test]
     fn stream_bind_listen_connect_accept_echo() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let srv = uds_create(UnixSockType::Stream).expect("srv create");
         let cli = uds_create(UnixSockType::Stream).expect("cli create");
@@ -1279,6 +1301,7 @@ mod tests {
 
     #[test]
     fn dgram_bind_connect_echo() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let rx = uds_create(UnixSockType::Dgram).expect("rx create");
         let tx = uds_create(UnixSockType::Dgram).expect("tx create");
@@ -1296,6 +1319,7 @@ mod tests {
 
     #[test]
     fn eaddrinuse_on_duplicate_bind() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let a = uds_create(UnixSockType::Stream).expect("a");
         let b = uds_create(UnixSockType::Stream).expect("b");
@@ -1308,6 +1332,7 @@ mod tests {
 
     #[test]
     fn eagain_on_empty_accept() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let s = uds_create(UnixSockType::Stream).expect("s");
         uds_bind(s, b"/tmp/empty.sock").expect("bind");
@@ -1319,6 +1344,7 @@ mod tests {
 
     #[test]
     fn close_listener_cancels_pending_clients() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let srv = uds_create(UnixSockType::Stream).expect("srv");
         let cli1 = uds_create(UnixSockType::Stream).expect("c1");
@@ -1336,6 +1362,7 @@ mod tests {
 
     #[test]
     fn socketpair_stream_bidirectional() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let (a, b) = uds_socketpair(UnixSockType::Stream).expect("socketpair");
         assert_ne!(a, b);
@@ -1357,6 +1384,7 @@ mod tests {
 
     #[test]
     fn socketpair_dgram_connected_send() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         let (a, b) = uds_socketpair(UnixSockType::Dgram).expect("socketpair");
         // 已连接 Dgram 无路径发送走 uds_send_connected, 接收走 uds_recvfrom
@@ -1376,6 +1404,7 @@ mod tests {
 
     #[test]
     fn socketpair_rollback_on_second_create_failure() {
+        let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         // 占满 MAX_UDS_FD - 1 个槽位, socketpair 需连续 2 个空槽 → 第二端 NoMem
         let mut filled = 0usize;

@@ -40,17 +40,10 @@ impl SwapPolicy for DefaultSwapPolicy {
 
     /// 唤醒条件: 空闲页 < 10% 或 swap 使用率 > 80%
     fn should_wakeup_kswapd(&self, ctx: SwapPolicyContext) -> bool {
-        let free_ratio = if ctx.total_pages > 0 {
-            ctx.free_pages as f64 / ctx.total_pages as f64
-        } else {
-            1.0
-        };
-        let swap_usage = if ctx.total_slots > 0 {
-            ctx.used_slots as f64 / ctx.total_slots as f64
-        } else {
-            0.0
-        };
-        free_ratio < 0.1 || swap_usage > 0.8
+        // 整数比较 (无浮点): free/total < 1/10 或 used/total > 8/10
+        let free_low = ctx.total_pages > 0 && ctx.free_pages * 10 < ctx.total_pages;
+        let swap_high = ctx.total_slots > 0 && ctx.used_slots * 10 > ctx.total_slots * 8;
+        free_low || swap_high
     }
 
     /// active 链表满时降级最旧条目

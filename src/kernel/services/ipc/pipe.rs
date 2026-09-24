@@ -96,10 +96,6 @@ pub fn pipe_read_safe(
     buf: &mut [u8],
     count: u32,
 ) -> Result<u32, i32> {
-    if count == 0 {
-        return Ok(0);
-    }
-
     let _lock = PIPE_LOCK.lock();
 
     let idx = match pipe_find_by_fd_index(namespace, fd) {
@@ -111,6 +107,12 @@ pub fn pipe_read_safe(
 
     if fd != pipe.read_fd {
         return Err(-2);
+    }
+
+    // fd 校验先于 count==0 早退: POSIX 要求 write/read 先校验 fd (EBADF),
+    // 原实现 count==0 直接 Ok(0) 会掩盖无效 fd (2026-09-24 UT-06 修复).
+    if count == 0 {
+        return Ok(0);
     }
 
     let mut read_count: u32 = 0;
@@ -154,10 +156,6 @@ pub fn pipe_write_safe(
     buf: &[u8],
     count: u32,
 ) -> Result<u32, i32> {
-    if count == 0 {
-        return Ok(0);
-    }
-
     let _lock = PIPE_LOCK.lock();
 
     let idx = match pipe_find_by_fd_index(namespace, fd) {
@@ -169,6 +167,11 @@ pub fn pipe_write_safe(
 
     if fd != pipe.write_fd {
         return Err(-2);
+    }
+
+    // fd 校验先于 count==0 早退 (与 pipe_read_safe 同一处置; 2026-09-24 UT-06 修复).
+    if count == 0 {
+        return Ok(0);
     }
 
     if pipe.readers == 0 {

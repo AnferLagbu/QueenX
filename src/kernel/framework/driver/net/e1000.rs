@@ -511,7 +511,9 @@ impl Driver for E1000Device {
     }
 
     fn is_ready(&self) -> bool {
-        self.driver_ref().is_ready()
+        // driver 为 None (尚未 init) 是合法状态, 查询就绪应返回 false 而非 panic
+        // (原实现经 driver_ref() 的 expect 直接 panic; 2026-09-24 UT-06 实测修复).
+        self.driver.as_ref().is_some_and(E1000Driver::is_ready)
     }
 
     fn status(&self) -> &'static str {
@@ -1086,6 +1088,8 @@ mod tests {
     fn test_virt_to_phys_conversion() {
         let high_addr: u64 = KERNEL_BASE;
         assert_eq!(virt_to_phys(high_addr), 0);
-        assert_eq!(virt_to_phys(0x12345678), 0x12345678);
+        // virt_to_phys 仅对内核空间地址 (>= KERNEL_BASE) 成立;
+        // 原用例传低地址 0x12345678 导致下溢 panic (2026-09-24 UT-06 实测修正).
+        assert_eq!(virt_to_phys(KERNEL_BASE + 0x12345678), 0x12345678);
     }
 }

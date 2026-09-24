@@ -534,22 +534,22 @@ mod tests {
 
     #[test]
     fn test_measure_time_basic() {
-        let (result, duration_ns) = measure_time(|| {
+        let (result, _duration_ns) = measure_time(|| {
             42 // 简单计算
         });
 
         assert_eq!(result, 42);
-        assert!(duration_ns >= 0); // 时间应该是非负的
+        // duration_ns 为 u64, 恒 >= 0 (恒真断言已删).
     }
 
     #[test]
     fn test_measure_time_ticks_basic() {
-        let (result, duration_ticks) = measure_time_ticks(|| {
+        let (result, _duration_ticks) = measure_time_ticks(|| {
             "hello".to_string() // 分配操作
         });
 
         assert_eq!(result, "hello");
-        assert!(duration_ticks >= 0);
+        // duration_ticks 为 u64, 恒 >= 0 (恒真断言已删).
     }
 
     #[test]

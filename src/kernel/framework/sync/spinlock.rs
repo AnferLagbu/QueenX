@@ -387,7 +387,8 @@ mod tests {
 
     #[test]
     fn test_spinlock_basic() {
-        let lock = SpinLock::new();
+        // raw_lock/raw_unlock 取 &mut self (底层原语不提供共享访问).
+        let mut lock = SpinLock::new();
         assert!(!lock.is_locked());
 
         lock.raw_lock();
@@ -399,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_spinlock_trylock() {
-        let lock = SpinLock::new();
+        let mut lock = SpinLock::new();
 
         assert_eq!(lock.try_lock(), TryLockResult::Acquired);
         assert!(lock.is_locked());
@@ -412,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_spinlock_irqsave() {
-        let lock = SpinLock::new();
+        let mut lock = SpinLock::new();
 
         let flags = lock.lock_irqsave();
         assert!(lock.is_locked());

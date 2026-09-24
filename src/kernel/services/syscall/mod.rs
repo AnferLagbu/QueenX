@@ -276,7 +276,8 @@ mod tests {
         assert_eq!(a3.a2, 3);
         assert_eq!(a3.a3, 0);
 
-        let a4 = SyscallArgs::new(1, 2, 3, 4);
+        // 4 参构造走具名构造函数 four (new 需 6 参).
+        let a4 = SyscallArgs::four(1, 2, 3, 4);
         assert_eq!(a4.a3, 4);
     }
 
@@ -297,21 +298,32 @@ mod tests {
 
     #[test]
     fn user_ptr_check() {
-        // 零指针和超出范围的指针应无效
+        use crate::framework::constants::limits::USER_ADDR_MAX;
+
+        // 零指针应无效
         assert!(!check_user_ptr(0));
         // 合法用户地址应通过
         assert!(check_user_ptr(0x1000));
-        // 超过用户态地址上限应失败
-        assert!(!check_user_ptr(0x7FFFFFFFE000 + 1));
+        // 上界之下 1 字节仍合法 (validate_user_ptr 为 ptr < USER_ADDR_MAX)
+        assert!(check_user_ptr(USER_ADDR_MAX - 1));
+        // 达到/超过用户态地址上界应失败
+        // (原用例用 0x7FFFFFFFE000, 该值低于真实上界 0x7FFFFFFF_F000, 断言与实现不符;
+        //  2026-09-24 UT-06 修正为直接以 USER_ADDR_MAX 为判据)
+        assert!(!check_user_ptr(USER_ADDR_MAX));
     }
 
     #[test]
     fn user_buf_check() {
-        // 零长度合法
-        assert!(check_user_buf(0, 0));
+        use crate::framework::constants::limits::USER_ADDR_MAX;
+
+        // 零长度但 NULL 指针: validate_user_buf 要求 ptr 非 NULL, 故无效
+        // (原断言认为 (0, 0) 合法, 与 B03-21 后语义不符; 2026-09-24 UT-06 修正)
+        assert!(!check_user_buf(0, 0));
+        // 零长度但非 NULL: 合法 (与 validate_user_buf 语义一致)
+        assert!(check_user_buf(0x1000, 0));
         // 合法 buf
         assert!(check_user_buf(0x1000, 0x100));
-        // ptr + len 溢出
-        assert!(!check_user_buf(0x7FFFFFFFE000 - 1, 0x1000));
+        // ptr + len 越过用户态上界应失败
+        assert!(!check_user_buf(USER_ADDR_MAX - 1, 0x1000));
     }
 }

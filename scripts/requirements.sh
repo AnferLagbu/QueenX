@@ -9,6 +9,7 @@
 #   │  1. Rust 工具链     : rustc / cargo / rustup (核心)      │
 #   │  2. Rust 编译目标   : x86_64-unknown-none                │
 #   │                       aarch64-unknown-none               │
+#   │                       aarch64-unknown-none-softfloat     │
 #   │  3. Rust 组件       : rust-src, llvm-tools-preview       │
 #   │                       clippy, rustfmt (CI 推荐)          │
 #   │  4. Rust 测试工具   : lockbud / cargo-deny / cargo-audit │
@@ -601,8 +602,8 @@ install_rust_toolchain() {
                 fi
 
                 # 询问是否安装 targets
-                if ask_yes_no "是否安装裸机目标 (x86_64-unknown-none + aarch64-unknown-none)？" "y"; then
-                    rustup target add x86_64-unknown-none aarch64-unknown-none
+                if ask_yes_no "是否安装裸机目标 (x86_64-unknown-none + aarch64-unknown-none + aarch64-unknown-none-softfloat)？" "y"; then
+                    rustup target add x86_64-unknown-none aarch64-unknown-none aarch64-unknown-none-softfloat
                 fi
             else
                 print_warning "Rust Nightly 安装失败"
@@ -872,7 +873,7 @@ if [ "$SKIP_OPTIONAL" = false ]; then
 
     print_subsection "Rust 编译目标 (.cargo/config.toml 引用)"
     if has_cmd rustup; then
-        local_targets=("x86_64-unknown-none" "aarch64-unknown-none")
+        local_targets=("x86_64-unknown-none" "aarch64-unknown-none" "aarch64-unknown-none-softfloat")
         for tgt in "${local_targets[@]}"; do
             print_check "rustup target: $tgt"
             if check_rustup_target "$tgt"; then
@@ -886,7 +887,7 @@ if [ "$SKIP_OPTIONAL" = false ]; then
         done
     else
         print_warning "rustup 未安装, 跳过 target 检查"
-        RECOMMENDED_TOTAL=$((RECOMMENDED_TOTAL + 2))
+        RECOMMENDED_TOTAL=$((RECOMMENDED_TOTAL + 3))
     fi
 
     # miri 已于 2026-06-26 弃用, 跳过 miri 组件检查

@@ -132,6 +132,7 @@
     - **批次 5**：全量验证——双架构 0w0e + `make test-host` + QEMU + 断言审计（断言总数 ≥ 迁移前、逐载体 0 丢失）+ `grep '#[cfg(test)]'` 复核源码 0 残留
   - 验证：迁移后双架构 0w0e + `make test-host`（host_test_runner_main 全量注册无 Fail）+ QEMU（kernel_test 硬件路径）；断言审计——迁移后断言总数 ≥ 迁移前，逐载体比对 0 丢失。
   - 状态：[ ]（2026-09-11 **整体回退**：批次 1 + 波 1B 代码改动已全部还原至 HEAD `94ba4281`，工作区仅剩本规划文档改动。下文"批次 1 完成/波 1B 完成/漏删修复/验证补全"均为**历史验证记录**（代码已不生效），保留作为外部委托人交接依据——判据/批次计划/处置清单/盲区登记全部有效，**全部实施待委托人**）
+    - **方向变更（本轮，用户重新裁定）**：本条"源码零 `#[cfg(test)]`"的方向已变更为**方案 A 完整版** —— 保留内联 `cfg(test)` 作为纯逻辑断言的唯一归属（由新增的 AGENTS §2.3 第 6 条 host 侧门槛强制执行），硬件路径断言留在 `kernel_test` 载体。变更理由：本条立论前提「`cfg(test)` 不可用」（DECISION-021 / E0152 双 core lang item 冲突）经实测已消失。裁定与实施计划见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 DECISION-080；本文档保留为交接依据与方向变更的依据链，其**批次 2–5 的载体迁移计划不再执行**。
     - **批次 1（12 处，host 352 PASSED / kernel_test 0w0e / clippy 0 新增）**：
       - 删除残留副本 5：sync/mutex、sync/atomic、sync/seqlock、sync/rwlock、cpu/mod（源 effective_family 0x0F bug 随删消除，载体已修正 0x15）
       - 迁移 7：lib/string 载体补裸 memcmp 断言；lib/cstr 新增 lib::cstr 组（4 测试）；error 新增 error::kernel_error 组（源 cfg(test) 依赖不存在的 `From<KernelError> for i32`，证明从未编译，载体以 as_errno().as_i32() 覆盖）；sync/lockdep 新增 sync::lockdep 组（10 测试，LockDepMap 私有 API 以公共 API 等价改写，overflow/pop_not_present 断言弱化已注释）；sync/spinlock 补 debug_assert（`cfg(all(host-test, debug_assertions))` 双门控，no_std 裸机不可编译）；sync/rcu 在 test_new_features 补 read_lock_unlock/nested 断言；cpu/cpuid 实现 arch.rs register_cpuid_tests（x86_64 门控 + aarch64 空 stub）

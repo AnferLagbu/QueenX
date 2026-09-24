@@ -858,9 +858,22 @@ mod tests {
     use super::super::driver::DriverError;
     use super::*;
 
+    /// 注册表类用例的互斥锁.
+    ///
+    /// 用例共享全局 `CHITIN_DEVICES`, 且普遍以 `clear()` 开场并按返回的下标
+    /// (`idx`) 回查设备; 并行 test runner 下清表/注册会互相错位下标, 造成偶发
+    /// 失败 (2026-09-24 UT-06, 口径同 framework/timer/tick.rs 的 FREQ_TEST_LOCK).
+    static CHITIN_TEST_LOCK: crate::framework::sync::IrqSpinLock<()> =
+        crate::framework::sync::IrqSpinLock::new(());
+
     struct TestDriver {
         name: &'static str,
-        init_called: bool,
+        /// init() 被调用的观测标志.
+        ///
+        /// 不能再用 `driver_as_ref::<TestDriver>()` 读自身字段: `driver_data`
+        /// 现存的是一次 `Box<DriverObject>` 包装 (见 `chitin_register_driver`),
+        /// 按具体驱动类型解引用是类型混淆 (2026-09-24 UT-06 实测修正).
+        init_called: &'static core::sync::atomic::AtomicBool,
     }
 
     impl Driver for TestDriver {
@@ -872,7 +885,8 @@ mod tests {
         }
 
         fn init(&mut self) -> core::result::Result<(), DriverError> {
-            self.init_called = true;
+            self.init_called
+                .store(true, core::sync::atomic::Ordering::Relaxed);
             Ok(())
         }
 
@@ -895,6 +909,7 @@ mod tests {
 
     #[test]
     fn test_register_and_find() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         let dummy: Box<u32> = Box::new(42u32);
         let raw = box_to_raw(dummy);
 
@@ -913,24 +928,28 @@ mod tests {
 
     #[test]
     fn test_register_driver_auto_init() {
+        let _lock = CHITIN_TEST_LOCK.lock();
+        static AUTO_INIT_CALLED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
+
         let driver = Box::new(TestDriver {
             name: "test",
-            init_called: false,
+            init_called: &AUTO_INIT_CALLED,
         });
         let id = chitin_register_driver("test_drv", ChitinProto::Other, None, None, driver);
         assert!(id > 0);
 
         chitin_with_device(id, |dev| {
             assert_eq!(dev.state, DeviceState::Ready);
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            let drv = unsafe { dev.driver_as_ref::<TestDriver>() };
-            assert!(drv.init_called);
         });
+        // 注册即自动 init (见 chitin_register_driver 内的 driver.init() 调用)
+        assert!(AUTO_INIT_CALLED.load(core::sync::atomic::Ordering::Relaxed));
 
         let ptr = chitin_unregister(id).unwrap();
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `chitin_register_driver` 存入的是 Box<DriverObject> 包装,
+        // 其 Drop 负责释放内部 Box<dyn Driver> (详见实现).
         unsafe {
-            drop(Box::from_raw(ptr as *mut TestDriver));
+            drop(Box::from_raw(ptr as *mut DriverObject));
         }
     }
 
@@ -943,11 +962,24 @@ mod tests {
     #[test]
     fn test_blk_read_invalid_drive() {
         let mut buf = [0u8; 512];
-        assert_eq!(chitin_blk_read(255, 0, &mut buf), -1);
+        // 越界 drive 返回 -EIO (KernelError::Io), 非裸 -1;
+        // 与 test_t4_1_drive_oob_via_trait 的既有断言口径一致 (UT-06 实测修正).
+        assert_eq!(chitin_blk_read(255, 0, &mut buf), -5);
     }
+
+    // NetOps 字段类型是 `extern "C" fn` 指针, 闭包不能强转为 C fn, 故用具名函数.
+    extern "C" fn mock_net_send(_: *mut u8, _: *const u8, _: u32) -> i32 {
+        0
+    }
+    extern "C" fn mock_net_try_receive(_: *mut u8, _: *mut u8, _: u32) -> i32 {
+        0
+    }
+    extern "C" fn mock_net_get_mac(_: *mut u8, _: *mut [u8; 6]) {}
+    extern "C" fn mock_net_handle_irq(_: *mut u8) {}
 
     #[test]
     fn test_register_with_ops() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         let dummy: Box<u8> = Box::new(0u8);
         let raw = box_to_raw(dummy);
         let id = chitin_register_with_ops(
@@ -958,16 +990,18 @@ mod tests {
             raw,
             // 使用 Net 变体替代已移除的 Block 变体
             ChitinOps::Net(&crate::framework::chitin::proto_net::NetOps {
-                send: |_, _, _| 0,
-                recv: |_, _| 0,
-                get_mac: |_, _| {},
-                irq_ack: |_| false,
+                send: mock_net_send,
+                try_receive: mock_net_try_receive,
+                get_mac: mock_net_get_mac,
+                handle_irq: Some(mock_net_handle_irq),
             }),
         );
         assert!(id > 0);
-        let devices = CHITIN_DEVICES.lock();
+        let mut devices = CHITIN_DEVICES.lock();
         assert!(devices.iter().any(|d| d.id == id && d.ops.is_some()));
-        CHITIN_DEVICES.lock().clear();
+        // 复用同一 guard 内 clear: CHITIN_DEVICES 为非重入 Mutex,
+        // 原写法「guard 存活期间再次 lock()」为自死锁 (guard 的 drop 作用域至函数末尾).
+        devices.clear();
         // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
         unsafe {
             drop(Box::from_raw(raw as *mut u8));
@@ -1031,31 +1065,42 @@ mod tests {
     /// 1. 注册路径: register_block_device + chitin_register_block_dev
     #[test]
     fn test_t4_1_register_via_trait() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
         let mock: &'static mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
         let idx = chitin_register_block_dev("trait_blk", None, None, mock);
         assert_eq!(chitin_count_by_proto(ChitinProto::Block), 1);
-        let devices = CHITIN_DEVICES.lock();
-        let dev = &devices[idx as usize];
-        assert!(dev.block_dev.is_some(), "block_dev 字段应被设置");
-        assert!(dev.ops.is_none(), "Block 字段应为空 (block_dev 已替代)");
-        CHITIN_DEVICES.lock().clear();
+        let mut devices = CHITIN_DEVICES.lock();
+        {
+            let dev = &devices[idx as usize];
+            assert!(dev.block_dev.is_some(), "block_dev 字段应被设置");
+            assert!(dev.ops.is_none(), "Block 字段应为空 (block_dev 已替代)");
+        }
+        // 复用同一 guard 内 clear: CHITIN_DEVICES 为非重入 Mutex,
+        // 原写法「guard 存活期间再次 lock()」为自死锁.
+        devices.clear();
     }
 
     /// trait dispatch: chitin_blk_read 调 MockBlockDevice.blk_read
     #[test]
     fn test_t4_1_chitin_blk_read_via_trait() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
-        let mock: &'static mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
-        let idx = chitin_register_block_dev("trait_blk_read", None, None, mock);
+        // 以裸指针持有泄漏对象: 注册表取走 `&'static mut` 后仍需读回 mock 的观测字段.
+        let mock_ptr: *mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
+        // SAFETY: mock_ptr 由 Box::leak 产生, 在测试进程生命周期内始终有效且独占.
+        let idx =
+            chitin_register_block_dev("trait_blk_read", None, None, unsafe { &mut *mock_ptr });
 
         let mut buf = [0u8; 512];
         let r = chitin_blk_read(idx as u8, 7, &mut buf);
         assert_eq!(r, 0, "chitin_blk_read 应成功");
         assert_eq!(buf[0], b'T', "数据应来自 MockBlockDevice (trait)");
         assert_eq!(buf[16], 7, "sector 7 应被传到 trait");
-        assert_eq!(mock.counter, 1, "MockBlockDevice.blk_read 应被调用 1 次");
-        assert_eq!(mock.last_sector, 7);
+        // SAFETY: 同上述; 注册表只持有该对象的可变引用, 此处无并发访问.
+        let (counter, last_sector) = unsafe { ((*mock_ptr).counter, (*mock_ptr).last_sector) };
+        assert_eq!(counter, 1, "MockBlockDevice.blk_read 应被调用 1 次");
+        assert_eq!(last_sector, 7);
 
         CHITIN_DEVICES.lock().clear();
     }
@@ -1063,15 +1108,22 @@ mod tests {
     /// 3. trait dispatch: chitin_blk_write 调 MockBlockDevice.blk_write
     #[test]
     fn test_t4_1_chitin_blk_write_via_trait() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
-        let mock: &'static mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
-        let idx = chitin_register_block_dev("trait_blk_write", None, None, mock);
+        // 理由同 test_t4_1_chitin_blk_read_via_trait.
+        let mock_ptr: *mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
+        // SAFETY: mock_ptr 由 Box::leak 产生, 在测试进程生命周期内始终有效且独占.
+        let idx =
+            chitin_register_block_dev("trait_blk_write", None, None, unsafe { &mut *mock_ptr });
 
         let buf = [b'X'; 512];
         let r = chitin_blk_write(idx as u8, 99, &buf);
         assert_eq!(r, 0, "chitin_blk_write 应成功");
-        assert_eq!(mock.last_sector, 99);
-        assert_eq!(mock.last_written[0], b'X', "数据应传到 MockBlockDevice");
+        // SAFETY: 同上述; 注册表只持有该对象的可变引用, 此处无并发访问.
+        let (last_sector, first_written) =
+            unsafe { ((*mock_ptr).last_sector, (*mock_ptr).last_written[0]) };
+        assert_eq!(last_sector, 99);
+        assert_eq!(first_written, b'X', "数据应传到 MockBlockDevice");
 
         CHITIN_DEVICES.lock().clear();
     }
@@ -1079,6 +1131,7 @@ mod tests {
     /// 4. trait 分发: chitin_blk_is_present / total_sectors
     #[test]
     fn test_t4_1_chitin_blk_metadata_via_trait() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
         let mock: &'static mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
         let idx = chitin_register_block_dev("trait_blk_meta", None, None, mock);
@@ -1092,6 +1145,7 @@ mod tests {
     /// 优先级: block_dev 路径
     #[test]
     fn test_t4_1_block_dev_takes_priority() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
         let mock: &'static mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
         let idx = chitin_register_block_dev("priority_blk", None, None, mock);
@@ -1105,14 +1159,20 @@ mod tests {
     /// 7. 边界: buf.len() < 512 应返回 -EINVAL (无论 block_dev 路径)
     #[test]
     fn test_t4_1_buf_too_small_via_trait() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
-        let mock: &'static mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
-        let idx = chitin_register_block_dev("small_buf_blk", None, None, mock);
+        // 理由同 test_t4_1_chitin_blk_read_via_trait.
+        let mock_ptr: *mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
+        // SAFETY: mock_ptr 由 Box::leak 产生, 在测试进程生命周期内始终有效且独占.
+        let idx =
+            chitin_register_block_dev("small_buf_blk", None, None, unsafe { &mut *mock_ptr });
 
         let mut small = [0u8; 256];
         let r = chitin_blk_read(idx as u8, 0, &mut small);
         assert_eq!(r, -22); // -EINVAL
-        assert_eq!(mock.counter, 0, "Mock 不应被调用 (校验前置)");
+        // SAFETY: 同上述; 注册表只持有该对象的可变引用, 此处无并发访问.
+        let counter = unsafe { (*mock_ptr).counter };
+        assert_eq!(counter, 0, "Mock 不应被调用 (校验前置)");
 
         CHITIN_DEVICES.lock().clear();
     }
@@ -1120,6 +1180,7 @@ mod tests {
     /// 8. 边界: drive OOB 应返回 -EIO (无 panic)
     #[test]
     fn test_t4_1_drive_oob_via_trait() {
+        let _lock = CHITIN_TEST_LOCK.lock();
         CHITIN_DEVICES.lock().clear();
         let mut buf = [0u8; 512];
         assert_eq!(chitin_blk_read(255, 0, &mut buf), -5); // -EIO

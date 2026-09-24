@@ -232,9 +232,10 @@ impl VirtioBlkDriver {
 
         slog_info!(
             Driver,
-            "virtio-blk: 容量={} 扇区 ({:.1} MB)",
+            "virtio-blk: 容量={} 扇区 ({} MB)",
             capacity,
-            (capacity * 512) as f64 / (1024.0 * 1024.0)
+            // 整数除法 (消除内核侧浮点, 见 docs/plan/aarch64-kernel-fp-free.md)
+            capacity * 512 / (1024 * 1024)
         );
 
         Some(Self {

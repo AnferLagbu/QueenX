@@ -925,18 +925,9 @@ mod tests {
         assert_eq!(buf.pop(), None);
     }
 
-    #[test]
-    fn test_driver_trait_impl() {
-        let mut driver = KeyboardDriver::new();
-
-        assert_eq!(driver.name(), "PS/2 Keyboard");
-        assert_eq!(driver.device_type(), DeviceType::Input);
-        assert!(!driver.is_ready());
-
-        let result = driver.init();
-        let _ = result;
-        assert!(driver.status().len() > 0);
-    }
+    // UT-06 (2026-09-24): test_driver_trait_impl 已删除 — driver.init() 走端口 I/O,
+    // host 下 SIGSEGV; 断言已由 framework/tests/driver.rs::keyboard_driver_trait
+    // (register_keyboard_serial_tests 注册) 在 kernel_test (QEMU 裸机) 等价覆盖.
 
     #[test]
     fn test_error_codes() {

@@ -366,7 +366,7 @@ mod tests {
     fn test_dyn_msgq_growth() {
         let ns = DynIpcNamespace::new();
 
-        for i in 0..100 {
+        for _ in 0..100 {
             let id = ns.msgq_create(1000, 64, 4096).unwrap();
             assert!(ns.msgq_exists(id));
             assert_eq!(ns.msgq_count(), 1);
@@ -375,15 +375,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_dyn_shm_alloc_and_free() {
-        let ns = DynIpcNamespace::new();
-
-        let id = ns.shm_create(2000, 8192).unwrap();
-        assert_ne!(id, 0);
-        assert_eq!(ns.shm_count(), 1);
-
-        ns.shm_destroy(id).unwrap();
-        assert_eq!(ns.shm_count(), 0);
-    }
+    // UT-06 (2026-09-24): test_dyn_shm_alloc_and_free 已迁出 — shm_create 依赖
+    // 裸机 PMM (host 下 panic); 等价断言迁至 framework/tests/test_ipc.rs
+    // (register_ipc_tests 注册), 在 kernel_test (QEMU 裸机) 执行.
 }

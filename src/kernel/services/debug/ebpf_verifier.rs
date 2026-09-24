@@ -348,12 +348,16 @@ impl BpfVerifier for StandardBpfVerifier {
 
             // ALU 操作
             if class == opcode::ALU || class == opcode::ALU64 {
-                if regs[dst].r#type == RegType::NotInit {
+                let op_low = insn.op & 0xf0;
+                // MOV 是写 dst 而非读 dst (MOV imm 即为寄存器初始化), 故不要求 dst 已初始化;
+                // 其余 ALU 运算读 dst, 要求已初始化.
+                // (原实现先判 dst NotInit 再判 MOV, 使 `MOV R0, 1` 等全部被误拒;
+                //  2026-09-24 UT-06 修复)
+                if op_low != opcode::MOV && regs[dst].r#type == RegType::NotInit {
                     return VerifyResult::Err(
                         alloc::format!("use of uninitialized R{dst} at pc={pc}").into_bytes(),
                     );
                 }
-                let op_low = insn.op & 0xf0;
                 if op_low == opcode::MOV {
                     if (insn.op & opcode::X) != 0 {
                         // MOV reg: 复制源类型
@@ -514,13 +518,8 @@ mod tests {
     use alloc::vec::Vec;
 
     fn make_insn(op: u8, dst: u8, src: u8, off: i16, imm: i32) -> BpfInsn {
-        BpfInsn {
-            op,
-            dst,
-            src,
-            off,
-            imm,
-        }
+        // BpfInsn 已将 dst/src 打包进 dst_reg 字段, 构造统一走 BpfInsn::new.
+        BpfInsn::new(op, dst, src, off, imm)
     }
 
     fn make_prog(insns: Vec<BpfInsn>) -> BpfProg {

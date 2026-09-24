@@ -662,8 +662,9 @@ mod tests {
         assert!(!is_user_ptr(USER_ADDR_MAX));
         assert!(!is_user_ptr(USER_ADDR_MAX + 1));
 
+        // USER_ADDR_MAX 为 u64 地址, 与 usize 型常量同转 u64 后相减.
         assert!(is_user_buf(
-            USER_ADDR_MAX - PAGE_SIZE as usize,
+            USER_ADDR_MAX - PAGE_SIZE as u64,
             PAGE_SIZE as usize
         ));
         assert!(!is_user_buf(USER_ADDR_MAX - 100, 200));

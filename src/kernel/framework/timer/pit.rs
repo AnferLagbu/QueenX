@@ -314,7 +314,8 @@ mod tests {
     fn test_frequency_bounds() {
         // 测试边界条件
         assert!(PIT_MIN_COUNT >= 1);
-        assert!(PIT_MAX_COUNT <= 65535);
+        // 恒真断言删除 (u16 max 恒 <= 65535); 与 J-01 对 registry 轨
+        // frequency_bounds 的既有处置同型 (见本文件下方注释).
 
         // 最大频率 (最小分频)
         let max_freq = PIT_BASE_FREQUENCY / PIT_MIN_COUNT as u64;

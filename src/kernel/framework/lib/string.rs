@@ -892,7 +892,7 @@ mod tests {
         unsafe {
             assert_eq!(strlen(c"Hello".as_ptr()), 5);
             assert_eq!(strlen(c"".as_ptr()), 0);
-            assert_eq!(strlen(c"A longer test string".as_ptr()), 19);
+            assert_eq!(strlen(c"A longer test string".as_ptr()), 20);
         }
     }
 
@@ -963,12 +963,12 @@ mod tests {
             let s = b"Hello World\0";
 
             // strchr - 查找 'o' 的第一次出现
-            let result = strchr(s.as_ptr() as *const u8, 'o' as i32);
+            let result = strchr(s.as_ptr() as *const i8, 'o' as i32);
             assert!(!result.is_null());
             assert_eq!(*result, 'o' as i8);
 
             // strrchr - 查找 'o' 的最后一次出现
-            let result = strrchr(s.as_ptr() as *const u8, 'o' as i32);
+            let result = strrchr(s.as_ptr() as *const i8, 'o' as i32);
             assert!(!result.is_null());
             // 应该指向 "World" 中的 'o'
         }
@@ -981,15 +981,15 @@ mod tests {
             let haystack = b"The quick brown fox jumps over the lazy dog\0";
 
             // 找到子串
-            let result = strstr(haystack.as_ptr() as *const u8, c"brown fox".as_ptr());
+            let result = strstr(haystack.as_ptr() as *const i8, c"brown fox".as_ptr());
             assert!(!result.is_null());
 
             // 未找到子串
-            let result = strstr(haystack.as_ptr() as *const u8, c"cat".as_ptr());
+            let result = strstr(haystack.as_ptr() as *const i8, c"cat".as_ptr());
             assert!(result.is_null());
 
             // 空子串
-            let result = strstr(haystack.as_ptr() as *const u8, c"".as_ptr());
+            let result = strstr(haystack.as_ptr() as *const i8, c"".as_ptr());
             assert!(!result.is_null()); // 应该返回原字符串
         }
     }
@@ -1006,7 +1006,9 @@ mod tests {
             assert_eq!(dest, src);
 
             // 测试 memmove（重叠区域）
-            let mut overlap = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+            // 元素类型必须显式为 u8: memmove 按字节搬运, 若推断为 [i32; 10]
+            // 则 n=8 只覆盖 2 个元素 (2026-09-24 UT-06 实测).
+            let mut overlap = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
             // 将 overlap[2..] 移动到 overlap[0..]
             memmove(
                 overlap.as_mut_ptr() as *mut u8,
@@ -1042,9 +1044,11 @@ mod tests {
     fn test_memcmp() {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            let a = [1, 2, 3, 4, 5];
-            let b = [1, 2, 3, 4, 5];
-            let c = [1, 2, 3, 4, 6];
+            // 元素类型必须显式为 u8: memcmp 按字节比较, 若推断为 [i32; 5]
+            // 则 a/c 的前 5 字节相同 (小端) 而失去区分度 (2026-09-24 UT-06 实测).
+            let a = [1u8, 2, 3, 4, 5];
+            let b = [1u8, 2, 3, 4, 5];
+            let c = [1u8, 2, 3, 4, 6];
 
             // 相等
             assert_eq!(
@@ -1079,7 +1083,8 @@ mod tests {
     fn test_secure_zero() {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            let mut secret = [0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE];
+            // 元素类型必须显式为 u8: secure_zero 按字节清零 (2026-09-24 UT-06 实测).
+            let mut secret = [0xDEu8, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE];
             secure_zero(secret.as_mut_ptr() as *mut u8, 6);
 
             for byte in secret.iter() {

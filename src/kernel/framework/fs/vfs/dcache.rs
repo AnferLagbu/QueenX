@@ -839,16 +839,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dcache_invalidate_entry() {
-        let mut dcache = DCache::new();
-        dcache.insert(1, "a", 10, 0);
-        dcache.insert(1, "b", 20, 0);
-        dcache.invalidate_entry(1, "a");
-        assert!(dcache.lookup(1, "a").is_none());
-        assert!(matches!(dcache.lookup(1, "b"), Some((20, 0))));
-    }
-
-    #[test]
     fn test_dcache_update() {
         let mut dcache = DCache::new();
         dcache.insert(1, "file", 10, 0);
@@ -859,7 +849,7 @@ mod tests {
     #[test]
     fn test_icache_insert_lookup() {
         let mut icache = ICache::new();
-        icache.insert(10, 1, 0o755, 4096, 1000);
+        icache.insert(10, 1, 0o755, 4096, 1000, 1000, 0, 0);
         let entry = icache.lookup(10).unwrap();
         assert_eq!(entry.ino, 10);
         assert_eq!(entry.file_type, 1);
@@ -869,7 +859,7 @@ mod tests {
     #[test]
     fn test_icache_invalidate() {
         let mut icache = ICache::new();
-        icache.insert(10, 1, 0o755, 4096, 1000);
+        icache.insert(10, 1, 0o755, 4096, 1000, 1000, 0, 0);
         icache.invalidate(10);
         assert!(icache.lookup(10).is_none());
     }

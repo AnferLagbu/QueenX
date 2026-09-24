@@ -281,17 +281,18 @@ mod tests {
     #[test]
     fn test_nvme_command_read() {
         let cmd = NvmeCommand::read(1, 0, 1, 0x1000);
-        assert_eq!(cmd.opcode, NvmeNvmOpcode::Read as u8);
-        assert_eq!(cmd.nsid, 1);
-        assert_eq!(cmd.cdw12, 0); // NLB-1 = 0
+        // NvmeCommand 是 packed 结构: 多字节字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ cmd.opcode }, NvmeNvmOpcode::Read as u8);
+        assert_eq!({ cmd.nsid }, 1);
+        assert_eq!({ cmd.cdw12 }, 0); // NLB-1 = 0
     }
 
     #[test]
     fn test_nvme_command_write() {
         let cmd = NvmeCommand::write(1, 100, 8, 0x2000);
-        assert_eq!(cmd.opcode, NvmeNvmOpcode::Write as u8);
-        assert_eq!(cmd.cdw10, 100);
-        assert_eq!(cmd.cdw12, 7); // 8 NLB -> 7
+        assert_eq!({ cmd.opcode }, NvmeNvmOpcode::Write as u8);
+        assert_eq!({ cmd.cdw10 }, 100);
+        assert_eq!({ cmd.cdw12 }, 7); // 8 NLB -> 7
     }
 
     #[test]

@@ -635,10 +635,11 @@ mod tests {
         timer.interval_ns.store(1_000_000, Ordering::Release); // 1ms
         timer.expiry_ns.store(5_000_000, Ordering::Release); // 5ms
 
-        // 当前时间 8ms, 应跳过 3 个周期到 8ms
+        // 当前时间 8ms: 自 5ms 起按 1ms 推进, 到期时间须 > 当前时间,
+        // 故 5→6→7→8→9 共跳过 4 个周期 (2026-09-24 UT-06 实测修正原断言 3/8ms).
         let skipped = timer.forward(8_000_000);
-        assert_eq!(skipped, 3);
-        assert_eq!(timer.expiry_ns(), 8_000_000);
+        assert_eq!(skipped, 4);
+        assert_eq!(timer.expiry_ns(), 9_000_000);
 
         // 当前时间 7ms, 未超过到期时间, 不跳过
         let skipped = timer.forward(7_000_000);
@@ -676,12 +677,17 @@ mod tests {
 
     #[test]
     fn test_next_expiry_empty() {
-        // 未初始化时返回 None
+        // UT-06 (2026-09-24): 先 hrtimer_init() 清空队列使断言与环境无关.
+        // 原断言依赖 "框架未初始化", 但同文件 test_hrtimer_sleep_init 会入队一个
+        // 栈上定时器, host 侧无 tick 消费, 队列残留导致顺序耦合失败.
+        hrtimer_init();
         assert!(hrtimer_next_expiry().is_none());
     }
 
     #[test]
-    fn test_pending_count_uninit() {
+    fn test_pending_count_empty() {
+        // UT-06 (2026-09-24): 同上, 清空队列后待触发数必为 0.
+        hrtimer_init();
         assert_eq!(hrtimer_pending_count(), 0);
     }
 

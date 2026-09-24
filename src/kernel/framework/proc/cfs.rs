@@ -138,6 +138,11 @@ impl CfsRunQueue {
         self.tree.insert((start_vr, pid), ());
         self.total_weight.fetch_add(weight, Ordering::Release);
         self.nr_running += 1;
+        // 维持不变式 min_vruntime == 队列最小 vruntime:
+        // 旧实现只在移除路径 (dequeue/pick_next) 推进 min_vruntime, 入队侧不推进
+        // 会使 min_vruntime 长期停在初值 0, 后续入队者的"提升到 min_vruntime"
+        // 形同虚设 (新线程可越过已在队的低 vruntime 线程) — 2026-09-24 UT-06 实测修复.
+        self.sync_min_vruntime();
     }
 
     pub fn dequeue(&mut self, pid: Pid, vruntime: u64, weight: u64) -> bool {
@@ -386,12 +391,14 @@ pub fn register_default_policy() -> Result<(), ()> {
 // - mlfq_level_to_nice: 层级 → nice
 // - DeadlineParams 校验: is_valid + utilization_pct
 // - CfsRunQueue: enqueue/dequeue/pick_next + 时间片计算
-// - DefaultPolicy 调度: time_slice + should_reschedule
+// - DefaultPolicy 调度: time_slice_for + should_reschedule
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::config::{
+    // DECISION-J 归属反转: SCHED_LEVEL_* 权威定义已迁回 framework::config,
+    // services::config 仅 re-export 兼容层; framework 侧测试不得反向引用 services.
+    use crate::framework::config::{
         SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM, SCHED_LEVEL_3_QUANTUM,
     };
 
@@ -440,8 +447,10 @@ mod tests {
         // 默认: 全 0 → invalid
         assert!(!DeadlineParams::new().is_valid());
         // runtime < MIN → invalid
+        // DL_MIN_RUNTIME_TICKS == 1, 故"小于 MIN"的样本取 0 (原用例取 1 即等于
+        // MIN, 断言必然不成立; 2026-09-24 UT-06 实测修正).
         let mut p = DeadlineParams {
-            runtime: 1,
+            runtime: 0,
             deadline: 100,
             period: 100,
         };
@@ -481,20 +490,22 @@ mod tests {
     fn test_sched_cfs_basic_ops() {
         let mut q = CfsRunQueue::new();
         assert!(q.is_empty());
-        // enqueue 3 个进程
+        // enqueue 3 个进程 (入队侧的 vruntime 提升见 enqueue 内 min_vruntime 同步)
         q.enqueue(1, 100, 1024);
-        q.enqueue(2, 50, 1024);
+        q.enqueue(2, 150, 1024);
         q.enqueue(3, 200, 1024);
         assert_eq!(q.nr_running, 3);
-        // pick_next: 最小 vruntime 是 50 (PID 2)
-        let (pid, vr) = q.pick_next().unwrap();
-        assert_eq!(pid, 2);
-        assert_eq!(vr, 50);
-        assert_eq!(q.nr_running, 2);
-        // pick_next: 下一个是 100 (PID 1)
+        // pick_next: 最小 vruntime 是 100 (PID 1)
         let (pid, vr) = q.pick_next().unwrap();
         assert_eq!(pid, 1);
         assert_eq!(vr, 100);
+        // pick_next 只从红黑树取出, 不递减 nr_running (与 update_curr 对称,
+        // 配额账由调用方负责; 2026-09-24 UT-06 实测修正原断言).
+        assert_eq!(q.nr_running, 3);
+        // pick_next: 下一个是 150 (PID 2)
+        let (pid, vr) = q.pick_next().unwrap();
+        assert_eq!(pid, 2);
+        assert_eq!(vr, 150);
         // pick_next: 最后一个是 200 (PID 3)
         let (pid, vr) = q.pick_next().unwrap();
         assert_eq!(pid, 3);
@@ -545,18 +556,21 @@ mod tests {
         assert_eq!(vr, 100);
     }
 
-    /// 9. DefaultPolicy: time_slice (4 级优先级)
+    /// 9. DefaultPolicy: `time_slice_for` (4 级优先级)
     #[test]
     fn test_sched_default_time_slice() {
         let p = DefaultPolicy;
         assert_eq!(
-            p.time_slice(ThreadPriority::Realtime),
+            p.time_slice_for(ThreadPriority::Realtime),
             SCHED_LEVEL_0_QUANTUM
         );
-        assert_eq!(p.time_slice(ThreadPriority::High), SCHED_LEVEL_1_QUANTUM);
-        assert_eq!(p.time_slice(ThreadPriority::Normal), SCHED_LEVEL_2_QUANTUM);
-        assert_eq!(p.time_slice(ThreadPriority::Low), SCHED_LEVEL_3_QUANTUM);
-        assert_eq!(p.time_slice(ThreadPriority::Idle), u32::MAX);
+        assert_eq!(p.time_slice_for(ThreadPriority::High), SCHED_LEVEL_1_QUANTUM);
+        assert_eq!(
+            p.time_slice_for(ThreadPriority::Normal),
+            SCHED_LEVEL_2_QUANTUM
+        );
+        assert_eq!(p.time_slice_for(ThreadPriority::Low), SCHED_LEVEL_3_QUANTUM);
+        assert_eq!(p.time_slice_for(ThreadPriority::Idle), u32::MAX);
     }
 
     /// 10. DefaultPolicy: 是否需要重新调度
@@ -575,20 +589,23 @@ mod tests {
     #[test]
     fn test_sched_cfs_full_cycle() {
         let mut q = CfsRunQueue::new();
-        // 加入 4 个进程, 不同 vruntime + weight
+        // 加入 4 个进程, 不同 vruntime + weight (均不低于当前 min_vruntime,
+        // 不发生入队侧提升, 以便校验按 vruntime 排序; 2026-09-24 UT-06 实测修正).
         q.enqueue(10, 100, 1024);
-        q.enqueue(20, 50, 2048); // 更高权重
-        q.enqueue(30, 150, 1024);
-        q.enqueue(40, 80, 1024);
+        q.enqueue(20, 150, 2048); // 更高权重
+        q.enqueue(30, 250, 1024);
+        q.enqueue(40, 200, 1024);
         // 按 vruntime 顺序调度
-        let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 20); // vruntime=50
-        let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 40); // vruntime=80
         let (pid, _) = q.pick_next().unwrap();
         assert_eq!(pid, 10); // vruntime=100
         let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 30); // vruntime=150
-        assert!(q.is_empty());
+        assert_eq!(pid, 20); // vruntime=150
+        let (pid, _) = q.pick_next().unwrap();
+        assert_eq!(pid, 40); // vruntime=200
+        let (pid, _) = q.pick_next().unwrap();
+        assert_eq!(pid, 30); // vruntime=250
+        // 队列空以红黑树为准 (is_empty 基于 nr_running, pick_next 不递减该计数)
+        assert!(q.pick_next().is_none());
+        assert_eq!(q.nr_running, 4);
     }
 }

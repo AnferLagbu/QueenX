@@ -366,12 +366,13 @@ mod tests {
             1,
         ];
         let desc = parse_device_descriptor(&data).unwrap();
-        assert_eq!(desc.length, 18);
-        assert_eq!(desc.descriptor_type, 1);
-        assert_eq!(desc.usb_version, 0x0110);
-        assert_eq!(desc.vendor_id, 0x12AB);
-        assert_eq!(desc.product_id, 0x34CD);
-        assert_eq!(desc.num_configurations, 1);
+        // 描述符结构为 packed: u16 字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ desc.length }, 18);
+        assert_eq!({ desc.descriptor_type }, 1);
+        assert_eq!({ desc.usb_version }, 0x0110);
+        assert_eq!({ desc.vendor_id }, 0x12AB);
+        assert_eq!({ desc.product_id }, 0x34CD);
+        assert_eq!({ desc.num_configurations }, 1);
     }
 
     #[test]
@@ -406,17 +407,18 @@ mod tests {
         data[4] = 1; // num_interfaces
         data[5] = 1; // configuration_value
         data[8] = 50; // max_power
-        // Interface
+        // Interface (标准 USB 接口描述符字段偏移: bNumEndpoints 在 +4, bInterfaceClass 在 +5)
+        // (原 fixture 把二者写在 +5/+6, 与 parse_configuration_descriptor 的解析偏移差 1; 2026-09-24 UT-06 修正)
         data[9] = 9;
         data[10] = 4;
         data[11] = 0; // interface_number
-        data[14] = 1; // num_endpoints
-        data[15] = 0x03; // HID class
+        data[13] = 1; // num_endpoints
+        data[14] = 0x03; // HID class
         // Endpoint
         data[18] = 7;
         data[19] = 5;
         data[20] = 0x81; // IN EP1
-        data[23] = 8; // max_packet_size
+        data[22] = 8; // max_packet_size (u16 LE 低字节)
 
         let (config, ifaces, eps) = parse_configuration_descriptor(&data).unwrap();
         assert_eq!(config.num_interfaces, 1);
@@ -444,28 +446,29 @@ mod tests {
     #[test]
     fn test_make_get_descriptor_request_device() {
         let req = make_get_descriptor_request(1, 0, 18);
-        assert_eq!(req.request_type, 0x80);
-        assert_eq!(req.request, 6); // GetDescriptor
-        assert_eq!(req.value, 1 << 8); // desc_type=设备描述符 (DEVICE), 位于高字节
-        assert_eq!(req.length, 18);
+        // 请求结构为 packed: u16 字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ req.request_type }, 0x80);
+        assert_eq!({ req.request }, 6); // GetDescriptor
+        assert_eq!({ req.value }, 1 << 8); // desc_type=设备描述符 (DEVICE), 位于高字节
+        assert_eq!({ req.length }, 18);
     }
 
     #[test]
     fn test_make_set_address_request() {
         let req = make_set_address_request(42);
-        assert_eq!(req.request_type, 0x00);
-        assert_eq!(req.request, 5); // SetAddress
-        assert_eq!(req.value, 42);
-        assert_eq!(req.length, 0);
+        assert_eq!({ req.request_type }, 0x00);
+        assert_eq!({ req.request }, 5); // SetAddress
+        assert_eq!({ req.value }, 42);
+        assert_eq!({ req.length }, 0);
     }
 
     #[test]
     fn test_make_set_configuration_request() {
         let req = make_set_configuration_request(1);
-        assert_eq!(req.request_type, 0x00);
-        assert_eq!(req.request, 9); // SetConfiguration
-        assert_eq!(req.value, 1);
-        assert_eq!(req.length, 0);
+        assert_eq!({ req.request_type }, 0x00);
+        assert_eq!({ req.request }, 9); // SetConfiguration
+        assert_eq!({ req.value }, 1);
+        assert_eq!({ req.length }, 0);
     }
 
     #[test]
@@ -481,8 +484,8 @@ mod tests {
         assert_eq!(dev.address, 5);
         assert_eq!(dev.speed, UsbSpeed::High);
         assert_eq!(dev.state, DeviceState::Configured);
-        assert_eq!(dev.descriptor.vendor_id, 0x12AB);
-        assert_eq!(dev.descriptor.product_id, 0x34CD);
+        assert_eq!({ dev.descriptor.vendor_id }, 0x12AB);
+        assert_eq!({ dev.descriptor.product_id }, 0x34CD);
         assert_eq!(dev.interfaces.len(), 1);
         assert_eq!(dev.interfaces[0].interface_class, 0x03); // HID
         assert_eq!(dev.endpoints.len(), 1);

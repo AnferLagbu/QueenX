@@ -10,6 +10,15 @@ rustflags = [
     "-C", "link-arg=-nostdlib",
 ]
 
+# 内核 aarch64 专用目标 (等效 -neon, 使 EL1 零 FP/SIMD, 与 +neon 版本仅差
+# target-feature 一项). rustflags 必须与 aarch64-unknown-none 保持一致.
+# 详见 docs/plan/aarch64-kernel-fp-free.md.
+[target.aarch64-unknown-none-softfloat]
+rustflags = [
+    "-C", "relocation-model=static",
+    "-C", "link-arg=-nostdlib",
+]
+
 # 方案 B (构建模式显式化, 2026-09-14): 全局 build-std 已移除 — 裸机构建
 # 入口 (build.sh / Makefile / audit.sh / CI yml) 显式注入
 # `--config 'unstable.build-std=["core","compiler_builtins","alloc"]'`, 避免

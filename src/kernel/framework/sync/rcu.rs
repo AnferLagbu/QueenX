@@ -440,7 +440,8 @@ mod tests {
         static CALLED: AtomicBool = AtomicBool::new(false);
 
         // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-        unsafe extern "C" fn callback(head: *mut RcuHead) {
+        // call_rcu 的 func 形参为 `unsafe fn(*mut RcuHead)` (Rust ABI), 非 C fn 指针.
+        unsafe fn callback(_head: *mut RcuHead) {
             CALLED.store(true, Ordering::Release);
         }
 

@@ -457,14 +457,19 @@ impl NestArc {
         self.stats.size.load(Ordering::Acquire)
     }
 
-    /// MRU 列表大小
+    /// MRU 列表条目数 (与 `max_size` 同量纲, 便于容量不变量比较)
+    ///
+    /// 注: `stats.mru_size` 为 MRU 占用字节数统计 (与 `stats.size` 同口径),
+    /// 与 `max_size` 的条目数量纲不同, 故本访问器按条目数返回.
     pub fn mru_size(&self) -> u64 {
-        self.stats.mru_size.load(Ordering::Acquire)
+        self.inner.lock().mru.len() as u64
     }
 
-    /// MFU 列表大小
+    /// MFU 列表条目数 (与 `max_size` 同量纲)
+    ///
+    /// 注: `stats.mfu_size` 为 MFU 占用字节数统计, 口径同 `mru_size` 注释.
     pub fn mfu_size(&self) -> u64 {
-        self.stats.mfu_size.load(Ordering::Acquire)
+        self.inner.lock().mfu.len() as u64
     }
 
     /// 命中次数

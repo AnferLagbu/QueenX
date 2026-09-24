@@ -74,7 +74,11 @@ impl NetStatus {
     }
 }
 
-fn ipv4_from_atomic(v: u32) -> Option<[u8; 4]> {
+/// u32 原子量 -> IPv4 点分字节 (0 视为未配置)
+///
+/// B04-09 拆分后本函数归入 query 子模块; 单元测试位于父模块 `init` (经
+/// `pub use query::*` 引入), 故可见性取 `pub(crate)` 而非私有.
+pub(crate) fn ipv4_from_atomic(v: u32) -> Option<[u8; 4]> {
     if v == 0 { None } else { Some(v.to_be_bytes()) }
 }
 

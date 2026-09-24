@@ -407,8 +407,10 @@ mod tests {
         m.set(CapDomain::FS, CapBits(0xFF)).unwrap();
 
         let p = PolicyEngine::new();
+        // 0x08 (bit3) 不含 FS 的可行性下界 (READ|EXEC = 0b101), 故仅需矩阵授权即 Allow
+        // (原用 0x0F 含下界位, 必被 FloorProtected 拒绝; 2026-09-24 UT-06 修正)
         assert_eq!(
-            p.check(&m, CapDomain::FS, CapBits(0x0F)),
+            p.check(&m, CapDomain::FS, CapBits(0x08)),
             PolicyResult::Allow
         );
         assert_eq!(

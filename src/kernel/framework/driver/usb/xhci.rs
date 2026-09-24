@@ -1038,6 +1038,8 @@ mod tests {
 
     #[test]
     fn test_xhci_controller_creation() {
+        // UT-06 (2026-09-24): 各用例须用互不重叠的 fake MMIO 区间 —
+        // ALIAS_REGISTRY 拒绝区间重叠, host 侧测试并行执行时会互相注册失败.
         // SAFETY: 测试用固定 MMIO 地址, identity-mapped in test environment
         let iomem = unsafe {
             IoMem::new(
@@ -1056,9 +1058,10 @@ mod tests {
     #[test]
     fn test_trb_creation() {
         let trb = Trb::new(0x12345678, 0, 0x12345678);
-        assert_eq!(trb.parameter, 0x12345678);
-        assert_eq!(trb.status, 0);
-        assert_eq!(trb.control, 0x12345678);
+        // Trb 是 packed 结构: 字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ trb.parameter }, 0x12345678);
+        assert_eq!({ trb.status }, 0);
+        assert_eq!({ trb.control }, 0x12345678);
     }
 
     #[test]
@@ -1074,24 +1077,22 @@ mod tests {
 
     /// 单元测试用 XhciController 构造器 (fake MMIO region).
     ///
-    /// SAFETY: fake 物理地址 0xFE000000 + identity-map 测试脚手架保证
+    /// `base` 须各用例唯一 (见 `test_xhci_controller_creation` 注释).
+    ///
+    /// SAFETY: fake 物理地址 + identity-map 测试脚手架保证
     /// phys..phys+len 已被映射, ALIAS_REGISTRY 在测试进程下独占.
-    fn make_test_ctrl() -> XhciController {
+    fn make_test_ctrl(base: u64) -> XhciController {
         // SAFETY: 测试脚手架, 详见函数 doc.
         let iomem = unsafe {
-            IoMem::new(
-                crate::framework::mm::PhysAddr(0xFE000000),
-                0x10000,
-                "xhci-test",
-            )
-            .expect("test IoMem")
+            IoMem::new(crate::framework::mm::PhysAddr(base), 0x10000, "xhci-test")
+                .expect("test IoMem")
         };
         XhciController::new(iomem)
     }
 
     #[test]
     fn test_address_allocate_returns_first_free_slot() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE010000);
         // 初始 next_address_hint = 1, 应分配到 1
         assert_eq!(ctrl.allocate_address().unwrap(), 1);
         // 再分配应得 2
@@ -1102,7 +1103,7 @@ mod tests {
 
     #[test]
     fn test_address_free_then_reallocate() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE020000);
         let addr1 = ctrl.allocate_address().unwrap();
         ctrl.free_address(addr1);
         // 释放后重新分配, 因 next_address_hint 已更新, 不一定回到 addr1
@@ -1114,7 +1115,7 @@ mod tests {
 
     #[test]
     fn test_address_free_zero_and_255_are_noops() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE030000);
         // 地址 0 和 255 是保留地址, 静默忽略
         ctrl.free_address(0);
         ctrl.free_address(255);
@@ -1124,7 +1125,7 @@ mod tests {
 
     #[test]
     fn test_address_allocate_exhaustion_returns_busy() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE040000);
         // 分配所有 254 个地址 (1..=254)
         for _ in 0..254 {
             ctrl.allocate_address().expect("should have free slot");
@@ -1136,7 +1137,7 @@ mod tests {
 
     #[test]
     fn test_address_reuse_after_free() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE050000);
         // 分配 1, 2, 3
         let _a = ctrl.allocate_address().unwrap();
         let _b = ctrl.allocate_address().unwrap();
@@ -1152,7 +1153,7 @@ mod tests {
 
     #[test]
     fn test_submit_urb_fails_when_not_initialized() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE060000);
         // 未 init_hardware, initialized=false
         let mut buf = [0u8; 16];
         let urb = Urb {
@@ -1172,7 +1173,7 @@ mod tests {
 
     #[test]
     fn test_submit_urb_fails_with_device_zero() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE070000);
         ctrl.initialized = true; // 绕过 init_hardware (无硬件环境)
         let mut buf = [0u8; 16];
         let urb = Urb {
@@ -1192,7 +1193,7 @@ mod tests {
 
     #[test]
     fn test_submit_urb_fails_with_invalid_endpoint() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE080000);
         ctrl.initialized = true;
         let mut buf = [0u8; 16];
         let urb = Urb {
@@ -1212,7 +1213,7 @@ mod tests {
 
     #[test]
     fn test_submit_urb_fails_with_null_buffer() {
-        let mut ctrl = make_test_ctrl();
+        let mut ctrl = make_test_ctrl(0xFE090000);
         ctrl.initialized = true;
         let urb = Urb {
             id: 1,

@@ -194,7 +194,7 @@ jobs:
         run: |
           mkdir -p build/log
           # 方案 D: clippy 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none --target-dir target --lib --bins --examples -- \
+          cargo clippy --manifest-path ../kernel/Cargo.toml --release --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir target --lib --bins --examples -- \
             -D clippy::pedantic \
             -A clippy::cast_possible_truncation \
             -A clippy::cast_sign_loss \

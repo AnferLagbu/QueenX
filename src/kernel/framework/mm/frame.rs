@@ -364,6 +364,8 @@ impl USegment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // KERNEL_BASE 定义于 framework::mm (父模块), 不在 frame 模块命名空间内.
+    use crate::framework::mm::KERNEL_BASE;
 
     #[test]
     fn test_uframe_rejects_kernel_addr() {

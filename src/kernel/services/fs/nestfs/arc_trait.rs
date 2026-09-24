@@ -60,13 +60,13 @@ pub trait ArcCache: Send + Sync {
     /// 当前缓存总大小
     fn current_size(&self) -> u64;
 
-    /// MRU 列表大小
+    /// MRU 列表条目数 (与 `max_size` 同量纲)
     fn mru_size(&self) -> u64;
 
-    /// MFU 列表大小
+    /// MFU 列表条目数 (与 `max_size` 同量纲)
     fn mfu_size(&self) -> u64;
 
-    /// 最大容量
+    /// 最大容量 (条目数, ARC 淘汰判据的单位)
     fn max_size(&self) -> u64;
 
     /// 命中次数
@@ -78,8 +78,8 @@ pub trait ArcCache: Send + Sync {
     /// 淘汰次数
     fn evict_count(&self) -> u64;
 
-    /// 命中率 (0.0 - 1.0)
-    fn hit_rate(&self) -> f64;
+    /// 命中率 (千分比, 0..=1000)
+    fn hit_rate(&self) -> u64;
 }
 
 // ============================================================================
@@ -159,10 +159,10 @@ impl ArcCache for StandardArc {
         self.0.evict_count()
     }
 
-    fn hit_rate(&self) -> f64 {
-        let hits = self.hit_count() as f64;
-        let total = hits + self.miss_count() as f64;
-        if total > 0.0 { hits / total } else { 0.0 }
+    fn hit_rate(&self) -> u64 {
+        let hits = self.hit_count();
+        let total = hits + self.miss_count();
+        if total > 0 { hits * 1000 / total } else { 0 }
     }
 }
 
@@ -240,7 +240,7 @@ mod tests {
         arc.insert(k1, &[1u8; 32], NestArcBufType::Data);
         // insert meta 类型
         let k2 = NestArcKey::new(0, 0, 2);
-        arc.insert(k2, &[2u8; 32], NestArcBufType::Meta);
+        arc.insert(k2, &[2u8; 32], NestArcBufType::Metadata);
         // 两个都应存在
         assert!(arc.lookup(&k1));
         assert!(arc.lookup(&k2));
@@ -252,15 +252,15 @@ mod tests {
         let arc = StandardArc::new();
         arc.init(100);
         // 0 命中率
-        assert_eq!(arc.hit_rate(), 0.0);
+        assert_eq!(arc.hit_rate(), 0);
         // 插 1 个, 查 2 次 (1 hit + 1 miss)
         let k = NestArcKey::new(0, 0, 0);
         arc.insert(k, &[0u8; 32], NestArcBufType::Data);
         arc.lookup(&k); // hit
         let miss_key = NestArcKey::new(0, 0, 99);
         arc.lookup(&miss_key); // miss
-        // hit_rate = 1/2 = 0.5
-        assert!((arc.hit_rate() - 0.5).abs() < 1e-9);
+        // hit_rate = 1/2 → 千分比 500
+        assert_eq!(arc.hit_rate(), 500);
     }
 
     /// 8. release: 释放 key (引用计数)
@@ -324,7 +324,7 @@ mod tests {
         // 模拟 SPA 缓存 dataset 元数据
         let datasets: Vec<NestArcKey> = (0..5).map(|i| NestArcKey::new(0, i * 4096, 0)).collect();
         for (i, k) in datasets.iter().enumerate() {
-            arc.insert(*k, &vec![i as u8; 64], NestArcBufType::Meta);
+            arc.insert(*k, &vec![i as u8; 64], NestArcBufType::Metadata);
         }
         // 验证
         for (i, k) in datasets.iter().enumerate() {

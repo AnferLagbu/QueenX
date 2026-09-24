@@ -383,6 +383,8 @@ impl super::policy::CapabilityMatrix for InMemoryCaps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // get/set 是 CapabilityMatrix 的 trait 方法, 需显式引入 trait 才能调用.
+    use crate::services::credo::policy::CapabilityMatrix;
 
     fn default_caps() -> [CapBits; CAP_DOMAINS] {
         [CapBits(0); CAP_DOMAINS]
@@ -431,7 +433,7 @@ mod tests {
     #[test]
     fn session_end_all_for() {
         let mut t = SessionTable::new();
-        for i in 0..3 {
+        for _ in 0..3 {
             t.create(1, default_caps(), 100, 0, 0).unwrap();
         }
         t.create(2, default_caps(), 100, 0, 0).unwrap();

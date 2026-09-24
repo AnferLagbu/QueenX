@@ -587,8 +587,10 @@ mod tests {
     fn make_test_hid_device() -> UsbDevice {
         use crate::framework::driver::usb::enumerate::parse_device_descriptor;
 
+        // data[4] = bDeviceClass: HidDriver::from_usb_device 要求其为 HID (0x03),
+        // 原值为 0 导致 3 例构造测试全部被拒 (2026-09-24 UT-06 修正).
         let device_data = [
-            18, 1, 0x10, 0x01, 0x00, 0x00, 0x00, 0x40, 0xAB, 0x12, 0xCD, 0x34, 0x00, 0x01, 1, 2, 0,
+            18, 1, 0x10, 0x01, 0x03, 0x00, 0x00, 0x40, 0xAB, 0x12, 0xCD, 0x34, 0x00, 0x01, 1, 2, 0,
             1,
         ];
         let descriptor = parse_device_descriptor(&device_data).unwrap();
@@ -630,7 +632,7 @@ mod tests {
     fn test_hid_driver_from_usb_device_keyboard() {
         let device = make_test_hid_device();
         let driver = HidDriver::from_usb_device(&device, 0).unwrap();
-        assert_eq!(driver.device_address, 5);
+        // HidDriver 不再保存 device_address 字段, 该断言随字段移除而删除.
         assert_eq!(driver.interface_number, 0);
         assert_eq!(driver.interrupt_in_endpoint(), 0x81);
         assert_eq!(driver.interrupt_in_max_packet(), 8);
@@ -643,10 +645,11 @@ mod tests {
         let device = make_test_hid_device();
         let driver = HidDriver::from_usb_device(&device, 0).unwrap();
         let req = driver.set_protocol_setup(HidProtocol::Boot);
-        assert_eq!(req.request_type, 0x21); // 类请求 (Class), 接口 (Interface), 主机到设备
-        assert_eq!(req.request, 0x0B); // SET_PROTOCOL
-        assert_eq!(req.value, 0); // Boot
-        assert_eq!(req.index, 0); // interface 0
+        // 请求结构为 packed: u16 字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ req.request_type }, 0x21); // 类请求 (Class), 接口 (Interface), 主机到设备
+        assert_eq!({ req.request }, 0x0B); // SET_PROTOCOL
+        assert_eq!({ req.value }, 0); // Boot
+        assert_eq!({ req.index }, 0); // interface 0
     }
 
     #[test]

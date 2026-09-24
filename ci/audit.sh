@@ -141,11 +141,27 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_tlb_r
     fi
 fi
 
+# FP-06: aarch64 内核「零 FP/SIMD」反汇编白名单审计 — 防 EL1 出现浮点/NEON
+# (软浮点 target 只保证编译期不生成 FP 指令, 无法拦截源码/汇编层的回退;
+#  以反汇编白名单确定性覆盖, 见 docs/plan/aarch64-kernel-fp-free.md FP-06)
+# 注意: 本步骤读取 build/kernel.bin, 要求其为最近一次 aarch64 链接的产物
+# (双架构共用该输出路径, ./ci/build.sh all 最后链接 x86_64 ⇒ 需先跑 build.sh aarch64).
+if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" ]; then
+    step "0.5i/6 aarch64 内核零 FP/SIMD (FP-06)"
+    FP_AUDIT_OUT=$("$PROJECT_ROOT/scripts/audit_aarch64_kernel_fp_free.py" 2>&1) && FP_AUDIT_RC=0 || FP_AUDIT_RC=$?
+    echo "$FP_AUDIT_OUT" | tail -20
+    if [ "$FP_AUDIT_RC" -eq 0 ]; then
+        ok "FP-06: aarch64 内核白名单外 FP/SIMD = 0"
+    else
+        err "FP-06: aarch64 内核存在白名单外 FP/SIMD 或不可检查 (fail-closed)! 见上方输出"
+    fi
+fi
+
 # ── 1. 双架构 check ─────────────────────────────────────────────
 step "1/6 双架构 cargo check (x86_64 + aarch64)"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
-for target in x86_64-unknown-none aarch64-unknown-none; do
+for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     echo -e "${BLUE}[audit] target=${target}${NC}"
     # 方案 D: kernel 独立 crate, 裸机 check 指向 kernel manifest (queenx 壳仅 host).
     if cargo +nightly check --manifest-path ../kernel/Cargo.toml --target "${target}" --target-dir target "${BUILD_STD_CFG[@]}" 2>&1 | tail -3; then

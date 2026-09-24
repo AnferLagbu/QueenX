@@ -23,7 +23,7 @@ jobs:
       - name: 安装 Rust nightly + aarch64 target
         uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: aarch64-unknown-none
+          targets: aarch64-unknown-none-softfloat
           components: rust-src
 
       - name: 缓存 cargo
@@ -39,7 +39,7 @@ jobs:
         working-directory: src/rust
         run: |
           # 方案 D: 裸机 check 指向 kernel manifest; 方案 B: 注入 build-std
-          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none --target-dir target 2>&1 | tee build/log/cargo_check_aarch64.txt
+          cargo check --manifest-path ../kernel/Cargo.toml --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]' --target aarch64-unknown-none-softfloat --target-dir target 2>&1 | tee build/log/cargo_check_aarch64.txt
           if grep -q "error\[" build/log/cargo_check_aarch64.txt; then
             echo "::error::cargo check 失败"
             exit 1
@@ -58,7 +58,8 @@ jobs:
       - name: 安装 Rust nightly + aarch64 target
         uses: dtolnay/rust-toolchain@nightly
         with:
-          targets: aarch64-unknown-none
+          # 内核走 softfloat (EL1 零 FP/SIMD); 用户态 (src/user) 仍用 aarch64-unknown-none
+          targets: aarch64-unknown-none aarch64-unknown-none-softfloat
           components: rust-src
 
       - name: 安装 QEMU

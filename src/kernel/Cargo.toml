@@ -14,7 +14,10 @@ name = "kernel"
 path = "lib.rs"
 # 方案 D: staticlib 供 Makefile 链接内核; rlib 供 queenx 壳依赖 (host-tests).
 crate-type = ["staticlib", "rlib"]
-test = false
+# 原 `test = false` (DECISION-021 处置 E0152 双 core lang item 冲突) 已移除:
+# 构建模式显式化后该冲突不再复现, 源文件 `#[cfg(test)]` 内联单元测试可直接由
+# `cargo test --features host-test --lib` 执行. 详见
+# docs/plan/kernel-unit-test-harness-unification.md.
 
 [profile.dev]
 panic = "abort"

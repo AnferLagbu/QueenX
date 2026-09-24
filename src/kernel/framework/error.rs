@@ -40,7 +40,7 @@ pub enum KernelError {
     InvalidArgument,
     /// 进程打开文件过多 (EMFILE=23)
     ProcessFileLimit,
-    /// 操作不支持 (ENOSYS=95)
+    /// 操作不支持 (EOPNOTSUPP/ENOTSUP=95)
     NotSupported,
     /// 地址族不支持 (EAFNOSUPPORT=97)
     AddrFamilyNotSupported,
@@ -177,7 +177,7 @@ impl KernelError {
             Self::NoSpace => Errno::ENOSPC,
             Self::ReadOnlyFilesystem => Errno::EROFS,
             Self::NameTooLong => Errno::ENAMETOOLONG,
-            Self::NotSupported => Errno::ENOSYS,
+            Self::NotSupported => Errno::ENOTSUP,
             Self::AddrFamilyNotSupported => Errno::EAFNOSUPPORT,
             Self::AddrInUse => Errno::EADDRINUSE,
             Self::AddrNotAvailable => Errno::EADDRNOTAVAIL,
@@ -222,7 +222,8 @@ mod tests {
     fn round_trip_common_errnos() {
         for raw in [1, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111] {
             let e = KernelError::from_i32(raw);
-            let back: i32 = e.into();
+            // 反向映射经 as_errno() (无 From<KernelError> for i32 实现).
+            let back = e.as_errno().as_i32();
             assert_eq!(back, raw, "round-trip failed for {raw}");
         }
     }
@@ -231,7 +232,7 @@ mod tests {
     fn other_preserves_raw() {
         let e = KernelError::from_i32(12345);
         assert_eq!(e, KernelError::Other(12345));
-        let raw: i32 = e.into();
+        let raw = e.as_errno().as_i32();
         assert_eq!(raw, 22 /*EINVAL fallback*/);
     }
 }

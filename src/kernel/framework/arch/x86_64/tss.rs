@@ -254,13 +254,16 @@ mod tests {
     #[test]
     fn test_tss_zeroed() {
         let tss = TaskStateSegment::zeroed();
-        assert_eq!(tss.rsp0, 0);
-        assert_eq!(tss.rsp1, 0);
-        assert_eq!(tss.rsp2, 0);
-        assert_eq!(tss.iomap_base, DEFAULT_IOMAP_BASE);
+        // TaskStateSegment 是 packed 结构: &tss.field 会构造未对齐引用 (E0793),
+        // 故先按值取出字段再断言.
+        assert_eq!({ tss.rsp0 }, 0);
+        assert_eq!({ tss.rsp1 }, 0);
+        assert_eq!({ tss.rsp2 }, 0);
+        assert_eq!({ tss.iomap_base }, DEFAULT_IOMAP_BASE);
 
-        for ist in tss.ist.iter() {
-            assert_eq!(*ist, 0);
+        let ist = tss.ist;
+        for value in ist.iter() {
+            assert_eq!(*value, 0);
         }
     }
 
@@ -294,27 +297,35 @@ mod tests {
     fn test_tss_iomap() {
         let mut tss = TaskStateSegment::zeroed();
 
-        // 默认禁用
+        // 默认禁用 (iomap_base == TSS_SIZE 是"无位图"哨兵)
         assert!(!tss.has_iomap());
 
-        // 启用
-        tss.enable_iomap(104); // TSS 最小大小之后
+        // 启用: 偏移必须落在 TSS 内部 (iomap_base < TSS_SIZE)
+        let offset: u16 = 0;
+        tss.enable_iomap(offset);
         assert!(tss.has_iomap());
-        assert_eq!(tss.iomap_base, 104);
+        assert_eq!({ tss.iomap_base }, offset);
+
+        // 边界: 偏移等于 TSS_SIZE 即回到"无位图"哨兵语义
+        // (原用例传入 104 = DEFAULT_IOMAP_BASE 本身, 断言必然不成立; UT-06 实测修正)
+        tss.enable_iomap(DEFAULT_IOMAP_BASE);
+        assert!(!tss.has_iomap());
 
         // 禁用
+        tss.enable_iomap(0);
         tss.disable_iomap();
         assert!(!tss.has_iomap());
-        assert_eq!(tss.iomap_base, DEFAULT_IOMAP_BASE);
+        assert_eq!({ tss.iomap_base }, DEFAULT_IOMAP_BASE);
     }
 
     #[test]
     fn test_tss_size() {
-        // TSS 必须 >= 104 字节
+        // TSS 必须 >= 104 字节 (Intel 64-bit TSS 规范最小值)
         assert!(TSS_SIZE >= TSS_MINIMUM_SIZE);
 
-        // TSS 必须 16-byte 对齐
-        assert_eq!(TSS_SIZE % 16, 0);
+        // 本结构体为 packed 且恰好等于规范最小值 (104 字节); 104 % 16 == 8,
+        // 故不存在"16 字节对齐"性质 (2026-09-24 UT-06 实测原断言不成立).
+        assert_eq!(TSS_SIZE, TSS_MINIMUM_SIZE);
     }
 }
 #[cfg(feature = "kernel_test")]

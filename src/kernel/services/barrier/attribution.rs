@@ -500,7 +500,8 @@ mod tests {
     #[test]
     fn full_flow_failure_downgrade() {
         let m = InMemoryMatrix::new();
-        let mut records = [DomainFailureRecord::new(0); 16];
+        // DomainFailureRecord 含原子字段非 Copy, 不能用数组重复语法; 逐元素构造.
+        let mut records = [(); 16].map(|()| DomainFailureRecord::new(0));
         let mut h = CrossLayerHandler::new(&m, &mut records, 100);
         for _ in 0..5 {
             h.handle(3);

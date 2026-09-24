@@ -167,7 +167,8 @@ mod tests {
     #[test]
     fn valid_cstr() {
         let s = CString::new("hello").unwrap();
-        let p = s.as_ptr();
+        // CStrExt 仅实现于 *const u8 / *mut u8; CString::as_ptr 返回 *const i8.
+        let p = s.as_ptr() as *const u8;
         assert_eq!(p.as_kstr(), "hello");
         assert_eq!(p.as_kstr_opt(), Some("hello"));
     }
@@ -175,14 +176,14 @@ mod tests {
     #[test]
     fn valid_cstr_with_unicode() {
         let s = CString::new("中文").unwrap();
-        let p = s.as_ptr();
+        let p = s.as_ptr() as *const u8;
         assert_eq!(p.as_kstr(), "中文");
     }
 
     #[test]
     fn empty_cstr() {
         let s = CString::new("").unwrap();
-        let p = s.as_ptr();
+        let p = s.as_ptr() as *const u8;
         assert_eq!(p.as_kstr(), "");
         assert_eq!(p.as_kstr_opt(), Some(""));
     }

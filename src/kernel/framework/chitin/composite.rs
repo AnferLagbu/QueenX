@@ -493,6 +493,8 @@ mod tests {
         };
 
         let mut buf = [0u8; 512];
-        assert_eq!(dev.clone().blk_read(16, &mut buf), -1);
+        // 超出 total_sectors 返回 -EINVAL (KernelError::InvalidArgument),
+        // 原断言 -1 是旧语义残留 (2026-09-24 UT-06 实测修正).
+        assert_eq!(dev.clone().blk_read(16, &mut buf), -22);
     }
 }

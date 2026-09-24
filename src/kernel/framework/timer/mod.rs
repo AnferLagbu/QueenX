@@ -241,15 +241,16 @@ mod integration_tests {
         let _t1 = ms_to_ticks(1000);
         let _t2 = us_to_ticks(1000000);
 
-        // Uptime (应该 >= 0)
-        assert!(get_uptime_ms() >= 0);
-        assert!(get_uptime_s() >= 0);
+        // Uptime 为 u64, 恒 >= 0 (恒真断言已删, 无信息量).
+        let _ = get_uptime_ms();
+        let _ = get_uptime_s();
 
         // Sleep 零值 (立即返回)
         busy_wait_ns(0);
         busy_wait_us(0);
         busy_wait_ms(0);
-        assert!(timer_sleep(0).is_ok());
+        // 零值睡眠走 sleep::timer_sleep (Result 形态; FFI 版 timer_sleep 返回 ()).
+        timer_sleep_safe(0).unwrap();
 
         // 测量工具
         let (_result, _time) = measure_time(|| 42);

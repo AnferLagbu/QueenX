@@ -241,7 +241,10 @@ pub fn ticks_to_ms(ticks: u64) -> u64 {
     if freq == 0 {
         return 0;
     }
-    (ticks * 1000) / freq
+    // saturating_mul: `ticks * 1000` 在 ticks 接近 u64::MAX 时溢出
+    // (debug 构建直接 panic) — 本函数的契约是"不 panic"
+    // (2026-09-24 UT-06 实测修复, 见 framework/timer/mod.rs::test_error_handling).
+    ticks.saturating_mul(1000) / freq
 }
 
 /// 将 ticks 转换为微秒
@@ -251,7 +254,8 @@ pub fn ticks_to_us(ticks: u64) -> u64 {
     if freq == 0 {
         return 0;
     }
-    (ticks * 1_000_000) / freq
+    // 同 ticks_to_ms: 防溢出 (UT-06 实测, 同一根因).
+    ticks.saturating_mul(1_000_000) / freq
 }
 
 /// 将 ticks 转换为纳秒
@@ -261,7 +265,8 @@ pub fn ticks_to_ns(ticks: u64) -> u64 {
     if freq == 0 {
         return 0;
     }
-    (ticks * 1_000_000_000) / freq
+    // 同 ticks_to_ms: 防溢出 (UT-06 实测, 同一根因).
+    ticks.saturating_mul(1_000_000_000) / freq
 }
 
 /// 将毫秒转换为 ticks (向上取整)
@@ -271,7 +276,8 @@ pub fn ms_to_ticks(ms: u64) -> u64 {
     if freq == 0 {
         return ms;
     }
-    (ms * freq).div_ceil(1000) // 向上取整
+    // saturating_mul: `ms * freq` 在 ms 接近 u64::MAX 时溢出 (UT-06 实测修复).
+    ms.saturating_mul(freq).div_ceil(1000) // 向上取整
 }
 
 /// 将微秒转换为 ticks (向上取整)
@@ -281,7 +287,8 @@ pub fn us_to_ticks(us: u64) -> u64 {
     if freq == 0 {
         return us;
     }
-    (us * freq).div_ceil(1_000_000)
+    // 同 ms_to_ticks: 防溢出 (UT-06 实测, 同一根因).
+    us.saturating_mul(freq).div_ceil(1_000_000)
 }
 
 /// 使用预计算的常量进行快速转换 (性能关键路径)
@@ -408,8 +415,34 @@ pub fn get_time_info() -> (u64, u32, u64, u64, u64) {
 mod tests {
     use super::*;
 
+    /// 频率相关用例的互斥锁.
+    ///
+    /// `zero_frequency_handling` 需临时把全局频率置 0 才能覆盖除零保护分支,
+    /// 而 `initial_state` 断言频率为初值; 并行 test runner 下两者必须互斥,
+    /// 否则偶发失败 (2026-09-24 UT-06).
+    static FREQ_TEST_LOCK: crate::framework::sync::IrqSpinLock<()> =
+        crate::framework::sync::IrqSpinLock::new(());
+
+    /// 把全局频率置 0 的 RAII 守卫 (断言 panic 时也能恢复).
+    struct FreqZeroGuard(u32);
+
+    impl FreqZeroGuard {
+        fn new() -> Self {
+            let old = TIMER_FREQ_HZ.load(Ordering::Relaxed);
+            TIMER_FREQ_HZ.store(0, Ordering::Relaxed);
+            Self(old)
+        }
+    }
+
+    impl Drop for FreqZeroGuard {
+        fn drop(&mut self) {
+            TIMER_FREQ_HZ.store(self.0, Ordering::Relaxed);
+        }
+    }
+
     #[test]
     fn test_initial_state() {
+        let _lock = FREQ_TEST_LOCK.lock();
         // 未初始化时应该返回安全值
         assert_eq!(get_ticks(), 0);
         assert_eq!(get_frequency(), DEFAULT_INTERRUPT_FREQ_HZ);
@@ -442,6 +475,11 @@ mod tests {
     #[test]
     fn test_zero_frequency_handling() {
         // 频率为 0 时应该返回 0 或原值（避免除零）
+        // 全局频率初值是 DEFAULT_INTERRUPT_FREQ_HZ (非 0), 故必须显式置 0
+        // 才能覆盖该分支 (2026-09-24 UT-06 实测修正).
+        let _lock = FREQ_TEST_LOCK.lock();
+        let _guard = FreqZeroGuard::new();
+        assert_eq!(get_frequency(), 0);
         assert_eq!(ticks_to_ms(1000), 0);
         assert_eq!(ticks_to_us(1000), 0);
         assert_eq!(ms_to_ticks(1000), 1000); // 无法转换时返回原值
@@ -457,18 +495,18 @@ mod tests {
 
     #[test]
     fn test_uptime_calculation() {
-        // uptime 应该 >= 0
-        assert!(get_uptime_ms() >= 0);
-        assert!(get_uptime_s() >= 0);
+        // u64 恒 >= 0, 原恒真断言删除; 保留调用以冒烟验证
+        // ticks_to_ms 在频率未初始化时不 panic.
+        let _ = get_uptime_ms();
+        let _ = get_uptime_s();
     }
 
     #[test]
     fn test_get_time_info() {
-        let (ticks, freq, uptime, ns_per_tick, us_per_tick) = get_time_info();
+        let (_ticks, freq, _uptime, ns_per_tick, us_per_tick) = get_time_info();
 
-        assert!(ticks >= 0);
+        // ticks / uptime 为 u64, 恒 >= 0 的断言已删 (无信息量).
         assert!(freq > 0);
-        assert!(uptime >= 0);
 
         // 如果已初始化，ns_per_tick 应该 > 0
         if is_initialized() {

@@ -828,7 +828,8 @@ mod tests {
 
         let mut mock = Mock;
         let h = SocketHandle::from_raw(1);
-        let ep = NetEndpoint::new(Ipv4Addr::new(192, 168, 1, 1), 8080);
+        // NetEndpoint::new 取统一 IpAddr (双栈), IPv4 字面量走 new_v4 辅助.
+        let ep = NetEndpoint::new_v4(Ipv4Addr::new(192, 168, 1, 1), 8080);
 
         // bind: 默认返回 NotReady
         assert_eq!(mock.bind(h, ep), Err(NetError::NotReady));
@@ -855,7 +856,7 @@ mod tests {
 
         let mut mock = Mock;
         let h = SocketHandle::from_raw(1);
-        let ep = NetEndpoint::new(Ipv4Addr::new(10, 0, 2, 15), 5000);
+        let ep = NetEndpoint::new_v4(Ipv4Addr::new(10, 0, 2, 15), 5000);
         let send_buf = [1u8, 2, 3, 4];
         let mut recv_buf = [0u8; 16];
 
@@ -1519,7 +1520,12 @@ mod wire_type_tests {
 
     #[test]
     fn test_ipv6_cidr() {
-        let c = Ipv6Cidr::new(Ipv6Addr::new(0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0), 64);
+        // Ipv6Addr::new 按 8 个 u16 段构造 (非字节), 故字节序列走 from_octets
+        // (原用例把 8 个 u16 当作字节传入; UT-06 实测修正)
+        let c = Ipv6Cidr::new(
+            Ipv6Addr::from_octets([0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            64,
+        );
         assert_eq!(c.address.octets()[0..4], [0x20, 0x01, 0x0d, 0xb8]);
         assert_eq!(c.prefix_len, 64);
     }

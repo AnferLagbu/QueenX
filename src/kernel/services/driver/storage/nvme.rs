@@ -216,6 +216,7 @@ pub struct NvmeCmdEntry {
     pub cdw2: u32,
     pub cdw3: u32,
     pub mptr: u64,
+    pub prp1: u64,
     pub prp2: u64,
     pub cdw10: u32,
     pub cdw11: u32,
@@ -236,6 +237,7 @@ impl NvmeCmdEntry {
             cdw2: 0,
             cdw3: 0,
             mptr: 0,
+            prp1: 0,
             prp2: 0,
             cdw10: 0,
             cdw11: 0,
@@ -252,7 +254,7 @@ impl NvmeCmdEntry {
             opcode: OP_IO_READ,
             cid: 0,
             nsid,
-            mptr: prp1,
+            prp1,
             cdw10: (slba & 0xFFFF_FFFF) as u32,
             cdw11: ((slba >> 32) & 0xFFFF_FFFF) as u32,
             cdw12: (u32::from(nlb) - 1) & 0xFFFF,
@@ -266,7 +268,7 @@ impl NvmeCmdEntry {
             opcode: OP_IO_WRITE,
             cid: 0,
             nsid,
-            mptr: prp1,
+            prp1,
             cdw10: (slba & 0xFFFF_FFFF) as u32,
             cdw11: ((slba >> 32) & 0xFFFF_FFFF) as u32,
             cdw12: (u32::from(nlb) - 1) & 0xFFFF,
@@ -279,7 +281,7 @@ impl NvmeCmdEntry {
         Self {
             opcode: OP_ADMIN_IDENTIFY,
             nsid,
-            mptr: prp1,
+            prp1,
             cdw10: u32::from(cns),
             ..Self::new()
         }
@@ -289,7 +291,7 @@ impl NvmeCmdEntry {
     pub fn create_cq(qid: u16, cq_phys: u64, depth: u16) -> Self {
         Self {
             opcode: OP_ADMIN_CREATE_IOCQ,
-            mptr: cq_phys,
+            prp1: cq_phys,
             cdw10: ((u32::from(depth) - 1) << 16) | u32::from(qid),
             cdw11: 1, // PC=1 (physically contiguous)
             ..Self::new()
@@ -300,7 +302,7 @@ impl NvmeCmdEntry {
     pub fn create_sq(qid: u16, cqid: u16, sq_phys: u64, depth: u16) -> Self {
         Self {
             opcode: OP_ADMIN_CREATE_IOSQ,
-            mptr: sq_phys,
+            prp1: sq_phys,
             cdw10: ((u32::from(depth) - 1) << 16) | u32::from(qid),
             cdw11: u32::from(cqid) << 16 | 1, // CQID | PC
             ..Self::new()
@@ -1431,33 +1433,36 @@ mod tests {
     #[test]
     fn test_nvme_cmd_entry_read() {
         let cmd = NvmeCmdEntry::read(1, 0, 1, 0x1000);
-        assert_eq!(cmd.opcode, OP_IO_READ);
-        assert_eq!(cmd.nsid, 1);
-        assert_eq!(cmd.cdw12, 0); // NLB-1 = 0
+        // NvmeCmdEntry 是 packed 结构: 多字节字段取引用会触发 E0793, 故按值取出再断言.
+        assert_eq!({ cmd.opcode }, OP_IO_READ);
+        assert_eq!({ cmd.nsid }, 1);
+        assert_eq!({ cmd.cdw12 }, 0); // NLB-1 = 0
     }
 
     #[test]
     fn test_nvme_cmd_entry_write() {
         let cmd = NvmeCmdEntry::write(1, 100, 8, 0x2000);
-        assert_eq!(cmd.opcode, OP_IO_WRITE);
-        assert_eq!(cmd.cdw10, 100);
-        assert_eq!(cmd.cdw12, 7); // 8 NLB -> 7
+        assert_eq!({ cmd.opcode }, OP_IO_WRITE);
+        assert_eq!({ cmd.cdw10 }, 100);
+        assert_eq!({ cmd.cdw12 }, 7); // 8 NLB -> 7
     }
 
     #[test]
     fn test_nvme_cmd_entry_identify() {
         let cmd = NvmeCmdEntry::identify(0, IDENTIFY_CNS_CONTROLLER, 0x3000);
-        assert_eq!(cmd.opcode, OP_ADMIN_IDENTIFY);
-        assert_eq!(cmd.cdw10, IDENTIFY_CNS_CONTROLLER as u32);
+        assert_eq!({ cmd.opcode }, OP_ADMIN_IDENTIFY);
+        assert_eq!({ cmd.cdw10 }, IDENTIFY_CNS_CONTROLLER as u32);
     }
 
     #[test]
     fn test_nvme_cmd_entry_create_cq() {
         let cmd = NvmeCmdEntry::create_cq(1, 0x5000, 64);
-        assert_eq!(cmd.opcode, OP_ADMIN_CREATE_IOCQ);
-        assert_eq!(cmd.cdw10 & 0xFFFF, 0); // QID=1 → 验证低位
+        assert_eq!({ cmd.opcode }, OP_ADMIN_CREATE_IOCQ);
+        // cdw10 低 16 位为 QID (QID=1), 高 16 位为 (depth-1)=63
+        // (原断言 `& 0xFFFF == 0` 与下一行 `== (63<<16)|1` 自相矛盾; 2026-09-24 UT-06 修正)
+        assert_eq!({ cmd.cdw10 } & 0xFFFF, 1);
         // cdw10 布局: ((depth-1) << 16) | qid = (63 << 16) | 1
-        assert_eq!(cmd.cdw10, (63 << 16) | 1);
+        assert_eq!({ cmd.cdw10 }, (63 << 16) | 1);
     }
 
     #[test]

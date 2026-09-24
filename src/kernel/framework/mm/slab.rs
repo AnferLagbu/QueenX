@@ -906,23 +906,23 @@ pub struct CacheStats {
 }
 
 impl CacheStats {
-    /// 计算命中率 (%)
+    /// 计算命中率 (千分比, 0..=1000)
     #[inline]
-    pub fn hit_rate(&self) -> f64 {
+    pub fn hit_rate(&self) -> u64 {
         if self.total_allocs == 0 {
-            0.0
+            0
         } else {
-            (self.cache_hits as f64 / self.total_allocs as f64) * 100.0
+            self.cache_hits * 1000 / self.total_allocs
         }
     }
 
-    /// 计算利用率 (%)
+    /// 计算利用率 (千分比, 0..=1000)
     #[inline]
-    pub fn utilization(&self) -> f64 {
+    pub fn utilization(&self) -> u64 {
         if self.total_objects == 0 {
-            0.0
+            0
         } else {
-            (f64::from(self.active_objects) / f64::from(self.total_objects)) * 100.0
+            u64::from(self.active_objects) * 1000 / u64::from(self.total_objects)
         }
     }
 }

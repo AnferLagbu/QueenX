@@ -711,11 +711,14 @@ pub extern "C" fn idt_print_interrupt_stats() {
 mod integration_tests {
     use super::*;
 
+    // host 轨仅保留 host 适用的纯逻辑冒烟 (klog 在 host-test 下为 no-op, 见 klog/mod.rs).
+    // idt_init 不作断言: 其符号面依赖 isr.asm 的 164 个汇编 stub, 且函数体内经
+    // remap_pic(outb) 与 load_idt(lidt) 执行特权指令, 属硬件路径 (DECISION-080:
+    // 硬件路径归 kernel_test 载体); 其真实覆盖由 BSP 启动路径
+    // (arch/x86_64/mod.rs 的 idt_init 调用) + QEMU boot + 双架构链接阶段承担.
+    // 不为此新增 host 符号桩 —— 遵守 T1「消灭 host 占位符号, 守卫交还链接器」的方向.
     #[test]
-    fn test_ffi_interface_compiles() {
-        // 验证所有 FFI 函数可以正常编译链接
-        assert_eq!(idt_init(), MODULE_INIT_SUCCESS);
-
+    fn test_dump_functions_no_panic() {
         // 测试 dump 函数不会 panic
         idt_dump_state();
         idt_print_interrupt_stats();

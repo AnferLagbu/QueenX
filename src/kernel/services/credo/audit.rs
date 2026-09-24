@@ -170,38 +170,37 @@ impl AuditLog {
         None
     }
 
-    #[expect(
-        clippy::large_stack_arrays,
-        reason = "large_stack_arrays: 大栈数组是性能权衡 (避免堆分配); 当前优先 expect"
-    )]
     /// 验证哈希链完整性
     ///
     /// 返回: (ok, 第一个被破坏的 index)
+    ///
+    /// 只校验仍保留在环形缓冲内的区间 `[next - BUFFER_SIZE, next)`;
+    /// 更早的条目已被覆盖, 其前驱不在缓冲中, 无法参与链校验.
+    /// 原实现遍历整个 buffer 收集节点, 未写槽位 (`EMPTY_NODE`, index=0, hash=0)
+    /// 会覆盖 `nodes[0]` 的真实节点, 导致 verify 恒返回 false (B-8; 2026-09-24 UT-06 修复).
     pub fn verify(&self) -> (bool, Option<u32>) {
-        let mut prev: u64 = 0;
         let next = self.next_index.load(Ordering::Acquire);
-        // 排序检查
-        let mut nodes: [Option<HashChainNode>; AUDIT_BUFFER_SIZE] = [None; AUDIT_BUFFER_SIZE];
-        for n in &self.buffer {
-            if n.index < next {
-                let pos = (n.index as usize) % AUDIT_BUFFER_SIZE;
-                nodes[pos] = Some(*n);
+        // 环形缓冲中仍保留的最早 index
+        let start = next.saturating_sub(AUDIT_BUFFER_SIZE as u32);
+        // 首个可校验节点无前驱作参照, 故 prev 用 Option 表示"尚无期望前驱哈希"
+        let mut prev: Option<u64> = None;
+        for i in start..next {
+            let slot = (i as usize) % AUDIT_BUFFER_SIZE;
+            let n = &self.buffer[slot];
+            // 槽位内容必须确为 index i (被同槽更新条目替换 / 未写则跳过)
+            if n.index != i {
+                continue;
             }
-        }
-        for i in 0..next as usize {
-            if i >= AUDIT_BUFFER_SIZE {
-                break;
-            }
-            if let Some(n) = nodes[i] {
-                if n.prev_hash != prev {
+            if let Some(prev_hash) = prev {
+                if n.prev_hash != prev_hash {
                     return (false, Some(n.index));
                 }
-                let expected = compute_hash(prev, &n.event);
-                if expected != n.hash {
-                    return (false, Some(n.index));
-                }
-                prev = n.hash;
             }
+            let expected = compute_hash(n.prev_hash, &n.event);
+            if expected != n.hash {
+                return (false, Some(n.index));
+            }
+            prev = Some(n.hash);
         }
         (true, None)
     }

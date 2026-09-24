@@ -65,7 +65,7 @@ ci-cargo:
 	@echo "[3/3] cargo check (x86_64 + aarch64)..."
 	@mkdir -p $(LOG_DIR)
 	@cd src/rust && cargo check --target x86_64-unknown-none 2>&1 | tee ../../$(LOG_DIR)/cargo_check_x86_64.txt
-	@cd src/rust && cargo check --target aarch64-unknown-none 2>&1 | tee ../../$(LOG_DIR)/cargo_check_aarch64.txt
+	@cd src/rust && cargo check --target aarch64-unknown-none-softfloat 2>&1 | tee ../../$(LOG_DIR)/cargo_check_aarch64.txt
 	@if grep -q "^error\[" $(LOG_DIR)/cargo_check_x86_64.txt $(LOG_DIR)/cargo_check_aarch64.txt 2>/dev/null; then \
 		echo "FAIL: cargo check failed" ; \
 		exit 1 ; \

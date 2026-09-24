@@ -509,6 +509,8 @@ pub fn page_fault_count() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // stack_top/stack_default_size 是 PageFaultPolicy 的 trait 方法, 需显式引入 trait.
+    use crate::framework::mm::page_fault_policy::PageFaultPolicy;
 
     #[test]
     fn test_pf_info_from_error_code() {

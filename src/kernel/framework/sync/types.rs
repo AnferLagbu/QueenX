@@ -462,7 +462,9 @@ mod tests {
         let flags = IrqSaveFlags(0x202); // IF=1 (interrupts enabled)
         assert!(flags.interrupts_enabled());
 
-        let flags_disabled = IrqSaveFlags(0x200); // IF=0 (disabled)
+        // RFLAGS bit1 恒为 1, IF 是 bit9 (0x200); 故 IF=0 的样本是 0x002
+        // (原用例误用 0x200 作为"禁用"样本; UT-06 实测修正)
+        let flags_disabled = IrqSaveFlags(0x002); // IF=0 (disabled)
         assert!(!flags_disabled.interrupts_enabled());
     }
 

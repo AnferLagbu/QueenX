@@ -151,12 +151,12 @@ case "$ARCH" in
         link_kernel "x86_64" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         ;;
     aarch64)
-        build_arch "aarch64" "aarch64-unknown-none" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
+        build_arch "aarch64" "aarch64-unknown-none-softfloat" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         link_kernel "aarch64" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         ;;
     all)
         build_arch "x86_64" "x86_64-unknown-none" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
-        build_arch "aarch64" "aarch64-unknown-none" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
+        build_arch "aarch64" "aarch64-unknown-none-softfloat" && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         run_host_tests && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         check_forbidden_patterns && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
         # 双架构共享 build/kernel.bin 输出路径, 仅链接主架构.

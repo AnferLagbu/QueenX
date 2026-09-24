@@ -364,7 +364,16 @@ pub extern "C" fn launch_first_user_process() -> ! {
 
     #[cfg(all(target_arch = "x86_64", not(feature = "initramfs")))]
     {
+        // 产物桩化: init.bin 是裸机产物 (build/ 被 gitignore, 仅由 make 生成).
+        // 判据用 target_os 而非 feature —— 本块 gate 为 all(target_arch = "x86_64",
+        // not(feature = "initramfs")), host target 的 host-test / kernel_test 两个
+        // lint 维度与 host-tests 都会编译它, 不桩化即让 host 侧编译硬依赖裸机产物
+        // (build.rs G-06「消除隐式 make 耦合」的漏项). 本函数为裸机 init 入口
+        // (extern "C"), host 不可达, 取空切片 ⇒ 走下方 bin_size == 0 报错退出分支.
+        #[cfg(target_os = "none")]
         let bin = include_bytes!("../../../../build/user/init.bin");
+        #[cfg(not(target_os = "none"))]
+        let bin: &[u8] = &[];
         let bin_ptr = bin.as_ptr();
         let bin_size = bin.len() as u64;
 
