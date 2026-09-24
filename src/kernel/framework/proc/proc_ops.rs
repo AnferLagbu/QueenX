@@ -795,6 +795,12 @@ pub fn proc_save_user_regs(pid: Pid, f: &crate::framework::idt::InterruptFrame) 
 /// **不写** `@96` (SP_EL1) 与 `@104` (EL1 侧 TTBR0): 二者由调度切换保存侧维护,
 /// 未调度过的新任务由创建方 (fork / init) 预置.
 #[cfg(target_arch = "aarch64")]
+#[expect(
+    clippy::used_underscore_binding,
+    reason = "used_underscore_binding: `_fpu_pad` 是历史填充槽名 (@136), 已被复用为 \
+              用户页表槽位并被 switch.asm / context.rs 偏移表按名引用, 改名波及跨文件文档; \
+              当前优先 expect"
+)]
 pub fn proc_save_user_regs_aarch64(
     pid: Pid,
     f: &crate::framework::arch::aarch64::exception::ExceptionFrame,
@@ -944,25 +950,15 @@ pub extern "C" fn sys_fork() -> Pid {
             );
         }
     }
-    // KPTI (aarch64): 子进程页表来自 COW 克隆 (只带父进程内核栈页映射),
-    // 需为子进程自己的内核栈顶页补映射, 否则其 EL0→EL1 入口压帧将不可写.
-    #[cfg(target_arch = "aarch64")]
-    crate::framework::mm::map_kernel_stack_top_page(
-        child_cr3,
-        child.kernel_stack.load(Ordering::SeqCst),
-    );
     // KPTI 方案 S3: COW 克隆只搬用户半区 (保留槽 `[1:0] = 00` 被过滤), 子进程页表
     // 不含 EL1 视图 ⇒ 须补建, 否则子进程的 EL0→EL1 入口只能回退到全局内核表,
     // 内核态将无法访问其用户页 (copy_from_user 触发同 EL 数据异常). fail-closed:
     // 视图建不起来则子进程不可投运, 回滚 (cr3 由 `Process::drop` 按帧持有计数销毁).
     #[cfg(target_arch = "aarch64")]
-    let child_el1_view = match crate::framework::mm::vmm_build_el1_view(child_cr3) {
-        Some(view) => view,
-        None => {
-            raw::drop_boxed_process(child_ptr);
-            PROCESS_TABLE.free_pid(child_pid);
-            return 0;
-        }
+    let Some(child_el1_view) = crate::framework::mm::vmm_build_el1_view(child_cr3) else {
+        raw::drop_boxed_process(child_ptr);
+        PROCESS_TABLE.free_pid(child_pid);
+        return 0;
     };
     // 上下文初始化 (分架构: x86_64 的 cr3/rax/rsp 与 aarch64 的 x29/x25/x27 复用
     // 同一偏移, 见 `arch/aarch64/context.rs` 头注释, 故必须按架构分别写).
@@ -976,6 +972,11 @@ pub extern "C" fn sys_fork() -> Pid {
         }
         #[cfg(target_arch = "aarch64")]
         {
+            #![expect(
+                clippy::used_underscore_binding,
+                reason = "used_underscore_binding: `_fpu_pad` 是历史填充槽名 (@136), 复用为子进程 \
+                          用户页表槽位; 改名会波及 switch.asm / context.rs 偏移表, 当前优先 expect"
+            )]
             // KPTI-17: 子进程首次被调度时必须能正确进入 EL0 (恢复侧按 SPSR.M == 0
             // 走 EL0 路径), 故预置:
             //   `_fpu_pad`(@136) = 子进程用户页表 (EL0 的 TTBR0)

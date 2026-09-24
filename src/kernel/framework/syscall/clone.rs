@@ -239,15 +239,6 @@ pub fn sys_clone(
         crate::framework::proc::kernel_stack_write_canary(child_kstack);
     }
 
-    // KPTI (aarch64): EL0→EL1 入口在切 TTBR0 **之前**就把 280 字节异常帧压入
-    // SP_EL1 顶页, 故子线程自己的内核栈顶页必须在共享页表 (cr3 = parent_cr3)
-    // 中可写 —— 仅父线程的栈顶页被映射不足以覆盖子线程 (首次陷入即 Data Abort).
-    #[cfg(target_arch = "aarch64")]
-    crate::framework::mm::map_kernel_stack_top_page(
-        parent_cr3,
-        child.kernel_stack.load(Ordering::SeqCst),
-    );
-
     // 上下文初始化 (分架构: x86_64 的 cr3/rax/rsp 与 aarch64 的 x29/x25/x27 复用
     // 同一偏移, 见 `arch/aarch64/context.rs` 头注释, 故必须按架构分别写)
     let parent_ctx = if let Some(ctx) = api::process_with(parent_pid, |p| *p.context.lock()) {

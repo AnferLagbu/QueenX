@@ -236,7 +236,8 @@ context_switch_asm:
     ldp  x6, x7, [x12, #48]
     // 跳 trampoline 的**高半区别名**: 该 trampoline 会切 TTBR0 → 用户表,
     // 切换后低半区代码即不可取指, 故必须在高别名上执行.
-    // 低半区链接符号 (bit63 == 0) 需加 HIGH_ALIAS_BASE; 已是高地址则直接用.
+    // 低半区链接符号 (bit63 == 0) 需加高半区别名基数 (0xFFFF_0000_0000_0000,
+    // 即 `mm::KERNEL_BASE` — L1-04 收敛后不再另有别名常量); 已是高地址则直接用.
     adrp x11, {tramp}
     add  x11, x11, #:lo12:{tramp}
     tbnz x11, #63, .Lctx_tramp_hi

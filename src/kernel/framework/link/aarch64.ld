@@ -10,6 +10,13 @@ PHDRS
 
 SECTIONS
 {
+    /* 高半区内核区与低半区引导区的固定偏移 (内核区 VMA = LMA + 本值). */
+    _kernel_base = 0xFFFF000000000000;
+
+    /* ── 低半区引导区 (VMA == LMA == PA) ────────────────────────────────
+     * 本区在 MMU 启用前由 start.S 以 PC 相对寻址 (adrp/add) 使用, 故三者必须
+     * 相等; 且镜像文件偏移 0 必为 `_start` (QEMU -kernel 平铺装载).
+     */
     . = 0x40080000;
 
     _kernel_start = .;
@@ -19,7 +26,30 @@ SECTIONS
     } :boot
 
     . = ALIGN(4096);
-    .text : {
+    .bootbss (NOLOAD) : {
+        *(.bootbss)
+    } :boot
+
+    . = ALIGN(4096);
+    _boot_end = .;
+
+    /* Rust 侧 boot 栈 canary 符号 (`proc/process.rs`).
+     * 引导栈本体在 `.bootbss` (低半区, VMA == PA), 其符号距高半区内核代码超出
+     * `adrp` 的 ±4GB 可达范围, 故此处直接暴露其**高半区别名**
+     * (VA = _kernel_base + PA, 运行时经 TTBR1 可达) 供 Rust 侧取址.
+     * 与 x86_64 的差异: x86_64 内核低 VMA 链接, 其 `stack_bottom` 是低 VMA 符号,
+     * 由 Rust 侧自行加 `KERNEL_BASE` 别名化. */
+    stack_bottom = _kernel_base + _boot_stack_bottom;
+
+    /* ── 高半区内核区 (VMA = 高半区, LMA = 物理地址) ────────────────────
+     * 内核代码/数据/向量表链接于高半区, 运行时经 TTBR1 取指取数; LMA 决定物理
+     * 装载位置, 二者差值恒为 `_kernel_base`.
+     */
+    _kernel_text_lma = .;
+    _kernel_text_vma = _kernel_base + .;
+    . = _kernel_text_vma;
+
+    .text : AT(_kernel_text_lma) {
         _kernel_text_start = .;
         *(.text)
         *(.text.*)
@@ -27,7 +57,7 @@ SECTIONS
     } :kernel
 
     . = ALIGN(2048);
-    .vectors : {
+    .vectors : AT(ADDR(.vectors) - _kernel_base) {
         _vectors_start = .;
         *(.vectors)
         /* KPTI 以页级粒度映射向量表段, 故段长对齐到 4KB (末页完整计入) */
@@ -36,20 +66,20 @@ SECTIONS
     } :kernel
 
     . = ALIGN(4096);
-    .rodata : {
+    .rodata : AT(ADDR(.rodata) - _kernel_base) {
         *(.rodata)
         *(.rodata.*)
     } :kernel
 
     . = ALIGN(4096);
-    .data : {
+    .data : AT(ADDR(.data) - _kernel_base) {
         *(.data)
         *(.data.*)
     } :kernel
 
     . = ALIGN(4096);
     __bss_start = .;
-    .bss (NOLOAD) : {
+    .bss (NOLOAD) : AT(ADDR(.bss) - _kernel_base) {
         *(.bss)
         *(.bss.*)
         *(COMMON)
@@ -59,9 +89,8 @@ SECTIONS
 
     . = ALIGN(4096);
     _kernel_end = .;
-    /* P1.D + F-03: Distinguish VMA/LMA semantics (both equal on aarch64
-     * because VMA == LMA in the low-half kernel mapping region). */
-    _kernel_size_vma = _kernel_end - _kernel_start;
-    _kernel_size_lma = _kernel_end - _kernel_start;
+    /* P1.D + F-03: 区分 VMA/LMA 语义 —— 高半区 VMA 与物理 LMA 相差 `_kernel_base`. */
+    _kernel_size_vma = _kernel_end - _kernel_text_vma;
+    _kernel_size_lma = (_kernel_end - _kernel_base) - _kernel_text_lma;
     _kernel_size = _kernel_size_lma;
 }

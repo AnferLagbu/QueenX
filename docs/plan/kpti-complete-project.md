@@ -34,8 +34,8 @@
 |---|---|---|---|
 | `.vectors` 全部页 | 异常取指 + 入口/出口汇编 + 进入 EL0 trampoline 取指 | trampoline 表（TTBR1，页级最小化） | `kpti_aarch64::kpti_init` |
 | `KPTI_GLOBALS` 页 | 入口/出口读 `tramp_ttbr1`/`kernel_ttbr*`/`user_ttbr0` | trampoline 表（TTBR1，单页） | `kpti_aarch64::kpti_init` |
-| 内核栈**顶页** | 入口压 280B 异常帧（切 TTBR0 **之前**） | 用户页表 EL1-only 映射（无 USER 位） | `kpti_aarch64::map_kernel_stack_top_page` |
-| 内核镜像/数据/BSS/内核栈 | 切换后 EL1 运行期（`copy_from_user` 等直访） | EL1 视图 DRAM 1 GiB 块（TTBR0） | `vmm_aarch64::build_el1_view` |
+| 内核栈**顶页** | 入口压 280B 异常帧 | 入口**先切两条 TTBR 再压帧**（内核栈经 `TTBR1` 高半区可达）；栈页不进任何 EL0 可见页表 | `exception.rs` 入口（L1-03b 已删 `kpti_aarch64::map_kernel_stack_top_page`） |
+| 内核镜像/数据/BSS/内核栈 | EL1 运行期取指/取数与栈访问 | `TTBR1` 高半区（内核经高半区链接）；曾由 EL1 视图 DRAM 1 GiB 块（`TTBR0`）承载，**L1-05 已移除** | 内核根表 `L1_IDMAP[1]` / `vmm_aarch64::build_el1_view` |
 | 用户页 | 切换后 EL1 解引用用户裸指针（`userptr.rs` 直访） | EL1 视图用户半区（TTBR0，与用户表共享 L2） | `vmm_aarch64::build_el1_view` |
 
 ### aarch64 完整化（Phase 1，近期）
@@ -66,7 +66,7 @@
 
 - **KPTI-13. EL1 视图（方案 S3）**
   - 描述：全切换模型下 EL0 与 EL1 使用不同 `TTBR0`。EL0 视图只含用户映射（Meltdown 面最小），但内核态必须**同时**看见内核镜像与用户页——`copy_from_user` / `UserReadPtr` 直接解引用用户裸指针（`userptr.rs`，不做页表遍历），地址空间缺映射即翻译故障。故需为每进程维护一份 EL1 专用视图。
-  - 方案：路线 = 方案 A，per-process 双视图：**EL1 视图 = 用户半区 ∪ 内核恒等**；**EL0 视图 = 用户 + 内核栈顶页（EL1-only）**。EL1 视图结构取 **S3**：内核 MMIO 统一走 TTBR1 高别名 ⇒ EL1 视图**刻意不含 Device 段**，其 L2/L3 与用户表**零同步共享**，每进程仅 +2 页（`L0_el1` + `L1_el1`）：`L0_el1[0]→L1_el1`、`L0_el1[170]/[255]` 与用户表同值、`L1_el1[0]→L2_u`（与用户视图同一页 ⇒ 用户页 map/unmap 对两侧同时生效）、`L1_el1[1]` = 内核 `L1_IDMAP[1]` 的 DRAM 1 GiB 块（内核镜像/数据/BSS/内核栈可达，VA 1-2 GiB）。
+  - 方案：路线 = 方案 A，per-process 双视图：**EL1 视图 = 用户半区 ∪ 内核恒等**（内核恒等部分 **L1-05 已移除**，见下）；**EL0 视图 = 用户 + 内核栈顶页（EL1-only）**（栈顶页 **L1-03b 已移除**——入口改为先切两条 TTBR 再压帧，栈页不进任何 EL0 可见页表）。EL1 视图结构取 **S3**：内核 MMIO 统一走 TTBR1 高别名 ⇒ EL1 视图**刻意不含 Device 段**，其 L2/L3 与用户表**零同步共享**，每进程仅 +2 页（`L0_el1` + `L1_el1`）：`L0_el1[0]→L1_el1`、`L0_el1[170]/[255]` 与用户表同值、`L1_el1[0]→L2_u`（与用户视图同一页 ⇒ 用户页 map/unmap 对两侧同时生效）。**`L1_el1[1]` = 内核 `L1_IDMAP[1]` 的 DRAM 1 GiB 块曾用于内核镜像/数据/BSS/内核栈（VA 1-2 GiB）可达；L1-05 已移除** —— 内核迁移到高半区后经 `TTBR1` 可达，EL1 视图只承载用户页（见 [aarch64-high-half-migration.md](./aarch64-high-half-migration.md)）。
   - 状态：[X]
   - 详情：实现于 `vmm_aarch64::build_el1_view` / `destroy_el1_view`（拆视图**仅**释放自身两页，不得递归——`L0_el1[170]/[255]` 与 `L1_el1[0]→L2_u` 均共享，递归会双释放/UAF）。关联方式（AI 自定）：用户表**保留槽 `EL1_VIEW_SLOT = 1`**（VA 512 GiB~1 TiB，用户态从不使用）存视图根物理地址，**只写地址不置 `bits[1:0]`** ⇒ 硬件视为无效描述符（该 VA 段保持未映射），软件可直接读出。收益：入口汇编只需 `ldr x4, [x2, #8]`（x2 = 当前 `TTBR0`）即取到本进程视图——关联**随页表一起切换**，无全局槽的陈旧值风险。`create_user_page_table` 建视图失败即 fail-closed 返回 `None`。fork 路径（`proc_ops.rs`）子页表由 COW 克隆产生（保留槽被 `[1:0]==0b11` 过滤掉）⇒ 须经 `vmm_build_el1_view` 补建，失败即回滚子进程。
 

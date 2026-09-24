@@ -18,7 +18,6 @@ use core::ptr::NonNull;
 
 use crate::framework::constants::limits::MAX_MMIO_MAPPINGS;
 use crate::framework::mm::PhysAddr;
-#[cfg(target_arch = "x86_64")]
 use crate::framework::mm::phys_to_virt;
 use crate::framework::sync::IrqSpinLock;
 // 仅供 x86_64 的 `ensure_mmio_mapped` 使用 (aarch64 走静态别名, 无需补映射)
@@ -87,25 +86,20 @@ impl AliasRegistry {
 
 /// MMIO 物理地址 → 内核虚拟地址。
 ///
-/// - `x86_64`: 走 `phys_to_virt` (高半区直接映射, boot.asm 已建立).
-/// - `aarch64`: 走**高半区别名** `VA = PA + HIGH_ALIAS_BASE`.
+/// 统一走 [`phys_to_virt`] (L1-04 收敛): `x86_64` 为高半区直接映射
+/// (boot.asm 已建立), aarch64 为**高半区别名** —— 内核迁至高半区后二者同为
+/// `PA + KERNEL_BASE`, 故不再按架构分派 (原 aarch64 分支的独立常量
+/// `HIGH_ALIAS_BASE` 已删除, 换算基数唯一来源为 `mm::KERNEL_BASE`).
 ///
 /// aarch64 侧必须走别名: EL0→EL1 入口把 TTBR0 切到本进程 **EL1 视图**
-/// (用户半区 ∪ 内核恒等 DRAM 块), 该视图**刻意不含 Device**
+/// (只承载用户页 —— 内核迁高半区后 DRAM 块已移除, 见 L1-05), 该视图**刻意不含 Device**
 /// (见 `vmm_aarch64::build_el1_view`), 故内核态不能再以低半区恒等地址访问
 /// MMIO (UART/GIC 已在别处改用别名, 此处补齐 virtio 等经 `IoMem` 的消费者).
 /// 别名由 TTBR1 (= `L0_TABLE`) 的 `L1_IDMAP[0] → L2_DEVICE` 提供
 /// (0-1 GiB Device, 2 MiB 粒度), 恒常有效, **无需动态建映射**.
 #[inline]
 fn mmio_virt(phys: u64) -> u64 {
-    #[cfg(target_arch = "aarch64")]
-    {
-        crate::framework::mm::kpti::HIGH_ALIAS_BASE + phys
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        phys_to_virt(phys)
-    }
+    phys_to_virt(phys)
 }
 
 /// 经校验的 MMIO 区域句柄。

@@ -1088,10 +1088,6 @@ impl UserProcManager {
         );
         crate::framework::proc::kernel_stack_write_canary(kstack_top);
 
-        // KPTI (aarch64): 让用户页表具备 EL0→EL1 异常入口压帧所需的栈页映射
-        #[cfg(target_arch = "aarch64")]
-        crate::framework::mm::map_kernel_stack_top_page(cr3_val, kstack_top);
-
         // ✅ PID 分配延后到所有内存/页表/栈资源就绪后:
         //   避免 `alloc_kernel_process` 或 `alloc_user_process` 失败时, 已分配
         //   的 PID 留在 next_pid 计数器中造成 PID 泄漏. 早期失败 (页表/栈分配)
@@ -1178,8 +1174,8 @@ impl UserProcManager {
         // 故内核栈顶页必须在用户页表中可见. 映射面收窄后不再继承高半区别名,
         // 必须显式映射 —— 统一走 `kpti::map_rsp0_page` (与调度器切换路径同源).
         // 权限 PRESENT|WRITABLE 且**不设 USER** (访问路径 CPL 恒为 0, 设 USER 即提权).
-        // 仅 x86_64 需要 (TSS RSP0 机制); aarch64 用 sp_el0 切换, 创建时已由
-        // `map_kernel_stack_top_page` 覆盖.
+        // 仅 x86_64 需要 (TSS RSP0 机制); aarch64 的异常入口先切 TTBR1 再压帧,
+        // 内核栈只经 TTBR1 可达, 无需在用户页表内为其保留任何映射.
         #[cfg(target_arch = "x86_64")]
         // SAFETY: cr3 是本进程有效用户页表 PML4 物理地址 (低 12 位可为 PCID);
         // kstack 是本进程内核栈顶的高半区 VA (页对齐). 当前在调度器上下文,

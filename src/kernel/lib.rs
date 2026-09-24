@@ -691,12 +691,13 @@ pub extern "C" fn kernel_init() {
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
         const KMALLOC_HEAP_SIZE: u64 = 16 * 1024 * 1024; // 16 MB
-        #[cfg(target_arch = "x86_64")]
+        // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
+        // (仍自 kernel_end + 0x200000 起), 仅访问别名改走高半区直射区,
+        // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
+        // (aarch64 原先直取物理地址, 依赖低半区恒等, 见 L1-05)。
         let heap_start = crate::framework::mm::VirtAddr(
             crate::framework::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
         );
-        #[cfg(target_arch = "aarch64")]
-        let heap_start = crate::framework::mm::VirtAddr(boot_info.kernel_end + 0x200000);
         unsafe {
             crate::framework::mm::kmalloc::get_kmalloc_mut()
                 .init(heap_start, KMALLOC_HEAP_SIZE);

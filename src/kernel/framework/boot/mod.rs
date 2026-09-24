@@ -289,10 +289,17 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
 pub fn init() -> BootInfo {
     // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号且不执行裸机引导,
     // 常量中性取值 0. 真机分支取链接脚本符号地址.
-    #[cfg(not(feature = "host-test"))]
+    // 消费侧 (`pmm_init` / `pmm.rs`) 要求本值必须是**物理地址**.
+    // aarch64: 内核区链接于高半区 (VMA = KERNEL_BASE + LMA), 故须减去 KERNEL_BASE.
+    // x86_64: 低 VMA 链接 + 高别名运行 (位置计数器未跳转), 符号地址即物理地址.
+    #[cfg(all(not(feature = "host-test"), target_arch = "aarch64"))]
     let kernel_end = {
-        // SAFETY: `_kernel_end` 为链接脚本定义的符号, 只读访问; 其 VMA 等于物理
-        // 地址 (链接脚本位置计数器未跳转到 _kernel_text_vma), 无需减去 KERNEL_BASE.
+        // SAFETY: `_kernel_end` 为链接脚本定义的符号, 只读访问.
+        unsafe { crate::framework::mm::virt_to_phys(&_kernel_end as *const u8 as u64) }
+    };
+    #[cfg(all(not(feature = "host-test"), not(target_arch = "aarch64")))]
+    let kernel_end = {
+        // SAFETY: `_kernel_end` 为链接脚本定义的符号, 只读访问.
         unsafe { &_kernel_end as *const u8 as u64 }
     };
     #[cfg(feature = "host-test")]

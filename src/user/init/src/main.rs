@@ -13,9 +13,9 @@ use userlib::sys::*;
 /// - x86_64: `KERNEL_BASE(0xFFFF_8000_0000_0000) + 0x100000`
 ///   （见 `framework/link/x86_64.ld` 的 `. = 0x100000`，对应
 ///   `framework/mm/mod.rs` 的 `KERNEL_BASE`）。
-/// - aarch64: `HIGH_ALIAS_BASE(0xFFFF_0000_0000_0000) + 0x4008_0000`
+/// - aarch64: `KERNEL_BASE(0xFFFF_0000_0000_0000) + 0x4008_0000`
 ///   （见 `framework/link/aarch64.ld` 的 `. = 0x40080000`，对应
-///   `framework/mm/kpti_aarch64.rs` 的 `HIGH_ALIAS_BASE`）。
+///   `framework/mm/mod.rs` 的 `KERNEL_BASE`）。
 #[cfg(target_arch = "x86_64")]
 const KERNEL_IMAGE_ALIAS: u64 = 0xFFFF_8000_0000_0000 + 0x10_0000;
 #[cfg(target_arch = "aarch64")]

@@ -130,7 +130,7 @@ fn test_init_probe_reads_kernel_high_half() {
     );
     assert!(
         src.contains("0xFFFF_0000_0000_0000 + 0x4008_0000"),
-        "aarch64 探针目标必须为 HIGH_ALIAS_BASE + 内核镜像 LMA 基址 (link/aarch64.ld 的 . = 0x40080000)"
+        "aarch64 探针目标必须为 KERNEL_BASE + 内核镜像 LMA 基址 (link/aarch64.ld 的 . = 0x40080000)"
     );
     assert!(
         src.contains("core::ptr::read_volatile(KERNEL_IMAGE_ALIAS as *const u8)"),

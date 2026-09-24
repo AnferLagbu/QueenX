@@ -544,7 +544,8 @@ pub unsafe fn assemble_kernel_half(user_pml4_phys: u64, kernel_pml4_phys: u64) {
 /// KPTI-08 移除高半区别名复制后, 该栈顶页不再自动可见 ⇒ 必须显式映射.
 ///
 /// 页选择: `(kernel_stack_top - 1) & !0xFFF` —— 内核栈自顶向下增长, 首次压入必然
-/// 落在栈顶页内, 故 1 页足够 (与 aarch64 侧 `map_kernel_stack_top_page` 同构).
+/// 落在栈顶页内, 故 1 页足够. aarch64 侧不需此形态: 其异常入口改为**先切 TTBR
+/// 再压帧**, 内核栈只经 TTBR1 可达, 从不出现在 EL0 可见页表中.
 /// 入参 `kernel_stack_top` 系 `Process::allocate_kernel_stack` 产物, 恒为高半区 VA
 /// 且页对齐 (`PhysAddr::to_virt() + KERNEL_STACK_SIZE`).
 ///

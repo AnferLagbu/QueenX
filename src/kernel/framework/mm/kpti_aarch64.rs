@@ -5,21 +5,28 @@
 //!
 //! # 全切换模型 (对齐 x86_64 CR3 语义)
 //!
-//! aarch64 内核代码/数据/栈位于低半区 (`KERNEL_BASE=0`, VA==PA), 由 TTBR0_EL1 翻译;
-//! 异常向量表经高半区别名 (`VA = PA + 0xFFFF_0000_0000_0000`) 由 TTBR1_EL1 翻译.
-//! 故"用户态隔离"必须 TTBR0/TTBR1 **同时**切换:
+//! 内核代码/数据/栈住在 **TTBR1 领地** (高半区); 异常向量表与 KPTI 全局量页经
+//! 高半区别名 (`VA = PA + 高半区基址`) 由 TTBR1_EL1 翻译. 故"用户态隔离"必须
+//! TTBR0/TTBR1 **同时**切换:
 //!
-//! - **EL0 运行期**: TTBR0 = 用户页表; TTBR1 = trampoline 表.
-//!   用户页表额外映射内核栈**首页** (EL1-only, 无 USER 位) —— 异常入口在切换 TTBR0
-//!   之前需向 SP_EL1 (= 内核栈低半区地址) 压入 280 字节异常帧.
-//! - **异常入口** (`exception.rs` 的 `handle_el0_*`): 压帧后立刻切
-//!   TTBR0 → 内核恒等表 (`kernel_ttbr0`), TTBR1 → 完整内核根表 (`kernel_ttbr1`),
-//!   此后处理器在完整内核地址空间中运行.
-//! - **异常出口** (eret 前): 切回 TTBR0 → 用户页表 (`user_ttbr0`),
-//!   TTBR1 → trampoline 表. 切换代码必须位于高半区 (`.vectors`) —— TTBR0 切换后
-//!   低半区代码即不可取指 (实测: 低半区切换必然 Prefetch Abort).
+//! - **EL0 运行期**: TTBR0 = 用户页表; TTBR1 = trampoline 表 (页级最小化).
+//! - **异常入口** (`exception.rs` 的 `handle_el0_*`): **先**切
+//!   TTBR0 → 内核恒等表 (`kernel_ttbr0`)、TTBR1 → 完整内核根表
+//!   (`kernel_ttbr1`), **再**向内核栈压入 280 字节异常帧 —— 内核栈只经
+//!   TTBR1 可达 (其 VA 在高半区), 切表前压帧必然 Data Abort. 切换序列本身需
+//!   2 个 scratch 寄存器, 而入口时刻全部 GPR 都是用户态活跃值, 故先把它们存入
+//!   [`KPTI_GLOBALS`] 的暂存槽, 切表后取回.
+//! - **异常出口** (eret 前): 帧先读回 (切表后内核栈即不可达), 再切回
+//!   TTBR0 → 用户页表 (`user_ttbr0`), TTBR1 → trampoline 表.
+//!   切换代码必须位于高半区 (`.vectors`) —— TTBR0 切换后低半区代码即不可取指
+//!   (实测: 低半区切换必然 Prefetch Abort).
 //! - **进入 EL0**: `arch/aarch64/mod.rs::enter_user` 跳转到 `.vectors` 内的
 //!   `kpti_enter_user_trampoline` (高半区) 完成切换后 eret.
+//!
+//! 内核栈页**不出现在任何 EL0 可见页表**中 (trampoline 表只映射 `.vectors` 与
+//! [`KPTI_GLOBALS`] 两页), 这是"先切表再压帧"相对"把栈顶页映射进用户页表"的
+//! 隔离收益. 与 x86_64 的差异: x86 的用户 PML4 能映射高 VA, 故其 RSP0 栈页
+//! 仍走"映射进用户页表"形态 (见 `kpti::map_rsp0_page`).
 //!
 //! aarch64 无 SMP (`smp_init.rs` 仅 x86_64), 故全局量用普通 `AtomicU64` 即可.
 
@@ -28,7 +35,9 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::framework::mm::PAGE_SIZE;
+use crate::framework::mm::phys_to_virt;
 use crate::framework::mm::pmm_alloc_page;
+use crate::framework::mm::virt_to_phys;
 
 // ── 公共状态 ──────────────────────────────────────────────────────
 
@@ -50,6 +59,13 @@ pub struct KptiGlobals {
     pub user_ttbr0: AtomicU64,
     /// KPTI 是否已初始化 (0 = 未就绪, 1 = 就绪).
     pub ready: AtomicU64,
+    /// 入口/出口暂存槽 0: 保住切换序列 clobber 掉的用户 `x4`.
+    ///
+    /// 入口时刻 `x0-x30` 全是用户态活跃值, 而切表需要 scratch 寄存器; 若无暂存槽
+    /// 则被 clobber 的用户值永久丢失 (帧尚未压入内核栈). 出口侧对称使用.
+    pub tramp_save0: AtomicU64,
+    /// 入口/出口暂存槽 1: 保住切换序列 clobber 掉的用户 `x3`.
+    pub tramp_save1: AtomicU64,
 }
 
 /// KPTI 全局状态实例. `#[unsafe(no_mangle)]` 供汇编按符号名/`sym` 操作数访问.
@@ -61,17 +77,21 @@ pub static KPTI_GLOBALS: KptiGlobals = KptiGlobals {
     kernel_ttbr0: AtomicU64::new(0),
     user_ttbr0: AtomicU64::new(0),
     ready: AtomicU64::new(0),
+    tramp_save0: AtomicU64::new(0),
+    tramp_save1: AtomicU64::new(0),
 };
 
-// 汇编按字面偏移 (0/8/16/24/32) 访问上述字段; 调整字段顺序/宽度会在此编译失败.
+// 汇编按字面偏移 (0/8/16/24/32/40/48) 访问上述字段; 调整字段顺序/宽度会在此编译失败.
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, tramp_ttbr1) == 0);
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, kernel_ttbr1) == 8);
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, kernel_ttbr0) == 16);
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, user_ttbr0) == 24);
 const _: () = assert!(core::mem::offset_of!(KptiGlobals, ready) == 32);
+const _: () = assert!(core::mem::offset_of!(KptiGlobals, tramp_save0) == 40);
+const _: () = assert!(core::mem::offset_of!(KptiGlobals, tramp_save1) == 48);
 
-/// 高半区别名基址: `VA = PA + HIGH_ALIAS_BASE`.
-pub const HIGH_ALIAS_BASE: u64 = 0xFFFF_0000_0000_0000;
+// 高半区别名基数由 `mm::KERNEL_BASE` 单一提供 (L1-04 收敛: 迁移后二者同值,
+// 不再另设 `HIGH_ALIAS_BASE`), 换算统一走 `mm::phys_to_virt` / `mm::virt_to_phys`.
 
 // ── 公开 API ──────────────────────────────────────────────────────
 
@@ -109,31 +129,6 @@ pub fn kpti_set_user_ttbr0(ttbr0: u64) {
 #[inline(always)]
 pub fn kpti_user_ttbr0() -> u64 {
     KPTI_GLOBALS.user_ttbr0.load(Ordering::Acquire)
-}
-
-/// 把内核栈**顶页**以 EL1-only 页级映射进用户页表 (`cr3`).
-///
-/// 依据 (全切换模型): EL0→EL1 异常入口 (`exception.rs::handle_el0_*`) 在切换
-/// `TTBR0` **之前**就把 280 字节异常帧压入 `SP_EL1` (= 内核栈顶), 故该页在用户
-/// 页表下必须可写 —— 与 `x86_64` 把 TSS.RSP0 栈页映射进用户页表同因.
-///
-/// 映射不带 `USER` 位 ⇒ EL0 不可访问; 且 `is_user_leaf` 判据 (bit6 = AP\[1\])
-/// 不将其视为用户 leaf, 故 COW 克隆与拆表都不会对其做帧计数 (不误释放共享帧).
-///
-/// 每个用户页表都需具备该映射: 新建页表 (`create_user_process`) 与 COW 克隆出的
-/// 子页表 (fork) 各调用一次.
-pub fn map_kernel_stack_top_page(cr3: u64, kstack_top: u64) {
-    if cr3 == 0 || kstack_top == 0 {
-        return;
-    }
-    // aarch64 `KERNEL_BASE == 0` (恒等映射) ⇒ 顶页虚拟地址即物理地址
-    let top_page = (kstack_top - 1) & !(PAGE_SIZE - 1);
-    super::vmm::get_vmm().map_page_in_table(
-        cr3,
-        super::VirtAddr(top_page),
-        super::PhysAddr(top_page),
-        super::PageFlags::PRESENT | super::PageFlags::WRITABLE,
-    );
 }
 
 /// 进入内核态: 切换 TTBR0/TTBR1 到完整内核地址空间.
@@ -255,22 +250,25 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
         core::ptr::write_bytes(phys_to_virt(tramp_l0_phys) as *mut u8, 0, PAGE_SIZE as usize);
     }
 
-    // 3. 页级最小化映射 (高半区别名 VA → 同物理页, EL1 RW 可执行, 无 USER 位)
-    let mut pa = &raw const _vectors_start as u64;
-    let vectors_end = &raw const _vectors_end as u64;
+    // 3. 页级最小化映射 (高半区别名 VA → 同物理页, EL1 RW 可执行, 无 USER 位).
+    //    `.vectors` 段与 KPTI_GLOBALS 均链接于高半区 (VMA = PA + KERNEL_BASE),
+    //    故映射项的物理地址须经 virt_to_phys 还原; 映射 VA 由同一物理地址经
+    //    phys_to_virt 换算, 结果恰为符号自身的高半区地址.
+    let mut pa = virt_to_phys(&raw const _vectors_start as u64);
+    let vectors_end = virt_to_phys(&raw const _vectors_end as u64);
     while pa < vectors_end {
         vmm.map_page_in_table(
             tramp_l0_phys,
-            super::VirtAddr(pa + HIGH_ALIAS_BASE),
+            super::VirtAddr(phys_to_virt(pa)),
             super::PhysAddr(pa),
             super::PageFlags::PRESENT | super::PageFlags::WRITABLE,
         );
         pa += PAGE_SIZE;
     }
-    let globals_pa = (core::ptr::addr_of!(KPTI_GLOBALS) as u64) & !(PAGE_SIZE - 1);
+    let globals_pa = virt_to_phys(core::ptr::addr_of!(KPTI_GLOBALS) as u64) & !(PAGE_SIZE - 1);
     vmm.map_page_in_table(
         tramp_l0_phys,
-        super::VirtAddr(globals_pa + HIGH_ALIAS_BASE),
+        super::VirtAddr(phys_to_virt(globals_pa)),
         super::PhysAddr(globals_pa),
         super::PageFlags::PRESENT | super::PageFlags::WRITABLE,
     );
@@ -289,8 +287,5 @@ pub fn kpti_trampoline_ttbr1_or_kernel(kernel_ttbr1: u64) -> u64 {
     if t == 0 { kernel_ttbr1 } else { t }
 }
 
-/// 物理地址 → 内核可访问虚拟地址 (`KERNEL_BASE=0` ⇒ 恒等).
-#[inline(always)]
-fn phys_to_virt(phys: u64) -> u64 {
-    phys + super::KERNEL_BASE
-}
+// L1-04 收敛: 原本地 `phys_to_virt` / `virt_to_phys` 副本已删除 ——
+// 换算唯一入口为 `mm::phys_to_virt` / `mm::virt_to_phys` (文件顶部导入).

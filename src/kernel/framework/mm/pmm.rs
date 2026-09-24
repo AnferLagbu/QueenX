@@ -20,7 +20,7 @@ macro_rules! klog_pmm {
     };
 }
 
-use super::{KERNEL_BASE, MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr};
+use super::{MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr, phys_to_virt};
 use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 use core::cell::{Cell, UnsafeCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -244,7 +244,7 @@ impl RawMetaStore {
 
 impl MetaStore for RawMetaStore {
     fn setup_bitmap(&mut self, phys: u64, bytes: usize) {
-        let virt = (phys + KERNEL_BASE) as *mut u8;
+        let virt = phys_to_virt(phys) as *mut u8;
         // SAFETY: virt 由 init_bitmap 计算 (phys + KERNEL_BASE 内核映射区),
         // bytes 为该区段长度, 区段已按页对齐且未他用.
         unsafe { raw::zero_memory(virt, bytes) };
@@ -253,21 +253,21 @@ impl MetaStore for RawMetaStore {
     }
 
     fn setup_meta(&mut self, phys: u64, bytes: usize) {
-        let virt = (phys + KERNEL_BASE) as *mut u8;
+        let virt = phys_to_virt(phys) as *mut u8;
         // SAFETY: 同上; 0xFF 预置 = BUDDY_ALLOCATED (与 H-04 之前行为一致)
         unsafe { raw::fill_memory(virt, BUDDY_ALLOCATED, bytes) };
         self.meta = NonNull::new(virt);
     }
 
     fn setup_links(&mut self, phys: u64, bytes: usize) {
-        let virt = (phys + KERNEL_BASE) as *mut u8;
+        let virt = phys_to_virt(phys) as *mut u8;
         // SAFETY: 同上; 0xFF 字节填充 → 每个 u64 字段 = u64::MAX = SENTINEL (链表空态)
         unsafe { raw::fill_memory(virt, 0xFF, bytes) };
         self.links = NonNull::new(virt.cast::<FreeIndex>());
     }
 
     fn setup_counts(&mut self, phys: u64, bytes: usize) {
-        let virt = (phys + KERNEL_BASE) as *mut u8;
+        let virt = phys_to_virt(phys) as *mut u8;
         // SAFETY: virt 由 init_bitmap 计算 (phys + KERNEL_BASE 内核映射区),
         // bytes 为该区段长度, 区段已按页对齐且未他用; 清零 = 全部帧"未计数"
         unsafe { raw::zero_memory(virt, bytes) };
@@ -831,18 +831,18 @@ impl PhysicalMemoryManager {
         klog_pmm!(
             "[PMM] Buddy meta: {} B at 0x{:X}",
             buddy_meta_bytes,
-            buddy_meta_phys + KERNEL_BASE
+            phys_to_virt(buddy_meta_phys)
         );
         klog_pmm!(
             "[PMM] FREE_LINKS: {} B at 0x{:X} ({} pages)",
             free_links_bytes,
-            free_links_phys + KERNEL_BASE,
+            phys_to_virt(free_links_phys),
             free_links_pages
         );
         klog_pmm!(
             "[PMM] FRAME_COUNTS: {} B at 0x{:X} ({} pages)",
             counts_bytes,
-            counts_phys + KERNEL_BASE,
+            phys_to_virt(counts_phys),
             counts_pages
         );
 

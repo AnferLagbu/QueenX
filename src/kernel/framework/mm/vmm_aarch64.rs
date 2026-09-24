@@ -13,10 +13,11 @@
 
 // 显式导入 mm 父模块符号 (2026-09-12 方案 B: 消除 glob 导入, 满足 clippy::wildcard_imports)
 // 背景: 既有 commit a7851509 删除本文件 glob allow 导致 aarch64 clippy 回归, 用户裁决改显式导入.
-// 说明: `super::KERNEL_BASE` / `super::kpti::kpti_init` 走显式路径, 无需在此导入.
+// 说明: `super::kpti::kpti_init` 走显式路径, 无需在此导入 (PA→VA 换算见上方
+// `super::phys_to_virt`, L1-04 收敛后不再本地重复定义).
 use super::{
     PAGE_NX, PAGE_SIZE, PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PhysAddr, VirtAddr, get_pmm,
-    is_user_leaf,
+    is_user_leaf, phys_to_virt,
 };
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -24,9 +25,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::framework::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 
 use crate::framework::sync::OnceLock;
-fn phys_to_virt(phys: u64) -> u64 {
-    phys + super::KERNEL_BASE
-}
 
 // ─── ARM 描述符常量 ────────────────────────────────────────
 
@@ -1044,8 +1042,10 @@ impl Aarch64Vmm {
     /// - `L0_el1[0] → L1_el1`; `L0_el1[170]/[255]` 与用户表同值 (PIE / mmap 栈)
     /// - `L1_el1[0] → L2_u` —— 与用户视图 `L1_u[0]` **指向同一页** ⇒ 后续
     ///   map/unmap 用户页对两侧同时生效, 零同步成本
-    /// - `L1_el1[1]` = 内核 `L1_IDMAP[1]` 的 **DRAM 1 GiB 块** ⇒ 内核
-    ///   镜像/数据/BSS/内核栈 (VA 1-2 GiB) 在 EL1 视图下可达
+    ///
+    /// **视图只承载用户页** (L1-05): 内核镜像/数据/BSS/内核栈在迁移后链接于高半区,
+    /// 经 `TTBR1` 可达, 不占用 `TTBR0` ⇒ 本视图不再含 DRAM 块 (L1-05 前曾以
+    /// `L1_el1[1]` = `L1_IDMAP[1]` DRAM 1 GiB 块纳入, 迁移完成后为冗余面).
     ///
     /// **刻意不含 Device**: 内核 MMIO 统一走高半区别名 (`IoMem` 的 `virt`),
     /// 若把 0-1 GiB 的 Device 页并入本视图, 用户进程页表就会带上 MMIO 面,
@@ -1073,26 +1073,10 @@ impl Aarch64Vmm {
             return None;
         }
 
-        // 前置: 内核 L0[0] → L1_IDMAP, 且 L1_IDMAP[1] 是 1 GiB 块描述符
-        let kernel = phys_to_virt(self.kernel_l0) as *mut u64;
-        let l1_idmap = self.get_next_level(kernel, 0);
-        if l1_idmap.is_null() {
-            return None;
-        }
-        // SAFETY: l1_idmap 是已存在的 L1 表页; 读槽位 1.
-        let dram_desc = unsafe { ptr::read_volatile(l1_idmap.add(1)) };
-        if dram_desc & 0b11 != 0b01 {
-            // 与 mmu::init 的 DRAM 块布局不符 ⇒ fail-closed, 不建半成品视图
-            return None;
-        }
-
         let el1_l0 = self.alloc_table()?;
-        let el1_l1 = match self.alloc_table() {
-            Some(t) => t,
-            None => {
-                self.free_table(el1_l0);
-                return None;
-            }
+        let Some(el1_l1) = self.alloc_table() else {
+            self.free_table(el1_l0);
+            return None;
         };
 
         let el1_l0_ptr = phys_to_virt(el1_l0) as *mut u64;
@@ -1110,9 +1094,9 @@ impl Aarch64Vmm {
             }
             // ② L0_el1[0] → L1_el1
             ptr::write_volatile(el1_l0_ptr, table_descriptor(el1_l1));
-            // ③ L1_el1[0] → L2_u (共享), L1_el1[1] = DRAM 1 GiB 块
+            // ③ L1_el1[0] → L2_u (共享). L1-05: 不再写 L1_el1[1] DRAM 块 ——
+            //    内核经 TTBR1 高半区可达, 本视图只承载用户页.
             ptr::write_volatile(el1_l1_ptr, l2_u_desc);
-            ptr::write_volatile(el1_l1_ptr.add(1), dram_desc);
             // ④ 登记关联: 用户表保留槽 = EL1 视图根 (不置位 ⇒ 硬件视为无效项)
             ptr::write_volatile(user.add(EL1_VIEW_SLOT), el1_l0);
             core::arch::asm!("dsb ishst");
@@ -1150,7 +1134,7 @@ impl Aarch64Vmm {
     /// 这些槽位, 就会停留在建视图时刻的快照 (全 0): 内核态按当前地址空间直访用户裸指针
     /// (`copy_from_user` / `userptr.rs`) 将触发 level-0 翻译故障.
     ///
-    /// 槽位 0 由视图自身占用 (`L0_el1[0] → L1_el1`, 内含内核 DRAM 块), 保留槽
+    /// 槽位 0 由视图自身占用 (`L0_el1[0] → L1_el1`, 仅承载用户页), 保留槽
     /// [`EL1_VIEW_SLOT`] 存放视图根地址, 二者都不镜像; 高半区槽位 (≥ 256) 于用户表恒为
     /// 内核 L0 的副本, 不参与映射变更, 同样不镜像.
     ///

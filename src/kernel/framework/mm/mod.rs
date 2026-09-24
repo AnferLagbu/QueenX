@@ -114,7 +114,7 @@ pub use swap::{kswapd_wakeup, set_page_locked};
 
 // kpti 公共接口 re-export — 避免跨子系统直接访问 mm::kpti 内部
 #[cfg(target_arch = "aarch64")]
-pub use kpti::{kpti_trampoline_ttbr1_or_kernel, map_kernel_stack_top_page};
+pub use kpti::kpti_trampoline_ttbr1_or_kernel;
 // x86_64 侧对应接口: 把任务内核栈顶页映射进该进程用户页表 (KPTI-08)
 #[cfg(target_arch = "x86_64")]
 pub use kpti::map_rsp0_page;
@@ -180,11 +180,11 @@ pub use crate::framework::config::{
 
 /// 内存布局常量
 /// `x86_64`: 高半核映射 (`0xFFFF_8000_0000_0000`)
-/// aarch64: 直接恒等映射 (PA=VA, 低 2GB)
+/// aarch64: 高半区内核区 (`0xFFFF_0000_0000_0000`, 内核区 VMA = LMA + 本常量)
 #[cfg(target_arch = "x86_64")]
 pub const KERNEL_BASE: u64 = 0xFFFF800000000000u64;
 #[cfg(target_arch = "aarch64")]
-pub const KERNEL_BASE: u64 = 0;
+pub const KERNEL_BASE: u64 = 0xFFFF000000000000u64;
 pub const PHYSICAL_BASE: u64 = 0x0000000000000000u64;
 
 /// 用户空间低地址保护阈值.
@@ -219,11 +219,11 @@ pub const TLB_PROBE_VA: u64 = 0x0000_7F80_0000_0000;
 /// 内核文本段基址 (符号地址).
 /// `x86_64`: 高半核最高 2GB 区域 (-2GB 符号地址), 用于内核代码绝对寻址
 ///   和 RIP/地址分类 (内核文本段 vs 直接映射区).
-/// aarch64: 恒等映射, 内核文本段基址由 bootloader 决定 (典型 0x40080000).
+/// aarch64: 内核镜像装载基址 (LMA 0x40080000) 的高半区地址.
 #[cfg(target_arch = "x86_64")]
 pub const KERNEL_TEXT_BASE: u64 = 0xFFFFFFFF80000000;
 #[cfg(target_arch = "aarch64")]
-pub const KERNEL_TEXT_BASE: u64 = 0x40080000;
+pub const KERNEL_TEXT_BASE: u64 = KERNEL_BASE + 0x4008_0000;
 
 /// 页表项标志 (与 C 定义一致)
 pub const PAGE_PRESENT: u64 = 1 << 0;

@@ -8,7 +8,7 @@
  *   1. 检测当前异常级别
  *   2. EL3→EL2: 配置 SCR_EL3, 返回 EL2
  *   3. EL2→EL1: 配置 HCR_EL2, 返回 EL1
- *   4. EL1: 设置栈, 跳转 Rust entry()
+ *   4. EL1: 建立引导页表 + 开启 MMU + 切至高半区内核 VMA, 跳转 Rust entry()
  */
 
 .section .text.boot
@@ -81,8 +81,7 @@ el2_entry:
     msr  cnthctl_el2, x0
 
     // P1.C + F-06: 显式清零 EL1 MAIR/TCR 影子寄存器,
-    // 防御 reset value 与 arch spec 不一致. eret 到 EL1 后 EL1 内核
-    // mmu::init() 会立即覆盖, 此处仅为清理 + 防御性文档.
+    // 防御 reset value 与 arch spec 不一致. EL1 引导页表建立时会立即覆盖.
     msr  mair_el1, xzr
     msr  tcr_el1, xzr
 
@@ -110,10 +109,10 @@ el2_entry:
     eret
 
 // ============================================================
-// 4. EL1 入口 — 准备C运行环境
+// 4. EL1 入口 — 建立引导页表 → 开启 MMU → 切高半区内核 VMA
 // ============================================================
 el1_entry:
-    // 4.1 设置栈指针 (boot stack)
+    // 4.1 设置栈指针 (boot stack, 位于 .bootbss: VMA == LMA == PA)
     adrp x0, _boot_stack_top
     add  x0, x0, #:lo12:_boot_stack_top
     mov  sp, x0
@@ -124,31 +123,124 @@ el1_entry:
     add  x1, x1, #:lo12:_fdt_addr
     str  x0, [x1]
 
-    // 4.4 跳转 Rust entry()
-    bl   entry
+    // 4.3 建立引导页表: L0 → L1 → L2, 覆盖低 2GB.
+    //   - VA 0x0000_0000_0000_0000-0x0000_0000_4000_0000 → 低 1GB Device (2MB 粒度)
+    //   - VA 0x0000_0000_4000_0000-0x0000_0000_8000_0000 → DRAM 1GB Normal 块
+    //   描述符取值与 mmu.rs::init() 逐条目相同 (PT_TYPE_BLOCK=1, PT_AF=0x400,
+    //   PT_ATTR_NORMAL=(0b0100<<2)|(0b0100<<8)=0x410, PT_AP_EL1_RW=0).
+    //   高半区别名 VA = PA + 0xFFFF_0000_0000_0000 的 VA[47:39] 恒为 0 ⇒ L0 索引
+    //   恒为 0, L1/L2 索引与恒等映射完全一致 ⇒ 同一张表同时服务 TTBR0 与 TTBR1.
+    //   表位于 .bootbss (NOLOAD), 内容不保证为 0, 必须先显式清零:
+    //   残留 bits[1:0]==0b11 的垃圾项会被投机表遍历当作有效描述符.
+    adrp x2, _boot_l0
+    add  x2, x2, #:lo12:_boot_l0
+    mov  x3, #0
+    mov  x4, #(3 * 512)             // 3 张表 × 512 项
+9:
+    str  x3, [x2], #8
+    subs x4, x4, #1
+    b.ne 9b
+
+    adrp x2, _boot_l1
+    add  x2, x2, #:lo12:_boot_l1
+    adrp x3, _boot_l0
+    add  x3, x3, #:lo12:_boot_l0
+    orr  x5, x2, #0x3               // L0[0] → L1 (表描述符)
+    str  x5, [x3]
+    adrp x3, _boot_l2
+    add  x3, x3, #:lo12:_boot_l2
+    orr  x5, x3, #0x3               // L1[0] → L2 (表描述符)
+    str  x5, [x2]
+    movz x5, #0x4000, lsl #16       // L1[1] → DRAM 1GB 块 @ PA 0x40000000
+    movz x6, #0x411                 //   | block | AF(bit10) | AttrIndx=4
+    orr  x5, x5, x6                 //   0x411 非位掩码立即数, 需经寄存器拼接
+    str  x5, [x2, #8]
+
+    // L2: 512 个 2MB Device 块, 覆盖 0x00000000-0x40000000
+    adrp x2, _boot_l2
+    add  x2, x2, #:lo12:_boot_l2
+    mov  x5, #0x401                 // 首项: PA 0 | block | AF (AttrIndx=0, EL1 RW)
+    movz x7, #0x20, lsl #16         // 2MB 步长
+    mov  x4, #512
+8:
+    str  x5, [x2], #8
+    add  x5, x5, x7
+    subs x4, x4, #1
+    b.ne 8b
+
+    // 4.4 MAIR_EL1: Attr0=Device-nGnRnE(0x44), Attr1/Attr4=Normal-WBWA(0xFF).
+    //   与 mmu.rs::init() 取值一致. 若不设 (MAIR=0), AttrIndx=4 会被硬件按
+    //   Device-nGnRnE 解释 ⇒ DRAM 取指行为不可预期.
+    movz x5, #0xFF44
+    movk x5, #0x00FF, lsl #32
+    msr  mair_el1, x5
+
+    // 4.5 TCR_EL1: T0SZ=T1SZ=16 (48-bit VA), TG0/TG1=4KB, 内部共享 + WBWA.
+    //   与 mmu.rs::init() 同值 ⇒ 迁移后 mmu::init() 重写为同值, 无窗口期.
+    movz x5, #0x3510
+    movk x5, #0xB510, lsl #16
+    msr  tcr_el1, x5
+
+    // 4.6 TTBR0/TTBR1 同指引导表 (低半区恒等 + 高半区别名共用一张 L0)
+    adrp x5, _boot_l0
+    add  x5, x5, #:lo12:_boot_l0
+    msr  ttbr0_el1, x5
+    msr  ttbr1_el1, x5
+    dsb  sy
+    isb
+
+    // 4.7 清 TLB 后开启 MMU (M / C / I)
+    tlbi vmalle1
+    dsb  sy
+    isb
+    mrs  x5, sctlr_el1
+    orr  x5, x5, #1                 // M: MMU
+    orr  x5, x5, #4                 // C: D-cache
+    orr  x5, x5, #(1 << 12)         // I: I-cache
+    msr  sctlr_el1, x5
+    isb
+
+    // 4.8 切至高半区内核 VMA. 内核区链接于高半区 (VMA = _kernel_base + LMA),
+    //   故 entry 的符号地址远超 `bl` 的 ±128MB 范围, 必须经寄存器间接跳转.
+    //   x0 仍持有 fdt 指针, 故以 x9 承载目标地址.
+    ldr  x9, =entry
+    br   x9
 
     // entry() should never return
     wfi
     b    .
 
 // ============================================================
-// 辅助符号
+// 引导区数据/页表/栈 (NOLOAD, 低半区 VMA == LMA == PA)
 // ============================================================
+.section .bootbss, "aw", %nobits
 
 // FDT 地址 (从 QEMU 传来)
-.data
+.align 3
 .global _fdt_addr
 _fdt_addr:
-    .quad 0
+    .space 8
+
+// 引导页表: L0 / L1 / L2 各 4KB, 连续排布 (4.3 的清零循环依赖连续性)
+.align 12
+.global _boot_l0
+_boot_l0:
+    .space 4096
+.align 12
+.global _boot_l1
+_boot_l1:
+    .space 4096
+.align 12
+.global _boot_l2
+_boot_l2:
+    .space 4096
 
 // Boot 栈
-.bss
-.align 16
+// 注: Rust 侧 process.rs 引用的 `stack_bottom` 由链接脚本 (aarch64.ld) 定义为
+// 本符号的**高半区别名** (低半区符号距内核代码超出 adrp ±4GB 可达范围),
+// 故 `_boot_stack_bottom` 须为全局符号 (链接脚本表达式只能引用全局符号).
+.align 4
+.global _boot_stack_bottom
 _boot_stack_bottom:
     .space 262144            // 256KB boot stack
 _boot_stack_top:
-
-// stack_bottom 符号别名 — 与 x86_64 boot.asm 对齐,
-// 供 Rust 侧 process.rs 的 stack canary 检测使用.
-.global stack_bottom
-stack_bottom = _boot_stack_bottom
