@@ -23,7 +23,7 @@ jobs:
           echo "工作流结论: ${{ github.event.workflow_run.conclusion }}"
           echo ""
           echo "各工作流状态:"
-          echo "  - CI x86_64: cargo check + clippy + host-tests"
+          echo "  - CI x86_64: cargo check + clippy + host-tests + 内核 host 单测 (§2.3-6)"
           echo "  - CI aarch64: cargo check"
           echo "  - CI Lint: SAFETY 审计 + 边界检查 + 死锁检测 + 注释语言"
           echo ""
@@ -42,7 +42,7 @@ jobs:
 
           | 工作流 | 状态 | 内容 |
           |--------|------|------|
-          | CI x86_64 | ✅ | cargo check + clippy + host-tests |
+          | CI x86_64 | ✅ | cargo check + clippy + host-tests + 内核 host 单测 |
           | CI aarch64 | ✅ | cargo check |
           | CI Lint | ✅ | SAFETY 审计 + 边界检查 + 死锁检测 |
 
