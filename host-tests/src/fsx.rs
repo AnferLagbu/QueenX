@@ -36,6 +36,16 @@ struct FileData {
     content: Vec<u8>,
 }
 
+/// 构造进程隔离的 fsx 测试目录 (名称 + 进程 ID 后缀)
+///
+/// 固定目录名会让并发运行共用同一目录并互相追加内容: `cargo test` 下 lib 单测与
+/// 集成测试是两个进程, 且同一仓库可能被多个会话并行运行 —— 一旦共用目录, 后续
+/// 运行的"空目录"初始假设即与实际内容冲突, 触发数据完整性假失败 (实测见
+/// `docs/plan/host-tests-fsx-tmp-isolation.md`)。进程 ID 后缀保证每个进程独占目录。
+pub fn isolated_test_dir(name: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("queenx-fsx-{}-{}", name, std::process::id()))
+}
+
 /// fsx 配置
 #[derive(Debug, Clone)]
 pub struct FsxConfig {
@@ -56,7 +66,7 @@ pub struct FsxConfig {
 impl Default for FsxConfig {
     fn default() -> Self {
         Self {
-            test_dir: PathBuf::from("/tmp/queenx-fsx"),
+            test_dir: isolated_test_dir("default"),
             num_operations: 1_000_000,
             max_files: 100,
             max_file_size: 64 * 1024, // 64KB
@@ -118,6 +128,9 @@ impl FsxFs {
 
     /// 运行 fsx 测试
     pub fn run(&mut self) -> Result<Stats, String> {
+        // 先清空测试目录: 上一次异常中断 (超时被杀 / 断言失败) 留下的残留文件会与
+        // 本次运行的"空目录"初始假设冲突
+        let _ = fs::remove_dir_all(&self.config.test_dir);
         // 创建测试目录
         fs::create_dir_all(&self.config.test_dir)
             .map_err(|e| format!("创建测试目录失败: {}", e))?;
@@ -357,7 +370,7 @@ mod tests {
     #[test]
     fn test_fsx_basic() {
         let config = FsxConfig {
-            test_dir: PathBuf::from("/tmp/queenx-fsx-test"),
+            test_dir: isolated_test_dir("unit-basic"),
             num_operations: 1000,
             max_files: 10,
             max_file_size: 1024,
@@ -375,7 +388,7 @@ mod tests {
     #[test]
     fn test_fsx_stress() {
         let config = FsxConfig {
-            test_dir: PathBuf::from("/tmp/queenx-fsx-stress"),
+            test_dir: isolated_test_dir("unit-stress"),
             num_operations: 100_000,
             max_files: 50,
             max_file_size: 4096,
