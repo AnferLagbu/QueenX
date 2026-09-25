@@ -315,7 +315,7 @@
     - fmt 核验：本次改动引入的 `cargo fmt --check` 差异为 **0**（改动行区间与 fmt 报告行号无交集；曾出现的 4 处空行残留已归一）。
   - 详情（A 类期间暴露的预存问题，登记不擅改 —— §12.5）
     - `make test-unit` 首次运行报 `构建产物缺失: build/user/init.bin`，须先 `make` 生成裸机产物 —— 与 UT-08「前置条件」同源（隐式 make 耦合残余），非本次改动导致。
-    - `cargo fmt --manifest-path src/kernel/Cargo.toml -- --check`（CI `clippy-pedantic` job 末步）在本机对**未改动**文件亦报差异（如 `framework/arch/aarch64/mod.rs`、`exception.rs`），全库 **415 处**。已核验本次 UT-07 改动贡献 0 处 ⇒ 属预存问题（rustfmt 版本/配置漂移），待用户裁定是否单开处置。
+    - `cargo fmt --manifest-path src/kernel/Cargo.toml -- --check`（CI `clippy-pedantic` job 末步）在本机对**未改动**文件亦报差异，全库 **415 处 / 163 文件**。已核验本次 UT-07 改动贡献 0 处 ⇒ 属预存问题。**已按用户裁定单开处置完成**：根因更正为「kernel 独立 crate 化（`3578b4e8`, 09-14）后未再跑 rustfmt，而 CI 该步已改指 `../kernel/Cargo.toml`」——非 rustfmt 版本/配置漂移（佐证：`src/rust` 侧 `cargo fmt --check` 实测 0 差异）；整改落 `style(kernel)` 一笔，含折行连带项（`framework/ipc/msgq.rs` 的 `semicolon_if_nothing_returned` 分号、`host-tests/ipc_strategy_registration_test.rs` 脆测试标记去尾随 `()`），改后 §2.3 六门槛复跑全过（fmt 0 差异 / kernel host 749-0 / QEMU 489-489 / boot 双架构 1-1）。
   - 详情（A 类之后的剩余批次）
     - A′ 类 5 组（逐例理由已备，见分类结果）→ C 类 16 组（先迁源侧 `cfg(test)` 再删注册副本，最大批为 `pwm::policy` 23 组/45 条）。按裁定节拍，每批完成后停下确认。
 
