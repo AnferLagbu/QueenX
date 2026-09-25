@@ -334,8 +334,12 @@
     - `./ci/build.sh aarch64` + `./ci/audit.sh quick`：exit 0，核心审计全过。
     - `make` + `make test-unit`（QEMU）：**489 → 464，0 failed / 0 skipped**（-25 = 8+3+1+13，与逐组明细吻合）。
     - `./scripts/qemu_boot_test.sh x86_64|aarch64`：各 **1/1** 通过。
-  - 详情（A′ 类期间发现的预存问题，登记待裁定 —— §12.5）
-    - `framework/tests/net.rs` 的注册**从不生效**：`tests/mod.rs` 的 `pub mod net` 声明与 `net::register_tests()` 调用均在 `#[cfg(feature = "kernel_test")]` 块内，而文件内条目门控 `#[cfg(not(feature = "kernel_test"))]` ⇒ 两分支互斥，kernel_test 下 `register_tests()` 为空函数、非 kernel_test 下模块不存在。本批已按计划删 `net::e1000` 组；残留 `net::utils` 3 条（其中 `net_hton_ntoh` / `net_mac_formatting` 零断言、仅 `return Pass`）属工程外问题，处置方式待裁定（规划修复 / 记录 / 搁置）。
+  - 详情（A′ 类期间发现的预存问题 —— 已按裁定修复，§12.5）
+    - `framework/tests/net.rs` 的注册**从不生效**：`tests/mod.rs` 的 `pub mod net` 声明与 `net::register_tests()` 调用均在 `#[cfg(feature = "kernel_test")]` 块内，而文件内条目门控 `#[cfg(not(feature = "kernel_test"))]` ⇒ 两分支互斥，kernel_test 下 `register_tests()` 为空函数、非 kernel_test 下模块不存在。
+    - 用户裁定：**本轮一并规划并修复**（裁定门控字符串 + 删除零断言空壳用例）。处置：
+      - `net::e1000` 组按 A′ 计划删除；残留 `net::utils` 的 `hton_ntoh` / `mac_formatting` 两例**零断言且其工具函数全库已无定义**（grep 确认 `fn hton/ntoh/mac_format` 不存在）⇒ 删空壳。
+      - 剩余 `net::utils::byteorder` 为纯逻辑（仅比较 std `u16::to_be` / `to_le`），无裸机依赖 ⇒ 按 E-03「纯逻辑测试模块双端编译」约定，将 `pub mod net` 门控由 `kernel_test` 专属改为 `any(kernel_test, host-test)`，`net::register_tests()` 调用从 kernel_test 块移入 any 块；文件内条目改为无门控（模块门控即足够），双版本 `register_tests()` 合并为一。
+      - 效果：`net::utils::byteorder` 首次**真正注册**（QEMU 侧 +1），文件不再是 `not(kernel_test)` 死岛。
 
 - **UT-08. §2.3 六门槛全跑 + CI 接入**
   - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。

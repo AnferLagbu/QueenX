@@ -16,7 +16,9 @@ pub mod driver;
 // 门控在 host-test 下关闭），保持 kernel_test
 #[cfg(feature = "kernel_test")]
 pub mod idt;
-#[cfg(feature = "kernel_test")]
+// UT-07 (2026-09-26): net 由 kernel_test 专属改归 any(kernel_test, host-test) —
+// e1000 硬件路径注册组删除后本模块仅剩纯逻辑用例 (net::utils), 按 E-03 双端约定.
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod net;
 // E-03: host 不可编译（依赖 barrier::reset::{bbr,bsr,audit,parallel}::tests,
 // 其 cfg(feature = "kernel_test") 门控在 host-test 下关闭），保持 kernel_test
@@ -491,6 +493,7 @@ pub fn register_all_tests() {
         }
         sched::register_tests();
         sync::register_tests();
+        net::register_tests();
     }
 
     // E-03 (2026-09-06): 硬件路径测试注册 — 依赖裸机硬件 (驱动/网络/定时器/中断等),
@@ -503,7 +506,6 @@ pub fn register_all_tests() {
             driver::register_tests();
             idt::register_tests();
         }
-        net::register_tests();
         reset::register_tests();
         #[cfg(target_arch = "x86_64")]
         {
