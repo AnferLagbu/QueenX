@@ -1,5 +1,6 @@
-// UT-07 (2026-09-25): idt::statistics 注册副本已删 — 其纯逻辑断言以
-// framework/idt/statistics.rs 的 #[cfg(test)] 为唯一归属.
+// UT-07 (2026-09-25): idt::statistics 与 idt::types 注册副本已删 —
+// 其纯逻辑断言分别以 framework/idt/statistics.rs 与 framework/idt/types.rs
+// 的 #[cfg(test)] 为唯一归属.
 use crate::framework::idt::handlers::{
     AccessType, DefaultHandler, DivisionByZeroHandler, ExceptionCategory, ExceptionHandler,
     ExceptionStatisticsCollector, FaultCause, Mode, PageFaultHandler, PanicInfo, RecoveryAction,
@@ -8,93 +9,10 @@ use crate::framework::idt::handlers::{
 use crate::framework::idt::{
     CpuFeatures, is_null_or_invalid, is_valid_kernel_address, is_valid_user_address,
 };
-use crate::framework::idt::{
-    ErrorFlags, GDT_KERNEL_CODE, IDT_ENTRIES, IDT_TYPE_INTERRUPT, IRQ_BASE, IdtEntry, IdtPtr,
-    InterruptFrame, InterruptStatistics, get_exception_name, get_irq_name,
-};
 use crate::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE};
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 use core::sync::atomic::Ordering;
-
-fn interrupt_frame_size() -> TestResult {
-    assert_eq_test!(
-        core::mem::size_of::<InterruptFrame>(),
-        176,
-        "InterruptFrame size"
-    );
-    TestResult::Pass
-}
-
-fn user_mode_detection() -> TestResult {
-    let kernel_frame = InterruptFrame::new_test_frame(14, KERNEL_TEXT_BASE, 0x08);
-    check!(
-        !kernel_frame.is_user_mode(),
-        "kernel CS should be kernel mode"
-    );
-    let user_frame = InterruptFrame::new_test_frame(14, 0x400000, 0x23);
-    check!(user_frame.is_user_mode(), "user CS should be user mode");
-    TestResult::Pass
-}
-
-fn idt_entry_creation() -> TestResult {
-    let entry = IdtEntry::new(0xDEADBEEFCAFEBABE, GDT_KERNEL_CODE, IDT_TYPE_INTERRUPT);
-    assert_eq_test!(entry.offset_low, 0xBABE, "offset_low");
-    assert_eq_test!(entry.selector, GDT_KERNEL_CODE, "selector");
-    check!(entry.is_present(), "should be present");
-    assert_eq_test!(
-        entry.handler_address(),
-        0xDEADBEEFCAFEBABE,
-        "handler address"
-    );
-    TestResult::Pass
-}
-
-fn idt_ptr_creation() -> TestResult {
-    let base_addr = 0xFFFF800000001000u64;
-    let ptr = IdtPtr::new(base_addr);
-    assert_eq_test!(ptr.base, base_addr, "base address");
-    assert_eq_test!(ptr.limit, (IDT_ENTRIES * 16 - 1) as u16, "limit");
-    TestResult::Pass
-}
-
-fn statistics_recording() -> TestResult {
-    let stats = InterruptStatistics::new();
-    stats.record_exception(0);
-    stats.record_exception(14);
-    stats.record_irq(0);
-    assert_eq_test!(stats.get_count(0), 1, "exception 0 count");
-    assert_eq_test!(stats.get_count(14), 1, "exception 14 count");
-    assert_eq_test!(stats.get_count(IRQ_BASE), 1, "IRQ 0 count");
-    assert_eq_test!(stats.get_count(100), 0, "invalid vector count");
-    TestResult::Pass
-}
-
-fn error_flags() -> TestResult {
-    let flags = ErrorFlags::PRESENT | ErrorFlags::WRITE | ErrorFlags::USER;
-    check!(flags.contains(ErrorFlags::PRESENT), "PRESENT flag");
-    check!(flags.contains(ErrorFlags::WRITE), "WRITE flag");
-    check!(flags.contains(ErrorFlags::USER), "USER flag");
-    check!(
-        !flags.contains(ErrorFlags::RESERVED),
-        "RESERVED flag absent"
-    );
-    TestResult::Pass
-}
-
-fn exception_names() -> TestResult {
-    assert_eq_test!(get_exception_name(0), "Division By Zero", "exception 0");
-    assert_eq_test!(get_exception_name(14), "Page Fault", "exception 14");
-    assert_eq_test!(get_exception_name(99), "Unknown", "exception 99");
-    TestResult::Pass
-}
-
-fn irq_names() -> TestResult {
-    assert_eq_test!(get_irq_name(0), "Timer", "IRQ 0");
-    assert_eq_test!(get_irq_name(1), "Keyboard", "IRQ 1");
-    assert_eq_test!(get_irq_name(20), "Unknown", "IRQ 20");
-    TestResult::Pass
-}
 
 fn recovery_action_variants() -> TestResult {
     assert_eq_test!(
@@ -231,22 +149,6 @@ fn cpu_features_no_panic() -> TestResult {
     TestResult::Pass
 }
 
-pub fn register_idt_types_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "idt::types": {
-            "frame_size": interrupt_frame_size,
-            "user_mode_detection": user_mode_detection,
-            "entry_creation": idt_entry_creation,
-            "ptr_creation": idt_ptr_creation,
-            "statistics_recording": statistics_recording,
-            "error_flags": error_flags,
-            "exception_names": exception_names,
-            "irq_names": irq_names,
-        },
-    }
-}
-
 pub fn register_idt_handlers_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -274,7 +176,6 @@ pub fn register_idt_safety_tests() {
 }
 
 pub fn register_tests() {
-    register_idt_types_tests();
     register_idt_handlers_tests();
     register_idt_safety_tests();
 }

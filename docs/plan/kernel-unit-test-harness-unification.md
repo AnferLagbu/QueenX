@@ -317,7 +317,25 @@
     - `make test-unit` 首次运行报 `构建产物缺失: build/user/init.bin`，须先 `make` 生成裸机产物 —— 与 UT-08「前置条件」同源（隐式 make 耦合残余），非本次改动导致。
     - `cargo fmt --manifest-path src/kernel/Cargo.toml -- --check`（CI `clippy-pedantic` job 末步）在本机对**未改动**文件亦报差异，全库 **415 处 / 163 文件**。已核验本次 UT-07 改动贡献 0 处 ⇒ 属预存问题。**已按用户裁定单开处置完成**：根因更正为「kernel 独立 crate 化（`3578b4e8`, 09-14）后未再跑 rustfmt，而 CI 该步已改指 `../kernel/Cargo.toml`」——非 rustfmt 版本/配置漂移（佐证：`src/rust` 侧 `cargo fmt --check` 实测 0 差异）；整改落 `style(kernel)` 一笔，含折行连带项（`framework/ipc/msgq.rs` 的 `semicolon_if_nothing_returned` 分号、`host-tests/ipc_strategy_registration_test.rs` 脆测试标记去尾随 `()`），改后 §2.3 六门槛复跑全过（fmt 0 差异 / kernel host 749-0 / QEMU 489-489 / boot 双架构 1-1）。
   - 详情（A 类之后的剩余批次）
-    - A′ 类 5 组（逐例理由已备，见分类结果）→ C 类 16 组（先迁源侧 `cfg(test)` 再删注册副本，最大批为 `pwm::policy` 23 组/45 条）。按裁定节拍，每批完成后停下确认。
+    - A′ 类 5 组（已完成，见下条）→ C 类 16 组（先迁源侧 `cfg(test)` 再删注册副本，最大批为 `pwm::policy` 23 组/45 条）。按裁定节拍，每批完成后停下确认。
+  - 详情（A′ 类施工完成 —— 5 组 / 17 用例 / 86 条断言）
+    - `idt::types`（8 用例）：`framework/tests/idt.rs` 删除整组 + 随之失效的 `use crate::framework::idt::{ErrorFlags, GDT_KERNEL_CODE, IDT_ENTRIES, IDT_TYPE_INTERRUPT, IRQ_BASE, IdtEntry, IdtPtr, InterruptFrame, InterruptStatistics, get_exception_name, get_irq_name}` 整块；`framework/idt/types.rs` 删除未被调用的 `register_idt_types_tests` 转发 shim。源侧 `framework/idt/types.rs` 的 8 个 `#[test]` 为唯一归属（源侧另含更强项：`test_user_mode_detection` 的 RIP 低半区回归防护断言）。
+    - `page_fault`（3 用例）：`framework/tests/test_new_features.rs` 删除整组 + 空节横幅「缺页异常 / 按需分页」；源侧 `framework/mm/page_fault.rs` 3 个 `#[test]`（`PfResult as u8` 与注册侧 `as u32` 值等价；源侧另有 `test_stack_expansion_candidate` 两条更强断言）。
+    - `net::e1000`（4 用例）：删除整组 + 4 个专属 helper fn + 随之失效的 `E1000*` / `KERNEL_BASE` / `Driver` / `check` 导入；源侧 `framework/driver/net/e1000.rs` 4 个 `#[test]`（`virt_to_phys` 已按 UT-06 修正为 `KERNEL_BASE + 0x12345678`，强于注册侧会下溢的低地址形态）。
+    - `lib::string`（13 用例）：注册侧 `framework/tests/string.rs` 为该命名空间唯一内容 ⇒ **整文件删除**，并同步删 `framework/tests/mod.rs` 的 `pub mod string;` 声明与 `string::register_tests();` 调用（F9 不留空壳）；`framework/lib/string.rs` 删除未被调用的 `register_string_tests` 转发 shim。源侧 13 个 `#[test]` 为唯一归属。
+    - `mmap`（1 用例）：删除 `test_prot_to_vma_flags`（因函数私有 → 只测 `PageFlags` 位运算的**弱代理**）+ 空节横幅「mmap syscall」；源侧 `services/mm/mmap.rs::test_prot_to_flags` 直调真实 `prot_to_vma_flags` ⇒ 删注册即**覆盖增强**（与 DECISION-080 第 4 条所指 B09-19 弱化同型、方向相反）。
+    - 断言净增不净减核验：删注册侧 86 条（逐例理由见「分类结果」），源侧断言数不变且逐组 ⊇ 注册侧 ⇒ 无覆盖损失。
+    - 改动面：7 文件（6 改 1 删），`+10 / -468` 行。
+  - 详情（A′ 类验证实测 —— 六门槛本机复跑）
+    - `./ci/build.sh all`：**Passed: 5 / Failed: 0**。
+    - `cargo fmt --manifest-path ../kernel/Cargo.toml -- --check`：**0 差异**（新写代码 rustfmt 合规）。
+    - `make test-kernel-host`（= `cargo test --features host-test --lib`）：**749 passed / 0 failed**（`#[cfg(test)]` 用例数不受注册侧收敛影响，与 A 类后一致）。
+    - clippy kernel_test 维（按 `ci-x86.yml` 实际写法：host target + `--lib` + `cast_*` 豁免）：**0 error / 0 warning** —— 该维是 `tests/idt.rs` 的唯一编译入口，本次删除导入块未留 unused import。
+    - `./ci/build.sh aarch64` + `./ci/audit.sh quick`：exit 0，核心审计全过。
+    - `make` + `make test-unit`（QEMU）：**489 → 464，0 failed / 0 skipped**（-25 = 8+3+1+13，与逐组明细吻合）。
+    - `./scripts/qemu_boot_test.sh x86_64|aarch64`：各 **1/1** 通过。
+  - 详情（A′ 类期间发现的预存问题，登记待裁定 —— §12.5）
+    - `framework/tests/net.rs` 的注册**从不生效**：`tests/mod.rs` 的 `pub mod net` 声明与 `net::register_tests()` 调用均在 `#[cfg(feature = "kernel_test")]` 块内，而文件内条目门控 `#[cfg(not(feature = "kernel_test"))]` ⇒ 两分支互斥，kernel_test 下 `register_tests()` 为空函数、非 kernel_test 下模块不存在。本批已按计划删 `net::e1000` 组；残留 `net::utils` 3 条（其中 `net_hton_ntoh` / `net_mac_formatting` 零断言、仅 `return Pass`）属工程外问题，处置方式待裁定（规划修复 / 记录 / 搁置）。
 
 - **UT-08. §2.3 六门槛全跑 + CI 接入**
   - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。

@@ -25,8 +25,6 @@ pub mod reset;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sched;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
-pub mod string;
-#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sync;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sys;
@@ -491,7 +489,6 @@ pub fn register_all_tests() {
             arch::register_tests();
             sys::register_tests();
         }
-        string::register_tests();
         sched::register_tests();
         sync::register_tests();
     }

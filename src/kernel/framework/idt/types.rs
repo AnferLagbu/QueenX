@@ -607,8 +607,3 @@ mod tests {
         assert_eq!(get_irq_name(20), "Unknown");
     }
 }
-
-#[cfg(feature = "kernel_test")]
-pub fn register_idt_types_tests() {
-    crate::framework::tests::idt::register_idt_types_tests();
-}

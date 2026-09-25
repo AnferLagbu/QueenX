@@ -1,39 +1,10 @@
 // UT-07 (2026-09-25): rcu / kmalloc_slab / zil_persist 注册副本已删 —
 // 其纯逻辑断言分别以 framework/sync/rcu.rs, framework/mm/kmalloc_slab.rs,
 // services/fs/nestfs/zil_persist.rs 的 #[cfg(test)] 为唯一归属.
+// UT-07 (2026-09-25): page_fault / mmap 注册副本已删 — 其纯逻辑断言分别以
+// framework/mm/page_fault.rs 与 services/mm/mmap.rs 的 #[cfg(test)] 为唯一归属.
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
-
-// ============================================================
-// 缺页异常 / 按需分页
-// ============================================================
-
-fn test_pf_info_from_error_code() -> TestResult {
-    let info = crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x4000, 0x06);
-    check!(info.fault_addr == 0x4000, "fault_addr");
-    check!(info.write, "write flag");
-    check!(info.user, "user flag");
-    check!(!info.present, "not present");
-    check!(!info.reserved, "not reserved");
-    check!(!info.instruction, "not instruction");
-    TestResult::Pass
-}
-
-fn test_pf_info_not_present() -> TestResult {
-    let info = crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x1000, 0x00);
-    check!(!info.present, "not present");
-    check!(!info.write, "not write");
-    check!(!info.user, "not user");
-    TestResult::Pass
-}
-
-fn test_pf_result_values() -> TestResult {
-    use crate::framework::mm::page_fault::PfResult;
-    assert_eq_test!(PfResult::Fixed as u32, 0, "Fixed=0");
-    assert_eq_test!(PfResult::SignalSegv as u32, 1, "SignalSegv=1");
-    assert_eq_test!(PfResult::Oom as u32, 3, "Oom=3");
-    TestResult::Pass
-}
 
 // ============================================================
 // COW 帧持有计数 (计数面已收敛到 PMM, 原 COW_REFS 已删除)
@@ -188,27 +159,6 @@ fn test_devtree_set_compatible() -> TestResult {
 }
 
 // ============================================================
-// mmap syscall
-// ============================================================
-
-fn test_prot_to_vma_flags() -> TestResult {
-    use crate::framework::mm::PageFlags;
-
-    // prot_to_vma_flags 是私有的, 无法直接调用, 此处仅测试基础标志语义
-    let r = PageFlags::PRESENT | PageFlags::USER;
-    check!(r.contains(PageFlags::PRESENT), "PROT_READ has PRESENT");
-    check!(r.contains(PageFlags::USER), "PROT_READ has USER");
-    check!(!r.contains(PageFlags::WRITABLE), "PROT_READ no WRITE");
-
-    let rw = PageFlags::PRESENT | PageFlags::USER | PageFlags::WRITABLE;
-    check!(rw.contains(PageFlags::WRITABLE), "PROT_WRITE has WRITABLE");
-
-    let rx = PageFlags::PRESENT | PageFlags::USER;
-    check!(!rx.contains(PageFlags::NX), "PROT_EXEC has no NX");
-    TestResult::Pass
-}
-
-// ============================================================
 // IPC Dynamic Namespace
 // ============================================================
 
@@ -344,11 +294,6 @@ fn test_vma_stack_guard() -> TestResult {
 pub fn register_new_tests() {
     let r = runner();
     register_tests_inner! { r:
-        "page_fault": {
-            "pf_info_from_error_code": test_pf_info_from_error_code,
-            "pf_info_not_present": test_pf_info_not_present,
-            "pf_result_values": test_pf_result_values,
-        },
         "cow": {
             "shared_frame_alloc_starts_at_one": test_cow_shared_frame_alloc_starts_at_one,
             "shared_frame_inc_dec_paired": test_cow_shared_frame_inc_dec_paired,
@@ -363,9 +308,6 @@ pub fn register_new_tests() {
         "devtree": {
             "create_node": test_devtree_create_node,
             "set_compatible": test_devtree_set_compatible,
-        },
-        "mmap": {
-            "prot_to_vma_flags": test_prot_to_vma_flags,
         },
         "ipc_dynamic": {
             "pipe_no_limit": test_dyn_ipc_pipe_no_limit,
