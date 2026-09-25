@@ -340,6 +340,39 @@
       - `net::e1000` 组按 A′ 计划删除；残留 `net::utils` 的 `hton_ntoh` / `mac_formatting` 两例**零断言且其工具函数全库已无定义**（grep 确认 `fn hton/ntoh/mac_format` 不存在）⇒ 删空壳。
       - 剩余 `net::utils::byteorder` 为纯逻辑（仅比较 std `u16::to_be` / `to_le`），无裸机依赖 ⇒ 按 E-03「纯逻辑测试模块双端编译」约定，将 `pub mod net` 门控由 `kernel_test` 专属改为 `any(kernel_test, host-test)`，`net::register_tests()` 调用从 kernel_test 块移入 any 块；文件内条目改为无门控（模块门控即足够），双版本 `register_tests()` 合并为一。
       - 效果：`net::utils::byteorder` 首次**真正注册**（QEMU 侧 +1），文件不再是 `not(kernel_test)` 死岛。
+  - 详情（C 类施工完成 —— 16 组，分 8 批落地）
+    - 处置形态（两类）：
+      - **源侧已有 `#[cfg(test)]` 模块者**（`sync::mutex` / `sync::rwlock` / `arch::tss` / `timer::pit` / `chitin::devtree` / `driver::ata` / `driver::keyboard` / `driver::framework` / `idt::handlers` / `idt::safety` / `framework::credo::sha256` / `framework::credo::types` / `services::credo::policy`）：把注册侧独有断言按源侧口径补入源模块的 `#[cfg(test)]`，再删注册侧整组 + 随之失效的转发 shim / 专属 fn / 导入与空节横幅（F9）。
+      - **源侧 `#[cfg(test)]` 数为 0 或形态非 cargo 可发现者**：`framework/fs/vfs/types.rs` 新建 `#[cfg(test)] mod tests`；`barrier/reset/{audit,bbr,bsr,parallel}.rs` 把原 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`（host 不编译、非 `#[test]`）改写为 `#[cfg(test)] #[test]`。
+    - 批次与注册侧删减（用例名数，合计 **102**）：
+      - C1（18）：`sync::mutex` 4 / `sync::rwlock` 6 / `arch::tss` 5 / `timer::pit` 3。
+      - C2（15）：`devtree` 2 / `driver::ata` 6 / `driver::keyboard` 7。
+      - C3（5）：`driver::framework` 5。
+      - C4（9）：`idt::handlers` 8 / `idt::safety` 1。
+      - C5（20）：`pwm::audit` 1 / `pwm::sha256` 16 / `pwm::types` 3。
+      - C6（23）：`pwm::policy` 23（最大批）。
+      - C7（5）：`vfs::types` 5。
+      - C8（7）：`barrier::audit` 2 / `bbr` 2 / `bsr` 1 / `parallel` 2 —— 经用户裁定**连带全量收敛 reset 子树**，`framework/tests/mod.rs` 的 `pub mod reset` 门控由 `kernel_test` 专属改为 `any(kernel_test, host-test)`，`reset::register_tests()` 调用一并移入 any 块（`config::tests` 本就是 any 双端）。
+    - 源侧新增 `#[test]` 增量（分 8 批，合计 **+59**）：C1–C4 **+9**（mutex 1 / rwlock 3 / ata 1 / keyboard 1 / framework 2 / safety 1；`tss`、`pit`、`devtree`、`handlers` 为在既有 test 内补断言，不新增 fn）→ C5 **+14**（sha256 10 / types 4）→ C6 **+23**（policy）→ C7 **+5**（vfs::types）→ C8 **+8**（audit 2 / bbr 2 / bsr 1 / parallel 3）。
+    - 改动面：30 文件（27 改 3 删 —— `tests/driver.rs`、`tests/sync.rs`、`tests/test_credo.rs` 整文件删除），`+722 / -1590` 行。
+  - 详情（C 类验证实测 —— 六门槛本机复跑）
+    - `./ci/build.sh all`：**Passed: 5 / Failed: 0**。
+    - `cargo +nightly fmt --check`：**0 差异**（C 类新写代码首轮有 3 处 rustfmt 差异，已格式化）。
+    - `make test-kernel-host`（= `cargo test --features host-test --lib`）：**808 passed / 0 failed**（749 → 808，+59，与上条逐批增量吻合）。
+    - clippy `kernel_test` 维（host target + `--lib` + `cast_*` 豁免）：0 error / 0 warning；`./ci/audit.sh quick` 的 `kernel_test` + `host-test` 两维同样通过。
+    - `./ci/build.sh aarch64` + `./ci/audit.sh quick`：exit 0，核心审计全绿（SAFETY 覆盖 1980/1980、6 不变式、I-43/I-16/I-07/TD-22 0 违规、FP-06 0、双架构 check、clippy 两维）。
+    - `make` + `make test-unit`（QEMU）：**464 → 360，360/360 ALL TESTS PASSED，0 failed / 0 skipped**。删减侧 102 个用例名与上条逐批吻合；另有 `net::utils::byteorder`（A′ 类 net 门控修复）首次真正注册（+1）；基数内 3 条重名注册随删清理。注册表**无静默丢弃**（`MAX_TESTS = 640` 富余）。
+    - `./scripts/qemu_boot_test.sh x86_64|aarch64`：各 **1/1** 通过（x86_64 Ring 3 / aarch64 EL0 + KPTI-09 双架构断言均过）。
+  - 详情（C 类期间的自造问题修复 —— §9.3）
+    - `framework/chitin/mod.rs`：C2 删除 `devtree` 注册组后，`pub(crate) use devtree::devtree_create_node_impl;`（注释明写"供同 crate 测试使用"）失去唯一使用点 ⇒ 触发 `unused_imports`（F5）。该 `pub(crate)` 项在 `services/chitin/devtree.rs` 经**全路径** `chitin::devtree::devtree_create_node_impl` 访问，不依赖此 re-export ⇒ 删除该 re-export 与其注释。
+    - `framework/credo/sha256.rs`：C5 迁入注记的续行（原 `single_byte / boundary_55/... / multi_block / ...`）为**纯英文段落** ⇒ TD-22（F7）违规，改写为含中文描述的单行注记。
+    - `framework/fs/vfs/types.rs`、`framework/tests/test_pwm.rs`、`framework/tests/idt.rs`：C 类新写代码的 rustfmt 差异 3 处 ⇒ `cargo +nightly fmt` 归一。
+  - 详情（C 类期间登记项 —— 计划与实际偏差 / 待报告，不擅改）
+    - `driver::framework`：计划栏（该条分类清单）列"删注册侧 3 组"，实际按收敛（等价即删）原则删 **5 组**（`device_info_builder` / `device_info_creation` / `device_types` / `error_codes` / `result_type`）—— 多出的 2 组断言同属源侧 `driver/framework.rs` 已有覆盖面，删除不降级。
+    - `pwm::audit`：计划栏写目标文件 `services/credo/audit.rs`，实际 3 条断言归入 **`framework/credo/types.rs`** —— 注册侧 `audit_entry` 的判据对象（`AuditAction`/`AuditResult`）定义在 `framework::credo::types`，归源侧对应文件即"就近原则"。
+    - C8 连带扩面：计划栏原本只要求 `barrier::audit` 一组，经用户裁定扩为 reset 子树 4 组（`audit`/`bbr`/`bsr`/`parallel`），已在上条登记。
+    - C8 占位型用例无断言登记：`bbr::compute_fingerprint`（形参为 `&PanicInfo`，stable 无法构造 ⇒ 保留"可调用性占位"语义，空体 + 注释）、`bsr::freeze_unfreeze`（仅簿记调用，原返回恒 `true`）、`parallel::compute_layers`（原判据 `count > 0 || true`）—— 三者本质为"可调用性占位"而非断言，未以 `assert!(true)` 伪装（会触发 clippy `assertions_on_constants`），属"注册侧断言数为 0"先例（类比 A 类 `rcu` / `kmalloc_slab`）。
+    - 待报告（预存，非本次改动引入）：`framework/tests/driver_test.rs`（255 行）与 `framework/barrier/reset/layered.rs` 的 `#[cfg(feature = "kernel_test")] pub mod tests` 块**全库无引用**（grep 确认），属孤儿文件 / 孤儿模块，是否清理待用户裁定（§12.5）。
 
 - **UT-08. §2.3 六门槛全跑 + CI 接入**
   - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。
