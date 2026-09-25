@@ -23,7 +23,8 @@ name = "framekernel-bench"
 path = "src/bin/framekernel_bench.rs"
 
 [dependencies]
-bitflags = "2.4"
+# G-07: `bitflags` 直接依赖已移除 — 原 framekernel_bench 的本地 `bitflags!` 复刻
+# 删除后改直引内核 `framework::mm::PageFlags`, 无本地使用者.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # B08-12 (DECISION-052 路线 C): 直接引用内核 services 真实源码 (host-test feature),

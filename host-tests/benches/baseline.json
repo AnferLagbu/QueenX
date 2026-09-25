@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "machine": "x86_64-Linux-7.0.12-201.fc44.x86_64",
-  "python": "3.14.5",
-  "recorded_at": "2026-06-23T07:57:00Z",
+  "machine": "x86_64-Linux-7.2.5-200.fc44.x86_64",
+  "python": "3.14.7",
+  "recorded_at": "2026-09-25T11:57:28Z",
   "results": [
     {
       "name": "page_flags_bits",
@@ -15,15 +15,15 @@
       "name": "pte_set_flags",
       "category": "mm",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "ns_per_op_frac": 0.036,
+      "ps_per_op": 36
     },
     {
       "name": "iomem_alias_check",
       "category": "iomem",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.001,
-      "ps_per_op": 1
+      "ns_per_op_frac": 0.005,
+      "ps_per_op": 5
     },
     {
       "name": "capability_check",
@@ -43,57 +43,50 @@
       "name": "sha256_block",
       "category": "credo",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.022,
-      "ps_per_op": 22
+      "ns_per_op_frac": 0.045,
+      "ps_per_op": 45
     },
     {
       "name": "attribution_classify",
       "category": "barrier",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.01,
-      "ps_per_op": 10
+      "ns_per_op_frac": 0.046,
+      "ps_per_op": 46
     },
     {
       "name": "recovery_decide",
       "category": "barrier",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.005,
-      "ps_per_op": 5
+      "ns_per_op_frac": 0.007,
+      "ps_per_op": 7
     },
     {
       "name": "bitmap_scan",
       "category": "pmm",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.011,
-      "ps_per_op": 11
-    },
-    {
-      "name": "btree_id_lookup",
-      "category": "proc",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.115,
-      "ps_per_op": 115
+      "ns_per_op_frac": 0.051,
+      "ps_per_op": 51
     },
     {
       "name": "socket_wait_queue",
       "category": "net",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.002,
-      "ps_per_op": 2
+      "ns_per_op_frac": 0.003,
+      "ps_per_op": 3
     },
     {
       "name": "virtio_blk_io",
       "category": "storage",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "ns_per_op_frac": 0.003,
+      "ps_per_op": 3
     },
     {
       "name": "bpf_verifier_dispatch",
       "category": "ebpf",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "ns_per_op_frac": 0.001,
+      "ps_per_op": 1
     },
     {
       "name": "sysctl_rw",
@@ -120,29 +113,29 @@
       "name": "zap_dispatch",
       "category": "nestfs",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.009,
-      "ps_per_op": 9
+      "ns_per_op_frac": 0.016,
+      "ps_per_op": 16
     },
     {
       "name": "txg_dispatch",
       "category": "nestfs",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "ns_per_op_frac": 0.002,
+      "ps_per_op": 2
     },
     {
       "name": "dmu_dispatch",
       "category": "nestfs",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.511,
-      "ps_per_op": 511
+      "ns_per_op_frac": 0.016,
+      "ps_per_op": 16
     },
     {
       "name": "spa_dispatch",
       "category": "nestfs",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "ns_per_op_frac": 0.001,
+      "ps_per_op": 1
     },
     {
       "name": "raidz_dispatch",
@@ -155,8 +148,8 @@
       "name": "arc_dispatch",
       "category": "nestfs",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.003,
-      "ps_per_op": 3
+      "ns_per_op_frac": 0.006,
+      "ps_per_op": 6
     },
     {
       "name": "zil_log_dispatch",
@@ -169,8 +162,8 @@
       "name": "zil_persist_dispatch",
       "category": "nestfs",
       "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "ns_per_op_frac": 0.729,
+      "ps_per_op": 729
     }
   ]
 }

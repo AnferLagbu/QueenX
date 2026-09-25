@@ -187,8 +187,10 @@ fn test_strlen_max_covers_kernel_paths() {
     // 假设: 内核合法字符串最大长度 ≤ 256 字节 (路径名 ≤ 256 + 命令行 ≤ 256).
     // STRLEN_MAX = 1024 是 256 的 4 倍, 留有充足 buffer.
     const KERNEL_MAX_CSTR: usize = 256;
-    assert!(
-        STRLEN_MAX >= KERNEL_MAX_CSTR * 2,
-        "STRLEN_MAX must cover at least 2x kernel max cstr length"
-    );
+    const {
+        assert!(
+            STRLEN_MAX >= KERNEL_MAX_CSTR * 2,
+            "STRLEN_MAX must cover at least 2x kernel max cstr length"
+        )
+    };
 }

@@ -1046,6 +1046,9 @@ impl BpfSubsystem {
             );
         }
         *slot = Some(v);
+        // 必须先释放锁: 下方 debug_assert 会经 `self.verifier()` 再次加锁, 而
+        // `IrqSpinLockGuard` 仅在作用域结束时 Drop 释放 — 持锁重入即自死锁.
+        drop(slot);
         crate::klog_ffi!(klog_ffi_info, "[BPF] verifier registered");
         // 注册后验证: 确认 verifier 可读回 (交叉校验)
         debug_assert!(

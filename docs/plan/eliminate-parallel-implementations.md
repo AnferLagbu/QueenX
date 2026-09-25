@@ -80,7 +80,7 @@
 - **平行实现清单**
   - 描述：host-tests/src/ 下 7 处复刻：nestfs/（19 文件，被测对象）、dma_stream.rs（自认复刻 dma_buf）、buddy.rs、capability.rs、checksum.rs、sha256.rs、framekernel_bench.rs（10 个内核算法复刻）。
   - 方案：按依赖面从易到难迁移，逐处删除平行实现，测试改指内核真实源码。
-  - 状态：[X] (7/7 已归零：sha256/checksum/capability/dma_stream 于 B08-12/B08-20 迁移；nestfs 于 B08-14 删除；buddy 于 H-04 (2026-09-09) 处置；framekernel_bench 改引内核真实实现。实测 `host-tests/src/` 仅剩 `dma_stream.rs`（无 framework/tests 重叠，唯一覆盖）+ `framekernel_bench.rs`（29 处 host-only mock，已登记 G-07）+ `lib.rs` + `fsx.rs`（宿主侧 `std::fs` 工具）+ `bin/`)
+  - 状态：[X] (7/7 已归零：sha256/checksum/capability/dma_stream 于 B08-12/B08-20 迁移；nestfs 于 B08-14 删除；buddy 于 H-04 (2026-09-09) 处置；framekernel_bench 改引内核真实实现。实测 `host-tests/src/` 仅剩 `dma_stream.rs`（无 framework/tests 重叠，唯一覆盖）+ `framekernel_bench.rs`（G-07 收尾轮已清零 host-only mock，见下「迁移 framekernel_bench」）+ `lib.rs` + `fsx.rs`（宿主侧 `std::fs` 工具）+ `bin/`)
 
 ### 待办
 
@@ -104,6 +104,11 @@
   - 方案：bench 的算法调用改指内核真实实现；保留 JSON 输出与 baseline 机制；确认性能基线不因引用方式改变而失真（同算法应同结果）。
   - 状态：[X] (2026-09-06 完成：sha256/capability/dma/iomem 等热点已随 B08-12/20 改引内核真实实现；F9 `#![allow(dead_code)]` 删除 + 6 处 mock 死代码消除；`cargo check --lib` 0 warning + 81 bench 测试 passed。nestfs dispatch 等 29 个 bench 中依赖内核 host 不可测的部分保留本地 mock（bench 专用性能测量，非功能测试被测对象），见 G-07 条目)
 
+- **G-07 收尾：剩余 host-only mock 清零**
+  - 描述：G-07 登记的 host-only mock 残留（archive 记为 29 个 bench，实测 HEAD 编排器注册 28 项）中，除已迁移的热点外仍存三类内核逻辑复刻：8 组 nestfs dispatch mock（`HostZapStore`/`HostTxgManager`/`HostDmuManager`/`HostSpaManager`/`HostRaidzEngine`/`HostArcCache`/`HostZilLog`/`HostZilPersist` 及其 `StandardHostXxx` 复刻）、`MockChitinDevice`/`HostBlockDevice` 块设备复刻、`MockVfsPollPolicy`/`MockEpollInstance`/`MockEpollPwake` 等 poll/epoll 复刻。三者均属"内核逻辑在 host 侧的平行实现"。
+  - 方案：8 组 nestfs dispatch 与块设备/poll 复刻改为直引内核真实实现（`NestZap`/`NestTxgGroup`/`NestObjSet`/`NestSpa`/`NestRaidzMap`/`StandardArc`/`NestZil`/`NestZilPersist`；`chitin_blk_read`/`chitin_blk_write` 注册表；`StandardVfsPollPolicy` + `VfsPollPolicyRef`）；无内核对应物的纯合成 bench 直接删除，不留复刻。
+  - 状态：[X] (收尾完成：**10 组改引内核真实实现**（`blk_dev_dispatch` 经 `chitin` 块设备注册表；`vfs_poll_dispatch` 经内核 `StandardVfsPollPolicy` + `VfsPollPolicyRef`；8 组 nestfs dispatch 直引内核类型）；**5 组纯合成 bench 删除**（`btree_id_lookup`/`context_switch_latency`/`pipe_throughput`/`vfs_open_close`/`loopback_rtt`）；**epoll mock 块删除**（`MockEpollInstance`/`instance_watches_fd`/`enqueue_ready_for_fd`/`MockEpollPwake` + 8 个单测）；本地复刻体删除后 `bitflags` 直接依赖随之移除；bench 项 28 → 23。迁移中发现并修复 1 处本轮自造问题（`framework/debug/ebpf.rs` `register_verifier` 持 `IrqSpinLockGuard` 重入 `verifier()` 自死锁）。验证：`cargo check --all-targets` 0 warning、`cargo test --lib` 95 passed / 0 failed、bench 运行输出 23 条、baseline.json 重录 23 条且 `check_bench_regression.py` PASS。剩余唯一测试替身为 `BenchBlockDevice`（实现内核 `BlockDevice` trait 的 bench 载具，非内核逻辑复刻）。**遗留**：`measure()` 度量口径缺陷（0ns 折叠）经用户裁定另立独立任务，见 [framekernel-bench-measure-fix.md](./framekernel-bench-measure-fix.md))
+
 - **删除完成标准**
   - 描述：host-tests/src/ 下不再存在任何与内核功能重叠的平行实现；`#![allow(dead_code)]` 清零（联动分册 09 F9）。
   - 方案：删除后全量 `cargo test`（host-tests）+ 内核双架构构建 + 既有 host-tests 用例全部通过（此时通过 = 内核源码正确性）。
@@ -119,7 +124,7 @@
 - **平行实现归零**
   - 描述：grep 确认 host-tests/src/ 无复刻模块；`crate::kernel` 引用全部为 `queenx::kernel`。
   - 方案：删除完成后 grep 复核。
-  - 状态：[X] (实测 grep：`host-tests/src/` 无内核逻辑复刻模块，`crate::kernel` 0 处；仅存 `dma_stream.rs` 与 `framekernel_bench.rs`（均已登记例外，见上「平行实现清单」）与 `fsx.rs`（宿主侧 `std::fs` 工具，非内核逻辑复刻）)
+  - 状态：[X] (实测 grep：`host-tests/src/` 无内核逻辑复刻模块，`crate::kernel` 0 处；仅存 `dma_stream.rs` 与 `fsx.rs`（宿主侧 `std::fs` 工具，非内核逻辑复刻）；`framekernel_bench.rs` 的 host-only mock 已随 G-07 收尾轮清零，余下唯一测试替身为 `BenchBlockDevice`（实现内核 `BlockDevice` trait 的 bench 载具，非内核逻辑复刻）)
 
 ## 决策记录
 

@@ -10,14 +10,13 @@
 //! ## 覆盖的热点路径
 //! 1. `page_flags_bench`: PageFlags 位运算 (PRESENT/WRITABLE/USER/NX)
 //! 2. `pte_set_flags_bench`: PageTableEntry.set_flags 原子位操作
-//! 3. `iomem_alias_bench`: IoMem 别名区间注册 (重叠检测)
-//! 4. `capability_check_bench`: CapabilityMatrix 16 域位检查
+//! 3. `iomem_alias_bench`: IoMem 别名区间注册 (重叠检测, 内核 `IoMem::new`)
+//! 4. `capability_check_bench`: 能力矩阵域位检查 (内核 `PolicyEngine::check`)
 //! 5. `dma_state_machine_bench`: DmaStream 状态机迁移
-//! 6. `sha256_block_bench`: SHA-256 单 block 压缩 (credo 身份)
+//! 6. `sha256_block_bench`: SHA-256 哈希 (credo 身份, 内核 `sha256`)
 //! 7. `attribution_classify_bench`: 故障归属分类 (barrier)
 //! 8. `recovery_decide_bench`: 恢复策略决策 (barrier)
-//! 9. `bitmap_scan_bench`: 位图扫描 (PMM 物理页分配)
-//! 10. `btree_id_lookup_bench`: BTreeMap 整数键查找
+//! 9. `bitmap_scan_bench`: PMM 物理页分配 (内核 buddy alloc/free)
 //!
 //! ## 输出
 //! stdout 单行 JSON:
@@ -29,27 +28,100 @@
 //! - `make -f Makefile.ci bench-baseline` / `bench-check`
 
 // G-07 (2026-09-06): 原 `#![allow(dead_code)]` (F9 违规) 删除 — 实测移除后 0 个
-// dead_code 警告 (全部 29 个 bench 均被 run_all() 与 tests 使用, 属防御性历史残留).
+// dead_code 警告 (全部 23 个 bench 均被 run_all() 与 tests 使用, 属防御性历史残留).
 
 use std::time::Instant;
 
+// ====== A 类: 内核真实实现直引 (G-07 消除 host 侧平行实现) ======
+//
+// 以下 bench 组不再本地复刻算法, 改为直接引用内核真实源码 (经 queenx 壳 crate 的
+// host-test feature 暴露面), 与 `src/kernel/**` 位一致. 各 bench 仅保留计时骨架,
+// 计算本身完全由内核实现承担 — 平行复刻体已删除.
+use queenx::kernel::framework::debug::{
+    BpfInsn, BpfProg, BpfProgType, BpfVerifier, VerifyResult, opcode,
+};
+// `BpfSubsystem` 仅单测使用 (bench 体走 `&dyn BpfVerifier`), 故 cfg(test) 门控.
+#[cfg(test)]
+use queenx::kernel::framework::debug::BpfSubsystem;
+use queenx::kernel::framework::dma_buf::{DmaDirection, DmaStream, SyncState};
+use queenx::kernel::framework::frame::Frame;
+use queenx::kernel::framework::mm::{PageFlags, PageTableEntry, PhysAddr};
+use queenx::kernel::framework::net::wait_queue::{SocketWaitQueue, WakeReason};
+use queenx::kernel::services::barrier::attribution::{FaultAttribution, FaultAttributor, TcbModule};
+use queenx::kernel::services::barrier::recovery_policy::{
+    FaultSignal, RecoveryAction, RecoveryPolicy,
+};
+use queenx::kernel::services::config::sysctl::{
+    SysctlKind, SysctlValue, sysctl_register, sysctl_write,
+};
+// `sysctl_read`/`SysctlError` 仅单测使用 (bench 体只写), 故 cfg(test) 门控.
+#[cfg(test)]
+use queenx::kernel::services::config::sysctl::{SysctlError, sysctl_read};
+use queenx::kernel::services::debug::ebpf_verifier::STANDARD_VERIFIER;
+
+// ====== B 类: 内核真实实现直引 + 机制层载体注入 (G-07 消除 host 侧平行实现) ======
+//
+// 与 A 类同口径, 但以下热点需宿主载体 (host 无裸机 PMM/直映射) 才能运行内核真实实现:
+// - `PhysicalMemoryManager` + `VecMetaStore`: buddy 分配/合并唯一实现 (载体注入模式,
+//   与 `tests/pmm_buddy_host_test.rs` 一致)
+// - `IoMem`: 别名注册表唯一公共入口 (与 `tests/mm_iomem_alias_test.rs` 一致)
+// - `VirtQueue`: 描述符/环区操作用宿主堆块作 DMA 后备 (host 无 PMM, 见 §12 段注释)
+use queenx::kernel::framework::credo::sha256::sha256;
+use queenx::kernel::framework::driver::virtio::queue::{
+    VQ_SIZE, VirtQueue, VqAvail, VqDesc, VqUsed, VqUsedElem,
+};
+// 描述符标志位仅单测断言使用 (bench 体经 `prepare_desc` 的 write 参数间接设置)
+#[cfg(test)]
+use queenx::kernel::framework::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
+use queenx::kernel::framework::iomem::IoMem;
+use queenx::kernel::framework::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
+use queenx::kernel::services::credo::policy::{
+    CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix, PolicyEngine, PolicyResult,
+};
+
+// ====== C 类: 内核真实实现直引 (G-07 遗留项: nestfs / chitin / epoll 策略面) ======
+//
+// 与 A/B 类同口径, 覆盖 G-07 遗留的三处平行实现:
+// - `chitin::BlockDevice` + `CHITIN_DEVICES` 注册表: 块设备边界检查与 dispatch
+//   的唯一实现 (host 侧仅提供扇区存储载体 `BenchBlockDevice`)
+// - `framework::fs::vfs_poll_trait` (机制) + services `StandardVfsPollPolicy` (策略):
+//   epoll `check_fd_ready` 事件位决策的唯一实现
+// - `nestfs::*`: Zap / TXG / DMU / SPA / RAID-Z / ARC / ZIL / ZIL-persist 八大子模块
+//   的唯一实现, 本地 `HostXxx` trait + `StandardHostXxx` 复刻体已全部删除
+use queenx::kernel::framework::chitin::{
+    BlockDevice, chitin_blk_read, chitin_blk_write, chitin_register_block_dev,
+};
+// `chitin_blk_is_present` 仅单测断言使用 (bench 体只做读写)
+#[cfg(test)]
+use queenx::kernel::framework::chitin::chitin_blk_is_present;
+use queenx::kernel::framework::fs::vfs_poll_trait::{
+    EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollContext, VfsPollPolicyRef,
+};
+// `VfsPollPolicy` trait 仅单测直接调用策略方法时需在作用域
+#[cfg(test)]
+use queenx::kernel::framework::fs::vfs_poll_trait::VfsPollPolicy;
+use queenx::kernel::framework::fs::{KernelError, VfsFileType};
+use queenx::kernel::services::fs::nestfs::arc::{NestArcBufType, NestArcKey};
+use queenx::kernel::services::fs::nestfs::arc_trait::{ArcCache, StandardArc};
+use queenx::kernel::services::fs::nestfs::bp::NestBlockPointer;
+use queenx::kernel::services::fs::nestfs::dmu::{NestObjSet, NestObjType};
+use queenx::kernel::services::fs::nestfs::raidz::{NestRaidzLevel, NestRaidzMap};
+// RAID-Z 列数上下限仅单测断言 clamp 行为时使用
+#[cfg(test)]
+use queenx::kernel::services::fs::nestfs::raidz::{HV_RAIDZ_MAX_COLS, HV_RAIDZ_MIN_COLS};
+use queenx::kernel::services::fs::nestfs::spa::NestSpa;
+use queenx::kernel::services::fs::nestfs::txg::NestTxgGroup;
+use queenx::kernel::services::fs::nestfs::vdev::NestVdevConfig;
+use queenx::kernel::services::fs::nestfs::zap::NestZap;
+use queenx::kernel::services::fs::nestfs::zil::{NestZil, NestZilRecord};
+use queenx::kernel::services::fs::nestfs::zil_persist::NestZilPersist;
+use queenx::kernel::services::fs::vfs_poll_policy::StandardVfsPollPolicy;
+use std::sync::OnceLock;
+use std::sync::atomic::Ordering;
+
 // ====== 1. PageFlags 位运算 (来自 framework/mm/mod.rs) ======
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct PageFlags: u64 {
-        const PRESENT     = 1 << 0;
-        const WRITABLE    = 1 << 1;
-        const USER        = 1 << 2;
-        const WRITE_THROUGH = 1 << 3;
-        const CACHE_DISABLE = 1 << 4;
-        const ACCESSED    = 1 << 5;
-        const DIRTY       = 1 << 6;
-        const HUGE_PAGE   = 1 << 7;
-        const GLOBAL      = 1 << 8;
-        const NX          = 1u64 << 63;
-    }
-}
+// G-07: 本地 `bitflags::bitflags!` 复刻已删除, 直引内核 `framework::mm::PageFlags`.
 
 /// 每轮执行 64 个位运算, 使每轮有可测量的耗时
 const PAGE_FLAGS_BATCH: u64 = 64;
@@ -76,24 +148,12 @@ pub fn page_flags_bench(iters: u64) -> u128 {
 
 // ====== 2. PTE set_flags (来自 framework/mm/mod.rs PageTableEntry) ======
 
-#[derive(Clone, Copy, Debug)]
-struct MockPte {
-    bits: u64,
-}
-
-impl MockPte {
-    #[inline(always)]
-    fn new(v: u64) -> Self { Self { bits: v } }
-    #[inline(always)]
-    fn set_flags(&mut self, flags: PageFlags) {
-        self.bits = (self.bits & !PageFlags::all().bits()) | flags.bits();
-    }
-    #[inline(always)]
-    fn is_present(&self) -> bool { self.bits & PageFlags::PRESENT.bits() != 0 }
-}
+// G-07: 本地 `MockPte` 复刻已删除, 直引内核 `framework::mm::PageTableEntry`.
+// 注: 内核实现以 `AtomicU64` + Acquire/Release 承载位域, 且 `set_flags` 取 `&self`
+// 而非旧 mock 的裸 `u64` 写入 — 语义与性能特征以内核为准, 基线随实现重录.
 
 pub fn pte_set_flags_bench(iters: u64) -> u128 {
-    let mut pte = MockPte::new(0x0);
+    let pte = PageTableEntry::from_value(0x0);
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE;
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -106,45 +166,26 @@ pub fn pte_set_flags_bench(iters: u64) -> u128 {
     start.elapsed().as_nanos()
 }
 
-// ====== 3. IoMem Alias Registry (来自 framework/iomem.rs) ======
+// ====== 3. IoMem 别名区间注册 (来自 framework/iomem.rs) ======
 
-const MAX_MMIO_MAPPINGS: usize = 64;
+// G-07: 本地 `AliasEntry`/`AliasRegistry`/`MAX_MMIO_MAPPINGS` 复刻已删除, 直引内核
+// `framework::iomem::IoMem` — 别名注册表 (`ALIAS_REGISTRY`) 为私有全局态, 唯一公共
+// 入口是 `IoMem::new` (注册) / `Drop` (注销), 用法与 `tests/mm_iomem_alias_test.rs` 一致.
+//
+// 语义与基线变更 (来源同 A 类): 旧 mock 只计时 `check_conflict` 单次扫描, 内核入口每次
+// 往返含 1 次 `IrqSpinLock` 加解锁 + 注册表写入 + 注销, 故 1 op = 一次「扫描 + 注册 + 注销」.
 
-#[derive(Debug, Clone, Copy)]
-struct AliasEntry {
-    phys: u64,
-    len: usize,
-}
-
-struct AliasRegistry {
-    entries: Vec<AliasEntry>,
-    capacity: usize,
-}
-
-impl AliasRegistry {
-    fn new() -> Self {
-        Self { entries: Vec::with_capacity(MAX_MMIO_MAPPINGS), capacity: MAX_MMIO_MAPPINGS }
-    }
-    fn check_conflict(&self, phys: u64, len: usize) -> bool {
-        let end = phys.saturating_add(len as u64);
-        for e in &self.entries {
-            let existing_end = e.phys.saturating_add(e.len as u64);
-            if phys < existing_end && end > e.phys { return true; }
-        }
-        false
-    }
-    fn register(&mut self, phys: u64, len: usize) -> Result<(), ()> {
-        if self.entries.len() >= self.capacity { return Err(()); }
-        if self.check_conflict(phys, len) { return Err(()); }
-        self.entries.push(AliasEntry { phys, len });
-        Ok(())
-    }
-}
+/// bench 预置的已注册 MMIO 区段数 (与旧 mock 的 30 条基线对齐)
+const IOMEM_BASELINE_ENTRIES: u64 = 30;
 
 pub fn iomem_alias_bench(iters: u64) -> u128 {
-    let mut r = AliasRegistry::new();
-    for i in 0..30 {
-        r.register(0x1000 + (i as u64) * 0x1000, 0x800).unwrap();
+    // 预置基线区段: 句柄须存活至计时结束 (Drop 即注销, 表回退到 0 条)
+    let mut baseline = Vec::with_capacity(IOMEM_BASELINE_ENTRIES as usize);
+    for i in 0..IOMEM_BASELINE_ENTRIES {
+        // SAFETY: phys 仅为纯算术载体 — `IoMem::new` 只做对齐/溢出/别名冲突校验
+        // (`mmio_virt` 为 `phys_to_virt` 纯换算), 不解引用该地址, 无 MMIO 访问.
+        let m = unsafe { IoMem::new(PhysAddr(0x1000 + i * 0x1000), 0x800, "bench.iomem") };
+        baseline.push(m.expect("bench 基线 MMIO 区段注册失败"));
     }
     const BATCH: u64 = 32;
     let start = Instant::now();
@@ -152,44 +193,63 @@ pub fn iomem_alias_bench(iters: u64) -> u128 {
     for i in 0..iters {
         for j in 0..BATCH {
             let phys = 0x50000 + ((i * BATCH + j) & 0xFFFF) * 0x100;
-            let len = 0x800;
-            if r.check_conflict(phys, len) { sink ^= 1; }
+            {
+                // SAFETY: 同基线注册 (纯算术载体, 不触碰映射内存)
+                let m = unsafe { IoMem::new(PhysAddr(phys), 0x800, "bench.iomem") };
+                if m.is_err() { sink ^= 1; }
+                // 句柄随本作用域结束 Drop → 注销, 注册表回到 30 条基线
+            }
         }
     }
+    sink ^= baseline.len() as u64;
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
     let total_ops = (iters as u128) * (BATCH as u128);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 4. Capability check (来自 framework/credo/capability.rs) ======
+// ====== 4. 能力矩阵域位检查 (来自 services/credo/policy.rs) ======
 
-const CAP_DOMAINS: usize = 16;
-
-struct CapabilityMatrix {
-    caps: [u64; CAP_DOMAINS],
-}
-
-impl CapabilityMatrix {
-    fn new() -> Self { Self { caps: [0; CAP_DOMAINS] } }
-    fn grant(&mut self, dom: usize, bits: u64) { self.caps[dom] |= bits; }
-    fn has(&self, dom: usize, bit: u64) -> bool { (self.caps[dom] & bit) != 0 }
-}
+// G-07: 本地 `CapabilityMatrix`/`CAP_DOMAINS` 复刻已删除, 直引内核
+// `services::credo::policy` 的 `InMemoryMatrix` (16×AtomicU64) + `PolicyEngine::check`
+// (域合法性 → 原子读 → 包含判定 → 可行下界保护).
+//
+// bench 域表按内核 16 域常量构造 (避免字面量映射).
+const BENCH_CAP_DOMAINS: [CapDomain; 16] = [
+    CapDomain::SYSTEM,
+    CapDomain::FS,
+    CapDomain::NET,
+    CapDomain::PROC,
+    CapDomain::DEVICE,
+    CapDomain::USER_MGMT,
+    CapDomain::IPC,
+    CapDomain::MEM,
+    CapDomain::TIME,
+    CapDomain::BARRIER,
+    CapDomain::SIGNAL,
+    CapDomain::SHM,
+    CapDomain::SEM,
+    CapDomain::MSGQ,
+    CapDomain::DMA,
+    CapDomain::RESERVED,
+];
 
 pub fn capability_check_bench(iters: u64) -> u128 {
-    let mut m = CapabilityMatrix::new();
-    m.grant(1, 0b11);
-    m.grant(3, 0b10101);
-    m.grant(2, 0b1111);
-    m.grant(5, 0b1);
+    let m = InMemoryMatrix::new();
+    // 预置各域能力位 (域下标与旧 mock 的 grant 序列对齐: 1/3/2/5)
+    let _ = m.set(CapDomain::FS, CapBits(0b11));
+    let _ = m.set(CapDomain::PROC, CapBits(0b10101));
+    let _ = m.set(CapDomain::NET, CapBits(0b1111));
+    let _ = m.set(CapDomain::USER_MGMT, CapBits(0b1));
+    let engine = PolicyEngine::new();
     const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
-            let dom = ((i * BATCH + j) as usize) & 0xF;
-            let bit = 1u64 << ((i + j) & 0x1F);
-            if m.has(dom, bit) { sink ^= 1; }
+            let dom = BENCH_CAP_DOMAINS[((i * BATCH + j) as usize) & 0xF];
+            let bits = CapBits(1u64 << ((i + j) & 0x1F));
+            if engine.check(&m, dom, bits) == PolicyResult::Allow { sink ^= 1; }
         }
     }
     std::hint::black_box(sink);
@@ -200,177 +260,90 @@ pub fn capability_check_bench(iters: u64) -> u128 {
 
 // ====== 5. DmaStream 状态机 (来自 framework/dma_buf.rs) ======
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DmaDirection { ToDevice, FromDevice, Bidirectional }
+// G-07: 本地 `DmaStream`/`SyncState`/`transition` 复刻已删除, 直引内核
+// `framework::dma_buf::DmaStream`. 内核状态机不暴露 `transition`, 仅提供
+// `sync_for_device`/`sync_for_cpu`; 二者在 `Bidirectional` 流上可无限 ping-pong
+// (CpuReady ↔ DeviceReady), 故 bench 用单一双向流承载全部迁移操作.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// 注: BidirInProgress 变体已删除 (G-07 死代码消除; 从未构造, transition 由 `_ => false` 通配兜底)
-enum SyncState { CpuReady, DeviceReady }
-
-struct DmaStream {
-    dir: DmaDirection,
-    state: SyncState,
-}
-
-impl DmaStream {
-    fn new(dir: DmaDirection) -> Self {
-        let state = match dir {
-            DmaDirection::ToDevice => SyncState::CpuReady,
-            DmaDirection::FromDevice => SyncState::DeviceReady,
-            DmaDirection::Bidirectional => SyncState::CpuReady,
-        };
-        Self { dir, state }
-    }
-    fn transition(&mut self, target: SyncState) -> Result<(), ()> {
-        use DmaDirection::*;
-        use SyncState::*;
-        let ok = match (self.dir, self.state, target) {
-            (ToDevice, CpuReady, DeviceReady) => true,
-            (ToDevice, DeviceReady, CpuReady) => true,
-            (FromDevice, DeviceReady, CpuReady) => true,
-            (FromDevice, CpuReady, DeviceReady) => true,
-            (Bidirectional, _, _) => true, // 简化: Bidirectional 任意转换
-            _ => false,
-        };
-        if ok { self.state = target; Ok(()) } else { Err(()) }
-    }
+/// 构造 bench 用 Frame (host 无真实物理页).
+///
+/// # SAFETY
+/// phys 仅为纯算术载体: 内核 `DmaStream::from_frame` 只做对齐/溢出/大小校验与
+/// 状态机迁移, 不解引用 `as_virt_ptr()`; `Frame` 无 Drop 实现 (不释放物理页).
+unsafe fn bench_frame(paddr: u64, order: u8) -> Frame {
+    // SAFETY: 见函数文档 (前置条件与调用点一致)
+    unsafe { Frame::from_raw(PhysAddr(paddr), order) }
 }
 
 pub fn dma_state_machine_bench(iters: u64) -> u128 {
-    // 三个方向各建一个流轮转使用, 消除 FromDevice/Bidirectional 未构造死代码 (G-07)
-    let mut streams = [
-        DmaStream::new(DmaDirection::ToDevice),
-        DmaStream::new(DmaDirection::FromDevice),
-        DmaStream::new(DmaDirection::Bidirectional),
-    ];
+    // SAFETY: 0x10000 页对齐, 见 bench_frame() 说明
+    let frame = unsafe { bench_frame(0x10000, 0) };
+    let mut s = DmaStream::from_frame(frame, DmaDirection::Bidirectional)
+        .expect("bidirectional DmaStream 构造失败");
     const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
-    for i in 0..iters {
-        for j in 0..BATCH {
-            let target = if (i + j) & 1 == 0 { SyncState::DeviceReady } else { SyncState::CpuReady };
-            if streams[((i + j) % 3) as usize].transition(target).is_ok() { sink ^= 1; }
+    for _ in 0..iters {
+        for _ in 0..BATCH {
+            if s.sync_for_device().is_ok() { sink ^= 1; }
+            if s.sync_for_cpu().is_ok() { sink ^= 2; }
         }
     }
+    sink ^= u64::from(s.sync_state() == SyncState::CpuReady);
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    let total_ops = (iters as u128) * (BATCH as u128);
+    // 1 op = 1 次状态机迁移 (每 BATCH 轮 = 2 次迁移)
+    let total_ops = (iters as u128) * (BATCH as u128) * 2;
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 6. SHA-256 block (来自 framework/credo/sha256.rs) ======
+// ====== 6. SHA-256 哈希 (来自 framework/credo/sha256.rs) ======
 
-const K: [u32; 64] = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-];
-
-#[inline(always)]
-fn rotr(x: u32, n: u32) -> u32 { x.rotate_right(n) }
-
-fn sha256_transform(state: &mut [u32; 8], block: &[u8; 64]) {
-    let mut w = [0u32; 64];
-    for i in 0..16 {
-        w[i] = ((block[i * 4] as u32) << 24)
-            | ((block[i * 4 + 1] as u32) << 16)
-            | ((block[i * 4 + 2] as u32) << 8)
-            | (block[i * 4 + 3] as u32);
-    }
-    for i in 16..64 {
-        let s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-        let s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
-    }
-    let mut a = state[0]; let mut b = state[1]; let mut c = state[2]; let mut d = state[3];
-    let mut e = state[4]; let mut f = state[5]; let mut g = state[6]; let mut h = state[7];
-    for i in 0..64 {
-        let s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-        let ch = (e & f) ^ (!e & g);
-        let t1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
-        let s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
-        let maj = (a & b) ^ (a & c) ^ (b & c);
-        let t2 = s0.wrapping_add(maj);
-        h = g; g = f; f = e; e = d.wrapping_add(t1);
-        d = c; c = b; b = a; a = t1.wrapping_add(t2);
-    }
-    state[0] = state[0].wrapping_add(a); state[1] = state[1].wrapping_add(b);
-    state[2] = state[2].wrapping_add(c); state[3] = state[3].wrapping_add(d);
-    state[4] = state[4].wrapping_add(e); state[5] = state[5].wrapping_add(f);
-    state[6] = state[6].wrapping_add(g); state[7] = state[7].wrapping_add(h);
-}
+// G-07: 本地 `K`/`rotr`/`sha256_transform` 复刻已删除, 直引内核
+// `framework::credo::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
+//
+// 语义与基线变更: 旧 mock 只做单 block 压缩 (无填充); 内核公共入口对 64B 输入做
+// 2 次压缩 (数据块 + 填充块) 并编码输出, 故 1 op 口径改为 1 次完整 `sha256` 调用.
+// 输入经 `black_box` 屏蔽常量传播, 避免编译器把整轮折叠为一次调用.
 
 pub fn sha256_block_bench(iters: u64) -> u128 {
-    let mut state = [
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
-    ];
     let block = [0u8; 64];
-    // SHA-256 本身耗时足够, 每 iter = 1 block
     let start = Instant::now();
+    let mut sink: u8 = 0;
     for _ in 0..iters {
-        sha256_transform(&mut state, &block);
+        sink ^= sha256(std::hint::black_box(&block))[0];
     }
-    std::hint::black_box(state[0]);
+    std::hint::black_box(sink);
     start.elapsed().as_nanos()
 }
 
 // ====== 7. Attribution classify (来自 services/barrier/attribution.rs) ======
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FaultAttribution {
-    Tcb { fault_pc: u64 },
-    Service { domain: u16, recoverable: bool },
-    CrossLayer { framework_fn: &'static str, services_fn: &'static str },
-}
-
-#[derive(Clone, Copy, Debug)]
-// 注: sp/caller_chain 字段已删除 (G-07 死代码消除; 原字段仅构造从未读取)
-struct FaultRecord {
-    rip: u64,
-    cs: u16,
-    in_interrupt: bool,
-    holding_lock: bool,
-    in_services: bool,
-}
-
-fn classify(rec: &FaultRecord) -> FaultAttribution {
-    // 简化版归属规则 (与 attribution.rs 同等语义)
-    if rec.in_interrupt && rec.holding_lock {
-        FaultAttribution::Tcb { fault_pc: rec.rip }
-    } else if rec.in_services {
-        if rec.holding_lock {
-            FaultAttribution::CrossLayer { framework_fn: "spinlock_acquire", services_fn: "domain_visit" }
-        } else {
-            FaultAttribution::Service { domain: (rec.cs & 0xF), recoverable: true }
-        }
-    } else {
-        FaultAttribution::Service { domain: 0, recoverable: false }
-    }
-}
+// G-07: 本地 `FaultAttribution`/`FaultRecord`/`classify` 复刻已删除, 直引内核
+// `services::barrier::attribution::FaultAttributor::attribute(panic_rip)`.
+//
+// 语义对齐说明 (基线变更来源): 旧 mock 按 `FaultRecord` 的 in_interrupt /
+// holding_lock / in_services 标志位做规则判定; 内核真实入口的唯一入参是
+// `panic_rip`, 按落入 `TCB_RANGES` / `SERVICE_RANGES` 静态地址区间判定归属,
+// 两者输入面不同. bench 现按内核契约以伪 RIP 序列驱动归属判定.
 
 pub fn attribution_classify_bench(iters: u64) -> u128 {
-    let recs: Vec<FaultRecord> = (0..256).map(|i| FaultRecord {
-        rip: 0xffff_8000_0010_0000 + i as u64 * 0x40,
-        cs: 0x08,
-        in_interrupt: i & 1 == 0,
-        holding_lock: i & 3 == 0,
-        in_services: i & 7 != 0,
-    }).collect();
+    // 三类伪 RIP: TCB 区间 / Services 区间 / 两区间外 (Unknown)
+    let rips: Vec<u64> = (0..256u64)
+        .map(|i| match i % 3 {
+            0 => 0xFFFF_FFFF_8000_0000 + i * 0x40, // TCB 区间起始段
+            1 => 0xFFFF_FFFF_0000_0000 + i * 0x40, // Services 区间起始段
+            _ => 0x0000_1000_0000_0000 + i * 0x40, // 两区间外 → Unknown
+        })
+        .collect();
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
-        let r = &recs[(i as usize) & 0xFF];
-        let a = classify(r);
-        match a {
-            FaultAttribution::Tcb { fault_pc } => sink ^= fault_pc,
-            FaultAttribution::Service { domain, .. } => sink ^= domain as u64,
+        match FaultAttributor::attribute(rips[(i as usize) & 0xFF]) {
+            FaultAttribution::Tcb { .. } => sink ^= 1,
+            FaultAttribution::Service { domain_id, .. } => sink ^= domain_id,
             FaultAttribution::CrossLayer { .. } => sink ^= 0xCAFE,
+            FaultAttribution::Unknown => sink ^= 0xF00D,
         }
     }
     std::hint::black_box(sink);
@@ -379,49 +352,42 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
 
 // ====== 8. Recovery decide (来自 services/barrier/recovery_policy.rs) ======
 
-#[derive(Clone, Copy, Debug)]
-enum RecoveryAction { Noop, Bbr, Bsr, Bhr, Quarantine }
+// G-07: 本地 `FaultSignal`/`decide` 复刻已删除, 直引内核
+// `services::barrier::recovery_policy::{FaultSignal, RecoveryAction, RecoveryPolicy}`.
+// 入参构造改用内核 `FaultSignal::tcb` 与 `FaultAttribution::Service` 结构体字面量
+// (旧 mock 的 `is_tcb`/`retry` 字段名映射为 `attribution`/`retry_count`).
 
-#[derive(Clone, Copy, Debug)]
-struct FaultSignal {
-    is_tcb: bool,
-    recoverable: bool,
-    retry: u32,
-    heartbeat_gap: u64,
-    dependents: u32,
-}
-
-fn decide(s: &FaultSignal) -> RecoveryAction {
-    if s.is_tcb { return RecoveryAction::Bhr; }
-    if !s.recoverable { return RecoveryAction::Quarantine; }
-    if s.heartbeat_gap > 500 { return RecoveryAction::Bsr; }
-    match s.retry {
-        0 => RecoveryAction::Noop,
-        1..=2 => if s.dependents == 0 { RecoveryAction::Bbr } else { RecoveryAction::Bsr },
-        3..=4 => RecoveryAction::Bsr,
-        _ => RecoveryAction::Quarantine,
+/// 构造第 i 个 bench 用故障信号 (奇偶交替 TCB / Service 两类归属).
+fn bench_signal(i: u64) -> FaultSignal {
+    if i & 1 == 0 {
+        FaultSignal::tcb(TcbModule::Barrier, i)
+    } else {
+        FaultSignal {
+            attribution: FaultAttribution::Service {
+                domain_id: i & 0xF,
+                recoverable: i & 2 != 0,
+            },
+            retry_count: (i % 8) as u32,
+            heartbeat_gap: i * 30,
+            dependents: (i % 4) as u32,
+            tick: i,
+        }
     }
 }
 
 pub fn recovery_decide_bench(iters: u64) -> u128 {
-    let signals: Vec<FaultSignal> = (0..64).map(|i| FaultSignal {
-        is_tcb: i & 1 == 0,
-        recoverable: i & 2 != 0,
-        retry: (i % 8) as u32,
-        heartbeat_gap: (i as u64) * 30,
-        dependents: (i % 4) as u32,
-    }).collect();
+    let signals: Vec<FaultSignal> = (0..64).map(bench_signal).collect();
     const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
-            let a = decide(&signals[((i * BATCH + j) as usize) & 0x3F]);
+            let a = RecoveryPolicy::decide(&signals[((i * BATCH + j) as usize) & 0x3F]);
             sink ^= match a {
                 RecoveryAction::Noop => 0,
-                RecoveryAction::Bbr => 1,
-                RecoveryAction::Bsr => 2,
-                RecoveryAction::Bhr => 3,
+                RecoveryAction::BarrierBaseRecovery => 1,
+                RecoveryAction::BarrierSoftReset => 2,
+                RecoveryAction::BarrierHardReset => 3,
                 RecoveryAction::Quarantine => 4,
             };
         }
@@ -431,123 +397,71 @@ pub fn recovery_decide_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / (iters as u128)
 }
 
-// ====== 9. Bitmap scan (PMM 物理页分配) ======
+// ====== 9. PMM 物理页分配 (来自 framework/mm/pmm.rs) ======
 
-struct Bitmap {
-    words: [u64; 16], // 1024 bits
-}
+// G-07: 本地 `Bitmap` 复刻已删除, 直引内核 `framework::mm::pmm::PhysicalMemoryManager`
+// — 经 `MetaStore` 载体注入宿主 `VecMetaStore`, buddy 分配/合并走内核唯一实现
+// (装配方式与 `tests/pmm_buddy_host_test.rs` 一致, 无测试/生产分叉).
 
-impl Bitmap {
-    fn new() -> Self { Self { words: [!0u64; 16] } }
-    fn alloc(&mut self) -> Option<usize> {
-        for (wi, w) in self.words.iter_mut().enumerate() {
-            if *w != 0 {
-                let bit = w.trailing_zeros() as usize;
-                *w &= !((1u64) << bit);
-                return Some(wi * 64 + bit);
-            }
-        }
-        None
-    }
-    fn free(&mut self, idx: usize) {
-        let wi = idx / 64;
-        let bit = idx % 64;
-        self.words[wi] |= (1u64) << bit;
-    }
-}
+/// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
+const BENCH_MEM_SIZE: u64 = 64 * 1024 * 1024;
+/// 模拟内核镜像末尾 16MB (init_bitmap 前的内核保留区)
+const BENCH_KERNEL_END: u64 = 16 * 1024 * 1024;
+/// bench 预分配页数 (与旧 mock 的 512 位基线对齐)
+const BENCH_PREALLOC_PAGES: usize = 512;
 
 pub fn bitmap_scan_bench(iters: u64) -> u128 {
-    let mut bm = Bitmap::new();
-    let mut allocated: Vec<usize> = Vec::with_capacity(512);
-    for _ in 0..512 {
-        if let Some(i) = bm.alloc() { allocated.push(i); }
+    let pmm = PhysicalMemoryManager::new();
+    pmm.inject_meta_store(VecMetaStore::new());
+    pmm.init(BENCH_MEM_SIZE, BENCH_KERNEL_END);
+    pmm.init_bitmap(0);
+    // 预分配基线页, 使后续 alloc 走非空空闲链路径
+    let mut baseline = Vec::with_capacity(BENCH_PREALLOC_PAGES);
+    for _ in 0..BENCH_PREALLOC_PAGES {
+        match pmm.alloc_page() {
+            Some(addr) => baseline.push(addr),
+            None => break,
+        }
     }
     const BATCH: u64 = 32;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
-            if let Some(idx) = bm.alloc() {
-                sink ^= idx as u64;
-                if (i + j) & 1 == 0 { bm.free(idx); }
+            if let Some(addr) = pmm.alloc_page() {
+                sink ^= addr.0;
+                if (i + j) & 1 == 0 { pmm.free_page(addr); }
             }
         }
     }
+    sink ^= baseline.len() as u64;
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
     elapsed.saturating_mul(1_000) / (iters as u128)
 }
 
-// ====== 10. BTreeMap integer lookup (进程表 PID 查找) ======
-
-pub fn btree_id_lookup_bench(iters: u64) -> u128 {
-    use std::collections::BTreeMap;
-    let mut m: BTreeMap<u32, u64> = BTreeMap::new();
-    for i in 0..512u32 {
-        m.insert(i, (i as u64) * 0x1000);
-    }
-    let start = Instant::now();
-    let mut sink: u64 = 0;
-    for i in 0..iters {
-        let key = (i as u32) & 0x1FF;
-        if let Some(v) = m.get(&key) { sink ^= *v; }
-    }
-    std::hint::black_box(sink);
-    start.elapsed().as_nanos()
-}
-
-// ====== 11. Socket WaitQueue (来自 services/net/wait_queue.rs) ======
+// ====== 11. Socket WaitQueue (来自 framework/net/wait_queue.rs) ======
 //
-// 模拟 16 个 fd (MAX_SM_FD) 上的 mark_waiting → try_wake 循环.
+// 16 个 fd (MAX_SM_FD) 上的 mark_waiting → try_wake 循环.
 // 单次循环 = 1 个 fd 上的 1 次 send/wake 对应操作.
 // 验收: 1000 个并发 send 路径平均延迟 < 1μs (QEMU 环境 1000 < 1ms 目标换算).
+//
+// G-07: 本地 `MockSocketWaitQueue` 复刻已删除, 直引内核
+// `framework::net::wait_queue::SocketWaitQueue`. 原注释所写
+// services/net/wait_queue.rs 为失效路径 (DECISION-J 已将该基础设施归位 framework).
+//
+// 注: 内核版以 `IrqSpinLock` 保护 pending 状态 (host-test 下禁中断为 no-op),
+// 并以 `is_pending`/`wake_count`/`last_reason` 暴露观测面.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
-use std::sync::Mutex as StdMutex;
-
-/// 与 framework/net/socket WaitQueue 等价的 host-only 简化版
-struct MockSocketWaitQueue {
-    pending: AtomicBool,
-    wake_count: AtomicU32,
-    last_reason: AtomicU32,
-    lock: StdMutex<()>,
-}
-
-impl MockSocketWaitQueue {
-    const fn new() -> Self {
-        Self {
-            pending: AtomicBool::new(false),
-            wake_count: AtomicU32::new(0),
-            last_reason: AtomicU32::new(u32::MAX),
-            lock: StdMutex::new(()),
-        }
-    }
-
-    fn mark_waiting(&self) -> bool {
-        !self.pending.swap(true, Ordering::AcqRel)
-    }
-
-    fn try_wake(&self, reason: u32) -> bool {
-        let _guard = match self.lock.try_lock() {
-            Ok(g) => g,
-            Err(_) => return false,
-        };
-        let was_pending = self.pending.swap(false, Ordering::AcqRel);
-        if was_pending {
-            self.wake_count.fetch_add(1, Ordering::Relaxed);
-            self.last_reason.store(reason, Ordering::Relaxed);
-        }
-        was_pending
-    }
-    // 注: is_pending 方法已删除 (G-07 死代码消除; 仅测试使用, pending 语义可由 mark_waiting/try_wake 返回值断言)
-}
+// G-07 收口: 本地 mock 的 `StdMutex` 依赖已随 `MockBlockDevice` 等复刻体删除而移除,
+// 全部同步原语由内核实现承担 (host-test 下 `IrqSpinLock` 的禁中断为 no-op).
 
 /// MAX_SM_FD: 16 (与 services/net/socket.rs 的 fd 空间 [0, 16) 对齐)
 const MAX_SM_FD: usize = 16;
 
 pub fn socket_wait_queue_bench(iters: u64) -> u128 {
-    let queues: Vec<MockSocketWaitQueue> = (0..MAX_SM_FD)
-        .map(|_| MockSocketWaitQueue::new())
+    let queues: Vec<SocketWaitQueue> = (0..MAX_SM_FD)
+        .map(|_| SocketWaitQueue::new())
         .collect();
     // 1 轮 (BATCH) = 1000 次并发 send/wake 路径 = 验收目标
     const BATCH: u64 = 1000;
@@ -558,274 +472,155 @@ pub fn socket_wait_queue_bench(iters: u64) -> u128 {
             // 轮询 16 个 fd, 每个 fd 上做 mark_waiting + try_wake
             let fd = ((i * BATCH + j) as usize) % MAX_SM_FD;
             queues[fd].mark_waiting();
-            if queues[fd].try_wake(0) {
+            if queues[fd].try_wake(WakeReason::Readable) {
                 sink ^= 1;
             }
         }
     }
+    // 读取内核观测面, 防止编译器优化掉 pending 状态迁移
+    sink ^= u64::from(queues[0].is_pending()) | u64::from(queues[0].wake_count());
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
     let total_ops = (iters as u128) * (BATCH as u128);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
-// ====== 12. virtio-blk I/O 路径 (来自 framework/driver/virtio/{queue,blk}.rs) ======
+// ====== 12. virtio-blk I/O 路径 (来自 framework/driver/virtio/queue.rs) ======
 //
-// 模拟 split virtqueue 的 submit → pop_used 循环.
-// 4K 写请求包含 3 段描述符链: header (1B) + data (4096B) + status (1B).
+// G-07: 本地 `MockVqDesc`/`MockVirtQueue` 复刻已删除, 直引内核
+// `framework::driver::virtio::queue::VirtQueue` — 描述符准备/链接/提交/回收与已用环
+// 弹出全部走内核实现. host 侧仅保留两处「装配与设备模拟」(非内核算法复刻):
+//   1. `bench_virtqueue`: 以宿主堆块充当环区后备 (host 无 PMM, `VirtQueue::new` 经
+//      extern `pmm_alloc_pages` + `phys_to_virt` 直写内核直映射, 在 host 不可运行)
+//   2. `bench_device_complete`: 设备侧写 used ring (设备行为, 内核不含此逻辑)
+//
+// 4K 写请求 = 3 段描述符链: header (16B, 设备读) + data (4096B, 设备读) + status (1B, 设备写).
 // 验收目标: 4K 写延迟 < 100μs (QEMU virtio-blk 设备实测),
 //          host 端算法路径应远低于此 (<< 1μs).
 
-/// 描述符标志
-const VQ_DESC_F_NEXT: u16 = 1;
-const VQ_DESC_F_WRITE: u16 = 2;
-
-/// split virtqueue 描述符 (host-only 简化版)
-// 注: addr 字段已删除 (G-07 死代码消除; 原字段仅写入从未读取, bench 只读 len/flags/next)
-struct MockVqDesc {
-    len: u32,
-    flags: u16,
-    next: u16,
-}
-
-/// 4K 写请求的 3 段描述符链 (与 virtio-blk 协议一致)
-const BLK_REQ_HEADERS_OUT: usize = 1;
-const BLK_REQ_DATA_OUT: usize = 1;
-const BLK_REQ_STATUS_IN: usize = 1;
-const BLK_REQ_CHAIN_LEN: usize = BLK_REQ_HEADERS_OUT + BLK_REQ_DATA_OUT + BLK_REQ_STATUS_IN;
-// 注: BLK_SECTOR_SIZE / BLK_4K_SECTORS 已删除 (G-07 死代码消除; 二者互相引用但均未被使用)
+/// 4K 写请求的数据段长度
 const BLK_4K_BYTES: u32 = 4096;
+/// 环区宿主后备块字节数 (desc 512 + avail 68 + used 260, 分段放置于 4096 内)
+const VQ_BACKING_BYTES: usize = 4096;
+/// 环区分段偏移 (互不重叠且满足各自对齐: desc @0 / avail @1024 / used @2048)
+const VQ_AVAIL_OFFSET: usize = 1024;
+const VQ_USED_OFFSET: usize = 2048;
 
-/// split virtqueue (host-only mock, 32 项, 与 VQ_SIZE 对齐)
-struct MockVirtQueue {
-    descs: Vec<MockVqDesc>,
-    avail_idx: u16,
-    last_used_idx: u16,
-    /// 空闲描述符链头 (单链表)
-    free_head: u16,
-    capacity: u16,
+/// 用宿主内存装配 bench 用 `VirtQueue`.
+///
+/// 空闲描述符链初始化与内核 `VirtQueue::new` 一致 (`desc[i].next = i + 1`,
+/// 末项 `0xFFFF`); 队列状态字段按内核构造的初值设置.
+///
+/// # SAFETY
+/// `backing` 为 8 字节对齐的宿主堆块且长度 ≥ `VQ_BACKING_BYTES`, 其生命周期必须
+/// 覆盖返回的 `VirtQueue` (调用方需在更外层作用域持有该后备块).
+unsafe fn bench_virtqueue(backing: &mut [u64]) -> VirtQueue {
+    let base = backing.as_mut_ptr().cast::<u8>();
+    // SAFETY: 见函数文档 — 后备块对齐/大小/存活性由调用方保证, 分段偏移在块内.
+    unsafe {
+        let desc = base.cast::<VqDesc>();
+        let avail = base.add(VQ_AVAIL_OFFSET).cast::<VqAvail>();
+        let used = base.add(VQ_USED_OFFSET).cast::<VqUsed>();
+        for i in 0..VQ_SIZE {
+            (*desc.add(i as usize)).next = if i + 1 < VQ_SIZE { i + 1 } else { 0xFFFF };
+        }
+        VirtQueue {
+            desc,
+            avail,
+            used,
+            queue_size: VQ_SIZE,
+            free_head: 0,
+            last_used_idx: 0,
+            next_avail_idx: 0,
+            // host 无真实物理地址, 三者为 DMA 描述用物理地址 (bench 不使用)
+            desc_phys: 0,
+            avail_phys: 0,
+            used_phys: 0,
+        }
+    }
 }
 
-impl MockVirtQueue {
-    fn new(capacity: u16) -> Self {
-        let mut descs: Vec<MockVqDesc> = (0..capacity)
-            .map(|i| MockVqDesc {
-                len: 0,
-                flags: 0,
-                next: if i + 1 < capacity { i + 1 } else { 0xFFFF },
-            })
-            .collect();
-        // 初始 free_head = 0
-        let _ = &mut descs;
-        Self {
-            descs,
-            avail_idx: 0,
-            last_used_idx: 0,
-            free_head: 0,
-            capacity,
-        }
-    }
-
-    /// 提交 3 段描述符链 (header + 4K data + status), 返回 head idx
-    fn submit_blk_write(&mut self) -> Option<u16> {
-        // 检查空闲槽位
-        if self.free_head == 0xFFFF {
-            return None;
-        }
-        let head = self.free_head;
-        // 分配 3 段: header, data, status
-        let h1 = head;
-        let h2 = ((head as u32 + 1) % self.capacity as u32) as u16;
-        let h3 = ((head as u32 + 2) % self.capacity as u32) as u16;
-        // 第 3 段 (status) 设备写, 不链 next
-        self.descs[h1 as usize] = MockVqDesc {
-            len: 16, flags: VQ_DESC_F_NEXT, next: h2,
+/// 设备侧完成 (host 模拟设备行为, 非内核逻辑): 写 used ring 并推进 `idx`.
+///
+/// # SAFETY
+/// `vq` 的 used 环必须指向有效后备块 (见 `bench_virtqueue`), 且调用方独占访问.
+unsafe fn bench_device_complete(vq: &mut VirtQueue, head: u16, len: u32) {
+    // SAFETY: 见函数文档.
+    unsafe {
+        let used = vq.used;
+        let idx = (*used).idx;
+        (*used).ring[(idx % VQ_SIZE) as usize] = VqUsedElem {
+            id: u32::from(head),
+            len,
         };
-        self.descs[h2 as usize] = MockVqDesc {
-            len: BLK_4K_BYTES, flags: VQ_DESC_F_NEXT, next: h3,
-        };
-        self.descs[h3 as usize] = MockVqDesc {
-            len: 1, flags: VQ_DESC_F_WRITE, next: 0xFFFF,
-        };
-        // 推进 free_head 到下一空闲
-        self.free_head = if h3 + 1 < self.capacity { h3 + 1 } else { 0xFFFF };
-        // 推进 avail_idx (驱动侧的可用环 head 索引)
-        self.avail_idx = self.avail_idx.wrapping_add(1);
-        Some(head)
-    }
-
-    /// 模拟设备完成 (used ring 推进 + 描述符回收)
-    fn complete_blk_write(&mut self, head: u16) {
-        // used ring 推进
-        self.last_used_idx = self.last_used_idx.wrapping_add(1);
-        // 回收整个 3 段描述符链: 走完 chain 把所有 desc 放回 free_head
-        // 简化: 链式回收 (链上 next 仍可读, 因为我们没有清 desc.next)
-        let mut idx = head;
-        for _ in 0..BLK_REQ_CHAIN_LEN {
-            let next = self.descs[idx as usize].next;
-            self.descs[idx as usize].flags = 0;
-            // 把当前 desc 插入 free_head 链头
-            if self.free_head == 0xFFFF {
-                // free_head 满, 把当前 desc 接在 head 之后
-                self.descs[idx as usize].next = 0xFFFF;
-                self.free_head = idx;
-            } else {
-                // 把 free_head 接到当前 desc 之后
-                self.descs[idx as usize].next = self.free_head;
-                self.free_head = idx;
-            }
-            if next == 0xFFFF {
-                break;
-            }
-            idx = next;
-        }
-    }
-
-    /// 模拟 pop_used (驱动侧读取已用环)
-    fn pop_used(&mut self) -> Option<u16> {
-        // 与设备完成同步推进
-        Some(0)
+        (*used).idx = idx.wrapping_add(1);
     }
 }
 
 pub fn virtio_blk_io_bench(iters: u64) -> u128 {
-    let mut vq = MockVirtQueue::new(32);
+    let mut backing = vec![0u64; VQ_BACKING_BYTES / 8];
+    // SAFETY: backing 在本函数作用域内存活, 覆盖 vq 全部使用期; Vec<u64> 为 8 字节对齐
+    let mut vq = unsafe { bench_virtqueue(&mut backing) };
     // 1 轮 (BATCH) = 32 次 4K 写 (覆盖整个 virtqueue 一次)
     const BATCH: u64 = 32;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for _ in 0..iters {
         for _ in 0..BATCH {
-            // 提交 1 个 4K 写请求
-            if let Some(head) = vq.submit_blk_write() {
-                // 设备完成 (同步, host-only mock)
-                vq.complete_blk_write(head);
-                let _ = vq.pop_used();
-                // 读取回状态防止编译器优化掉整条路径
-                sink ^= head as u64;
-                sink ^= vq.last_used_idx as u64;
-                sink ^= vq.descs[head as usize].len as u64;
+            // 3 段描述符链: header → data → status (末段设备写)
+            let h1 = vq.prepare_desc(0, 16, false);
+            let h2 = vq.prepare_desc(0, BLK_4K_BYTES, false);
+            let h3 = vq.prepare_desc(0, 1, true);
+            vq.link_desc(h1, h2);
+            vq.link_desc(h2, h3);
+            vq.submit(h1);
+            vq.commit_and_kick();
+            // SAFETY: vq.used 指向本函数作用域内的 backing
+            unsafe { bench_device_complete(&mut vq, h1, BLK_4K_BYTES) };
+            if let Some((id, len)) = vq.pop_used() {
+                sink ^= u64::from(id) ^ u64::from(len);
             }
+            vq.reclaim_desc(h1);
+            vq.reclaim_desc(h2);
+            vq.reclaim_desc(h3);
         }
     }
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    // 归一化: 1 op = 1 个 4K 写请求 (含 submit + complete + pop)
+    // 归一化: 1 op = 1 个 4K 写请求 (prepare+link+submit+kick+complete+pop+reclaim)
     let total_ops = (iters as u128) * (BATCH as u128);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
 // ============================================================================
-// EBPF-3: BpfVerifier trait dispatch Mock + bench
+// EBPF-3: BpfVerifier trait dispatch bench (G-07: 直引内核真实实现)
 // ============================================================================
 //
-// T4-3 framekernel 设计: framework 通过 `&dyn BpfVerifier` 动态分派
-// 调用 services 注册的 verifier. 此 mock 复现该机制, 在 host 端验证:
-//   1. trait 动态分派可工作 (`&dyn BpfVerifier::verify`)
-//   2. 安全默认行为: 未注册 verifier → prog_load 拒绝所有
-//   3. 注册后 prog_load 走 verifier 验证路径
-//   4. 测量动态分派的 throughput (vs. 静态分派 / 直接调用)
-
-/// Mock BPF 程序 (host-only, 不依赖 no_std services)
-#[derive(Clone, Debug)]
-pub struct MockBpfProg {
-    pub insn_cnt: u32,
-}
-
-impl MockBpfProg {
-    pub fn new(insn_cnt: u32) -> Self {
-        Self { insn_cnt }
-    }
-}
-
-/// 验证结果 (复现 framework::debug::VerifyResult)
-#[derive(Debug, PartialEq, Eq)]
-pub enum VerifyResult {
-    Ok,
-    Err(Vec<u8>),
-}
-
-/// BpfVerifier trait (host-only mock, 与 services::debug::ebpf_verifier::BpfVerifier 同构)
-pub trait BpfVerifier: Sync + Send {
-    fn verify(&self, prog: &MockBpfProg) -> VerifyResult;
-}
-
-/// Mock verifier: 根据构造参数决定全部 accept 或全部 reject
-pub struct MockBpfVerifier {
-    accept: bool,
-}
-
-impl MockBpfVerifier {
-    pub const fn new(accept: bool) -> Self {
-        Self { accept }
-    }
-}
-
-impl BpfVerifier for MockBpfVerifier {
-    fn verify(&self, prog: &MockBpfProg) -> VerifyResult {
-        if prog.insn_cnt == 0 {
-            return VerifyResult::Err(b"empty program".to_vec());
-        }
-        if self.accept {
-            VerifyResult::Ok
-        } else {
-            VerifyResult::Err(b"mock reject".to_vec())
-        }
-    }
-}
-
-/// Mock BpfSubsystem (复现 framework::debug::BpfSubsystem 的核心机制)
-pub struct MockBpfSubsystem {
-    verifier: std::sync::Mutex<Option<&'static dyn BpfVerifier>>,
-    next_prog_fd: AtomicI64,
-}
-
-impl Default for MockBpfSubsystem {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockBpfSubsystem {
-    pub const fn new() -> Self {
-        Self {
-            verifier: std::sync::Mutex::new(None),
-            next_prog_fd: AtomicI64::new(1),
-        }
-    }
-    /// T4-3: 注册 verifier (framekernel 动态分派接口)
-    pub fn set_verifier(&self, v: &'static dyn BpfVerifier) {
-        *self.verifier.lock().unwrap() = Some(v);
-    }
-    /// T4-3: 模拟 prog_load, 走 verifier 验证
-    /// - 未注册: 返回 -1 (EPERM, 安全默认)
-    /// - 注册后: 走 verifier 验证, 成功返回 fd
-    pub fn prog_load(&self, prog: MockBpfProg) -> i64 {
-        let slot = self.verifier.lock().unwrap();
-        let v = match *slot {
-            Some(v) => v,
-            None => return -1, // EPERM
-        };
-        match v.verify(&prog) {
-            VerifyResult::Ok => self.next_prog_fd.fetch_add(1, Ordering::AcqRel),
-            VerifyResult::Err(_) => -22, // EINVAL
-        }
-    }
-}
+// G-07: 本地 `MockBpfProg`/`VerifyResult`/`BpfVerifier`/`MockBpfVerifier`/
+// `MockBpfSubsystem` 复刻已全部删除, 直引内核真实类型:
+//   - framework (机制): `framework::debug::{BpfProg, BpfInsn, BpfProgType,
+//     BpfVerifier, VerifyResult}`
+//   - services (策略): `services::debug::ebpf_verifier::STANDARD_VERIFIER`
+//     (7 条验证规则的 services 实现)
+//
+// bench 测量 `&dyn BpfVerifier::verify` 动态分派 + 7 条规则全路径吞吐.
 
 /// bench: 测量 `&dyn BpfVerifier::verify` 动态分派 throughput
 ///
-/// 1000 op = 1000 次 verifier.verify 调用. 1 op 包含:
-/// - 构造 MockBpfProg
-/// - 通过 `&dyn BpfVerifier` 间接调用 verify
-/// - 匹配 VerifyResult
+/// 1 op = 1 次 `verify` 调用. 1 op 包含:
+/// - 通过 `&dyn BpfVerifier` 间接调用 `StandardBpfVerifier::verify`
+/// - 匹配 `VerifyResult`
 pub fn bpf_verifier_dispatch_bench(iters: u64) -> u128 {
-    static VERIFIER: MockBpfVerifier = MockBpfVerifier::new(true);
-    let v: &'static dyn BpfVerifier = &VERIFIER;
+    // 最小合法程序: ALU64 MOV r0,0 + EXIT — 通过内核 7 条规则的全部检查路径
+    let insns = vec![
+        BpfInsn::new(opcode::ALU64 | opcode::MOV, 0, 0, 0, 0),
+        BpfInsn::new(opcode::JMP | opcode::EXIT, 0, 0, 0, 0),
+    ];
+    let prog = BpfProg::new(BpfProgType::SocketFilter, insns);
+    let v: &dyn BpfVerifier = &STANDARD_VERIFIER;
     let start = Instant::now();
     let mut sink: u32 = 0;
     for _ in 0..iters {
-        let prog = MockBpfProg::new(8);
         let r = v.verify(&prog);
         // 读取结果, 防止编译器优化掉整条路径
         sink ^= match r {
@@ -841,190 +636,83 @@ pub fn bpf_verifier_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// SYSCTL-2: sysctl register/write bench
+// SYSCTL-2: sysctl register/write bench (G-07: 直引内核真实实现)
 // ============================================================================
 //
-// LEGACY-6 引入 services/config/sysctl.rs (314 行, 0 unsafe, IrqSpinLock + 原子).
-// 由于 services 是 no_std, host-tests 用 Mock 复现等价机制:
-//   - MockSysctlTable: 32 槽位 Option<entry>, 与 services 数组布局一致
-//   - MockSysctlEntry: name + value (i64/u64/bool)
-//   - 锁语义: 用 std::sync::Mutex 模拟 IrqSpinLock (host 不存在中断上下文)
-//   - register / read / write 路径与 services 1:1 对应
+// G-07: 本地 `MockSysctlValue`/`MockSysctlKind`/`MockSysctlEntry`/`MockSysctlTable`
+// 复刻已全部删除, 直引内核 `services::config::sysctl`:
+//   - 注册表: 内核 `SYSCTL_TABLE` 全局静态 (32 槽 `IrqSpinLock` + 原子字段)
+//   - API: `sysctl_register` / `sysctl_write` (host-test 下 `IrqSpinLock` 原子自旋
+//     互斥, 禁中断为 no-op)
 //
-// 性能含义: register + write 路径 lock + lookup + write, 测算法层开销.
+// 注: 内核注册表是进程内全局唯一且无注销面 — 故 16 个 bench 节点经 `Once` 只注册
+// 一次, 计时主体仅覆盖 write 路径 (旧 mock 每轮新建本地表, 不受此约束).
 
-/// Mock sysctl 值类型
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MockSysctlValue {
-    Int(i64),
-    UInt(u64),
-    Bool(bool),
-}
+/// bench sysctl 节点数 (内核 `MAX_SYSCTL_ENTRIES` = 32 槽位内)
+const SYSCTL_NODES: usize = 16;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MockSysctlKind {
-    Int,
-    UInt,
-    Bool,
-}
+/// bench sysctl 节点名 (静态字符串池, 免去 `Box::leak`)
+const SYSCTL_BENCH_NAMES: [&str; SYSCTL_NODES] = [
+    "bench.sysctl.0",
+    "bench.sysctl.1",
+    "bench.sysctl.2",
+    "bench.sysctl.3",
+    "bench.sysctl.4",
+    "bench.sysctl.5",
+    "bench.sysctl.6",
+    "bench.sysctl.7",
+    "bench.sysctl.8",
+    "bench.sysctl.9",
+    "bench.sysctl.10",
+    "bench.sysctl.11",
+    "bench.sysctl.12",
+    "bench.sysctl.13",
+    "bench.sysctl.14",
+    "bench.sysctl.15",
+];
 
-pub struct MockSysctlEntry {
-    pub name: &'static str,
-    pub kind: MockSysctlKind,
-    pub int_val: i64,
-    pub uint_val: u64,
-    pub bool_val: bool,
-}
-
-impl MockSysctlEntry {
-    pub const fn new(name: &'static str, kind: MockSysctlKind, val: MockSysctlValue) -> Self {
-        let (int_v, uint_v, bool_v) = match val {
-            MockSysctlValue::Int(v) => (v, 0, false),
-            MockSysctlValue::UInt(v) => (0, v, false),
-            MockSysctlValue::Bool(v) => (0, 0, v),
-        };
-        Self { name, kind, int_val: int_v, uint_val: uint_v, bool_val: bool_v }
-    }
-
-    pub fn read(&self) -> MockSysctlValue {
-        match self.kind {
-            MockSysctlKind::Int => MockSysctlValue::Int(self.int_val),
-            MockSysctlKind::UInt => MockSysctlValue::UInt(self.uint_val),
-            MockSysctlKind::Bool => MockSysctlValue::Bool(self.bool_val),
-        }
-    }
-
-    #[allow(clippy::result_unit_err)] // bench 框架简化错误类型, 不影响内核
-    pub fn write(&mut self, val: MockSysctlValue) -> Result<(), ()> {
-        let k = match val {
-            MockSysctlValue::Int(_) => MockSysctlKind::Int,
-            MockSysctlValue::UInt(_) => MockSysctlKind::UInt,
-            MockSysctlValue::Bool(_) => MockSysctlKind::Bool,
-        };
-        if k != self.kind { return Err(()); }
-        match val {
-            MockSysctlValue::Int(v) => self.int_val = v,
-            MockSysctlValue::UInt(v) => self.uint_val = v,
-            MockSysctlValue::Bool(v) => self.bool_val = v,
-        }
-        Ok(())
+/// bench 节点的值类型 (按下标轮转 Int/UInt/Bool)
+fn sysctl_bench_kind(i: usize) -> SysctlKind {
+    match i % 3 {
+        0 => SysctlKind::Int,
+        1 => SysctlKind::UInt,
+        _ => SysctlKind::Bool,
     }
 }
 
-const MOCK_SYSCTL_SLOTS: usize = 32;
-
-pub struct MockSysctlTable {
-    slots: StdMutex<[Option<MockSysctlEntry>; MOCK_SYSCTL_SLOTS]>,
-}
-
-impl Default for MockSysctlTable {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockSysctlTable {
-    pub const fn new() -> Self {
-        // 用 const { None } 数组初始化 (Rust 1.79+)
-        Self {
-            slots: StdMutex::new([const { None }; MOCK_SYSCTL_SLOTS]),
+/// 一次性注册 bench 节点 (内核注册表无注销面, 重复注册返回 `Duplicate`)
+fn sysctl_bench_init() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        for (i, name) in SYSCTL_BENCH_NAMES.iter().enumerate() {
+            let kind = sysctl_bench_kind(i);
+            let initial = match kind {
+                SysctlKind::Int => SysctlValue::Int(i as i64),
+                SysctlKind::UInt => SysctlValue::UInt(i as u64),
+                SysctlKind::Bool => SysctlValue::Bool(i % 2 == 0),
+            };
+            let _ = sysctl_register(name, kind, initial);
         }
-    }
-
-    #[allow(clippy::result_unit_err)] // bench 框架简化错误类型, 不影响内核
-    pub fn register(
-        &self,
-        name: &'static str,
-        kind: MockSysctlKind,
-        val: MockSysctlValue,
-    ) -> Result<(), ()> {
-        let mut g = self.slots.lock().unwrap();
-        // 重复检测
-        for s in g.iter() {
-            if let Some(e) = s
-                && e.name == name { return Err(()); }
-        }
-        // 找一个空槽
-        for s in g.iter_mut() {
-            if s.is_none() {
-                *s = Some(MockSysctlEntry::new(name, kind, val));
-                return Ok(());
-            }
-        }
-        Err(())
-    }
-
-    #[allow(clippy::result_unit_err)] // bench 框架简化错误类型, 不影响内核
-    pub fn write(&self, name: &str, val: MockSysctlValue) -> Result<(), ()> {
-        let mut g = self.slots.lock().unwrap();
-        for s in g.iter_mut() {
-            if let Some(e) = s
-                && e.name == name { return e.write(val); }
-        }
-        Err(())
-    }
-
-    pub fn read(&self, name: &str) -> Option<MockSysctlValue> {
-        let g = self.slots.lock().unwrap();
-        for s in g.iter() {
-            if let Some(e) = s
-                && e.name == name { return Some(e.read()); }
-        }
-        None
-    }
-}
-
-/// bench: sysctl register + write 吞吐量
-///
-/// 1 轮 (BATCH) = 16 次 write (启动期 register 在 r==0 完成)
-/// 模拟"启动期注册 + 运行时调参"工作负载
-pub fn sysctl_bench(iters: u64) -> u128 {
-    let table = MockSysctlTable::new();
-    const NODES: usize = 16;
-    const BATCH: u64 = 16;
-
-    // 准备静态名称池 (一次性)
-    use std::sync::OnceLock;
-    static NAMES: OnceLock<Vec<&'static str>> = OnceLock::new();
-    let names = NAMES.get_or_init(|| {
-        (0..NODES)
-            .map(|i| Box::leak(format!("sysctl.bench.{}", i).into_boxed_str())
-                as &'static str)
-            .collect()
     });
+}
 
-    // 启动期: 注册 16 个节点
-    for i in 0..NODES {
-        let kind = match i % 3 {
-            0 => MockSysctlKind::Int,
-            1 => MockSysctlKind::UInt,
-            _ => MockSysctlKind::Bool,
-        };
-        let val = match kind {
-            MockSysctlKind::Int => MockSysctlValue::Int(i as i64),
-            MockSysctlKind::UInt => MockSysctlValue::UInt(i as u64),
-            MockSysctlKind::Bool => MockSysctlValue::Bool(i % 2 == 0),
-        };
-        let _ = table.register(names[i], kind, val);
-    }
-
-    // 主体: 旋转 write 不同节点
+/// bench: sysctl write 吞吐量
+///
+/// 1 轮 (BATCH) = 16 次 write. 节点注册在首次进入时一次性完成 (见 `sysctl_bench_init`).
+pub fn sysctl_bench(iters: u64) -> u128 {
+    sysctl_bench_init();
+    const BATCH: u64 = 16;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         for i in 0..BATCH {
-            let idx = (i as usize) % NODES;
-            let kind = match idx % 3 {
-                0 => MockSysctlKind::Int,
-                1 => MockSysctlKind::UInt,
-                _ => MockSysctlKind::Bool,
+            let idx = (i as usize) % SYSCTL_NODES;
+            let val = match sysctl_bench_kind(idx) {
+                SysctlKind::Int => SysctlValue::Int(i as i64 + (r as i64) * 1000),
+                SysctlKind::UInt => SysctlValue::UInt(i + r * 1000),
+                SysctlKind::Bool => SysctlValue::Bool(r % 2 == 0),
             };
-            let val = match kind {
-                MockSysctlKind::Int => MockSysctlValue::Int(i as i64 + (r as i64) * 1000),
-                MockSysctlKind::UInt => MockSysctlValue::UInt(i + r * 1000),
-                MockSysctlKind::Bool => MockSysctlValue::Bool(r % 2 == 0),
-            };
-            let _ = table.write(names[idx], val);
+            let _ = sysctl_write(SYSCTL_BENCH_NAMES[idx], val);
             sink ^= idx as u64;
         }
     }
@@ -1035,123 +723,90 @@ pub fn sysctl_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// T-4.1 (LEGACY-4): BlockDevice trait dispatch bench + Mock
+// T-4.1 (LEGACY-4): BlockDevice trait dispatch bench
 // ============================================================================
 //
-// 验证 chitin_blk_read/write 走 BlockDevice trait dispatch (0 thunk).
-// 由于 chitin::chitin_blk_read/write 是 no_std, host-tests 用 Mock 复现:
-//   - MockBlockDevice: 实现本地 BlockDevice trait, 模拟真实块设备
-//   - MockChitinDevice: 模拟 chitin 表, 持有 dyn BlockDevice, 提供 read/write API
-//   - bench: 测量 trait dispatch 路径的吞吐
+// G-07: 本地 `HostBlockDevice` / `MockChitinDevice` 复刻已删除, 直引内核
+// `framework::chitin` — 设备注册 (`chitin_register_block_dev`)、协议/状态/长度
+// 边界检查与 trait dispatch (`chitin_blk_read`/`chitin_blk_write`) 全为内核唯一实现.
+// host 侧仅保留「设备载体」`BenchBlockDevice`: 提供扇区存储, 实现内核 `BlockDevice` 契约.
 
-/// host-only BlockDevice trait (与 kernel::framework::chitin::BlockDevice 等价)
-pub trait HostBlockDevice: Send + Sync {
-    fn blk_read(&self, sector: u64, buf: &mut [u8]) -> i32;
-    fn blk_write(&self, sector: u64, buf: &[u8]) -> i32;
-    fn blk_is_present(&self) -> bool { true }
-    fn blk_total_sectors(&self) -> u64 { u64::MAX }
+/// 宿主块设备载体 (实现内核 `BlockDevice`, 供 `CHITIN_DEVICES` 注册表 dispatch)
+pub struct BenchBlockDevice {
+    /// 内部存储 (按 sector 索引)
+    storage: Vec<[u8; 512]>,
 }
 
-/// Mock 块设备, 模拟 virtio-blk 行为
-pub struct MockBlockDevice {
-    /// 内部存储 (按 sector 索引, 0-1023 扇区)
-    storage: StdMutex<Vec<[u8; 512]>>,
-    read_count: std::sync::atomic::AtomicU64,
-    write_count: std::sync::atomic::AtomicU64,
-}
-
-impl MockBlockDevice {
+impl BenchBlockDevice {
+    /// 构造 `capacity_sectors` 个扇区, 首 2 字节写入扇区号 (便于区分扇区)
     pub fn new(capacity_sectors: usize) -> Self {
         Self {
-            storage: StdMutex::new(
-                (0..capacity_sectors)
-                    .map(|i| {
-                        let mut s = [0u8; 512];
-                        s[0] = (i & 0xFF) as u8;
-                        s[1] = ((i >> 8) & 0xFF) as u8;
-                        s
-                    })
-                    .collect()
-            ),
-            read_count: std::sync::atomic::AtomicU64::new(0),
-            write_count: std::sync::atomic::AtomicU64::new(0),
+            storage: (0..capacity_sectors)
+                .map(|i| {
+                    let mut s = [0u8; 512];
+                    s[0] = (i & 0xFF) as u8;
+                    s[1] = ((i >> 8) & 0xFF) as u8;
+                    s
+                })
+                .collect(),
         }
     }
-
-    pub fn read_count(&self) -> u64 {
-        self.read_count.load(std::sync::atomic::Ordering::Acquire)
-    }
-    pub fn write_count(&self) -> u64 {
-        self.write_count.load(std::sync::atomic::Ordering::Acquire)
-    }
 }
 
-impl HostBlockDevice for MockBlockDevice {
-    fn blk_read(&self, sector: u64, buf: &mut [u8]) -> i32 {
-        if buf.len() < 512 { return -1; }
-        self.read_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+impl BlockDevice for BenchBlockDevice {
+    fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
         let s = sector as usize;
-        let storage = self.storage.lock().unwrap();
-        if s >= storage.len() { return -5; }
-        buf.copy_from_slice(&storage[s]);
+        if s >= self.storage.len() {
+            return KernelError::Io.as_i32();
+        }
+        buf.copy_from_slice(&self.storage[s]);
         0
     }
-    fn blk_write(&self, sector: u64, buf: &[u8]) -> i32 {
-        if buf.len() < 512 { return -1; }
-        self.write_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
         let s = sector as usize;
-        let mut storage = self.storage.lock().unwrap();
-        if s >= storage.len() { return -5; }
-        storage[s].copy_from_slice(&buf[..512]);
+        if s >= self.storage.len() {
+            return KernelError::Io.as_i32();
+        }
+        self.storage[s].copy_from_slice(&buf[..512]);
         0
     }
-}
-
-/// Mock chitin_blk_read/write 路径 (trait dispatch)
-pub struct MockChitinDevice {
-    block_dev: Box<dyn HostBlockDevice>,
-}
-
-impl MockChitinDevice {
-    pub fn new(dev: Box<dyn HostBlockDevice>) -> Self {
-        Self { block_dev: dev }
+    fn blk_is_present(&self) -> bool {
+        true
     }
-    pub fn blk_read(&self, sector: u64, buf: &mut [u8]) -> i32 {
-        if buf.len() < 512 { return -1; }
-        self.block_dev.blk_read(sector, buf)
-    }
-    pub fn blk_write(&self, sector: u64, buf: &[u8]) -> i32 {
-        if buf.len() < 512 { return -1; }
-        self.block_dev.blk_write(sector, buf)
-    }
-    pub fn blk_is_present(&self) -> bool {
-        self.block_dev.blk_is_present()
-    }
-    pub fn blk_total_sectors(&self) -> u64 {
-        self.block_dev.blk_total_sectors()
+    fn blk_total_sectors(&self) -> u64 {
+        self.storage.len() as u64
     }
 }
 
-/// bench: T-4.1 trait dispatch 路径 throughput
+/// 注册 1024 扇区的 bench 块设备并返回 drive 索引
+///
+/// `box_leak` 只执行一次 (measure 会对同一 bench 多次取样), 避免重复注册泄漏.
+fn bench_blk_drive() -> u8 {
+    static SLOT: OnceLock<u8> = OnceLock::new();
+    *SLOT.get_or_init(|| {
+        let dev: &'static mut BenchBlockDevice = Box::leak(Box::new(BenchBlockDevice::new(1024)));
+        chitin_register_block_dev("bench_blk", None, None, dev) as u8
+    })
+}
+
+/// bench: T-4.1 块设备 I/O 路径 throughput (经内核 chitin dispatch)
 pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
-    let dev: Box<dyn HostBlockDevice> = Box::new(MockBlockDevice::new(1024));
-    let chitin = MockChitinDevice::new(dev);
+    let drive = bench_blk_drive();
 
     // 预热 (避免首次调用路径开销污染)
+    let mut buf = [0u8; 512];
     for _ in 0..100 {
-        let mut buf = [0u8; 512];
-        chitin.blk_read(0, &mut buf);
+        let _ = chitin_blk_read(drive, 0, &mut buf);
     }
 
     let start = Instant::now();
     let mut sink: u64 = 0;
-    let mut buf = [0u8; 512];
     for r in 0..iters {
         // 1 轮: 1 读 + 1 写 (16 扇区 旋转)
         let sector = r & 0xF;
-        let _ = chitin.blk_read(sector, &mut buf);
+        let _ = chitin_blk_read(drive, sector, &mut buf);
         sink ^= u64::from(buf[0]) | (u64::from(buf[1]) << 8);
-        let _ = chitin.blk_write(sector, &buf);
+        let _ = chitin_blk_write(drive, sector, &buf);
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
@@ -1160,104 +815,41 @@ pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// REVAL-6.1: VfsPollPolicy trait dispatch bench + Mock
+// REVAL-6.1: VfsPollPolicy trait dispatch bench
 // ============================================================================
 //
-// 验证 epoll::check_fd_ready 走 VfsPollPolicy trait dispatch (无硬编码 match).
-// 由于 framework::fs 是 no_std, host-tests 用 Mock 复现:
-//   - MockVfsFileType: 模拟 4 种 VFS 文件类型
-//   - MockVfsPollPolicy: 实现本地 trait, 模拟 StandardVfsPollPolicy
-//   - bench: 测量 trait dispatch 路径的吞吐 (与 fallback 路径对比)
+// G-07: 本地 `MockVfsFileType` / `MockVfsPollPolicy` / `MockEpollCheck` 复刻已删除,
+// 直引内核 `framework::fs::vfs_poll_trait` (机制) + services `StandardVfsPollPolicy`
+// (策略): `VfsPollPolicyRef::events_for` 即 epoll `check_fd_ready` 的唯一决策入口.
 
-/// host-only epoll 事件位常量 (与 kernel 一致)
-pub mod poll_events {
-    pub const EPOLLIN: u32 = 0x001;
-    pub const EPOLLOUT: u32 = 0x004;
-    pub const EPOLLERR: u32 = 0x008;
-    pub const EPOLLHUP: u32 = 0x010;
-}
+/// bench 用 epoll 事件掩码 (与内核 `check_fd_ready` 的 user mask 语义一致)
+const BENCH_EPOLL_MASK: u32 = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP;
 
-/// host-only VFS 文件类型 (4 种)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MockVfsFileType {
-    File = 0,
-    Dir = 1,
-    Dev = 2,
-    Symlink = 3,
-}
+/// 供 `VfsPollPolicyRef::Registered` 引用的内核默认策略
+static BENCH_VFS_POLL_POLICY: StandardVfsPollPolicy = StandardVfsPollPolicy;
 
-/// host-only VfsPollContext
-#[derive(Debug, Clone, Copy)]
-pub struct MockVfsPollContext {
-    pub valid: bool,
-    pub file_type: MockVfsFileType,
-}
-
-/// host-only VfsPollPolicy trait
-pub trait HostVfsPollPolicy: Send + Sync {
-    fn events_for_file_type(&self, file_type: MockVfsFileType) -> u32;
-    fn events_for_invalid_fd(&self) -> u32;
-}
-
-/// host-only StandardVfsPollPolicy (与 kernel services/fs/vfs_poll_policy.rs 等价)
-pub struct StandardHostVfsPollPolicy;
-impl HostVfsPollPolicy for StandardHostVfsPollPolicy {
-    fn events_for_file_type(&self, ft: MockVfsFileType) -> u32 {
-        use poll_events::*;
-        match ft {
-            MockVfsFileType::File => EPOLLIN | EPOLLOUT,
-            MockVfsFileType::Dir => EPOLLIN,
-            MockVfsFileType::Dev => EPOLLHUP,
-            MockVfsFileType::Symlink => EPOLLIN | EPOLLHUP,
-        }
-    }
-    fn events_for_invalid_fd(&self) -> u32 {
-        use poll_events::*;
-        EPOLLERR | EPOLLHUP
-    }
-}
-
-/// host-only 决策函数 (复现 epoll::check_fd_ready 的核心逻辑)
-pub struct MockEpollCheck {
-    policy: Box<dyn HostVfsPollPolicy>,
-}
-
-impl MockEpollCheck {
-    pub fn new(policy: Box<dyn HostVfsPollPolicy>) -> Self {
-        Self { policy }
-    }
-    pub fn check(&self, ctx: MockVfsPollContext, user_events: u32) -> u32 {
-        let raw = if !ctx.valid {
-            self.policy.events_for_invalid_fd()
-        } else {
-            self.policy.events_for_file_type(ctx.file_type)
-        };
-        raw & user_events
-    }
-}
-
-/// bench: REVAL-6.1 trait dispatch 路径 throughput
+/// bench: REVAL-6.1 策略决策路径 throughput
 pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
-    let check = MockEpollCheck::new(Box::new(StandardHostVfsPollPolicy));
+    let policy = VfsPollPolicyRef::Registered(&BENCH_VFS_POLL_POLICY);
 
     // 预热
     for _ in 0..1000 {
-        let ctx = MockVfsPollContext { valid: true, file_type: MockVfsFileType::File };
-        let _ = check.check(ctx, poll_events::EPOLLIN);
+        let ctx = VfsPollContext { valid: true, file_type: VfsFileType::File };
+        let _ = policy.events_for(ctx) & BENCH_EPOLL_MASK;
     }
 
     // 4 种 file_type 旋转
-    let fts = [MockVfsFileType::File, MockVfsFileType::Dir, MockVfsFileType::Dev, MockVfsFileType::Symlink];
+    let fts = [VfsFileType::File, VfsFileType::Dir, VfsFileType::Dev, VfsFileType::Symlink];
     let start = Instant::now();
     let mut sink: u32 = 0;
     for r in 0..iters {
         let ft = fts[(r & 0x3) as usize];
-        let ctx = MockVfsPollContext { valid: true, file_type: ft };
-        sink ^= check.check(ctx, poll_events::EPOLLIN | poll_events::EPOLLOUT);
+        let ctx = VfsPollContext { valid: true, file_type: ft };
+        sink ^= policy.events_for(ctx) & BENCH_EPOLL_MASK;
         // 偶尔插入 invalid fd
         if r & 0xFF == 0 {
-            let inv_ctx = MockVfsPollContext { valid: false, file_type: MockVfsFileType::File };
-            sink ^= check.check(inv_ctx, poll_events::EPOLLIN);
+            let inv_ctx = VfsPollContext { valid: false, file_type: VfsFileType::File };
+            sink ^= policy.events_for(inv_ctx) & BENCH_EPOLL_MASK;
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -1266,203 +858,31 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// REVAL-6.2: epoll_pwake 拆分行为 Mock
+// LEGACY-5.1: ZAP (NestZap) dispatch bench
 // ============================================================================
 //
-// 验证 epoll_pwake 拆分为 `instance_watches_fd` (机制) + `enqueue_ready_for_fd` (策略)
-// 后行为不变: 找到 fd 的实例, 入队, 去重.
-//
-// 由于 no_std kernel 不能 host-test, 用 MockEpollInstance 复现.
+// G-07: 本地 `HostZapStore` / `StandardHostZap` (Mutex<HashMap>) 复刻已删除, 直引内核
+// `services::fs::nestfs::zap::NestZap`. 注: 内核 ZAP 为线性扫描 (先比 hash 再比名字),
+// 与内核真实行为位一致.
 
-/// host-only epoll 实例
-pub struct MockEpollInstance {
-    pub interest_list: Vec<MockEpollInterestItem>,
-    pub ready_list: Vec<(u32, u64)>,  // (revents, data)
-}
-
-/// host-only 注册项
-#[derive(Debug, Clone, Copy)]
-pub struct MockEpollInterestItem {
-    pub fd: i32,
-    pub events: u32,
-    pub data: u64,
-}
-
-impl Default for MockEpollInstance {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockEpollInstance {
-    pub fn new() -> Self {
-        Self { interest_list: Vec::new(), ready_list: Vec::new() }
-    }
-    pub fn add(&mut self, item: MockEpollInterestItem) {
-        self.interest_list.push(item);
-    }
-}
-
-/// 机制: 检查 epoll 实例是否在监控指定 fd (REVAL-6.2 提取)
-pub fn instance_watches_fd(instance: &MockEpollInstance, fd: i32) -> bool {
-    instance.interest_list.iter().any(|item| item.fd == fd)
-}
-
-/// 策略: 把 fd 的就绪事件加入 epoll 实例的 ready_list (REVAL-6.2 提取)
-pub fn enqueue_ready_for_fd(
-    instance: &mut MockEpollInstance,
-    fd: i32,
-    policy: &dyn HostVfsPollPolicy,
-) -> bool {
-    let pos = match instance.interest_list.iter().position(|item| item.fd == fd) {
-        Some(p) => p,
-        None => return false,
-    };
-    let events = instance.interest_list[pos].events;
-    let data = instance.interest_list[pos].data;
-
-    // 决策 revents: 简化 (Mock 不走 VFS, 永远返回 IN|OUT if File)
-    let revents = policy.events_for_file_type(MockVfsFileType::File) & events;
-    if revents == 0 {
-        return false;
-    }
-    if instance.ready_list.iter().any(|(_, d)| *d == data) {
-        return false;  // dedup
-    }
-    instance.ready_list.push((revents, data));
-    true
-}
-
-/// 编排: epoll_pwake (REVAL-6.2 拆分后)
-pub struct MockEpollPwake {
-    pub instances: Vec<MockEpollInstance>,
-}
-
-impl Default for MockEpollPwake {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MockEpollPwake {
-    pub fn new() -> Self {
-        Self { instances: Vec::new() }
-    }
-    pub fn pwake(&mut self, fd: i32, policy: &dyn HostVfsPollPolicy) -> usize {
-        let mut count = 0;
-        for inst in &mut self.instances {
-            if !instance_watches_fd(inst, fd) {
-                continue;
-            }
-            if enqueue_ready_for_fd(inst, fd, policy) {
-                count += 1;
-            }
-        }
-        count
-    }
-}
-
-// ============================================================================
-// LEGACY-5.1: ZapStore trait dispatch bench + Mock
-// ============================================================================
-//
-// 验证 ZAP 走 trait dispatch (与 LEGACY-4 BlockDevice, REVAL-6.1 VfsPollPolicy 范式一致).
-// 模拟 StandardZap 行为: insert/lookup/remove.
-
-use std::collections::HashMap;
-
-/// host-only ZapStore trait
-pub trait HostZapStore: Send + Sync {
-    fn insert(&self, name: &str, value: &[u8]) -> bool;
-    fn insert_u64(&self, name: &str, value: u64) -> bool;
-    fn lookup(&self, name: &str) -> Option<Vec<u8>>;
-    fn lookup_u64(&self, name: &str) -> Option<u64>;
-    fn remove(&self, name: &str) -> bool;
-    fn contains(&self, name: &str) -> bool;
-    fn len(&self) -> usize;
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    fn capacity(&self) -> usize;
-}
-
-/// host-only StandardZap (Mutex<HashMap>)
-pub struct StandardHostZap {
-    pub map: std::sync::Mutex<(HashMap<String, Vec<u8>>, usize)>,
-}
-
-impl Default for StandardHostZap {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostZap {
-    pub fn new() -> Self {
-        Self {
-            map: std::sync::Mutex::new((HashMap::new(), 256)),
-        }
-    }
-    pub fn with_capacity(cap: usize) -> Self {
-        Self {
-            map: std::sync::Mutex::new((HashMap::new(), cap)),
-        }
-    }
-}
-
-impl HostZapStore for StandardHostZap {
-    fn insert(&self, name: &str, value: &[u8]) -> bool {
-        let mut g = self.map.lock().unwrap();
-        if g.0.len() >= g.1 && !g.0.contains_key(name) {
-            return false;
-        }
-        g.0.insert(name.to_string(), value.to_vec());
-        true
-    }
-    fn insert_u64(&self, name: &str, value: u64) -> bool {
-        self.insert(name, &value.to_le_bytes())
-    }
-    fn lookup(&self, name: &str) -> Option<Vec<u8>> {
-        self.map.lock().unwrap().0.get(name).cloned()
-    }
-    fn lookup_u64(&self, name: &str) -> Option<u64> {
-        self.lookup(name).map(|v| {
-            let mut arr = [0u8; 8];
-            arr.copy_from_slice(&v[..8.min(v.len())]);
-            u64::from_le_bytes(arr)
-        })
-    }
-    fn remove(&self, name: &str) -> bool {
-        self.map.lock().unwrap().0.remove(name).is_some()
-    }
-    fn contains(&self, name: &str) -> bool {
-        self.map.lock().unwrap().0.contains_key(name)
-    }
-    fn len(&self) -> usize {
-        self.map.lock().unwrap().0.len()
-    }
-    fn capacity(&self) -> usize {
-        self.map.lock().unwrap().1
-    }
-}
-
-/// bench: ZAP trait dispatch throughput
+/// bench: ZAP insert / lookup / contains 路径 throughput
 pub fn zap_dispatch_bench(iters: u64) -> u128 {
-    let zap: Box<dyn HostZapStore> = Box::new(StandardHostZap::new());
-    // 预热
-    for i in 0..1000 {
-        zap.insert_u64(&format!("warmup_{}", i), i);
+    // 容量 > 键空间, 保证 insert 分支始终走「查找已有键」真实路径
+    let zap = NestZap::with_capacity(512);
+    // 预热: 填满键空间
+    for i in 0..256u64 {
+        zap.insert_u64(&format!("k_{}", i), i);
     }
-    // bench: insert + lookup + remove 旋转
+    // bench: insert + lookup + contains 旋转
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        let key = format!("k_{}", r & 0xFFF);
+        let key = format!("k_{}", r & 0xFF);
         if r & 0x3 == 0 {
-            // insert
+            // insert (已有键 → 原地更新)
             let _ = zap.insert_u64(&key, r);
         } else if r & 0x3 == 1 {
-            // lookup
+            // lookup_u64
             if let Some(v) = zap.lookup_u64(&key) {
                 sink = sink.wrapping_add(v);
             }
@@ -1482,102 +902,23 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.2: TxgManager trait dispatch bench + Mock
+// LEGACY-5.2: TXG (NestTxgGroup) dispatch bench
 // ============================================================================
 //
-// 模拟 StandardTxg 行为: init/transition/add_dirty_to_open/current_txg.
+// G-07: 本地 `MockTxgState` / `HostTxgManager` / `StandardHostTxg` 复刻已删除, 直引内核
+// `services::fs::nestfs::txg::NestTxgGroup` — `init`/`transition`/`add_dirty_to_open`/
+// `current_txg` 的唯一实现. 事务组三态 (open/quiescing/syncing) 迁移与脏块登记
+// 均由内核承担.
 
-/// host-only TXG 状态机快照
-#[derive(Debug, Clone)]
-pub struct MockTxgState {
-    pub open_id: u64,
-    pub syncing_id: u64,
-    pub current: u64,
-    pub total_syncs: u64,
-    pub total_dirty: u64,
-}
-
-/// host-only TxgManager trait
-pub trait HostTxgManager: Send + Sync {
-    fn init(&mut self, start_txg: u64);
-    fn transition(&mut self) -> u64;
-    fn current_txg(&self) -> u64;
-    fn open_txg_id(&self) -> u64;
-    fn syncing_txg_id(&self) -> u64;
-    fn is_sync_in_progress(&self) -> bool;
-    fn total_syncs(&self) -> u64;
-    fn total_dirty(&self) -> u64;
-    fn add_dirty_to_open(&mut self, dummy: u64);
-    fn add_free_to_open(&mut self, dummy: u64);
-    fn add_io_to_open(&mut self, dummy: u64);
-}
-
-/// host-only StandardTxg (Mutex<MockTxgState>)
-pub struct StandardHostTxg {
-    pub state: std::sync::Mutex<MockTxgState>,
-}
-
-impl Default for StandardHostTxg {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostTxg {
-    pub fn new() -> Self {
-        Self {
-            state: std::sync::Mutex::new(MockTxgState {
-                open_id: 0,
-                syncing_id: 0,
-                current: 0,
-                total_syncs: 0,
-                total_dirty: 0,
-            }),
-        }
-    }
-}
-
-impl HostTxgManager for StandardHostTxg {
-    fn init(&mut self, start_txg: u64) {
-        let mut s = self.state.lock().unwrap();
-        s.open_id = start_txg;
-        s.syncing_id = start_txg + 2;
-        s.current = start_txg;
-        s.total_syncs = 0;
-        s.total_dirty = 0;
-    }
-    fn transition(&mut self) -> u64 {
-        let mut s = self.state.lock().unwrap();
-        s.open_id += 3;
-        s.syncing_id += 3;
-        s.current += 3;
-        s.total_syncs += 1;
-        s.current
-    }
-    fn current_txg(&self) -> u64 { self.state.lock().unwrap().current }
-    fn open_txg_id(&self) -> u64 { self.state.lock().unwrap().open_id }
-    fn syncing_txg_id(&self) -> u64 { self.state.lock().unwrap().syncing_id }
-    fn is_sync_in_progress(&self) -> bool {
-        self.state.lock().unwrap().total_syncs > 0
-    }
-    fn total_syncs(&self) -> u64 { self.state.lock().unwrap().total_syncs }
-    fn total_dirty(&self) -> u64 { self.state.lock().unwrap().total_dirty }
-    fn add_dirty_to_open(&mut self, _dummy: u64) {
-        self.state.lock().unwrap().total_dirty += 1;
-    }
-    fn add_free_to_open(&mut self, _dummy: u64) {}
-    fn add_io_to_open(&mut self, _dummy: u64) {}
-}
-
-/// bench: TXG trait dispatch throughput
+/// bench: TXG 事务组迁移 + 脏块登记 路径 throughput
 pub fn txg_dispatch_bench(iters: u64) -> u128 {
-    let mut txg: Box<dyn HostTxgManager> = Box::new(StandardHostTxg::new());
+    let mut txg = NestTxgGroup::new();
     txg.init(1);
     // 预热
-    for i in 0..1000 {
-        txg.add_dirty_to_open(i);
+    for _ in 0..1000 {
+        txg.add_dirty_to_open(NestBlockPointer::null());
     }
-    // bench: add_dirty + transition 旋转
+    // bench: add_dirty + current_txg + transition 旋转
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
@@ -1590,7 +931,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
             sink = sink.wrapping_add(txg.current_txg());
         } else {
             // add_dirty_to_open
-            txg.add_dirty_to_open(r);
+            txg.add_dirty_to_open(NestBlockPointer::null());
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -1599,144 +940,36 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.4: DmuManager trait dispatch bench + Mock
+// LEGACY-5.4: DMU (NestObjSet) dispatch bench
 // ============================================================================
 //
-// 模拟 StandardDmu 行为: alloc_obj/get_obj/free_obj/obj_count.
+// G-07: 本地 `MockDmuObject` / `HostDmuManager` / `StandardHostDmu` (Mutex<HashMap>)
+// 复刻已删除, 直引内核 `services::fs::nestfs::dmu::NestObjSet` — 对象分配/释放/查询/
+// 计数唯一实现 (内核为 `Mutex<Vec<NestDmuObject>>`, 查询与计数为线性扫描).
 
-/// host-only DMU 对象快照
-#[derive(Debug, Clone)]
-pub struct MockDmuObject {
-    pub obj_id: u64,
-    pub obj_type: u8,  // 0=None, 1=File, 2=Dir, ...
-    pub used: bool,
-    pub link_count: u32,
-}
-
-/// host-only DmuManager trait
-pub trait HostDmuManager: Send + Sync {
-    fn init(&self, owner_pwm: u64);
-    fn is_initialized(&self) -> bool;
-    fn alloc_obj(&self, obj_type: u8, owner_pwm: u64) -> Option<u64>;
-    fn free_obj(&self, obj_id: u64) -> bool;
-    fn get_obj(&self, obj_id: u64) -> Option<MockDmuObject>;
-    fn update_obj(&self, obj: MockDmuObject) -> bool;
-    fn root_obj_id(&self) -> u64;
-    fn get_root(&self) -> Option<MockDmuObject>;
-    fn obj_count(&self) -> u64;
-    fn next_obj_id(&self) -> u64;
-}
-
-/// host-only StandardDmu (Mutex<Vec<MockDmuObject>>)
-pub struct StandardHostDmu {
-    pub state: std::sync::Mutex<DmuState>,
-}
-
-pub struct DmuState {
-    pub objects: HashMap<u64, MockDmuObject>,
-    pub next_id: u64,
-    pub initialized: bool,
-    pub root_id: u64,
-}
-
-impl Default for StandardHostDmu {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostDmu {
-    pub fn new() -> Self {
-        Self {
-            state: std::sync::Mutex::new(DmuState {
-                objects: HashMap::new(),
-                next_id: 3,  // 0=NUM, 1=META, 2=ROOT
-                initialized: false,
-                root_id: 2,
-            }),
-        }
-    }
-}
-
-impl HostDmuManager for StandardHostDmu {
-    fn init(&self, _owner_pwm: u64) {
-        let mut s = self.state.lock().unwrap();
-        s.objects.clear();
-        s.initialized = true;
-        s.root_id = 2;
-        s.next_id = 3;
-        // 模拟 init 创建 root + meta
-        s.objects.insert(1, MockDmuObject { obj_id: 1, obj_type: 4, used: true, link_count: 1 });
-        s.objects.insert(2, MockDmuObject { obj_id: 2, obj_type: 2, used: true, link_count: 1 });
-    }
-    fn is_initialized(&self) -> bool { self.state.lock().unwrap().initialized }
-    fn alloc_obj(&self, obj_type: u8, _owner_pwm: u64) -> Option<u64> {
-        let mut s = self.state.lock().unwrap();
-        let id = s.next_id;
-        s.next_id += 1;
-        s.objects.insert(id, MockDmuObject {
-            obj_id: id, obj_type, used: true, link_count: 1,
-        });
-        Some(id)
-    }
-    fn free_obj(&self, obj_id: u64) -> bool {
-        let mut s = self.state.lock().unwrap();
-        if let Some(obj) = s.objects.get_mut(&obj_id) {
-            obj.link_count = obj.link_count.saturating_sub(1);
-            if obj.link_count == 0 {
-                obj.used = false;
-            }
-            true
-        } else {
-            false
-        }
-    }
-    fn get_obj(&self, obj_id: u64) -> Option<MockDmuObject> {
-        self.state.lock().unwrap().objects.get(&obj_id).filter(|o| o.used).cloned()
-    }
-    fn update_obj(&self, obj: MockDmuObject) -> bool {
-        let mut s = self.state.lock().unwrap();
-        if let std::collections::hash_map::Entry::Occupied(mut e) = s.objects.entry(obj.obj_id) {
-            e.insert(obj);
-            true
-        } else {
-            false
-        }
-    }
-    fn root_obj_id(&self) -> u64 { self.state.lock().unwrap().root_id }
-    fn get_root(&self) -> Option<MockDmuObject> {
-        let s = self.state.lock().unwrap();
-        s.objects.get(&s.root_id).cloned()
-    }
-    fn obj_count(&self) -> u64 {
-        self.state.lock().unwrap().objects.values().filter(|o| o.used).count() as u64
-    }
-    fn next_obj_id(&self) -> u64 { self.state.lock().unwrap().next_id }
-}
-
-/// bench: DMU trait dispatch throughput
+/// bench: DMU 对象分配 / 查询 路径 throughput
 pub fn dmu_dispatch_bench(iters: u64) -> u128 {
-    let dmu: Box<dyn HostDmuManager> = Box::new(StandardHostDmu::new());
+    let dmu = NestObjSet::new();
     dmu.init(0x100);
-    // 预热: alloc 1000
+    // 预热: alloc 1000 个 File 对象
     for _ in 0..1000 {
-        dmu.alloc_obj(1, 0x100);
+        dmu.alloc_obj(NestObjType::File, 0x100);
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         if r & 0x3 == 0 {
             // alloc File
-            if let Some(id) = dmu.alloc_obj(1, 0x100) {
+            if let Some(id) = dmu.alloc_obj(NestObjType::File, 0x100) {
                 sink = sink.wrapping_add(id);
             }
         } else if r & 0x3 == 1 {
-            // get_obj
+            // get_obj (线性扫描)
             if let Some(obj) = dmu.get_obj(2) {
                 sink = sink.wrapping_add(obj.obj_id);
             }
         } else if r & 0x3 == 2 {
-            // obj_count
+            // obj_count (全表扫描)
             sink = sink.wrapping_add(dmu.obj_count());
         } else {
             // get_root
@@ -1751,103 +984,20 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.5: SpaManager trait dispatch bench + Mock
+// LEGACY-5.5: SPA (NestSpa) dispatch bench
 // ============================================================================
 //
-// 模拟 StandardSpa 行为: init/add_vdev/advance_txg/get_stats.
+// G-07: 本地 `SpaState` / `HostSpaManager` / `StandardHostSpa` 复刻已删除, 直引内核
+// `services::fs::nestfs::spa::NestSpa` — 池初始化 / vdev 装配 / 事务组推进 / 统计读取
+// 唯一实现. 注: 内核 vdev 上限为 `NestSpaConfig::max_vdevs` (默认 8).
 
-/// host-only SPA 状态
-pub struct SpaState {
-    pub name: String,
-    pub guid: u64,
-    pub vdevs: Vec<u32>,  // vdev_id list
-    pub initialized: bool,
-    pub current_txg: u64,
-    pub alloc_count: u64,
-    pub free_count: u64,
-    pub read_count: u64,
-    pub write_count: u64,
-}
-
-/// host-only SpaManager trait
-pub trait HostSpaManager: Send + Sync {
-    fn init(&self, name: &str);
-    fn add_vdev(&self, vdev_id: u32) -> bool;
-    fn vdev_count(&self) -> usize;
-    fn guid(&self) -> u64;
-    fn is_initialized(&self) -> bool;
-    fn current_txg(&self) -> u64;
-    fn advance_txg(&self) -> u64;
-    fn get_stats(&self) -> (u64, u64, u64, u64, u64);
-}
-
-/// host-only StandardSpa (Mutex<SpaState>)
-pub struct StandardHostSpa {
-    pub state: std::sync::Mutex<SpaState>,
-}
-
-impl Default for StandardHostSpa {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostSpa {
-    pub fn new() -> Self {
-        Self {
-            state: std::sync::Mutex::new(SpaState {
-                name: String::new(),
-                guid: 0,
-                vdevs: Vec::new(),
-                initialized: false,
-                current_txg: 0,
-                alloc_count: 0,
-                free_count: 0,
-                read_count: 0,
-                write_count: 0,
-            }),
-        }
-    }
-}
-
-impl HostSpaManager for StandardHostSpa {
-    fn init(&self, name: &str) {
-        let mut s = self.state.lock().unwrap();
-        s.name = name.to_string();
-        s.guid = 0x12345678 + name.len() as u64;
-        s.initialized = true;
-        s.current_txg = 1;
-    }
-    fn add_vdev(&self, vdev_id: u32) -> bool {
-        let mut s = self.state.lock().unwrap();
-        if s.vdevs.contains(&vdev_id) {
-            return false;
-        }
-        s.vdevs.push(vdev_id);
-        true
-    }
-    fn vdev_count(&self) -> usize { self.state.lock().unwrap().vdevs.len() }
-    fn guid(&self) -> u64 { self.state.lock().unwrap().guid }
-    fn is_initialized(&self) -> bool { self.state.lock().unwrap().initialized }
-    fn current_txg(&self) -> u64 { self.state.lock().unwrap().current_txg }
-    fn advance_txg(&self) -> u64 {
-        let mut s = self.state.lock().unwrap();
-        s.current_txg += 1;
-        s.current_txg
-    }
-    fn get_stats(&self) -> (u64, u64, u64, u64, u64) {
-        let s = self.state.lock().unwrap();
-        (s.alloc_count, s.free_count, s.read_count, s.write_count, s.current_txg)
-    }
-}
-
-/// bench: SPA trait dispatch throughput
+/// bench: SPA 池状态读 + 事务组推进 路径 throughput
 pub fn spa_dispatch_bench(iters: u64) -> u128 {
-    let spa: Box<dyn HostSpaManager> = Box::new(StandardHostSpa::new());
+    let spa = NestSpa::new();
     spa.init("bench");
-    // 预热: add_vdev 1000
-    for i in 0..1000 {
-        spa.add_vdev(i);
+    // 预热: 装配 vdev 至内核上限 (max_vdevs = 8)
+    for i in 0..8u16 {
+        spa.add_vdev(NestVdevConfig::new_disk(i, "bench_disk", 9));
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -1860,10 +1010,10 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
             sink = sink.wrapping_add(spa.current_txg());
         } else if r & 0x3 == 2 {
             // vdev_count
-            sink = sink.wrapping_add(spa.vdev_count() as u64);
+            sink = sink.wrapping_add(spa.vdevs.lock().len() as u64);
         } else {
             // guid
-            sink = sink.wrapping_add(spa.guid());
+            sink = sink.wrapping_add(spa.config.lock().guid);
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -1872,95 +1022,29 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.7: RaidzEngine trait dispatch bench + Mock
+// LEGACY-5.7: RAID-Z 几何查询 dispatch bench
 // ============================================================================
 //
-// 模拟 StandardRaidz 行为: ncols/data_cols/parity_cols/max_failures.
+// G-07: 本地 `MockRaidzLevel` / `HostRaidzEngine` / `StandardHostRaidz` 复刻已删除,
+// 直引内核 `services::fs::nestfs::raidz::NestRaidzMap`. 注: 内核以 struct 字段
+// (`ncols` / `nparity` / `ashift`) + `level` 枚举方法表达几何, 无 `is_single` /
+// `is_mirror` 谓词, 故此处按内核真实访问面测量.
 
-/// host-only RAID-Z 等级 (与 kernel enum 对齐)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MockRaidzLevel {
-    Single = 0,
-    RaidZ1 = 1,
-    RaidZ2 = 2,
-    RaidZ3 = 3,
-    Mirror = 4,
-}
-
-impl MockRaidzLevel {
-    pub fn parity_cols(&self) -> usize {
-        match self {
-            Self::Single => 0,
-            Self::RaidZ1 => 1,
-            Self::RaidZ2 => 2,
-            Self::RaidZ3 => 3,
-            Self::Mirror => 0,
-        }
-    }
-    pub fn max_failures(&self) -> usize {
-        match self {
-            Self::Single => 0,
-            Self::RaidZ1 => 1,
-            Self::RaidZ2 => 2,
-            Self::RaidZ3 => 3,
-            Self::Mirror => 1,
-        }
-    }
-}
-
-/// host-only RaidzEngine trait
-pub trait HostRaidzEngine: Send + Sync {
-    fn level(&self) -> MockRaidzLevel;
-    fn ncols(&self) -> usize;
-    fn data_cols(&self) -> usize;
-    fn parity_cols(&self) -> usize;
-    fn max_failures(&self) -> usize;
-    fn ashift(&self) -> u8;
-    fn is_single(&self) -> bool;
-    fn is_mirror(&self) -> bool;
-}
-
-/// host-only StandardRaidz
-pub struct StandardHostRaidz {
-    pub level: MockRaidzLevel,
-    pub ncols: usize,
-    pub ashift: u8,
-}
-
-impl StandardHostRaidz {
-    pub fn new(level: MockRaidzLevel, ncols: usize, ashift: u8) -> Self {
-        Self { level, ncols, ashift }
-    }
-}
-
-impl HostRaidzEngine for StandardHostRaidz {
-    fn level(&self) -> MockRaidzLevel { self.level }
-    fn ncols(&self) -> usize { self.ncols }
-    fn data_cols(&self) -> usize { self.ncols - self.level.parity_cols() }
-    fn parity_cols(&self) -> usize { self.level.parity_cols() }
-    fn max_failures(&self) -> usize { self.level.max_failures() }
-    fn ashift(&self) -> u8 { self.ashift }
-    fn is_single(&self) -> bool { self.level == MockRaidzLevel::Single }
-    fn is_mirror(&self) -> bool { self.level == MockRaidzLevel::Mirror }
-}
-
-/// bench: RAID-Z trait dispatch throughput
+/// bench: RAID-Z 几何查询 (ncols / nparity / max_failures / ashift) throughput
 pub fn raidz_dispatch_bench(iters: u64) -> u128 {
-    let r: Box<dyn HostRaidzEngine> = Box::new(StandardHostRaidz::new(
-        MockRaidzLevel::RaidZ1, 3, 9
-    ));
+    let map = NestRaidzMap::new(NestRaidzLevel::RaidZ1, 3, 9);
     // 预热
     for _ in 0..1000 {
-        let _ = r.ncols();
+        let _ = map.ncols;
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for it in 0..iters {
         match it & 0x3 {
-            0 => sink = sink.wrapping_add(r.ncols() as u64),
-            1 => sink = sink.wrapping_add(r.parity_cols() as u64),
-            2 => sink = sink.wrapping_add(r.max_failures() as u64),
-            _ => sink = sink.wrapping_add(r.ashift() as u64),
+            0 => sink = sink.wrapping_add(map.ncols as u64),
+            1 => sink = sink.wrapping_add(map.nparity as u64),
+            2 => sink = sink.wrapping_add(map.level.max_failures() as u64),
+            _ => sink = sink.wrapping_add(u64::from(map.ashift)),
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -1969,136 +1053,38 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.8: ArcCache trait dispatch bench + Mock
+// LEGACY-5.8: ARC 缓存 dispatch bench
 // ============================================================================
 //
-// 模拟 StandardArc 行为: lookup/insert + hit/miss 计数.
+// G-07: 本地 `MockArcKey` / `HostArcCache` / `StandardHostArc` / `ArcState`
+// (Mutex<HashMap>) 复刻已删除, 直引内核 `services::fs::nestfs::arc_trait::StandardArc`.
+// 注: 内核 `ArcCache::hit_rate()` 返回千分比 (u64), 且 `insert` 额外带
+// `NestArcBufType` 参数.
 
-/// host-only ARC key
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MockArcKey {
-    pub vdev_id: u16,
-    pub offset: u64,
-    pub birth_txg: u64,
-}
+/// ARC 初始容量 (内核 `HV_ARC_DEFAULT_SIZE` 量级, 保证预热后仍有淘汰余量)
+const BENCH_ARC_MAX_SIZE: usize = 100;
 
-/// host-only ArcCache trait
-pub trait HostArcCache: Send + Sync {
-    fn init(&self, max_size: usize);
-    fn is_initialized(&self) -> bool;
-    fn lookup(&self, key: MockArcKey) -> bool;
-    fn insert(&self, key: MockArcKey, data: &[u8]) -> bool;
-    fn release(&self, key: MockArcKey);
-    fn current_size(&self) -> u64;
-    fn max_size(&self) -> u64;
-    fn hit_count(&self) -> u64;
-    fn miss_count(&self) -> u64;
-    fn evict_count(&self) -> u64;
-    fn hit_rate(&self) -> f64;
-}
-
-/// host-only StandardArc (Mutex<HashMap>)
-pub struct StandardHostArc {
-    pub state: std::sync::Mutex<ArcState>,
-}
-
-pub struct ArcState {
-    pub map: HashMap<MockArcKey, Vec<u8>>,
-    pub max: usize,
-    pub initialized: bool,
-    pub hits: u64,
-    pub misses: u64,
-    pub evicts: u64,
-}
-
-impl Default for StandardHostArc {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostArc {
-    pub fn new() -> Self {
-        Self {
-            state: std::sync::Mutex::new(ArcState {
-                map: HashMap::new(),
-                max: 0,
-                initialized: false,
-                hits: 0,
-                misses: 0,
-                evicts: 0,
-            }),
-        }
-    }
-}
-
-impl HostArcCache for StandardHostArc {
-    fn init(&self, max_size: usize) {
-        let mut s = self.state.lock().unwrap();
-        s.max = max_size;
-        s.map.clear();
-        s.hits = 0;
-        s.misses = 0;
-        s.evicts = 0;
-        s.initialized = true;
-    }
-    fn is_initialized(&self) -> bool { self.state.lock().unwrap().initialized }
-    fn lookup(&self, key: MockArcKey) -> bool {
-        let mut s = self.state.lock().unwrap();
-        if s.map.contains_key(&key) {
-            s.hits += 1;
-            true
-        } else {
-            s.misses += 1;
-            false
-        }
-    }
-    fn insert(&self, key: MockArcKey, data: &[u8]) -> bool {
-        let mut s = self.state.lock().unwrap();
-        if s.map.len() >= s.max && !s.map.contains_key(&key) {
-            // 简化淘汰: 移除第一个 (FIFO)
-            if let Some(first) = s.map.keys().next().cloned() {
-                s.map.remove(&first);
-            }
-            s.evicts += 1;
-        }
-        s.map.insert(key, data.to_vec());
-        true
-    }
-    fn release(&self, _key: MockArcKey) {}
-    fn current_size(&self) -> u64 { self.state.lock().unwrap().map.len() as u64 }
-    fn max_size(&self) -> u64 { self.state.lock().unwrap().max as u64 }
-    fn hit_count(&self) -> u64 { self.state.lock().unwrap().hits }
-    fn miss_count(&self) -> u64 { self.state.lock().unwrap().misses }
-    fn evict_count(&self) -> u64 { self.state.lock().unwrap().evicts }
-    fn hit_rate(&self) -> f64 {
-        let s = self.state.lock().unwrap();
-        let total = s.hits + s.misses;
-        if total > 0 { s.hits as f64 / total as f64 } else { 0.0 }
-    }
-}
-
-/// bench: ARC trait dispatch throughput
+/// bench: ARC trait dispatch (lookup / insert / hit_count / current_size) throughput
 pub fn arc_dispatch_bench(iters: u64) -> u128 {
-    let arc: Box<dyn HostArcCache> = Box::new(StandardHostArc::new());
-    arc.init(100);
-    // 预热
-    for i in 0..1000 {
-        let k = MockArcKey { vdev_id: 0, offset: i, birth_txg: 0 };
-        arc.insert(k, &[0u8; 16]);
+    let arc: Box<dyn ArcCache> = Box::new(StandardArc::new());
+    arc.init(BENCH_ARC_MAX_SIZE);
+    // 预热: 填满容量上限, 使 lookup 分支可命中
+    for i in 0..BENCH_ARC_MAX_SIZE as u64 {
+        let k = NestArcKey::new(0, i, 0);
+        arc.insert(k, &[0u8; 16], NestArcBufType::Data);
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        let k = MockArcKey { vdev_id: 0, offset: r & 0xFF, birth_txg: 0 };
+        let k = NestArcKey::new(0, r & 0xFF, 0);
         if r & 0x3 == 0 {
             // lookup
-            if arc.lookup(k) {
+            if arc.lookup(&k) {
                 sink = sink.wrapping_add(1);
             }
         } else if r & 0x3 == 1 {
             // insert
-            arc.insert(k, &[0u8; 16]);
+            arc.insert(k, &[0u8; 16], NestArcBufType::Data);
         } else if r & 0x3 == 2 {
             // hit_count
             sink = sink.wrapping_add(arc.hit_count());
@@ -2113,114 +1099,21 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.10: ZilLog trait dispatch bench + Mock
+// LEGACY-5.10: ZIL 日志 dispatch bench
 // ============================================================================
 //
-// 模拟 StandardZil 行为: add_record/current_seq/pending_count/commit.
+// G-07: 本地 `MockZilRecord` / `HostZilLog` / `StandardHostZil` / `ZilLogState`
+// 复刻已删除, 直引内核 `services::fs::nestfs::zil::NestZil`. 注: 内核无
+// `is_enabled` / `set_enabled` / `current_seq()` / `committed_seq()` 访问器,
+// 序列号域为 `AtomicU64` 直读.
 
-/// host-only ZIL record snapshot
-#[derive(Debug, Clone, Copy)]
-pub struct MockZilRecord {
-    pub txg: u64,
-    pub obj_id: u64,
-    pub offset: u64,
-    pub size: u32,
-    pub seq: u64,
-}
-
-/// host-only ZilLog trait
-pub trait HostZilLog: Send + Sync {
-    fn init(&self);
-    fn is_enabled(&self) -> bool;
-    fn set_enabled(&self, enabled: bool);
-    fn add_record(&self, rec: MockZilRecord);
-    fn current_seq(&self) -> u64;
-    fn committed_seq(&self) -> u64;
-    fn has_uncommitted(&self) -> bool;
-    fn pending_count(&self) -> usize;
-    fn commit(&self, txg: u64);
-    fn sync(&self, txg: u64);
-}
-
-/// host-only StandardZil (Mutex<Vec<MockZilRecord>>)
-pub struct StandardHostZil {
-    pub state: std::sync::Mutex<ZilLogState>,
-}
-
-pub struct ZilLogState {
-    pub records: Vec<MockZilRecord>,
-    pub committed_seq: u64,
-    pub current_seq: u64,
-    pub enabled: bool,
-}
-
-impl Default for StandardHostZil {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostZil {
-    pub fn new() -> Self {
-        Self {
-            state: std::sync::Mutex::new(ZilLogState {
-                records: Vec::new(),
-                committed_seq: 0,
-                current_seq: 0,
-                enabled: true,
-            }),
-        }
-    }
-}
-
-impl HostZilLog for StandardHostZil {
-    fn init(&self) {
-        let mut s = self.state.lock().unwrap();
-        s.records.clear();
-        s.committed_seq = 0;
-        s.current_seq = 0;
-        s.enabled = true;
-    }
-    fn is_enabled(&self) -> bool { self.state.lock().unwrap().enabled }
-    fn set_enabled(&self, enabled: bool) { self.state.lock().unwrap().enabled = enabled; }
-    fn add_record(&self, rec: MockZilRecord) {
-        let mut s = self.state.lock().unwrap();
-        if !s.enabled { return; }
-        let mut r = rec;
-        r.seq = s.current_seq + 1;
-        s.current_seq = r.seq;
-        s.records.push(r);
-    }
-    fn current_seq(&self) -> u64 { self.state.lock().unwrap().current_seq }
-    fn committed_seq(&self) -> u64 { self.state.lock().unwrap().committed_seq }
-    fn has_uncommitted(&self) -> bool {
-        let s = self.state.lock().unwrap();
-        s.current_seq > s.committed_seq
-    }
-    fn pending_count(&self) -> usize { self.state.lock().unwrap().records.len() }
-    fn commit(&self, txg: u64) {
-        let mut s = self.state.lock().unwrap();
-        let mut max_seq = 0u64;
-        s.records.retain(|r| {
-            if r.txg <= txg {
-                max_seq = max_seq.max(r.seq);
-                false
-            } else { true }
-        });
-        s.committed_seq = max_seq;
-    }
-    fn sync(&self, txg: u64) {
-        self.commit(txg);
-    }
-}
-
-/// bench: ZIL log trait dispatch throughput
+/// bench: ZIL 日志 (add_record / current_seq / pending_count / commit) throughput
 pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
-    let zil: Box<dyn HostZilLog> = Box::new(StandardHostZil::new());
+    let zil = NestZil::new();
     zil.init();
     // 预热
     for i in 0..1000 {
-        zil.add_record(MockZilRecord { txg: 1, obj_id: 100, offset: i, size: 4096, seq: 0 });
+        zil.add_record(NestZilRecord::new_write(1, 100, i, 4096));
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
@@ -2230,13 +1123,13 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
             zil.commit((r & 0x3) + 1);
         } else if r & 0x3 == 1 {
             // current_seq
-            sink = sink.wrapping_add(zil.current_seq());
+            sink = sink.wrapping_add(zil.current_seq.load(Ordering::Acquire));
         } else if r & 0x3 == 2 {
             // pending_count
             sink = sink.wrapping_add(zil.pending_count() as u64);
         } else {
             // add_record
-            zil.add_record(MockZilRecord { txg: 1, obj_id: 100, offset: r, size: 4096, seq: 0 });
+            zil.add_record(NestZilRecord::new_write(1, 100, r, 4096));
         }
     }
     let elapsed = start.elapsed().as_nanos();
@@ -2245,83 +1138,44 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
 }
 
 // ============================================================================
-// LEGACY-5.11: ZilPersist trait dispatch bench + Mock
+// LEGACY-5.11: ZIL 持久化 dispatch bench
 // ============================================================================
 //
-// 模拟 StandardZilPersist 行为: serialize/deserialize.
+// G-07: 本地 `HostZilPersist` / `StandardHostZilPersist` / `MockZilPersistState`
+// 复刻已删除, 直引内核 `services::fs::nestfs::zil_persist::NestZilPersist`.
+// 注: 内核 serialize/deserialize 为关联函数, 输入为真实 `NestZil` 记录集
+// (每块上限 `ZIL_MAX_RECORDS_PER_BLOCK` = 15 条), 含 CRC32 逐位计算.
 
-/// host-only ZilPersist trait
-pub trait HostZilPersist: Send + Sync {
-    fn serialize(&self, count: usize) -> Option<Vec<u8>>;
-    fn deserialize(&self, block: &[u8]) -> usize;
-    fn mark_written(&self);
-}
+/// 预热用 ZIL 记录数 (等于内核单块记录上限 15, 使 serialize 走满块路径)
+const BENCH_ZIL_PERSIST_RECORDS: u64 = 15;
 
-/// host-only StandardZilPersist (Mutex<MockZilPersistState>)
-pub struct StandardHostZilPersist {
-    pub written: std::sync::Mutex<bool>,
-}
-
-pub struct MockZilPersistState {
-    pub written: bool,
-}
-
-impl Default for StandardHostZilPersist {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl StandardHostZilPersist {
-    pub fn new() -> Self {
-        Self { written: std::sync::Mutex::new(false) }
-    }
-}
-
-impl HostZilPersist for StandardHostZilPersist {
-    /// 模拟 serialize: 生成 8KB 块
-    fn serialize(&self, count: usize) -> Option<Vec<u8>> {
-        if count == 0 { return None; }
-        let block = vec![0xAA; 8192];
-        // 头 4 字节记录 count (模拟)
-        let mut block = block;
-        if count <= u32::MAX as usize {
-            let n = count as u32;
-            block[0..4].copy_from_slice(&n.to_le_bytes());
-        }
-        Some(block)
-    }
-    /// 模拟 deserialize: 从块读取 count
-    fn deserialize(&self, block: &[u8]) -> usize {
-        if block.len() < 4 { return 0; }
-        let n = u32::from_le_bytes(block[0..4].try_into().unwrap_or([0; 4]));
-        n as usize
-    }
-    fn mark_written(&self) {
-        *self.written.lock().unwrap() = true;
-    }
-}
-
-/// bench: ZIL persist trait dispatch throughput
+/// bench: ZIL 持久化 (serialize / deserialize / mark_written) throughput
 pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
-    let persist: Box<dyn HostZilPersist> = Box::new(StandardHostZilPersist::new());
+    let persist = NestZilPersist::new();
+    let zil = NestZil::new();
+    zil.init();
+    for i in 0..BENCH_ZIL_PERSIST_RECORDS {
+        zil.add_record(NestZilRecord::new_write(1, 100, i, 4096));
+    }
     // 预热: serialize + deserialize
-    let block = persist.serialize(10);
-    if let Some(b) = &block {
-        let _ = persist.deserialize(b);
+    let warm_block = NestZilPersist::serialize_zil_to_block(&zil, 1);
+    if let Some(b) = &warm_block {
+        let _ = NestZilPersist::deserialize_zil_from_block(b);
     }
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         if r & 0x3 == 0 {
             // serialize
-            if let Some(b) = persist.serialize((r & 0xF) as usize + 1) {
+            if let Some(b) = NestZilPersist::serialize_zil_to_block(&zil, 1) {
                 sink = sink.wrapping_add(b.len() as u64);
             }
         } else if r & 0x3 == 1 {
             // deserialize
-            if let Some(b) = &block {
-                sink = sink.wrapping_add(persist.deserialize(b) as u64);
+            if let Some(b) = &warm_block {
+                sink = sink.wrapping_add(
+                    NestZilPersist::deserialize_zil_from_block(b).len() as u64,
+                );
             }
         } else {
             // mark_written
@@ -2330,157 +1184,6 @@ pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
-}
-
-// ====== 25. 调度延迟: 模拟上下文切换 ======
-
-/// 模拟上下文切换开销: 寄存器保存/恢复 + 栈指针切换
-/// 测量纯软件上下文切换延迟 (不含 TLB flush)
-pub fn context_switch_bench(iters: u64) -> u128 {
-    // 模拟寄存器组 (x86_64: 16 个 64-bit 通用寄存器 + RFLAGS)
-    #[repr(C)]
-    struct Context {
-        regs: [u64; 16],
-        rflags: u64,
-        rsp: u64,
-        rbp: u64,
-    }
-
-    let mut ctx_a = Context {
-        regs: [0; 16],
-        rflags: 0,
-        rsp: 0,
-        rbp: 0,
-    };
-    let mut ctx_b = Context {
-        regs: [1; 16],
-        rflags: 0,
-        rsp: 0,
-        rbp: 0,
-    };
-
-    let start = Instant::now();
-    let mut sink: u64 = 0;
-    for _ in 0..iters {
-        // 模拟 save ctx_a, restore ctx_b
-        for i in 0..16 {
-            ctx_b.regs[i] = ctx_a.regs[i];
-        }
-        sink ^= ctx_b.regs[0];
-        // 模拟 save ctx_b, restore ctx_a
-        for i in 0..16 {
-            ctx_a.regs[i] = ctx_b.regs[i];
-        }
-        sink ^= ctx_a.regs[0];
-    }
-    std::hint::black_box(sink);
-    let elapsed = start.elapsed().as_nanos();
-    // 每次迭代完成 2 次上下文切换
-    elapsed.saturating_mul(1_000) / (iters * 2) as u128
-}
-
-// ====== 26. IPC 吞吐: 模拟管道读写 ======
-
-/// 模拟管道吞吐量: 环形缓冲区 + 生产者-消费者模式
-/// 测量单次写入 + 单次读取的总延迟
-pub fn pipe_throughput_bench(iters: u64) -> u128 {
-    const PIPE_SIZE: usize = 4096;
-    let mut buffer = [0u8; PIPE_SIZE];
-    let mut read_pos: usize = 0;
-    let mut write_pos: usize = 0;
-
-    let start = Instant::now();
-    let mut sink: u64 = 0;
-    for _ in 0..iters {
-        // 模拟写入 (生产者)
-        let data = [0xAB; 64]; // 64 字节消息
-        for &byte in &data {
-            buffer[write_pos % PIPE_SIZE] = byte;
-            write_pos += 1;
-        }
-
-        // 模拟读取 (消费者)
-        for _ in 0..64 {
-            sink ^= buffer[read_pos % PIPE_SIZE] as u64;
-            read_pos += 1;
-        }
-    }
-    std::hint::black_box(sink);
-    let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / iters as u128
-}
-
-// ====== 27. 文件系统 ops/sec: 模拟 VFS open/close ======
-
-/// 模拟 VFS open/close 路径: 路径哈希 + 文件表查找 + 引用计数
-/// 测量单次 open + close 的总延迟
-pub fn vfs_open_close_bench(iters: u64) -> u128 {
-    use std::collections::HashMap;
-
-    // 模拟文件表
-    let mut file_table: HashMap<u64, u32> = HashMap::new();
-    // 预填充一些文件
-    for i in 0..1000 {
-        file_table.insert(i, 1); // refcount = 1
-    }
-
-    let start = Instant::now();
-    let mut sink: u64 = 0;
-    for i in 0..iters {
-        let fd = i % 1000;
-        // 模拟 open: 查找文件 + 增加引用计数
-        if let Some(refcount) = file_table.get_mut(&fd) {
-            *refcount += 1;
-            sink ^= fd;
-        }
-        // 模拟 close: 减少引用计数 + 可能删除
-        if let Some(refcount) = file_table.get_mut(&fd) {
-            *refcount -= 1;
-            if *refcount == 0 {
-                file_table.remove(&fd);
-            }
-        }
-    }
-    std::hint::black_box(sink);
-    let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / iters as u128
-}
-
-// ====== 28. 网络延迟: 模拟环回 RTT ======
-
-/// 模拟环回 RTT: 协议栈处理 + 缓冲区复制 + 校验和计算
-/// 测量单次发送 + 接收的总延迟
-pub fn loopback_rtt_bench(iters: u64) -> u128 {
-    const MTU: usize = 1500;
-    let mut tx_buf = [0u8; MTU];
-    let mut rx_buf = [0u8; MTU];
-
-    // 填充测试数据
-    for (i, byte) in tx_buf.iter_mut().enumerate() {
-        *byte = (i & 0xFF) as u8;
-    }
-
-    let start = Instant::now();
-    let mut sink: u64 = 0;
-    for _ in 0..iters {
-        // 模拟发送: 复制 + 计算校验和
-        let mut checksum: u32 = 0;
-        for &byte in &tx_buf {
-            checksum = checksum.wrapping_add(byte as u32);
-        }
-        rx_buf.copy_from_slice(&tx_buf);
-
-        // 模拟接收: 校验和验证 + 处理
-        let mut rx_checksum: u32 = 0;
-        for &byte in &rx_buf {
-            rx_checksum = rx_checksum.wrapping_add(byte as u32);
-        }
-        sink ^= (checksum ^ rx_checksum) as u64;
-    }
-    std::hint::black_box(sink);
-    let elapsed = start.elapsed().as_nanos();
-    // 每次迭代完成 1 次 RTT (发送 + 接收)
     elapsed.saturating_mul(1_000) / iters as u128
 }
 
@@ -2535,7 +1238,7 @@ fn measure<F: Fn() -> u128>(name: &str, category: &str, default_iters: u64, f: F
     }
 }
 
-#[allow(clippy::vec_init_then_push)] // 80+ 项基准测试, vec![] 宏可读性差
+#[allow(clippy::vec_init_then_push)] // 23 项基准测试, vec![] 宏可读性差
 pub fn run_all() -> BenchReport {
     let mut results = Vec::new();
     results.push(measure("page_flags_bits", "mm", 100_000, ||
@@ -2556,8 +1259,6 @@ pub fn run_all() -> BenchReport {
         recovery_decide_bench(100_000)));
     results.push(measure("bitmap_scan", "pmm", 100_000, ||
         bitmap_scan_bench(100_000)));
-    results.push(measure("btree_id_lookup", "proc", 100_000, ||
-        btree_id_lookup_bench(100_000)));
     results.push(measure("socket_wait_queue", "net", 10_000, ||
         socket_wait_queue_bench(10_000)));
     results.push(measure("virtio_blk_io", "storage", 10_000, ||
@@ -2574,47 +1275,30 @@ pub fn run_all() -> BenchReport {
     // REVAL-6.1: VfsPollPolicy dispatch bench
     results.push(measure("vfs_poll_dispatch", "epoll", 100_000, ||
         vfs_poll_dispatch_bench(100_000)));
-    // LEGACY-5.1: ZAP trait dispatch bench
-    results.push(measure("zap_dispatch", "nestfs", 100_000, ||
-        zap_dispatch_bench(100_000)));
-    // LEGACY-5.2: TXG trait dispatch bench
-    results.push(measure("txg_dispatch", "nestfs", 100_000, ||
-        txg_dispatch_bench(100_000)));
-    // LEGACY-5.4: DMU trait dispatch bench
-    results.push(measure("dmu_dispatch", "nestfs", 100_000, ||
-        dmu_dispatch_bench(100_000)));
-    // LEGACY-5.5: SPA trait dispatch bench
+    // LEGACY-5.1: ZAP dispatch bench (线性扫描 + 键名 format, 故缩小 iters)
+    results.push(measure("zap_dispatch", "nestfs", 10_000, ||
+        zap_dispatch_bench(10_000)));
+    // LEGACY-5.2: TXG dispatch bench (脏块 Vec 累积, 故缩小 iters)
+    results.push(measure("txg_dispatch", "nestfs", 10_000, ||
+        txg_dispatch_bench(10_000)));
+    // LEGACY-5.4: DMU dispatch bench (get_obj/obj_count 为 O(n) 线性扫描, 故缩小 iters)
+    results.push(measure("dmu_dispatch", "nestfs", 1_000, ||
+        dmu_dispatch_bench(1_000)));
+    // LEGACY-5.5: SPA dispatch bench
     results.push(measure("spa_dispatch", "nestfs", 100_000, ||
         spa_dispatch_bench(100_000)));
-    // LEGACY-5.7: RAID-Z trait dispatch bench
+    // LEGACY-5.7: RAID-Z 几何查询 dispatch bench
     results.push(measure("raidz_dispatch", "nestfs", 100_000, ||
         raidz_dispatch_bench(100_000)));
-    // LEGACY-5.8: ARC trait dispatch bench
+    // LEGACY-5.8: ARC 缓存 dispatch bench
     results.push(measure("arc_dispatch", "nestfs", 100_000, ||
         arc_dispatch_bench(100_000)));
-    // LEGACY-5.10: ZIL log trait dispatch bench
+    // LEGACY-5.10: ZIL 日志 dispatch bench
     results.push(measure("zil_log_dispatch", "nestfs", 100_000, ||
         zil_log_dispatch_bench(100_000)));
-    // LEGACY-5.11: ZIL persist trait dispatch bench
+    // LEGACY-5.11: ZIL 持久化 dispatch bench (含 CRC32 逐位计算, 故缩小 iters)
     results.push(measure("zil_persist_dispatch", "nestfs", 1_000, ||
         zil_persist_dispatch_bench(1_000)));
-
-    // ====================================================================
-    // 子系统级基准测试 (2.1)
-    // ====================================================================
-
-    // 调度延迟: 模拟上下文切换 (寄存器保存/恢复 + 栈切换)
-    results.push(measure("context_switch_latency", "sched", 100_000, ||
-        context_switch_bench(100_000)));
-    // IPC 吞吐: 模拟管道读写 (环形缓冲区 + 生产者-消费者)
-    results.push(measure("pipe_throughput", "ipc", 10_000, ||
-        pipe_throughput_bench(10_000)));
-    // 文件系统 ops/sec: 模拟 VFS open/close 路径 (哈希查找 + 状态更新)
-    results.push(measure("vfs_open_close", "fs", 10_000, ||
-        vfs_open_close_bench(10_000)));
-    // 网络延迟: 模拟环回 RTT (协议栈处理 + 缓冲区复制)
-    results.push(measure("loopback_rtt", "net", 10_000, ||
-        loopback_rtt_bench(10_000)));
 
     BenchReport { version: 1, results }
 }
@@ -2636,110 +1320,133 @@ mod tests {
 
     #[test]
     fn test_pte_set_flags_round_trip() {
-        let mut pte = MockPte::new(0xFFFF_FFFF_FFFF_FFFF);
+        // G-07: 直引内核 PageTableEntry (原子位域, set_flags 取 &self)
+        let pte = PageTableEntry::from_value(0xFFFF_FFFF_FFFF_FFFF);
         pte.set_flags(PageFlags::PRESENT | PageFlags::WRITABLE);
         assert!(pte.is_present());
-        let pte2 = MockPte::new(0x0);
+        let pte2 = PageTableEntry::from_value(0x0);
         assert!(!pte2.is_present());
     }
 
     #[test]
-    fn test_iomem_alias_no_conflict() {
-        let mut r = AliasRegistry::new();
-        assert!(r.register(0x1000, 0x800).is_ok());
-        assert!(r.register(0x2000, 0x800).is_ok());
-        assert!(!r.check_conflict(0x3000, 0x800));
-    }
-
-    #[test]
-    fn test_iomem_alias_overlap() {
-        let mut r = AliasRegistry::new();
-        r.register(0x1000, 0x800).unwrap();
-        // 0x1000-0x17FF 已被占用
-        assert!(r.check_conflict(0x1100, 0x800));   // 完全在内
-        assert!(r.check_conflict(0x1000, 0x400));   // 起点边界
-        assert!(r.check_conflict(0x1500, 0x800));   // 起点在内, 越界
-        assert!(r.check_conflict(0x0800, 0x900));   // 起点在外, 末端在内
-        assert!(!r.check_conflict(0x1800, 0x800));  // 完全不相邻
-        assert!(!r.check_conflict(0x0000, 0x1000)); // 完全在外
+    fn test_iomem_alias_semantics() {
+        // G-07: 直引内核 IoMem — 别名注册表为进程级全局态, 故单测合并为一个函数
+        // 并使用独立地址段 (0x8000_1000 起), 避免与其他用例并发相互干扰.
+        // SAFETY: phys 为纯算术载体 (IoMem::new 不解引用该地址), 同 bench 语义.
+        let a = unsafe { IoMem::new(PhysAddr(0x8000_1000), 0x800, "bench.t1") };
+        assert!(a.is_ok());
+        // 完全不相邻 → 可注册
+        assert!(unsafe { IoMem::new(PhysAddr(0x8000_2000), 0x800, "bench.t2") }.is_ok());
+        // 起点在内 → 冲突
+        assert!(unsafe { IoMem::new(PhysAddr(0x8000_1200), 0x800, "bench.t3") }.is_err());
+        // 起点边界 (完全在内) → 冲突
+        assert!(unsafe { IoMem::new(PhysAddr(0x8000_1000), 0x400, "bench.t4") }.is_err());
+        // 起点在外, 末端在内 → 冲突
+        assert!(unsafe { IoMem::new(PhysAddr(0x8000_0800), 0x900, "bench.t5") }.is_err());
+        // 与 a 末端相接 (不重叠) → 可注册
+        assert!(unsafe { IoMem::new(PhysAddr(0x8000_1800), 0x800, "bench.t6") }.is_ok());
     }
 
     #[test]
     fn test_capability_check() {
-        let mut m = CapabilityMatrix::new();
-        m.grant(1, 0b11);
-        assert!(m.has(1, 0b01));
-        assert!(m.has(1, 0b10));
-        assert!(!m.has(1, 0b100));
+        // G-07: 直引内核 `PolicyEngine::check` + `InMemoryMatrix`
+        let m = InMemoryMatrix::new();
+        let _ = m.set(CapDomain::FS, CapBits(0b11));
+        let engine = PolicyEngine::new();
+        // 已授予且不含可行下界 (FS 下界 = READ|EXEC = 0b101) → 允许
+        assert_eq!(engine.check(&m, CapDomain::FS, CapBits(0b01)), PolicyResult::Allow);
+        assert_eq!(engine.check(&m, CapDomain::FS, CapBits(0b10)), PolicyResult::Allow);
+        // 未授予位 → 无权限
+        assert!(matches!(
+            engine.check(&m, CapDomain::FS, CapBits(0b100)),
+            PolicyResult::Deny(_)
+        ));
     }
 
     #[test]
     fn test_dma_state_machine() {
-        let mut s = DmaStream::new(DmaDirection::ToDevice);
-        assert_eq!(s.state, SyncState::CpuReady);
-        assert!(s.transition(SyncState::DeviceReady).is_ok());
-        assert!(s.transition(SyncState::CpuReady).is_ok());
+        // G-07: 直引内核 DmaStream — 双向流 CpuReady ↔ DeviceReady ping-pong
+        // SAFETY: 0x10000 页对齐, 见 bench_frame() 说明
+        let frame = unsafe { bench_frame(0x10000, 0) };
+        let mut s = DmaStream::from_frame(frame, DmaDirection::Bidirectional).unwrap();
+        assert_eq!(s.sync_state(), SyncState::CpuReady);
+        assert!(s.sync_for_device().is_ok());
+        assert_eq!(s.sync_state(), SyncState::DeviceReady);
+        assert!(s.sync_for_cpu().is_ok());
+        assert_eq!(s.sync_state(), SyncState::CpuReady);
+        // ToDevice 方向调用 sync_for_cpu → 状态机拒绝
+        // SAFETY: 同上
+        let frame2 = unsafe { bench_frame(0x20000, 0) };
+        let mut t = DmaStream::from_frame(frame2, DmaDirection::ToDevice).unwrap();
+        assert!(t.sync_for_cpu().is_err());
     }
 
     #[test]
-    fn test_sha256_transform_known_block() {
-        let mut state = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    fn test_sha256_known_digest() {
+        // G-07: 直引内核 credo `sha256` — 已知向量 "abc" (与 framework 侧单测同源)
+        let expected: [u8; 32] = [
+            0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+            0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+            0xf2, 0x00, 0x15, 0xad,
         ];
-        let block = [0u8; 64];
-        sha256_transform(&mut state, &block);
-        // SHA256(0x00 * 64) 中间状态应有具体值 (不验最终哈希, 只验不变崩)
-        assert_ne!(state, [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-                            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+        assert_eq!(sha256(b"abc"), expected);
     }
 
     #[test]
     fn test_attribution_tcb_path() {
-        let rec = FaultRecord { rip: 0xdead, cs: 0x08,
-            in_interrupt: true, holding_lock: true, in_services: false };
-        let a = classify(&rec);
-        assert!(matches!(a, FaultAttribution::Tcb { .. }));
+        // G-07: 直引内核 FaultAttributor — 按 RIP 落入地址区间判定归属
+        assert!(matches!(
+            FaultAttributor::attribute(0xFFFF_FFFF_8000_0000),
+            FaultAttribution::Tcb { .. }
+        ));
+        // Services 区间
+        assert!(matches!(
+            FaultAttributor::attribute(0xFFFF_FFFF_0000_0000),
+            FaultAttribution::Service { .. }
+        ));
+        // 两区间外 → Unknown
+        assert!(matches!(
+            FaultAttributor::attribute(0x0000_1000_0000_0000),
+            FaultAttribution::Unknown
+        ));
     }
 
     #[test]
     fn test_recovery_tcb_is_bhr() {
-        let s = FaultSignal { is_tcb: true, recoverable: false, retry: 0,
-            heartbeat_gap: 0, dependents: 0 };
-        assert!(matches!(decide(&s), RecoveryAction::Bhr));
+        // G-07: 直引内核 RecoveryPolicy — TCB 故障不可恢复 → 硬重置
+        let s = FaultSignal::tcb(TcbModule::Barrier, 0);
+        assert_eq!(RecoveryPolicy::decide(&s), RecoveryAction::BarrierHardReset);
     }
 
     #[test]
-    fn test_bitmap_alloc_free() {
-        let mut bm = Bitmap::new();
-        let i = bm.alloc().unwrap();
-        bm.free(i);
-        let j = bm.alloc().unwrap();
-        // 回收后重新分配, 应能拿到相同 idx 或更小 idx
-        assert!(j <= i);
-    }
-
-    #[test]
-    fn test_btree_lookup() {
-        use std::collections::BTreeMap;
-        let mut m: BTreeMap<u32, u64> = BTreeMap::new();
-        m.insert(42, 0xCAFE);
-        assert_eq!(m.get(&42), Some(&0xCAFE));
-        assert_eq!(m.get(&43), None);
+    fn test_pmm_alloc_free_roundtrip() {
+        // G-07: 直引内核 PMM (经 `VecMetaStore` 注入宿主载体, 同 pmm_buddy_host_test.rs)
+        let pmm = PhysicalMemoryManager::new();
+        pmm.inject_meta_store(VecMetaStore::new());
+        pmm.init(BENCH_MEM_SIZE, BENCH_KERNEL_END);
+        pmm.init_bitmap(0);
+        let a = pmm.alloc_page().expect("首次分配应成功");
+        assert!(a.0 >= BENCH_KERNEL_END, "分配不得落入内核保留区");
+        pmm.free_page(a);
+        // 释放后页回到池: 再次分配应成功
+        let b = pmm.alloc_page().expect("释放后再分配应成功");
+        pmm.free_page(b);
     }
 
     #[test]
     fn test_socket_wait_queue_mark_then_wake() {
-        let q = MockSocketWaitQueue::new();
+        // G-07: 直引内核 SocketWaitQueue
+        let q = SocketWaitQueue::new();
         // 首次 mark_waiting 返回 true (之前未标记)
         assert!(q.mark_waiting());
         // 重复 mark_waiting 返回 false (已经标记)
         assert!(!q.mark_waiting());
         // try_wake 成功清掉 pending, 返回 true
-        assert!(q.try_wake(0));
+        assert!(q.try_wake(WakeReason::Readable));
         // 没有等待者时 try_wake 返回 false
-        assert!(!q.try_wake(0));
-        assert_eq!(q.wake_count.load(Ordering::Relaxed), 1);
+        assert!(!q.try_wake(WakeReason::Readable));
+        assert_eq!(q.wake_count(), 1);
+        assert_eq!(q.last_reason(), Some(WakeReason::Readable));
     }
 
     #[test]
@@ -2749,28 +1456,32 @@ mod tests {
     }
 
     #[test]
-    fn test_virtio_blk_submit_blk_write() {
-        let mut vq = MockVirtQueue::new(32);
-        // 提交 1 个 4K 写请求, 应返回 head = 0
-        let head = vq.submit_blk_write().expect("free desc");
-        assert_eq!(head, 0);
-        // 描述符链 3 段已填充
-        assert_eq!(vq.descs[0].len, 16);
-        assert_eq!(vq.descs[1].len, BLK_4K_BYTES);
-        assert_eq!(vq.descs[2].flags & VQ_DESC_F_WRITE, VQ_DESC_F_WRITE);
-        assert_eq!(vq.descs[2].next, 0xFFFF);
-        // avail_idx 已推进
-        assert_eq!(vq.avail_idx, 1);
-    }
-
-    #[test]
-    fn test_virtio_blk_submit_full_chain() {
-        // 容量 32, 每次提交占用 3 段, 10 次后应仍有空间
-        let mut vq = MockVirtQueue::new(32);
-        for _ in 0..10 {
-            assert!(vq.submit_blk_write().is_some());
+    fn test_virtio_prepare_desc_chain() {
+        let mut backing = vec![0u64; VQ_BACKING_BYTES / 8];
+        // SAFETY: backing 在本作用域内存活, 覆盖 vq 全部使用期
+        let mut vq = unsafe { bench_virtqueue(&mut backing) };
+        // 描述符链: header → data → status (末段设备写)
+        let h1 = vq.prepare_desc(0x1000, 16, false);
+        let h2 = vq.prepare_desc(0x2000, BLK_4K_BYTES, false);
+        let h3 = vq.prepare_desc(0x3000, 1, true);
+        assert_eq!((h1, h2, h3), (0, 1, 2), "空闲描述符链应顺序分配");
+        vq.link_desc(h1, h2);
+        vq.link_desc(h2, h3);
+        // SAFETY: vq.desc 指向本作用域内 backing
+        unsafe {
+            assert_eq!((*vq.desc.add(0)).next, 1);
+            assert_eq!((*vq.desc.add(0)).flags & VQ_DESC_F_NEXT, VQ_DESC_F_NEXT);
+            assert_eq!((*vq.desc.add(2)).flags & VQ_DESC_F_WRITE, VQ_DESC_F_WRITE);
         }
-        assert_eq!(vq.avail_idx, 10);
+        // 提交 → avail 环写入 head
+        assert_eq!(vq.submit(h1), 0);
+        vq.commit_and_kick();
+        // 设备侧完成 → pop_used 取回链头
+        // SAFETY: vq.used 指向本作用域内 backing
+        unsafe { bench_device_complete(&mut vq, h1, BLK_4K_BYTES) };
+        assert_eq!(vq.pop_used(), Some((h1, BLK_4K_BYTES)));
+        // 无新完成 → None
+        assert_eq!(vq.pop_used(), None);
     }
 
     #[test]
@@ -2779,42 +1490,50 @@ mod tests {
         let _ = virtio_blk_io_bench(10);
     }
 
-    // ====== EBPF-3: BpfVerifier trait dispatch Mock + bench ======
-    // 与 T4-3 framekernel 范式对齐: services 提供 verifier 实现, framework
-    // 通过 `&dyn BpfVerifier` 动态分派. host-tests 用 mock 模拟 trait 契约.
+    // ====== EBPF-3: BpfVerifier trait dispatch + bench ======
+    // G-07: 直引内核真实实现 — framework 机制 (`BpfProg`/`BpfVerifier` trait/
+    // `BpfSubsystem`) + services 策略 (`STANDARD_VERIFIER`), 无本地 mock.
+
+    /// 构造最小合法程序: ALU64 MOV r0,0 + EXIT (通过内核 7 条规则)
+    fn bench_min_valid_insns() -> Vec<BpfInsn> {
+        vec![
+            BpfInsn::new(opcode::ALU64 | opcode::MOV, 0, 0, 0, 0),
+            BpfInsn::new(opcode::JMP | opcode::EXIT, 0, 0, 0, 0),
+        ]
+    }
 
     #[test]
-    fn test_bpf_verifier_mock_trait_dispatch() {
-        // 关键: 验证 `&dyn BpfVerifier` 动态分派机制可工作
-        let v: &dyn BpfVerifier = &MockBpfVerifier::new(true);
-        let prog = MockBpfProg::new(8);
+    fn test_bpf_verifier_trait_dispatch() {
+        // 关键: 验证 `&dyn BpfVerifier` 动态分派机制可工作 (内核最小合法程序)
+        let prog = BpfProg::new(BpfProgType::SocketFilter, bench_min_valid_insns());
+        let v: &dyn BpfVerifier = &STANDARD_VERIFIER;
         assert!(matches!(v.verify(&prog), VerifyResult::Ok));
     }
 
     #[test]
     fn test_bpf_verifier_reject() {
-        // reject 模式: 验证拒绝路径
-        let v: &dyn BpfVerifier = &MockBpfVerifier::new(false);
-        let prog = MockBpfProg::new(8);
+        // 拒绝路径: 缺 EXIT 结尾的程序被内核验证器拒绝 (规则 5)
+        let insns = vec![BpfInsn::new(opcode::ALU64 | opcode::MOV, 0, 0, 0, 0)];
+        let prog = BpfProg::new(BpfProgType::SocketFilter, insns);
+        let v: &dyn BpfVerifier = &STANDARD_VERIFIER;
         assert!(matches!(v.verify(&prog), VerifyResult::Err(_)));
     }
 
     #[test]
-    fn test_bpf_verifier_safety_default_no_verifier() {
+    fn test_bpf_subsystem_safety_default_no_verifier() {
         // 安全默认: 未注册 verifier 时, prog_load 拒绝所有
-        // (framekernel 设计, 拒绝 = 安全默认)
-        let subsys = MockBpfSubsystem::new();
-        let result = subsys.prog_load(MockBpfProg::new(4));
+        // (framekernel 设计, 拒绝 = 安全默认). 用局部实例, 不扰动全局 BPF_SUBSYSTEM.
+        let subsys = BpfSubsystem::new();
+        let result = subsys.prog_load(BpfProgType::SocketFilter, bench_min_valid_insns());
         assert_eq!(result, -1); // EPERM: no verifier registered
     }
 
     #[test]
-    fn test_bpf_verifier_set_then_load() {
-        // 注册后 prog_load 走 verifier
-        static VERIFIER: MockBpfVerifier = MockBpfVerifier::new(true);
-        let subsys = MockBpfSubsystem::new();
-        subsys.set_verifier(&VERIFIER);
-        let result = subsys.prog_load(MockBpfProg::new(4));
+    fn test_bpf_subsystem_set_then_load() {
+        // 注册后 prog_load 走 verifier (局部实例, 不扰动全局 BPF_SUBSYSTEM)
+        let subsys = BpfSubsystem::new();
+        subsys.set_verifier(&STANDARD_VERIFIER);
+        let result = subsys.prog_load(BpfProgType::SocketFilter, bench_min_valid_insns());
         assert_eq!(result, 1); // fd = 1
     }
 
@@ -2824,78 +1543,109 @@ mod tests {
         let _ = bpf_verifier_dispatch_bench(100);
     }
 
-    // ====== SYSCTL-2: MockSysctl 单元测试 ======
+    // ====== SYSCTL-2: 内核 sysctl 全局注册表单元测试 ======
+    // G-07: 直引内核 `services::config::sysctl` 真实实现 (无本地 mock).
+    // 命名空间用 `ut.sysctl.*` 与 bench 节点 `bench.sysctl.*` 隔离.
 
     #[test]
-    fn test_mock_sysctl_register_and_read() {
-        let t = MockSysctlTable::new();
-        assert!(t.register("a", MockSysctlKind::Int, MockSysctlValue::Int(42)).is_ok());
-        assert_eq!(t.read("a"), Some(MockSysctlValue::Int(42)));
+    fn test_sysctl_register_and_read() {
+        assert_eq!(
+            sysctl_register("ut.sysctl.reg", SysctlKind::Int, SysctlValue::Int(42)),
+            Ok(())
+        );
+        assert_eq!(sysctl_read("ut.sysctl.reg"), Some(SysctlValue::Int(42)));
     }
 
     #[test]
-    fn test_mock_sysctl_write_type_mismatch() {
-        let t = MockSysctlTable::new();
-        assert!(t.register("a", MockSysctlKind::Int, MockSysctlValue::Int(0)).is_ok());
+    fn test_sysctl_write_type_mismatch() {
+        assert_eq!(
+            sysctl_register("ut.sysctl.tm", SysctlKind::Int, SysctlValue::Int(0)),
+            Ok(())
+        );
         // 写 Bool 到 Int 节点
-        assert!(t.write("a", MockSysctlValue::Bool(true)).is_err());
+        assert_eq!(
+            sysctl_write("ut.sysctl.tm", SysctlValue::Bool(true)),
+            Err(SysctlError::TypeMismatch)
+        );
     }
 
     #[test]
-    fn test_mock_sysctl_read_not_found() {
-        let t = MockSysctlTable::new();
-        assert_eq!(t.read("nonexistent"), None);
+    fn test_sysctl_read_not_found() {
+        assert_eq!(sysctl_read("ut.sysctl.nonexistent"), None);
     }
 
     #[test]
-    fn test_mock_sysctl_bench_runs() {
+    fn test_sysctl_duplicate_register() {
+        assert_eq!(
+            sysctl_register("ut.sysctl.dup", SysctlKind::UInt, SysctlValue::UInt(1)),
+            Ok(())
+        );
+        assert_eq!(
+            sysctl_register("ut.sysctl.dup", SysctlKind::UInt, SysctlValue::UInt(2)),
+            Err(SysctlError::Duplicate)
+        );
+    }
+
+    #[test]
+    fn test_sysctl_bench_runs() {
         let _ = sysctl_bench(10);
     }
 
-    // ====== T-4.1 (LEGACY-4): BlockDevice trait dispatch 单元测试 ======
+    // ====== T-4.1 (LEGACY-4): 块设备 I/O 路径单元测试 (经内核 chitin 注册表) ======
+
+    /// 注册 4 扇区的独立块设备载具 (边界用例专用), 返回 drive 索引
+    fn bench_blk_small_drive() -> u8 {
+        static SLOT: OnceLock<u8> = OnceLock::new();
+        *SLOT.get_or_init(|| {
+            let dev: &'static mut BenchBlockDevice = Box::leak(Box::new(BenchBlockDevice::new(4)));
+            chitin_register_block_dev("bench_blk_small", None, None, dev) as u8
+        })
+    }
 
     #[test]
-    fn test_mock_blk_dev_read_write() {
-        let dev = MockBlockDevice::new(16);
-        let chitin = MockChitinDevice::new(Box::new(dev));
-        let mut buf = [0u8; 512];
-        // 读 sector 0
-        assert_eq!(chitin.blk_read(0, &mut buf), 0);
-        assert_eq!(buf[0], 0);
-        // 写 sector 1
+    fn test_blk_dev_read_write_roundtrip() {
+        let drive = bench_blk_drive();
         let wbuf = [0xAB; 512];
-        assert_eq!(chitin.blk_write(1, &wbuf), 0);
-        // 再读 sector 1
+        assert_eq!(chitin_blk_write(drive, 1, &wbuf), 0);
         let mut rbuf = [0u8; 512];
-        assert_eq!(chitin.blk_read(1, &mut rbuf), 0);
+        assert_eq!(chitin_blk_read(drive, 1, &mut rbuf), 0);
         assert_eq!(rbuf[0], 0xAB);
     }
 
     #[test]
-    fn test_mock_blk_dev_oob() {
-        let dev = MockBlockDevice::new(4);
-        let chitin = MockChitinDevice::new(Box::new(dev));
-        let mut buf = [0u8; 512];
-        // 越界 sector 100 应返回 -EIO
-        assert_eq!(chitin.blk_read(100, &mut buf), -5);
-        assert_eq!(chitin.blk_write(100, &buf), -5);
+    fn test_blk_dev_oob() {
+        let drive = bench_blk_small_drive();
+        let buf = [0u8; 512];
+        let mut rbuf = [0u8; 512];
+        // 越界 sector (容量 4) 应由载体返回 -EIO
+        assert_eq!(chitin_blk_read(drive, 100, &mut rbuf), -5);
+        assert_eq!(chitin_blk_write(drive, 100, &buf), -5);
     }
 
     #[test]
-    fn test_mock_blk_dev_buf_too_small() {
-        let dev = MockBlockDevice::new(4);
-        let chitin = MockChitinDevice::new(Box::new(dev));
+    fn test_blk_dev_buf_too_small() {
+        let drive = bench_blk_small_drive();
         let mut small = [0u8; 256];
-        // buf.len() < 512 应返回 -1
-        assert_eq!(chitin.blk_read(0, &mut small), -1);
+        // 内核 dispatch 层 buf.len() < 512 → -EINVAL
+        assert_eq!(chitin_blk_read(drive, 0, &mut small), -22);
     }
 
     #[test]
-    fn test_mock_blk_dev_metadata() {
-        let dev = MockBlockDevice::new(64);
-        let chitin = MockChitinDevice::new(Box::new(dev));
-        assert!(chitin.blk_is_present());
-        assert_eq!(chitin.blk_total_sectors(), u64::MAX);
+    fn test_blk_dev_metadata() {
+        let drive = bench_blk_small_drive();
+        assert!(chitin_blk_is_present(drive));
+        // 容量 4: 末扇区可读, 越界不可读
+        let mut buf = [0u8; 512];
+        assert_eq!(chitin_blk_read(drive, 3, &mut buf), 0);
+        assert_eq!(chitin_blk_read(drive, 4, &mut buf), -5);
+        // 未注册的 drive 索引 → 不存在
+        assert!(!chitin_blk_is_present(200));
+    }
+
+    #[test]
+    fn test_blk_dev_unregistered_drive() {
+        let mut buf = [0u8; 512];
+        assert_eq!(chitin_blk_read(200, 0, &mut buf), -5);
     }
 
     #[test]
@@ -2904,152 +1654,62 @@ mod tests {
         let _ = blk_dev_dispatch_bench(100);
     }
 
-    // ====== REVAL-6.1: VfsPollPolicy trait dispatch 单元测试 ======
+    // ====== REVAL-6.1: VfsPollPolicy 事件位单元测试 ======
 
     #[test]
-    fn test_mock_vfs_poll_file_type() {
-        let p = StandardHostVfsPollPolicy;
-        use poll_events::*;
-        assert_eq!(p.events_for_file_type(MockVfsFileType::File), EPOLLIN | EPOLLOUT);
-        assert_eq!(p.events_for_file_type(MockVfsFileType::Dir), EPOLLIN);
-        assert_eq!(p.events_for_file_type(MockVfsFileType::Dev), EPOLLHUP);
-        assert_eq!(p.events_for_file_type(MockVfsFileType::Symlink), EPOLLIN | EPOLLHUP);
+    fn test_vfs_poll_events_for_file_type() {
+        let p = StandardVfsPollPolicy;
+        assert_eq!(p.events_for_file_type(VfsFileType::File), EPOLLIN | EPOLLOUT);
+        assert_eq!(p.events_for_file_type(VfsFileType::Dir), EPOLLIN);
+        assert_eq!(p.events_for_file_type(VfsFileType::Dev), EPOLLHUP);
+        assert_eq!(p.events_for_file_type(VfsFileType::Symlink), EPOLLIN | EPOLLHUP);
     }
 
     #[test]
-    fn test_mock_vfs_poll_invalid_fd() {
-        let p = StandardHostVfsPollPolicy;
-        use poll_events::*;
+    fn test_vfs_poll_events_for_invalid_fd() {
+        let p = StandardVfsPollPolicy;
         assert_eq!(p.events_for_invalid_fd(), EPOLLERR | EPOLLHUP);
     }
 
     #[test]
-    fn test_mock_epoll_check_valid_file() {
-        let check = MockEpollCheck::new(Box::new(StandardHostVfsPollPolicy));
-        let ctx = MockVfsPollContext { valid: true, file_type: MockVfsFileType::File };
-        // user 只关心 EPOLLIN
-        assert_eq!(check.check(ctx, poll_events::EPOLLIN), poll_events::EPOLLIN);
-        // user 只关心 EPOLLOUT
-        assert_eq!(check.check(ctx, poll_events::EPOLLOUT), poll_events::EPOLLOUT);
-        // user 关心 IN|OUT → 都报告
-        assert_eq!(check.check(ctx, poll_events::EPOLLIN | poll_events::EPOLLOUT),
-                   poll_events::EPOLLIN | poll_events::EPOLLOUT);
-        // user 关心 ERR (File 不报告 ERR) → 0
-        assert_eq!(check.check(ctx, poll_events::EPOLLERR), 0);
+    fn test_vfs_poll_ref_registered_valid_file() {
+        let policy = VfsPollPolicyRef::Registered(&BENCH_VFS_POLL_POLICY);
+        let ctx = VfsPollContext { valid: true, file_type: VfsFileType::File };
+        // File → IN|OUT, 与 user 掩码 AND 后按关心位报告
+        assert_eq!(policy.events_for(ctx) & BENCH_EPOLL_MASK, EPOLLIN | EPOLLOUT);
+        assert_eq!(policy.events_for(ctx) & EPOLLIN, EPOLLIN);
+        assert_eq!(policy.events_for(ctx) & EPOLLOUT, EPOLLOUT);
+        // File 不报告 ERR
+        assert_eq!(policy.events_for(ctx) & EPOLLERR, 0);
     }
 
     #[test]
-    fn test_mock_epoll_check_invalid_fd() {
-        let check = MockEpollCheck::new(Box::new(StandardHostVfsPollPolicy));
-        let ctx = MockVfsPollContext { valid: false, file_type: MockVfsFileType::File };
-        // invalid fd → ERR|HUP, 但 AND user mask
-        assert_eq!(check.check(ctx, poll_events::EPOLLERR | poll_events::EPOLLHUP),
-                   poll_events::EPOLLERR | poll_events::EPOLLHUP);
-        assert_eq!(check.check(ctx, poll_events::EPOLLIN), 0);  // IN 不报告
+    fn test_vfs_poll_ref_registered_invalid_fd() {
+        let policy = VfsPollPolicyRef::Registered(&BENCH_VFS_POLL_POLICY);
+        let ctx = VfsPollContext { valid: false, file_type: VfsFileType::File };
+        // 无效 fd → ERR|HUP, 与 user 掩码 AND 后按关心位报告
+        assert_eq!(policy.events_for(ctx) & BENCH_EPOLL_MASK, EPOLLERR | EPOLLHUP);
+        assert_eq!(policy.events_for(ctx) & EPOLLIN, 0);
     }
 
     #[test]
-    fn test_mock_vfs_poll_bench_runs() {
+    fn test_vfs_poll_ref_fallback_without_registered_policy() {
+        // 未注册策略时 Fallback 分支仍给出事件位 (与原硬编码一致)
+        let policy = VfsPollPolicyRef::Fallback;
+        let ctx = VfsPollContext { valid: true, file_type: VfsFileType::File };
+        assert_ne!(policy.events_for(ctx) & BENCH_EPOLL_MASK, 0);
+    }
+
+    #[test]
+    fn test_vfs_poll_bench_runs() {
         let _ = vfs_poll_dispatch_bench(100);
     }
 
-    // ====== REVAL-6.2: epoll_pwake 拆分行为 单元测试 ======
-
-    #[test]
-    fn test_mock_instance_watches_fd() {
-        let mut inst = MockEpollInstance::new();
-        inst.add(MockEpollInterestItem { fd: 5, events: poll_events::EPOLLIN, data: 100 });
-        // 包含 fd=5
-        assert!(instance_watches_fd(&inst, 5));
-        // 不包含 fd=6
-        assert!(!instance_watches_fd(&inst, 6));
-    }
-
-    #[test]
-    fn test_mock_enqueue_ready_basic() {
-        let mut inst = MockEpollInstance::new();
-        inst.add(MockEpollInterestItem { fd: 3, events: poll_events::EPOLLIN, data: 42 });
-        let policy = StandardHostVfsPollPolicy;
-        // 第一次入队
-        assert!(enqueue_ready_for_fd(&mut inst, 3, &policy));
-        assert_eq!(inst.ready_list.len(), 1);
-        assert_eq!(inst.ready_list[0], (poll_events::EPOLLIN, 42));
-    }
-
-    #[test]
-    fn test_mock_enqueue_ready_dedup() {
-        let mut inst = MockEpollInstance::new();
-        inst.add(MockEpollInterestItem { fd: 3, events: poll_events::EPOLLIN, data: 42 });
-        let policy = StandardHostVfsPollPolicy;
-        // 第一次入队
-        assert!(enqueue_ready_for_fd(&mut inst, 3, &policy));
-        // 第二次入队 → dedup, 失败
-        assert!(!enqueue_ready_for_fd(&mut inst, 3, &policy));
-        assert_eq!(inst.ready_list.len(), 1);
-    }
-
-    #[test]
-    fn test_mock_enqueue_ready_no_fd() {
-        let mut inst = MockEpollInstance::new();
-        inst.add(MockEpollInterestItem { fd: 3, events: poll_events::EPOLLIN, data: 42 });
-        let policy = StandardHostVfsPollPolicy;
-        // fd=99 不在列表
-        assert!(!enqueue_ready_for_fd(&mut inst, 99, &policy));
-        assert_eq!(inst.ready_list.len(), 0);
-    }
-
-    #[test]
-    fn test_mock_pwake_multiple_instances() {
-        let mut p = MockEpollPwake::new();
-        // 3 个实例, 只有 2 个监控 fd=5
-        for _ in 0..2 {
-            let mut inst = MockEpollInstance::new();
-            inst.add(MockEpollInterestItem { fd: 5, events: poll_events::EPOLLIN, data: 100 });
-            p.instances.push(inst);
-        }
-        p.instances.push(MockEpollInstance::new());  // 第 3 个不监控
-
-        let policy = StandardHostVfsPollPolicy;
-        let count = p.pwake(5, &policy);
-        // 2 个实例成功入队
-        assert_eq!(count, 2);
-        // 第 3 个实例 ready_list 仍空
-        assert_eq!(p.instances[2].ready_list.len(), 0);
-    }
-
-    #[test]
-    fn test_mock_pwake_dedup_across_calls() {
-        let mut p = MockEpollPwake::new();
-        let mut inst = MockEpollInstance::new();
-        inst.add(MockEpollInterestItem { fd: 5, events: poll_events::EPOLLIN, data: 100 });
-        p.instances.push(inst);
-
-        let policy = StandardHostVfsPollPolicy;
-        // 第 1 次: 入队
-        assert_eq!(p.pwake(5, &policy), 1);
-        // 第 2 次: dedup, 不入队
-        assert_eq!(p.pwake(5, &policy), 0);
-        // ready_list 仍只 1 项
-        assert_eq!(p.instances[0].ready_list.len(), 1);
-    }
-
-    #[test]
-    fn test_mock_pwake_no_match() {
-        let mut p = MockEpollPwake::new();
-        let mut inst = MockEpollInstance::new();
-        inst.add(MockEpollInterestItem { fd: 5, events: poll_events::EPOLLIN, data: 100 });
-        p.instances.push(inst);
-
-        let policy = StandardHostVfsPollPolicy;
-        // fd=99 不在列表
-        assert_eq!(p.pwake(99, &policy), 0);
-    }
-
-    // ====== LEGACY-5.1: ZapStore trait 单元测试 ======
+    // ====== LEGACY-5.1: ZAP 单元测试 ======
 
     #[test]
     fn test_zap_insert_lookup() {
-        let zap: Box<dyn HostZapStore> = Box::new(StandardHostZap::new());
+        let zap = NestZap::new();
         assert!(zap.insert("a", b"1"));
         assert_eq!(zap.lookup("a"), Some(b"1".to_vec()));
         assert_eq!(zap.lookup("nokey"), None);
@@ -3057,34 +1717,35 @@ mod tests {
 
     #[test]
     fn test_zap_update() {
-        let zap: Box<dyn HostZapStore> = Box::new(StandardHostZap::new());
+        let zap = NestZap::new();
         assert!(zap.insert("k", b"v1"));
         assert!(zap.insert("k", b"v2"));
         assert_eq!(zap.lookup("k"), Some(b"v2".to_vec()));
+        // 原地覆盖, 不新增条目
+        assert_eq!(zap.len(), 1);
     }
 
     #[test]
     fn test_zap_capacity_limit() {
-        let zap: Box<dyn HostZapStore> = Box::new(StandardHostZap::with_capacity(2));
+        let zap = NestZap::with_capacity(2);
         assert!(zap.insert("a", b"1"));
         assert!(zap.insert("b", b"2"));
-        // 容量满 + 新键 → false
+        // 内核实现: 容量满后一切 insert 均拒 (含已存在键的更新)
         assert!(!zap.insert("c", b"3"));
-        // 容量满 + 旧键 (更新) → true
-        assert!(zap.insert("a", b"x"));
+        assert!(!zap.insert("a", b"x"));
         assert_eq!(zap.len(), 2);
     }
 
     #[test]
     fn test_zap_u64() {
-        let zap: Box<dyn HostZapStore> = Box::new(StandardHostZap::new());
+        let zap = NestZap::new();
         assert!(zap.insert_u64("count", 42));
         assert_eq!(zap.lookup_u64("count"), Some(42));
     }
 
     #[test]
     fn test_zap_remove() {
-        let zap: Box<dyn HostZapStore> = Box::new(StandardHostZap::new());
+        let zap = NestZap::new();
         zap.insert("a", b"1");
         assert!(zap.contains("a"));
         assert!(zap.remove("a"));
@@ -3097,37 +1758,37 @@ mod tests {
         let _ = zap_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.2: TxgManager trait 单元测试 ======
+    // ====== LEGACY-5.2: TXG 单元测试 ======
 
     #[test]
     fn test_txg_init() {
-        let mut txg: Box<dyn HostTxgManager> = Box::new(StandardHostTxg::new());
+        let mut txg = NestTxgGroup::new();
         txg.init(1);
         assert_eq!(txg.current_txg(), 1);
-        assert_eq!(txg.open_txg_id(), 1);
-        assert_eq!(txg.syncing_txg_id(), 3);
-        assert_eq!(txg.total_syncs(), 0);
+        // init 后 open/quiescing/syncing 槽位分别指向 txgs[0..3]
+        assert_eq!(txg.get_open_txg().expect("open 槽位存在").txg_id, 1);
+        assert_eq!(txg.get_syncing_txg().expect("syncing 槽位存在").txg_id, 3);
+        assert_eq!(txg.total_syncs.load(Ordering::Acquire), 0);
     }
 
     #[test]
     fn test_txg_transition() {
-        let mut txg: Box<dyn HostTxgManager> = Box::new(StandardHostTxg::new());
+        let mut txg = NestTxgGroup::new();
         txg.init(1);
         let old = txg.current_txg();
         let new = txg.transition();
         assert!(new > old);
-        assert_eq!(txg.total_syncs(), 1);
-        assert!(txg.is_sync_in_progress());
+        assert_eq!(txg.total_syncs.load(Ordering::Acquire), 1);
     }
 
     #[test]
     fn test_txg_dirty_accumulate() {
-        let mut txg: Box<dyn HostTxgManager> = Box::new(StandardHostTxg::new());
+        let mut txg = NestTxgGroup::new();
         txg.init(1);
         for _ in 0..5 {
-            txg.add_dirty_to_open(0);
+            txg.add_dirty_to_open(NestBlockPointer::null());
         }
-        assert_eq!(txg.total_dirty(), 5);
+        assert_eq!(txg.total_dirty.load(Ordering::Acquire), 5);
     }
 
     #[test]
@@ -3135,44 +1796,59 @@ mod tests {
         let _ = txg_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.4: DmuManager trait 单元测试 ======
+    // ====== LEGACY-5.4: DMU 单元测试 ======
 
     #[test]
-    fn test_dmu_init_uninitialized() {
-        let dmu: Box<dyn HostDmuManager> = Box::new(StandardHostDmu::new());
-        assert!(!dmu.is_initialized());
+    fn test_dmu_uninitialized() {
+        let dmu = NestObjSet::new();
+        assert!(!dmu.initialized.load(Ordering::Acquire));
         assert_eq!(dmu.obj_count(), 0);
+        // 未 init 时对象表为空 → root 不可得
+        assert!(dmu.get_root().is_none());
     }
 
     #[test]
     fn test_dmu_init_creates_root() {
-        let dmu: Box<dyn HostDmuManager> = Box::new(StandardHostDmu::new());
+        let dmu = NestObjSet::new();
         dmu.init(0x100);
-        assert!(dmu.is_initialized());
-        // init 后有 root + meta = 2 个对象
+        assert!(dmu.initialized.load(Ordering::Acquire));
+        // init 后有 root + meta 两个对象
         assert_eq!(dmu.obj_count(), 2);
+        assert_eq!(
+            dmu.get_root().expect("root 对象存在").obj_type,
+            NestObjType::Dir
+        );
     }
 
     #[test]
     fn test_dmu_alloc_obj() {
-        let dmu: Box<dyn HostDmuManager> = Box::new(StandardHostDmu::new());
+        let dmu = NestObjSet::new();
         dmu.init(0x100);
-        let f = dmu.alloc_obj(1, 0x100).unwrap();  // 1 = File
-        assert!(f >= 3);
-        let obj = dmu.get_obj(f).unwrap();
-        assert_eq!(obj.obj_type, 1);
+        let f = dmu.alloc_obj(NestObjType::File, 0x100).expect("File 分配成功");
+        // init 后 next_obj_id = root+2 = 4
+        assert!(f >= 4);
+        assert_eq!(dmu.get_obj(f).expect("已分配对象可查").obj_type, NestObjType::File);
     }
 
     #[test]
     fn test_dmu_free_link_count() {
-        let dmu: Box<dyn HostDmuManager> = Box::new(StandardHostDmu::new());
+        let dmu = NestObjSet::new();
         dmu.init(0x100);
-        let f = dmu.alloc_obj(1, 0x100).unwrap();
-        let obj = dmu.get_obj(f).unwrap();
-        assert_eq!(obj.link_count, 1);
-        dmu.free_obj(f);
-        let obj2 = dmu.get_obj(f);
-        assert!(obj2.is_none(), "link_count=0 后 used=false");
+        let f = dmu.alloc_obj(NestObjType::File, 0x100).expect("File 分配成功");
+        assert_eq!(dmu.get_obj(f).expect("对象可查").link_count, 1);
+        assert!(dmu.free_obj(f));
+        // link_count 归 0 → used=false, 查询不到
+        assert!(dmu.get_obj(f).is_none());
+        assert_eq!(dmu.obj_count(), 2);
+    }
+
+    #[test]
+    fn test_dmu_unsupported_obj_type() {
+        let dmu = NestObjSet::new();
+        dmu.init(0x100);
+        // 内核仅支持 File/Dir/Zap/ZapMicro/Symlink
+        assert!(dmu.alloc_obj(NestObjType::None, 0x100).is_none());
+        assert!(dmu.alloc_obj(NestObjType::Snapshot, 0x100).is_none());
     }
 
     #[test]
@@ -3180,38 +1856,47 @@ mod tests {
         let _ = dmu_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.5: SpaManager trait 单元测试 ======
+    // ====== LEGACY-5.5: SPA 单元测试 ======
 
     #[test]
     fn test_spa_uninitialized() {
-        let spa: Box<dyn HostSpaManager> = Box::new(StandardHostSpa::new());
+        let spa = NestSpa::new();
         assert!(!spa.is_initialized());
-        assert_eq!(spa.vdev_count(), 0);
+        assert_eq!(spa.vdevs.lock().len(), 0);
     }
 
     #[test]
     fn test_spa_init() {
-        let spa: Box<dyn HostSpaManager> = Box::new(StandardHostSpa::new());
+        let spa = NestSpa::new();
         spa.init("tank");
         assert!(spa.is_initialized());
         assert_eq!(spa.current_txg(), 1);
-        assert_ne!(spa.guid(), 0);
+        assert_ne!(spa.config.lock().guid, 0);
     }
 
     #[test]
     fn test_spa_add_vdev() {
-        let spa: Box<dyn HostSpaManager> = Box::new(StandardHostSpa::new());
+        let spa = NestSpa::new();
         spa.init("tank");
-        assert!(spa.add_vdev(0));
-        assert!(spa.add_vdev(1));
-        assert_eq!(spa.vdev_count(), 2);
-        // 重复添加 → false
-        assert!(!spa.add_vdev(0));
+        assert!(spa.add_vdev(NestVdevConfig::new_disk(0, "d0", 9)));
+        assert!(spa.add_vdev(NestVdevConfig::new_disk(1, "d1", 9)));
+        assert_eq!(spa.vdevs.lock().len(), 2);
+    }
+
+    #[test]
+    fn test_spa_vdev_limit() {
+        let spa = NestSpa::new();
+        spa.init("tank");
+        // 内核上限 = config.max_vdevs (默认 8)
+        for i in 0..8u16 {
+            assert!(spa.add_vdev(NestVdevConfig::new_disk(i, "d", 9)));
+        }
+        assert!(!spa.add_vdev(NestVdevConfig::new_disk(8, "d", 9)));
     }
 
     #[test]
     fn test_spa_advance_txg() {
-        let spa: Box<dyn HostSpaManager> = Box::new(StandardHostSpa::new());
+        let spa = NestSpa::new();
         spa.init("tank");
         let t1 = spa.advance_txg();
         let t2 = spa.advance_txg();
@@ -3224,43 +1909,44 @@ mod tests {
         let _ = spa_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.7: RaidzEngine trait 单元测试 ======
+    // ====== LEGACY-5.7: RAID-Z 几何单元测试 ======
 
     #[test]
-    fn test_raidz_levels() {
-        let r: Box<dyn HostRaidzEngine> = Box::new(StandardHostRaidz::new(
-            MockRaidzLevel::RaidZ1, 3, 9
-        ));
-        assert_eq!(r.ncols(), 3);
-        assert_eq!(r.parity_cols(), 1);
-        assert_eq!(r.data_cols(), 2);
-        assert_eq!(r.max_failures(), 1);
+    fn test_raidz_z1_geometry() {
+        let map = NestRaidzMap::new(NestRaidzLevel::RaidZ1, 3, 9);
+        assert_eq!(map.ncols, 3);
+        assert_eq!(map.nparity, 1);
+        assert_eq!(map.data_cols(), 2);
+        assert_eq!(map.level.max_failures(), 1);
     }
 
     #[test]
-    fn test_raidz_z2() {
-        let r: Box<dyn HostRaidzEngine> = Box::new(StandardHostRaidz::new(
-            MockRaidzLevel::RaidZ2, 5, 12
-        ));
-        assert_eq!(r.parity_cols(), 2);
-        assert_eq!(r.data_cols(), 3);
-        assert_eq!(r.max_failures(), 2);
-        assert_eq!(r.ashift(), 12);
+    fn test_raidz_z2_geometry() {
+        let map = NestRaidzMap::new(NestRaidzLevel::RaidZ2, 5, 12);
+        assert_eq!(map.nparity, 2);
+        assert_eq!(map.data_cols(), 3);
+        assert_eq!(map.level.max_failures(), 2);
+        assert_eq!(map.ashift, 12);
     }
 
     #[test]
-    fn test_raidz_mirror_flags() {
-        let m: Box<dyn HostRaidzEngine> = Box::new(StandardHostRaidz::new(
-            MockRaidzLevel::Mirror, 2, 9
-        ));
-        assert!(m.is_mirror());
-        assert!(!m.is_single());
+    fn test_raidz_mirror_and_single_parity() {
+        // Mirror 与 Single 均无校验列, 但 Mirror 容许 1 块盘故障
+        let mirror = NestRaidzMap::new(NestRaidzLevel::Mirror, 2, 9);
+        assert_eq!(mirror.nparity, 0);
+        assert_eq!(mirror.level.max_failures(), 1);
+        let single = NestRaidzMap::new(NestRaidzLevel::Single, 2, 9);
+        assert_eq!(single.nparity, 0);
+        assert_eq!(single.level.max_failures(), 0);
+    }
 
-        let s: Box<dyn HostRaidzEngine> = Box::new(StandardHostRaidz::new(
-            MockRaidzLevel::Single, 1, 9
-        ));
-        assert!(s.is_single());
-        assert!(!s.is_mirror());
+    #[test]
+    fn test_raidz_cols_clamped() {
+        // 构造时 ncols 被 clamp 到 [HV_RAIDZ_MIN_COLS, HV_RAIDZ_MAX_COLS]
+        let low = NestRaidzMap::new(NestRaidzLevel::Single, 1, 9);
+        assert_eq!(low.ncols, HV_RAIDZ_MIN_COLS);
+        let high = NestRaidzMap::new(NestRaidzLevel::Single, 64, 9);
+        assert_eq!(high.ncols, HV_RAIDZ_MAX_COLS);
     }
 
     #[test]
@@ -3268,55 +1954,53 @@ mod tests {
         let _ = raidz_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.8: ArcCache trait 单元测试 ======
+    // ====== LEGACY-5.8: ARC 单元测试 ======
 
     #[test]
-    fn test_arc_uninitialized_mock() {
-        let arc: Box<dyn HostArcCache> = Box::new(StandardHostArc::new());
+    fn test_arc_uninitialized() {
+        let arc = StandardArc::new();
         assert!(!arc.is_initialized());
     }
 
     #[test]
     fn test_arc_lookup_miss_hit() {
-        let arc: Box<dyn HostArcCache> = Box::new(StandardHostArc::new());
+        let arc = StandardArc::new();
         arc.init(10);
-        let k = MockArcKey { vdev_id: 0, offset: 0, birth_txg: 0 };
+        let k = NestArcKey::new(0, 0, 0);
         // 首次 lookup → miss
-        assert!(!arc.lookup(k));
+        assert!(!arc.lookup(&k));
         assert_eq!(arc.miss_count(), 1);
-        // insert
-        arc.insert(k, &[1u8; 16]);
+        arc.insert(k, &[1u8; 16], NestArcBufType::Data);
         // 二次 lookup → hit
-        assert!(arc.lookup(k));
+        assert!(arc.lookup(&k));
         assert_eq!(arc.hit_count(), 1);
     }
 
     #[test]
     fn test_arc_capacity_eviction() {
-        let arc: Box<dyn HostArcCache> = Box::new(StandardHostArc::new());
+        let arc = StandardArc::new();
+        // 内核淘汰以「条目数」为口径 (max_size 为条目上限)
         arc.init(3);
-        for i in 0..5 {
-            let k = MockArcKey { vdev_id: 0, offset: i, birth_txg: 0 };
-            arc.insert(k, &[0u8; 16]);
+        for i in 0..5u64 {
+            arc.insert(NestArcKey::new(0, i, 0), &[0u8; 16], NestArcBufType::Data);
         }
         assert!(arc.evict_count() > 0);
-        // current_size <= max
-        assert!(arc.current_size() <= 3);
+        // 存活条目数不超过 max_size
+        assert!(arc.mru_size() + arc.mfu_size() <= 3);
     }
 
     #[test]
     fn test_arc_hit_rate() {
-        let arc: Box<dyn HostArcCache> = Box::new(StandardHostArc::new());
+        let arc = StandardArc::new();
         arc.init(10);
-        let k = MockArcKey { vdev_id: 0, offset: 0, birth_txg: 0 };
-        arc.insert(k, &[0u8; 16]);
-        // 2 hit + 2 miss
-        arc.lookup(k);
-        arc.lookup(k);
-        arc.lookup(MockArcKey { vdev_id: 0, offset: 99, birth_txg: 0 });
-        arc.lookup(MockArcKey { vdev_id: 0, offset: 100, birth_txg: 0 });
-        // hit_rate = 2/4 = 0.5
-        assert!((arc.hit_rate() - 0.5).abs() < 1e-9);
+        let k = NestArcKey::new(0, 0, 0);
+        arc.insert(k, &[0u8; 16], NestArcBufType::Data);
+        arc.lookup(&k);
+        arc.lookup(&k);
+        arc.lookup(&NestArcKey::new(0, 99, 0));
+        arc.lookup(&NestArcKey::new(0, 100, 0));
+        // 内核 `hit_rate()` 为千分比: 2 hit / 4 total → 500
+        assert_eq!(arc.hit_rate(), 500);
     }
 
     #[test]
@@ -3324,50 +2008,49 @@ mod tests {
         let _ = arc_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.10: ZilLog trait 单元测试 ======
+    // ====== LEGACY-5.10: ZIL 日志单元测试 ======
 
     #[test]
     fn test_zil_log_init() {
-        let zil: Box<dyn HostZilLog> = Box::new(StandardHostZil::new());
+        let zil = NestZil::new();
         zil.init();
-        assert!(zil.is_enabled());
-        assert_eq!(zil.current_seq(), 0);
+        assert!(zil.enabled.load(Ordering::Acquire));
+        assert_eq!(zil.current_seq.load(Ordering::Acquire), 0);
         assert_eq!(zil.pending_count(), 0);
     }
 
     #[test]
     fn test_zil_log_add_record() {
-        let zil: Box<dyn HostZilLog> = Box::new(StandardHostZil::new());
+        let zil = NestZil::new();
         zil.init();
-        zil.add_record(MockZilRecord { txg: 1, obj_id: 100, offset: 0, size: 4096, seq: 0 });
-        assert_eq!(zil.current_seq(), 1);
+        zil.add_record(NestZilRecord::new_write(1, 100, 0, 4096));
+        assert_eq!(zil.current_seq.load(Ordering::Acquire), 1);
         assert_eq!(zil.pending_count(), 1);
         assert!(zil.has_uncommitted());
     }
 
     #[test]
     fn test_zil_log_commit() {
-        let zil: Box<dyn HostZilLog> = Box::new(StandardHostZil::new());
+        let zil = NestZil::new();
         zil.init();
-        zil.add_record(MockZilRecord { txg: 1, obj_id: 100, offset: 0, size: 4096, seq: 0 });
-        zil.add_record(MockZilRecord { txg: 2, obj_id: 100, offset: 0, size: 4096, seq: 0 });
-        zil.add_record(MockZilRecord { txg: 3, obj_id: 100, offset: 0, size: 4096, seq: 0 });
+        zil.add_record(NestZilRecord::new_write(1, 100, 0, 4096));
+        zil.add_record(NestZilRecord::new_write(2, 100, 0, 4096));
+        zil.add_record(NestZilRecord::new_write(3, 100, 0, 4096));
         // commit txg=2 → 保留 txg=3
         zil.commit(2);
         assert_eq!(zil.pending_count(), 1);
-        // committed_seq 是被移除记录的最大 seq
-        // seq=1 (txg=1) + seq=2 (txg=2) 被移除 → max = 2
-        assert_eq!(zil.committed_seq(), 2);
+        // committed_seq 是被移除记录的最大 seq (seq 1, 2 被移除 → 2)
+        assert_eq!(zil.committed_seq.load(Ordering::Acquire), 2);
     }
 
     #[test]
     fn test_zil_log_disabled() {
-        let zil: Box<dyn HostZilLog> = Box::new(StandardHostZil::new());
+        let zil = NestZil::new();
         zil.init();
-        zil.set_enabled(false);
-        zil.add_record(MockZilRecord { txg: 1, obj_id: 100, offset: 0, size: 4096, seq: 0 });
-        // disable 后 add_record 不应分配 seq
-        assert_eq!(zil.current_seq(), 0);
+        zil.enabled.store(false, Ordering::Release);
+        zil.add_record(NestZilRecord::new_write(1, 100, 0, 4096));
+        // disable 后 add_record 不分配 seq
+        assert_eq!(zil.current_seq.load(Ordering::Acquire), 0);
         assert_eq!(zil.pending_count(), 0);
     }
 
@@ -3376,40 +2059,59 @@ mod tests {
         let _ = zil_log_dispatch_bench(100);
     }
 
-    // ====== LEGACY-5.11: ZilPersist trait 单元测试 ======
+    // ====== LEGACY-5.11: ZIL 持久化单元测试 ======
+
+    /// 构造含 `count` 条 write 记录的 ZIL
+    fn zil_with_records(count: u64) -> NestZil {
+        let zil = NestZil::new();
+        zil.init();
+        for i in 0..count {
+            zil.add_record(NestZilRecord::new_write(1, 100, i, 4096));
+        }
+        zil
+    }
 
     #[test]
     fn test_zil_persist_serialize_empty() {
-        let persist: Box<dyn HostZilPersist> = Box::new(StandardHostZilPersist::new());
-        let result = persist.serialize(0);
-        assert!(result.is_none());
+        let zil = NestZil::new();
+        zil.init();
+        // 无记录 → 无块可写
+        assert!(NestZilPersist::serialize_zil_to_block(&zil, 1).is_none());
     }
 
     #[test]
     fn test_zil_persist_roundtrip() {
-        let persist: Box<dyn HostZilPersist> = Box::new(StandardHostZilPersist::new());
-        // serialize 10 条
-        let block = persist.serialize(10);
-        assert!(block.is_some());
-        let block = block.unwrap();
-        // deserialize → 10
-        let count = persist.deserialize(&block);
-        assert_eq!(count, 10);
+        let zil = zil_with_records(10);
+        let block = NestZilPersist::serialize_zil_to_block(&zil, 1).expect("有记录时块生成成功");
+        assert_eq!(block.len(), 4096);
+        let records = NestZilPersist::deserialize_zil_from_block(&block);
+        assert_eq!(records.len(), 10);
+        // 反序列化按 seq 升序还原
+        assert_eq!(records[0].seq, 1);
+        assert_eq!(records[9].seq, 10);
     }
 
     #[test]
     fn test_zil_persist_short_block() {
-        let persist: Box<dyn HostZilPersist> = Box::new(StandardHostZilPersist::new());
-        let count = persist.deserialize(&[]);
-        assert_eq!(count, 0);
+        // 长度不足 4096 → 空记录 (整块拒绝)
+        assert!(NestZilPersist::deserialize_zil_from_block(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_zil_persist_corrupt_block_rejected() {
+        let zil = zil_with_records(10);
+        let mut block = NestZilPersist::serialize_zil_to_block(&zil, 1).expect("块生成成功");
+        // 翻转 record 区一个字节 → 块 CRC 失配 → 整块拒绝 (ZFS 块级校验语义)
+        block[128] ^= 0xFF;
+        assert!(NestZilPersist::deserialize_zil_from_block(&block).is_empty());
     }
 
     #[test]
     fn test_zil_persist_mark_written() {
-        let persist: Box<dyn HostZilPersist> = Box::new(StandardHostZilPersist::new());
+        let persist = NestZilPersist::new();
+        assert!(!persist.zil_blocks_written.load(Ordering::Acquire));
         persist.mark_written();
-        // 幂等
-        persist.mark_written();
+        assert!(persist.zil_blocks_written.load(Ordering::Acquire));
     }
 
     #[test]

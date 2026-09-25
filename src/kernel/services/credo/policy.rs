@@ -311,9 +311,9 @@ impl PolicyEngine {
         if !owned.contains(required) {
             return PolicyResult::Deny(DenyReason::NoAuthority);
         }
-        // 不能撤销可行下界
+        // 不能撤销可行下界 (仅对设有非零下界的域生效; 零下界域不受此约束)
         let floor = CapBits(VIABLE_FLOOR[domain.0 as usize]);
-        if required.contains(floor) {
+        if !floor.is_empty() && required.contains(floor) {
             return PolicyResult::Deny(DenyReason::FloorProtected);
         }
         PolicyResult::Allow
@@ -451,6 +451,24 @@ mod tests {
         // 我们要求 required 包含 floor bits → 拒绝
         let result = p.check(&m, CapDomain::FS, CapBits(0b0101));
         assert_eq!(result, PolicyResult::Deny(DenyReason::FloorProtected));
+    }
+
+    #[test]
+    fn policy_zero_floor_domain_allowed() {
+        // 回归 (零下界域恒拒): 曾因 floor == 0 使 required.contains(floor) 恒真,
+        // 导致 SYSTEM/NET 等 13 个零下界域一律被 FloorProtected 拒绝.
+        let m = make_matrix();
+        m.set(CapDomain::NET, CapBits(0x03)).unwrap();
+        m.set(CapDomain::SYSTEM, CapBits(0x01)).unwrap();
+        let p = PolicyEngine::new();
+        assert_eq!(
+            p.check(&m, CapDomain::NET, CapBits(0x03)),
+            PolicyResult::Allow
+        );
+        assert_eq!(
+            p.check(&m, CapDomain::SYSTEM, CapBits(0x01)),
+            PolicyResult::Allow
+        );
     }
 
     #[test]

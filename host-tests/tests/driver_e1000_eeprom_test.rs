@@ -18,7 +18,7 @@
 //!
 //! 按 B08-20/21 消并规则, 依赖 MMIO/私有符号的镜像对象不保留平行实现:
 //! 本地 `MockIoMem` / `EerdState` / `eeprom_read_real` / `eeprom_read_qemu` /
-//! `mac_from_eeprom_words` 复刻与全部用例已删除 (QEMU 兼容路径 + EERD 状态机
-//! + MAC 字节序). 该契约的真实覆盖由 QEMU 集成测试 (网卡驱动路径) 承担.
+//! `mac_from_eeprom_words` 复刻与全部用例已删除 (QEMU 兼容路径 + EERD 状态机 +
+//! MAC 字节序). 该契约的真实覆盖由 QEMU 集成测试 (网卡驱动路径) 承担.
 //! 待内核将 MAC 字节组装 (word → 6 字节) 提炼为 pub 纯函数后可恢复 host 侧
 //! 验证 (记录待办).

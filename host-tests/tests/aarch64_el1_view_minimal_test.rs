@@ -35,7 +35,7 @@ fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
 fn test_build_el1_view_has_no_dram_block() {
     let src = read(VMM);
     // 起点取函数签名 (doc 注释中的历史说明不参与断言).
-    let body = norm(&slice_between(
+    let body = norm(slice_between(
         &src,
         "pub fn build_el1_view",
         "fn destroy_el1_view",
@@ -69,7 +69,7 @@ fn test_build_el1_view_has_no_dram_block() {
 fn test_el0_sync_entry_comment_drops_dram_claim() {
     // 入口注释同步: 不得再宣称 EL1 视图含内核 DRAM 块.
     let src = read(EXCEPTION);
-    let body = norm(&slice_between(
+    let body = norm(slice_between(
         &src,
         "handle_el0_sync:",
         "// -------- EL0 IRQ handler --------",

@@ -208,7 +208,6 @@ dependencies = [
 name = "queenx-host-tests"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.12.1",
  "queenx",
  "serde",
  "serde_json",
