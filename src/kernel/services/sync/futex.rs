@@ -145,13 +145,7 @@ pub fn futex_syscall(
     futex_validate_op(op)?;
 
     // 2. 委托 framework
-    let ret = crate::framework::syscall::futex::sys_futex(
-        uaddr,
-        op,
-        val,
-        timeout_or_uaddr2,
-        val2,
-    );
+    let ret = crate::framework::syscall::futex::sys_futex(uaddr, op, val, timeout_or_uaddr2, val2);
 
     // 3. 错误码解析
     if ret < 0 {

@@ -132,5 +132,9 @@ pub fn register_timer_irq_tests() {
         "handler_signature",
         timer_irq0_handler_signature as TestFn,
     );
-    r.register("timer::irq", "register_interface", register_interface as TestFn);
+    r.register(
+        "timer::irq",
+        "register_interface",
+        register_interface as TestFn,
+    );
 }

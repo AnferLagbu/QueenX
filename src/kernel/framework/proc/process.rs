@@ -619,9 +619,7 @@ impl Drop for Process {
             // 计数归零才销毁: cr3 可能仍被 CLONE_VM 的兄弟进程持有, 无条件销毁
             // 会使对方在用的页表被回收 (UAF). `frame_dec` 对未计数帧 (计数 0)
             // 返回 false, 同时防止同一 PML4 被二次销毁.
-            if crate::framework::mm::pmm::get_pmm()
-                .frame_dec(crate::framework::mm::PhysAddr(cr3))
-            {
+            if crate::framework::mm::pmm::get_pmm().frame_dec(crate::framework::mm::PhysAddr(cr3)) {
                 // SAFETY: cr3 由 vmm_create_user_page_table / COW 克隆产生,
                 // 且计数已归零 (无其他持有者), 本进程是最后持有者.
                 unsafe {
@@ -891,10 +889,7 @@ fn proc_barrier_rollback_cb() -> bool {
 
 pub fn proc_register_barrier_domain() {
     crate::framework::barrier::recovery_domain_register(4);
-    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER
-        .lock()
-        .find(4)
-    {
+    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER.lock().find(4) {
         *dom.capture_cb.lock() = Some(proc_barrier_capture_cb);
         *dom.rollback_cb.lock() = Some(proc_barrier_rollback_cb);
     }

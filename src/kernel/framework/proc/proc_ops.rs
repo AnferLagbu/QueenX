@@ -871,8 +871,7 @@ pub extern "C" fn sys_fork() -> Pid {
     // KPTI 修复: page fault handler 现在使用 get_user_pml4() 获取正确的用户页表
     // G2 修复: 克隆失败必须回滚 (原 `.unwrap_or(parent_cr3)` 在 OOM 时静默共享父页表,
     // 造成父子双所有权且 COW 语义静默降级为共享写)
-    let Some(child_cr3) = crate::framework::mm::cow::clone_user_page_table_cow(parent_cr3)
-    else {
+    let Some(child_cr3) = crate::framework::mm::cow::clone_user_page_table_cow(parent_cr3) else {
         // 此刻子进程尚无内核栈 (`allocate_kernel_stack` 在下方) 且未插入进程表,
         // 直接释放其描述符 + 归还已分配的 PID (否则失败 fork 会泄漏 PID 位图位)
         raw::drop_boxed_process(child_ptr);

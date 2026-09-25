@@ -6,7 +6,7 @@
 //! 路径不变 (`#[no_mangle]` 全局符号不受模块位置影响).
 
 use super::api::{
-    ptr_to_str, split_parent_name, with_cstr, PCACHE_FAST_MAX_BYTES, PCACHE_FAST_MIN_BYTES,
+    PCACHE_FAST_MAX_BYTES, PCACHE_FAST_MIN_BYTES, ptr_to_str, split_parent_name, with_cstr,
 };
 use super::open_file_table::OPEN_FILE_TABLE;
 use super::types::{
@@ -385,10 +385,7 @@ pub extern "C" fn vfs_write_internal(fd_idx: u32, buf: *const u8, count: u32) ->
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         // O_APPEND: 写入前自动 seek 到文件末尾 (POSIX 原子 append)
-        let offset = if (open_file.get_flags()
-            & super::types::VfsOpenFlags::APPEND.bits())
-            != 0
-        {
+        let offset = if (open_file.get_flags() & super::types::VfsOpenFlags::APPEND.bits()) != 0 {
             open_file
                 .inode()
                 .stat(open_file.pwm)
@@ -432,30 +429,28 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
         None => return -1,
     };
 
-    let result =
-        OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
-            let offset = open_file.get_offset();
+    let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
+        let offset = open_file.get_offset();
 
-            match open_file.inode().readdir(offset) {
-                Ok((name, file_type, has_more)) => {
-                    if !has_more {
-                        return 0;
-                    }
-                    let mut dir_entry = VfsDirEntry::default();
-                    dir_entry.set_name(&name);
-                    dir_entry.file_type = file_type.as_u8();
-                    // SAFETY: 调用方保证指针/类型有效
-                    let mut entry_ref = unsafe { UserRefMut::new(entry) };
-                    *entry_ref.as_mut() = dir_entry;
-                    let new_offset = offset
-                        + core::mem::size_of::<crate::framework::fs::ramfs::RamFsDirEntry>()
-                            as u64;
-                    open_file.set_offset(new_offset);
-                    1
+        match open_file.inode().readdir(offset) {
+            Ok((name, file_type, has_more)) => {
+                if !has_more {
+                    return 0;
                 }
-                Err(_) => -1,
+                let mut dir_entry = VfsDirEntry::default();
+                dir_entry.set_name(&name);
+                dir_entry.file_type = file_type.as_u8();
+                // SAFETY: 调用方保证指针/类型有效
+                let mut entry_ref = unsafe { UserRefMut::new(entry) };
+                *entry_ref.as_mut() = dir_entry;
+                let new_offset = offset
+                    + core::mem::size_of::<crate::framework::fs::ramfs::RamFsDirEntry>() as u64;
+                open_file.set_offset(new_offset);
+                1
             }
-        });
+            Err(_) => -1,
+        }
+    });
 
     result.unwrap_or(-1)
 }
@@ -561,10 +556,7 @@ pub fn vfs_seek_safe(fd: u32, offset: i32, whence: u32) -> i32 {
     reason = "ref_as_ptr: &T as *const T 是已知安全 (Rust 2024 可用 &raw const; 当前优先 expect"
 )]
 /// Safe 包装: `vfs_readdir`
-pub fn vfs_readdir_safe(
-    fd: u32,
-    entry: &mut super::types::VfsDirEntry,
-) -> i32 {
+pub fn vfs_readdir_safe(fd: u32, entry: &mut super::types::VfsDirEntry) -> i32 {
     // SAFETY: entry 是调用方拥有的有效可写结构体
     vfs_readdir(fd, entry as *mut _)
 }

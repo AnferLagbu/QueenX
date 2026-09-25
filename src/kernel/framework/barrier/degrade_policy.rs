@@ -83,13 +83,11 @@ impl BarrierDegradePolicy for FallbackBarrierDegradePolicy {
     }
 }
 
-static FALLBACK_BARRIER_DEGRADE_POLICY: FallbackBarrierDegradePolicy =
-    FallbackBarrierDegradePolicy;
+static FALLBACK_BARRIER_DEGRADE_POLICY: FallbackBarrierDegradePolicy = FallbackBarrierDegradePolicy;
 
 /// 全局策略注册表 — services 通过 `register_barrier_degrade_policy` 注册
-static BARRIER_DEGRADE_POLICY: crate::framework::sync::OnceLock<
-    &'static dyn BarrierDegradePolicy,
-> = crate::framework::sync::OnceLock::new();
+static BARRIER_DEGRADE_POLICY: crate::framework::sync::OnceLock<&'static dyn BarrierDegradePolicy> =
+    crate::framework::sync::OnceLock::new();
 
 /// 注册栏栈降级策略 (由 `services::barrier::init` 调用)
 ///
@@ -140,7 +138,10 @@ mod tests {
 
         // 4 次失败: 剥夺 FS_WRITE | NET_SEND | PROC_CREATE
         let d = p.degrade(4, original);
-        assert_eq!(d.cap_mask, original & !(CAP_FS_WRITE | CAP_NET_SEND | CAP_PROC_CREATE));
+        assert_eq!(
+            d.cap_mask,
+            original & !(CAP_FS_WRITE | CAP_NET_SEND | CAP_PROC_CREATE)
+        );
         assert!(d.mark_degraded);
         assert!(!d.mark_quarantined);
 

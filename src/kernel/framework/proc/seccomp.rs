@@ -40,10 +40,10 @@ pub const MAX_FILTERS: usize = 4;
 // B09-17 (2026-09-14): 白名单数值从 QX_* 私有区 (501+) 归位 Linux 编号 (SYS_*).
 // 原 QX_* 值 (502/503/...) 与用户态实际 syscall 编号 (SYS_read=0 等) 不一致 → 白名单永不命中 (bug).
 const STRICT_ALLOWED: &[u64] = &[
-    SYS_read,        // read
-    SYS_write,       // write
-    SYS_exit,        // exit
-    SYS_exit_group,  // exit_group
+    SYS_read,         // read
+    SYS_write,        // write
+    SYS_exit,         // exit
+    SYS_exit_group,   // exit_group
     SYS_rt_sigreturn, // rt_sigreturn
 ];
 

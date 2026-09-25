@@ -6,13 +6,13 @@
 //! services 依赖: `services::net` (安全代理)
 
 pub mod driver;
-/// NetOps 安全桥 (批次 Z ④): services 网络设备经 trait 接入 smoltcp。
-pub mod net_device_ops;
 /// REVAL-W: 网络协议栈抽象 — Framekernel Safe API (W1 子任务, 2026-06-24)
 /// 设计见 [docs/plan/smoltcp-framekernel-wrapper.md]
 pub mod iface_trait;
 #[cfg(not(feature = "kernel_test"))]
 pub mod init;
+/// NetOps 安全桥 (批次 Z ④): services 网络设备经 trait 接入 smoltcp。
+pub mod net_device_ops;
 /// C5: Netfilter 包过滤框架
 pub mod netfilter;
 /// C5: 路由表管理

@@ -287,8 +287,7 @@ pub type SignalResult<T> = Result<T, SignalError>;
 pub fn send(pid: crate::framework::proc::Pid, sig: Signal) -> SignalResult<()> {
     if sig == Signal::NONE {
         // POSIX: kill(pid, 0) 仅检查进程存在, 不发送
-        return crate::services::proc::table::with(pid, |_p| ())
-            .ok_or(SignalError::NoSuchProcess);
+        return crate::services::proc::table::with(pid, |_p| ()).ok_or(SignalError::NoSuchProcess);
     }
     if sig.0 > 63 {
         return Err(SignalError::InvalidArgument);
@@ -308,8 +307,7 @@ pub fn pending(pid: crate::framework::proc::Pid) -> Option<u64> {
 ///
 /// 当目标进程不存在时返回 `NoSuchProcess`.
 pub fn clear(pid: crate::framework::proc::Pid, mask: u64) -> SignalResult<()> {
-    crate::services::proc::table::signal_clear(pid, mask)
-        .map_err(|_| SignalError::NoSuchProcess)
+    crate::services::proc::table::signal_clear(pid, mask).map_err(|_| SignalError::NoSuchProcess)
 }
 
 // ============================================================================
@@ -492,8 +490,8 @@ pub fn tgkill_syscall(
     }
 
     // 目标存在性校验 (tid 在当前模型下即 pid)
-    let target = crate::framework::proc::api::process_with(tid as u32, |p| p.pid)
-        .ok_or(Errno::ESRCH)?;
+    let target =
+        crate::framework::proc::api::process_with(tid as u32, |p| p.pid).ok_or(Errno::ESRCH)?;
     if target.0 != tgid as u32 {
         // 无线程组模型下 tid 所属进程的 tgid 即其 pid
         return Err(Errno::ESRCH);

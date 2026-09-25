@@ -466,10 +466,7 @@ pub fn apply_adjtimex(
 
     // ADJ_SETOFFSET: 在墙钟上叠加增量 (加性跳变)
     if modes & ADJ_SETOFFSET != 0 {
-        let delta = Timeval {
-            tv_sec,
-            tv_usec,
-        };
+        let delta = Timeval { tv_sec, tv_usec };
         let delta_ns = timeval_to_ns_signed(delta);
         let target = if delta_ns >= 0 {
             wall_clock_ns().saturating_add(delta_ns as u64)

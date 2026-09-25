@@ -115,12 +115,12 @@ pub fn prctl_syscall(option: i64, arg2: u64, _arg3: u64, _arg4: u64, _arg5: u64)
             process_with(pid, |p| p.seccomp.set_no_new_privs()).unwrap_or(());
             0
         }
-        PR_GET_NO_NEW_PRIVS => process_with(pid, |p| i64::from(p.seccomp.is_no_new_privs()))
-            .unwrap_or(0),
+        PR_GET_NO_NEW_PRIVS => {
+            process_with(pid, |p| i64::from(p.seccomp.is_no_new_privs())).unwrap_or(0)
+        }
         PR_SET_NAME => {
             // 进程名 (comm 语义): 拷贝用户字符串, 截断到 15 字符 + NUL
-            let Ok(name) = crate::framework::mm::copy_user::copy_string_from_user(arg2, 16)
-            else {
+            let Ok(name) = crate::framework::mm::copy_user::copy_string_from_user(arg2, 16) else {
                 return Errno::EFAULT.as_ret();
             };
             let mut buf = name.into_bytes();

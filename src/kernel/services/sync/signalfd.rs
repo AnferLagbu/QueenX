@@ -23,8 +23,7 @@ pub const SFD_CLOEXEC: i32 = crate::framework::syscall::signalfd::SFD_CLOEXEC;
 pub const SFD_FD_BASE: i32 = crate::framework::syscall::signalfd::SFD_FD_BASE;
 
 /// `signalfd_siginfo` 大小
-pub const SIGNALFD_SIGINFO_SIZE: usize =
-    crate::framework::syscall::signalfd::SIGNALFD_SIGINFO_SIZE;
+pub const SIGNALFD_SIGINFO_SIZE: usize = crate::framework::syscall::signalfd::SIGNALFD_SIGINFO_SIZE;
 
 /// signalfd 安全代理
 ///

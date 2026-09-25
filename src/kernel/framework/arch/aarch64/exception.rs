@@ -634,8 +634,7 @@ pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
                 Boot,
                 "TIMER IRQ (EL0) count={} ready={}",
                 el0count,
-                crate::framework::net::NET_READY
-                    .load(core::sync::atomic::Ordering::Acquire)
+                crate::framework::net::NET_READY.load(core::sync::atomic::Ordering::Acquire)
             );
         }
 
@@ -864,8 +863,7 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
                 Boot,
                 "TIMER IRQ count={} ready={}",
                 tcount,
-                crate::framework::net::NET_READY
-                    .load(core::sync::atomic::Ordering::Acquire)
+                crate::framework::net::NET_READY.load(core::sync::atomic::Ordering::Acquire)
             );
         }
 
@@ -879,9 +877,7 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
         }
 
         // 仅当 scheduler 已初始化时触发调度
-        if crate::framework::proc::SCHEDULER_READY
-            .load(core::sync::atomic::Ordering::Acquire)
-        {
+        if crate::framework::proc::SCHEDULER_READY.load(core::sync::atomic::Ordering::Acquire) {
             // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
             unsafe extern "C" {
                 fn scheduler_tick();

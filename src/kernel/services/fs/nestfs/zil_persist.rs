@@ -471,15 +471,10 @@ impl NestZilPersist {
             // 通过后 record 解析必成功 (record CRC ⊆ block CRC 覆盖范围, 数学上不可达).
             // Err 为不可达防御: 若发生说明块级校验有盲区, 整个 block 拒绝 (损坏块
             // 拒绝契约), 而非静默跳过单条制造半持久化错觉.
-            let Ok(record) =
-                try_deserialize_record(&block[offset..offset + ZIL_RECORD_DISK_SIZE])
+            let Ok(record) = try_deserialize_record(&block[offset..offset + ZIL_RECORD_DISK_SIZE])
             else {
                 #[cfg(debug_assertions)]
-                crate::slog_warn!(
-                    FS,
-                    "ZIL 回放: record 解析失败 (index={}), 整块拒绝",
-                    i
-                );
+                crate::slog_warn!(FS, "ZIL 回放: record 解析失败 (index={}), 整块拒绝", i);
                 return Vec::new();
             };
             records.push(record);

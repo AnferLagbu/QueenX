@@ -96,14 +96,14 @@ pub use vmm::*;
 // api 公共接口 re-export — 避免跨子系统直接访问 mm::api 内部
 // 注意: 不使用 glob re-export 因与 vmm::* 有名称冲突 (vmm_init 等)
 pub use api::{
-    KmallocStats, PageFaultInfo, PfResult, copy_from_user, copy_to_user,
-    handle_page_fault, handle_user_page_fault, is_user_buf, k_free, k_malloc, kfree, kmalloc_stats,
+    KmallocStats, PageFaultInfo, PfResult, copy_from_user, copy_to_user, handle_page_fault,
+    handle_user_page_fault, is_user_buf, k_free, k_malloc, kfree, kmalloc_stats,
     pmm_alloc_huge_page, pmm_alloc_huge_page_phys, pmm_alloc_page, pmm_alloc_page_phys,
     pmm_alloc_pages, pmm_alloc_pages_phys, pmm_dump_stats, pmm_free_huge_page, pmm_free_page,
     pmm_free_page_phys, pmm_free_pages, pmm_free_pages_phys, pmm_get_free_pages,
     pmm_get_total_pages, pmm_get_used_pages, pmm_init, pmm_init_bitmap, pmm_is_aligned_for_huge,
-    vma_get_current_mm, vma_set_current_mm, vmm_clone_user_page_table_cow,
-    vmm_destroy_page_table, vmm_switch_page_table,
+    vma_get_current_mm, vma_set_current_mm, vmm_clone_user_page_table_cow, vmm_destroy_page_table,
+    vmm_switch_page_table,
 };
 
 // vma 公共类型 re-export — 避免跨子系统直接访问 mm::vma 内部
@@ -149,8 +149,7 @@ pub use swap_trait::{
 
 // page_fault_policy 公共接口 re-export — 缺页策略-机制分离
 pub use page_fault_policy::{
-    FallbackPageFaultPolicy, PageFaultPolicy, current_page_fault_policy,
-    register_page_fault_policy,
+    FallbackPageFaultPolicy, PageFaultPolicy, current_page_fault_policy, register_page_fault_policy,
 };
 
 // cow 模块的计数入口已收敛到 PMM 帧持有计数面 (`pmm::frame_inc` / `frame_dec` /

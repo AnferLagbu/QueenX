@@ -924,14 +924,13 @@ impl NvmeController {
     /// Identify 控制器
     pub fn identify_controller(&mut self) -> bool {
         let buf_size = 4096; // Identify 数据为 4KB
-        let buf = if let Some(v) =
-            crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
-        {
-            v
-        } else {
-            slog_warn!(Driver, "Identify 缓冲区分配失败");
-            return false;
-        };
+        let buf =
+            if let Some(v) = crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size) {
+                v
+            } else {
+                slog_warn!(Driver, "Identify 缓冲区分配失败");
+                return false;
+            };
         let vaddr = buf.cpu_addr().as_ptr() as u64;
         let paddr = buf.dma_addr().as_u64();
 
@@ -946,11 +945,7 @@ impl NvmeController {
             // §6.4 storage 专项 0 号子步: 经 framework DMA 拷贝读取数据字节,
             // 解析 (纯函数) 在 services 层完成
             let mut data = [0u8; 520];
-            crate::framework::driver::storage::nvme_copy_from_dma(
-                data.as_mut_ptr(),
-                vaddr,
-                520,
-            );
+            crate::framework::driver::storage::nvme_copy_from_dma(data.as_mut_ptr(), vaddr, 520);
             if let Some((nn, model)) = parse_identify_controller(&data) {
                 self.namespace_count = nn;
 
@@ -976,14 +971,13 @@ impl NvmeController {
     /// Identify 命名空间
     pub fn identify_namespace(&mut self, nsid: u32) -> bool {
         let buf_size = 4096;
-        let buf = if let Some(v) =
-            crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size)
-        {
-            v
-        } else {
-            slog_warn!(Driver, "Identify NS 缓冲区分配失败");
-            return false;
-        };
+        let buf =
+            if let Some(v) = crate::framework::driver::storage::nvme_alloc_dma_buffer(buf_size) {
+                v
+            } else {
+                slog_warn!(Driver, "Identify NS 缓冲区分配失败");
+                return false;
+            };
         let vaddr = buf.cpu_addr().as_ptr() as u64;
         let paddr = buf.dma_addr().as_u64();
 
@@ -997,11 +991,7 @@ impl NvmeController {
             // §6.4 storage 专项 0 号子步: 经 framework DMA 拷贝读取数据字节,
             // 解析 (纯函数) 在 services 层完成
             let mut data = [0u8; 192];
-            crate::framework::driver::storage::nvme_copy_from_dma(
-                data.as_mut_ptr(),
-                vaddr,
-                192,
-            );
+            crate::framework::driver::storage::nvme_copy_from_dma(data.as_mut_ptr(), vaddr, 192);
             if let Some((nsze, flbas, lbaf_data)) = parse_identify_namespace(&data) {
                 self.namespace_size_lba = nsze;
 
@@ -1151,9 +1141,7 @@ impl NvmeController {
 
         if result.is_ok() {
             // 从 DMA 缓冲区复制到用户缓冲区
-            crate::framework::driver::storage::nvme_copy_from_dma(
-                buffer, buf_vaddr, byte_count,
-            );
+            crate::framework::driver::storage::nvme_copy_from_dma(buffer, buf_vaddr, byte_count);
         }
 
         result
@@ -1303,26 +1291,24 @@ impl NvmeController {
         let io_cq_db_offset = self.io_db_offset() + 4;
 
         // Admin CQ 排空 (doorbell = DB_BASE + 4: QID 0 completion 槽)
-        let (admin_drained, _) =
-            crate::framework::driver::storage::nvme_drain_completions(
-                self.admin_cq_virt,
-                &mut self.admin_queue.cq_head,
-                &mut self.admin_queue.admin_cq_phase,
-                admin_depth,
-                &self.mmio,
-                NVME_DB_BASE + 4,
-            );
+        let (admin_drained, _) = crate::framework::driver::storage::nvme_drain_completions(
+            self.admin_cq_virt,
+            &mut self.admin_queue.cq_head,
+            &mut self.admin_queue.admin_cq_phase,
+            admin_depth,
+            &self.mmio,
+            NVME_DB_BASE + 4,
+        );
 
         // I/O CQ 排空 + 完成计数递增 (Release 配对提交者 Acquire 等待)
-        let (io_drained, status) =
-            crate::framework::driver::storage::nvme_drain_completions(
-                self.io_cq_virt,
-                &mut self.io_queue.cq_head,
-                &mut self.io_queue.io_cq_phase,
-                io_depth,
-                &self.mmio,
-                io_cq_db_offset,
-            );
+        let (io_drained, status) = crate::framework::driver::storage::nvme_drain_completions(
+            self.io_cq_virt,
+            &mut self.io_queue.cq_head,
+            &mut self.io_queue.io_cq_phase,
+            io_depth,
+            &self.mmio,
+            io_cq_db_offset,
+        );
         if io_drained > 0 {
             if (status >> 1) & 0x7FF != 0 {
                 slog_warn!(
@@ -1553,8 +1539,7 @@ mod tests {
         data[138] = 0x01;
         data[139] = 0x00;
 
-        let (nsze, flbas, lbaf_data) =
-            parse_identify_namespace(&data).expect("长度足够应解析成功");
+        let (nsze, flbas, lbaf_data) = parse_identify_namespace(&data).expect("长度足够应解析成功");
         assert_eq!(nsze, 1_048_576);
         assert_eq!(flbas, 2);
         assert_eq!(lbaf_data, 0x0001_0000);

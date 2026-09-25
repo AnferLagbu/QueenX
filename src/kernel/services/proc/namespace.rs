@@ -67,7 +67,9 @@ pub fn setns_syscall(ns_type: u64, target_ns_id: u64) -> i64 {
 
     let pid = process_get_current_pid();
 
-    match process_with_mut(pid, |p| p.namespaces.lock().setns_by_type(ns_t, target_ns_id)) {
+    match process_with_mut(pid, |p| {
+        p.namespaces.lock().setns_by_type(ns_t, target_ns_id)
+    }) {
         Some(Ok(())) => 0,
         Some(Err(e)) => e.as_ret(),
         None => Errno::ESRCH.as_ret(),

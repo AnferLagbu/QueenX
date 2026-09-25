@@ -73,9 +73,7 @@ struct CpuQueues {
 unsafe impl Sync for CpuQueues {}
 
 static CPU_QUEUES: CpuQueues = CpuQueues {
-    queues: UnsafeCell::new(
-        [const { CpuQueue::new() }; crate::framework::config::MAX_CPUS],
-    ),
+    queues: UnsafeCell::new([const { CpuQueue::new() }; crate::framework::config::MAX_CPUS]),
 };
 
 pub fn cpu_queue(cpu_id: u32) -> &'static CpuQueue {

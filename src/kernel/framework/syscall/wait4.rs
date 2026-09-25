@@ -184,8 +184,7 @@ fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
         } else {
             // target_pid < -1: 进程组 ID = |target_pid|
             let want_pgid = target_pid.unsigned_abs();
-            let pgid = api::process_with(child_pid, |p| p.pgid.load(Ordering::SeqCst))
-                .unwrap_or(0);
+            let pgid = api::process_with(child_pid, |p| p.pgid.load(Ordering::SeqCst)).unwrap_or(0);
             if pgid == want_pgid {
                 return Some(child_pid);
             }

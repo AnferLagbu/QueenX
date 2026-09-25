@@ -14,9 +14,7 @@ use crate::framework::chitin::firmware as fw;
 pub use crate::framework::chitin::FirmwareInfo;
 
 /// 固件加载错误码
-pub use crate::framework::chitin::{
-    FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_OOM, FW_ERR_TOO_LARGE,
-};
+pub use crate::framework::chitin::{FW_ERR_IO, FW_ERR_NOT_FOUND, FW_ERR_OOM, FW_ERR_TOO_LARGE};
 
 /// 固件大小上限
 pub use crate::framework::chitin::MAX_FIRMWARE_SIZE;

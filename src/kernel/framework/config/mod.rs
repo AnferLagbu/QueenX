@@ -269,8 +269,8 @@ pub fn init() {
     // 注意: 此校验点位于 kernel_init 极早期, 此时 PCI/网络/驱动尚未初始化。
     // 这里记录为 0 错误是预期行为 — 真正的 driver 配置检查在它们各自的 init() 末尾调用。
     // clippy: 消除冗余闭包 (直接函数引用)
-    let driver_errors = current_config_validate_hook()
-        .map_or(0, ConfigValidateHook::validate_drivers);
+    let driver_errors =
+        current_config_validate_hook().map_or(0, ConfigValidateHook::validate_drivers);
     if driver_errors > 0 {
         klog_info!(
             Boot,

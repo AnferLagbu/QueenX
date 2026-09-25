@@ -167,7 +167,7 @@ pub fn reset_stats() {
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
-    use super::{get_stats, reset_stats, RecoveryConfig, RecoveryLayer, RecoveryResult};
+    use super::{RecoveryConfig, RecoveryLayer, RecoveryResult, get_stats, reset_stats};
 
     pub fn test_recovery_result() -> bool {
         let success = RecoveryResult::Success;

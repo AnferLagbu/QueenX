@@ -612,13 +612,35 @@ mod tests {
         let mut eng = DelegationEngine::new(&mut table, &policy);
 
         // 根委托: A(1) → B(2)
-        let r1 = eng.delegate(&from, &mut to, 1, 2, CapDomain::FS, CapBits(0b1000), 100, 0, 0, false);
+        let r1 = eng.delegate(
+            &from,
+            &mut to,
+            1,
+            2,
+            CapDomain::FS,
+            CapBits(0b1000),
+            100,
+            0,
+            0,
+            false,
+        );
         let gen1 = match r1 {
             DelegationResult::Granted { r#gen } => r#gen,
             _ => panic!("expected Granted"),
         };
         // 子委托: B(2) → C(3), parent_gen = gen1
-        let r2 = eng.delegate(&to, &mut to2, 2, 3, CapDomain::FS, CapBits(0b0100), 100, 0, gen1, false);
+        let r2 = eng.delegate(
+            &to,
+            &mut to2,
+            2,
+            3,
+            CapDomain::FS,
+            CapBits(0b0100),
+            100,
+            0,
+            gen1,
+            false,
+        );
         let gen2 = match r2 {
             DelegationResult::Granted { r#gen } => r#gen,
             _ => panic!("expected Granted"),
@@ -642,7 +664,18 @@ mod tests {
         from.set(CapDomain::FS, CapBits(0xFF)).unwrap();
         let mut eng = DelegationEngine::new(&mut table, &policy);
         // parent_gen=999 不存在 → 拒绝
-        let r = eng.delegate(&from, &mut to, 1, 2, CapDomain::FS, CapBits(0b1000), 100, 0, 999, false);
+        let r = eng.delegate(
+            &from,
+            &mut to,
+            1,
+            2,
+            CapDomain::FS,
+            CapBits(0b1000),
+            100,
+            0,
+            999,
+            false,
+        );
         assert!(matches!(
             r,
             DelegationResult::Denied(DelegationDeny::InvalidExpiry)

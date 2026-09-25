@@ -418,8 +418,7 @@ impl ProcfsData {
 
             for info in infos.iter().take(count) {
                 let objperslab = if info.object_size > 0 {
-                    (crate::framework::mm::PAGE_SIZE as usize / info.object_size as usize)
-                        as u32
+                    (crate::framework::mm::PAGE_SIZE as usize / info.object_size as usize) as u32
                 } else {
                     0
                 };

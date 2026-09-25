@@ -244,8 +244,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
         let mtime_v = if mtime_sec == -1 { u64::MAX } else { times[2] };
         (atime_v, mtime_v)
     };
-    let Ok(path) = crate::framework::mm::copy_user::copy_string_from_user(path_ptr, 4096)
-    else {
+    let Ok(path) = crate::framework::mm::copy_user::copy_string_from_user(path_ptr, 4096) else {
         return Errno::EFAULT.as_ret();
     };
     let pwm = crate::framework::credo::pwm_get_current();

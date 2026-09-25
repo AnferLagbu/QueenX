@@ -86,8 +86,7 @@ fn classify_pressure(free_pages: u64, total_pages: u64) -> MemoryPressure {
 ///
 /// 当分级策略已被注册时返回 `Err(())`.
 pub fn register_pressure_classifier() -> Result<(), ()> {
-    crate::framework::mm::pressure::register_pressure_classifier(classify_pressure)
-        .map_err(|_| ())
+    crate::framework::mm::pressure::register_pressure_classifier(classify_pressure).map_err(|_| ())
 }
 
 pub fn is_pressure_critical() -> bool {

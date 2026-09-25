@@ -164,10 +164,7 @@ pub fn raw_read_sun_family(ptr: u64) -> Result<u16, Errno> {
 /// 当路径以 NUL 开头 (空路径) 时返回 `Errno::EINVAL`.
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-pub fn raw_read_sockaddr_un(
-    ptr: u64,
-    addrlen: u32,
-) -> Result<SockAddrUn, Errno> {
+pub fn raw_read_sockaddr_un(ptr: u64, addrlen: u32) -> Result<SockAddrUn, Errno> {
     if ptr == 0 || addrlen < 2 {
         return Err(Errno::EFAULT);
     }
@@ -208,11 +205,7 @@ pub fn raw_read_sockaddr_un(
 /// 当 `ptr`/`addrlen_ptr` 无效或任一用户缓冲区校验失败时返回 `Errno::EFAULT`.
 // 有意窄化: 显式收窄, 调用方保证值域
 #[expect(clippy::cast_possible_truncation)]
-pub fn raw_write_sockaddr_un(
-    ptr: u64,
-    addrlen_ptr: u64,
-    addr: &SockAddrUn,
-) -> Result<(), Errno> {
+pub fn raw_write_sockaddr_un(ptr: u64, addrlen_ptr: u64, addr: &SockAddrUn) -> Result<(), Errno> {
     if ptr == 0 || addrlen_ptr == 0 {
         return Err(Errno::EFAULT);
     }

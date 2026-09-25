@@ -643,13 +643,12 @@ impl AhciPort {
         if self.dma.is_some() {
             return true;
         }
-        let handle =
-            if let Some(h) = crate::framework::driver::storage::ahci_alloc_port_dma() {
-                h
-            } else {
-                slog_warn!(Driver, "端口 {} DMA 分配失败", self.port_num);
-                return false;
-            };
+        let handle = if let Some(h) = crate::framework::driver::storage::ahci_alloc_port_dma() {
+            h
+        } else {
+            slog_warn!(Driver, "端口 {} DMA 分配失败", self.port_num);
+            return false;
+        };
 
         // 写入寄存器
         self.set_cmd_list(hba, handle.cmd_list_phys);
@@ -877,12 +876,11 @@ impl AhciPort {
         let byte_count = u32::from(count) * SECTOR_SIZE as u32;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let buf = match crate::framework::driver::storage::ahci_alloc_dma_buffer(
-            byte_count as usize,
-        ) {
-            Some(v) => v,
-            None => return Err(()),
-        };
+        let buf =
+            match crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize) {
+                Some(v) => v,
+                None => return Err(()),
+            };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_paddr = buf.dma_addr().as_u64();
 
@@ -934,21 +932,16 @@ impl AhciPort {
         let byte_count = u32::from(count) * SECTOR_SIZE as u32;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let buf = match crate::framework::driver::storage::ahci_alloc_dma_buffer(
-            byte_count as usize,
-        ) {
-            Some(v) => v,
-            None => return Err(()),
-        };
+        let buf =
+            match crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize) {
+                Some(v) => v,
+                None => return Err(()),
+            };
         let buf_vaddr = buf.cpu_addr().as_ptr() as u64;
         let buf_paddr = buf.dma_addr().as_u64();
 
         // 复制数据到 DMA 缓冲区
-        crate::framework::driver::storage::ahci_copy_to_dma(
-            buf_vaddr,
-            buffer,
-            byte_count as usize,
-        );
+        crate::framework::driver::storage::ahci_copy_to_dma(buf_vaddr, buffer, byte_count as usize);
 
         let fis = H2dFis::write_dma(lba, count);
         let result = self.submit_dma_command(hba, &fis, buf_paddr, byte_count, true);
@@ -977,7 +970,8 @@ impl AhciPort {
         let byte_count = SECTOR_SIZE as u32;
 
         // 分配 DMA 缓冲区 (RAII 句柄: 函数返回即归还)
-        let Some(buf) = crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
+        let Some(buf) =
+            crate::framework::driver::storage::ahci_alloc_dma_buffer(byte_count as usize)
         else {
             return Err(());
         };
@@ -1185,7 +1179,11 @@ impl AhciController {
 
         // 获取已实现的端口
         self.port_bitmap = self.hba.ports_implemented();
-        slog_info!(Driver, "HBA 就绪, 已实现端口位图 PI={:#010x}", self.port_bitmap);
+        slog_info!(
+            Driver,
+            "HBA 就绪, 已实现端口位图 PI={:#010x}",
+            self.port_bitmap
+        );
 
         // 初始化每个端口
         for i in 0..AHCI_MAX_PORTS {

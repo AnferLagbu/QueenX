@@ -117,8 +117,7 @@ pub extern "C" fn user_proc_load_elf(path: *const u8, pwm: u64) -> i32 {
         return -1;
     }
 
-    let mut st: crate::framework::fs::VfsStat =
-        crate::framework::fs::VfsStat::default();
+    let mut st: crate::framework::fs::VfsStat = crate::framework::fs::VfsStat::default();
     let stat_result = crate::framework::fs::vfs_stat(path, &mut st, pwm);
     if stat_result < 0 {
         return -1;
@@ -141,8 +140,7 @@ pub extern "C" fn user_proc_load_elf(path: *const u8, pwm: u64) -> i32 {
         return -1;
     }
 
-    let bytes_read =
-        crate::framework::fs::vfs_read(fd as u32, buffer as *mut u8, file_size as u32);
+    let bytes_read = crate::framework::fs::vfs_read(fd as u32, buffer as *mut u8, file_size as u32);
 
     crate::framework::fs::vfs_close(fd as u32);
 
@@ -280,8 +278,7 @@ pub extern "C" fn launch_first_user_process() -> ! {
 
     // 1. 挂载 ramfs 为根文件系统
     crate::klog_boot_info!("[USER] Mounting ramfs...");
-    let mount_result =
-        crate::framework::fs::vfs_mount(b"/\0".as_ptr(), b"ramfs\0".as_ptr());
+    let mount_result = crate::framework::fs::vfs_mount(b"/\0".as_ptr(), b"ramfs\0".as_ptr());
     crate::klog_boot_info!("[USER] ramfs mount result={}", mount_result);
 
     if mount_result < 0 {

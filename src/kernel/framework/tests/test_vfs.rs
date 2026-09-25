@@ -20,7 +20,10 @@ fn test_fstype_from_name() -> TestResult {
 
 fn test_fstype_as_str() -> TestResult {
     check!(FsType::RamFs.as_str() == "ramfs", "RamFs as_str mismatch");
-    check!(FsType::NestFs.as_str() == "nestfs", "NestFs as_str mismatch");
+    check!(
+        FsType::NestFs.as_str() == "nestfs",
+        "NestFs as_str mismatch"
+    );
     check!(
         FsType::Unknown.as_str() == "unknown",
         "Unknown as_str mismatch"
@@ -176,8 +179,8 @@ fn test_fs_backend_registered_make_inode() -> TestResult {
     // 激活注册 (幂等: 重复注册 Err 被忽略)
     crate::services::fs::init();
     // 钩子必须返回真实 Inode — FallbackFsBackend 恒 Err, 本断言锁定回归
-    let result = crate::framework::fs::vfs::backend_trait::current_fs_backend()
-        .make_ramfs_inode(0, 0);
+    let result =
+        crate::framework::fs::vfs::backend_trait::current_fs_backend().make_ramfs_inode(0, 0);
     check!(
         result.is_ok(),
         "make_ramfs_inode 命中回退策略 — services::fs::init 未生效"
@@ -186,8 +189,8 @@ fn test_fs_backend_registered_make_inode() -> TestResult {
 }
 
 fn test_ramfs_fs_open_via_backend_hook() -> TestResult {
-    use crate::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
     use crate::framework::fs::FileSystem;
+    use crate::framework::fs::ramfs::{RAMFS_DATA, RamFsData};
 
     crate::services::fs::init();
     // 建根目录 (幂等): RAMFS_DATA 初始为空, resolve_path("/") 需先 mount
@@ -335,8 +338,9 @@ const BAD_USER_PTR: u64 = 0x8000_0000_0000_0000;
 
 /// `inotify_init` 遗留接口等价 `inotify_init1(0)`
 fn test_inotify_init_legacy() -> TestResult {
-    use crate::framework::fs::vfs::inotify::{IN_NONBLOCK, inotify_release, is_inotify_fd,
-        sys_inotify_init1};
+    use crate::framework::fs::vfs::inotify::{
+        IN_NONBLOCK, inotify_release, is_inotify_fd, sys_inotify_init1,
+    };
 
     let fd = sys_inotify_init1(0);
     check!(fd > 0, "inotify_init1(0) 应返回有效 fd");
@@ -381,10 +385,7 @@ fn test_temporary_sigmask_swap() -> TestResult {
         // sigmask 指针越界 → EFAULT (此处仅验证错误路径不污染原掩码)
         let err = with_temporary_sigmask(BAD_USER_PTR, 8, || Ok(9));
         check!(err.is_err(), "非法 sigmask 指针应返回错误");
-        check!(
-            get_blocked_mask(pid) == original,
-            "错误路径不应改变屏蔽字"
-        );
+        check!(get_blocked_mask(pid) == original, "错误路径不应改变屏蔽字");
     }
     // sigsetsize != 8 → EINVAL (sigmask 非 NULL 时校验)
     match with_temporary_sigmask(BAD_USER_PTR, 4, || Ok(9)) {
@@ -493,17 +494,17 @@ fn test_resolve_relative_to_cwd() -> TestResult {
     // chdir 经 resolve_view_path 存储 (视图路径, 无根前缀)
     let mut buf = [0u8; VFS_MAX_PATH];
     let view = mgr.resolve_view_path("/opt/./srv/../app", &mut buf);
-    check!(view == Some("/opt/app"), "resolve_view_path 应归一化视图路径");
+    check!(
+        view == Some("/opt/app"),
+        "resolve_view_path 应归一化视图路径"
+    );
     TestResult::Pass
 }
 
 /// 根前缀: 视图路径 → 真实路径拼接 + 切根后 cwd 重置
 fn test_resolve_with_root_prefix() -> TestResult {
     let mgr = VfsManager::new();
-    check!(
-        resolve_is(&mgr, "/tmp", "/tmp"),
-        "前置: 默认根下路径不变"
-    );
+    check!(resolve_is(&mgr, "/tmp", "/tmp"), "前置: 默认根下路径不变");
 
     mgr.set_root("/jail");
     check!(mgr.get_root() == "/jail", "切根后 root 应为 /jail");
@@ -516,10 +517,7 @@ fn test_resolve_with_root_prefix() -> TestResult {
         resolve_is(&mgr, "/../..", "/jail"),
         "根前缀之外的 .. 不应逃逸 (钳制在视图根)"
     );
-    check!(
-        resolve_is(&mgr, "/", "/jail"),
-        "视图根应映射为根前缀自身"
-    );
+    check!(resolve_is(&mgr, "/", "/jail"), "视图根应映射为根前缀自身");
 
     // 相对路径基于视图 cwd (cwd 为视图路径, 与根前缀无关)
     mgr.set_cwd("/sub");

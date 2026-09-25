@@ -29,10 +29,8 @@
 //!
 //! 评估日期: 2026-06-19
 
-use crate::framework::syscall::dispatch_trait::{
-    SyscallDispatch, register_syscall_dispatch,
-};
 use crate::framework::syscall::Errno;
+use crate::framework::syscall::dispatch_trait::{SyscallDispatch, register_syscall_dispatch};
 
 // ============================================================================
 // 辅助函数
@@ -101,19 +99,18 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
         QX_SNAPSHOT_CLONE, QX_SNAPSHOT_CREATE, QX_SNAPSHOT_DESTROY, QX_SNAPSHOT_ROLLBACK,
         SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_chroot, SYS_clock_gettime,
-        SYS_close_range, SYS_close, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
+        SYS_close, SYS_close_range, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
         SYS_faccessat, SYS_fallocate, SYS_fchmod, SYS_fchmodat, SYS_fchown, SYS_fchownat,
         SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd, SYS_getdents,
-        SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init,
-        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
-        SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat,
-        SYS_open, SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_poll, SYS_ppoll,
-        SYS_preadv, SYS_pivot_root, SYS_read,
-        SYS_readlink, SYS_readlinkat, SYS_readv, SYS_removexattr, SYS_rename, SYS_renameat,
-        SYS_rmdir, SYS_select, SYS_sendfile, SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat,
-        SYS_statx, SYS_symlink, SYS_symlinkat, SYS_sync, SYS_time, SYS_times, SYS_truncate,
-        SYS_umask, SYS_umount2, SYS_unlink, SYS_unlinkat, SYS_utimensat, SYS_write, SYS_writev,
-        SYS_pwritev,
+        SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init, SYS_inotify_init1,
+        SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr, SYS_lseek, SYS_lstat,
+        SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
+        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_pivot_root, SYS_poll,
+        SYS_ppoll, SYS_preadv, SYS_pwritev, SYS_read, SYS_readlink, SYS_readlinkat, SYS_readv,
+        SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select, SYS_sendfile,
+        SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat, SYS_statx, SYS_symlink, SYS_symlinkat,
+        SYS_sync, SYS_time, SYS_times, SYS_truncate, SYS_umask, SYS_umount2, SYS_unlink,
+        SYS_unlinkat, SYS_utimensat, SYS_write, SYS_writev,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -139,17 +136,19 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         },
         // close_range (T1 G1 实装): 批量关闭 fd
         SYS_close_range => as_ret(crate::services::fs::io::close_range_syscall(
-            a0 as u32,
-            a1 as u32,
-            a2 as u32,
+            a0 as u32, a1 as u32, a2 as u32,
         )),
         // preadv/pwritev (T1 G1 实装): 显式偏移向量 I/O (pos 为负时 -EINVAL)
         SYS_preadv => match i32::try_from(a0) {
-            Ok(fd) => as_ret(crate::services::fs::io::preadv_syscall(fd, a1, a2, a3 as i64)),
+            Ok(fd) => as_ret(crate::services::fs::io::preadv_syscall(
+                fd, a1, a2, a3 as i64,
+            )),
             Err(_) => Errno::EINVAL.as_ret(),
         },
         SYS_pwritev => match i32::try_from(a0) {
-            Ok(fd) => as_ret(crate::services::fs::io::pwritev_syscall(fd, a1, a2, a3 as i64)),
+            Ok(fd) => as_ret(crate::services::fs::io::pwritev_syscall(
+                fd, a1, a2, a3 as i64,
+            )),
             Err(_) => Errno::EINVAL.as_ret(),
         },
         SYS_open => as_ret(crate::services::fs::open::open_syscall(
@@ -157,68 +156,46 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
         SYS_close => as_ret(crate::services::fs::open::close_syscall(a0 as i32)),
         SYS_stat => as_ret(crate::services::fs::stat::stat_syscall(a0, a1)),
-        SYS_fstat => as_ret(crate::services::fs::stat::fstat_syscall(
-            a0 as i32, a1,
-        )),
+        SYS_fstat => as_ret(crate::services::fs::stat::fstat_syscall(a0 as i32, a1)),
         SYS_lstat => as_ret(crate::services::fs::stat::lstat_syscall(a0, a1)),
         // statx (T1 G1 实装): 扩展文件状态 (Linux struct statx)
         SYS_statx => as_ret(crate::services::fs::stat::statx_syscall(
             a0 as i32, a1, a2 as u32, a3 as u32, a4,
         )),
         // utimensat (T1 G1 实装): 设置文件时间戳 (仅 AT_FDCWD)
-        SYS_utimensat => crate::services::fs::stat::utimensat_syscall(
-            a0 as i32, a1, a2, a3 as i32,
-        ),
-        SYS_creat => as_ret(crate::services::fs::open::creat_syscall(
-            a0, a2 as i32,
-        )),
+        SYS_utimensat => crate::services::fs::stat::utimensat_syscall(a0 as i32, a1, a2, a3 as i32),
+        SYS_creat => as_ret(crate::services::fs::open::creat_syscall(a0, a2 as i32)),
 
         // 文件系统操作
-        SYS_mkdir => as_ret(crate::services::fs::mode::mkdir_syscall(
-            a0, a1 as i32,
-        )),
+        SYS_mkdir => as_ret(crate::services::fs::mode::mkdir_syscall(a0, a1 as i32)),
         SYS_rmdir => as_ret(crate::services::fs::mode::rmdir_syscall(a0)),
-        SYS_chmod => as_ret(crate::services::fs::mode::chmod_syscall(
-            a0, a1 as u32,
-        )),
+        SYS_chmod => as_ret(crate::services::fs::mode::chmod_syscall(a0, a1 as u32)),
         SYS_fchmod => as_ret(crate::services::fs::mode::fchmod_syscall(
             a0 as i32, a1 as u32,
         )),
         SYS_umask => as_ret(crate::services::fs::mode::umask_syscall(a0 as u32)),
-        SYS_access => as_ret(crate::services::fs::access::access_syscall(
-            a0, a1 as i32,
-        )),
+        SYS_access => as_ret(crate::services::fs::access::access_syscall(a0, a1 as i32)),
         SYS_unlink => as_ret(crate::services::fs::access::unlink_syscall(a0)),
         SYS_rename => as_ret(crate::services::fs::misc::rename_syscall(a0, a1)),
         SYS_symlink => as_ret(crate::services::fs::link::symlink_syscall(a0, a1)),
-        SYS_readlink => as_ret(crate::services::fs::link::readlink_syscall(
-            a0, a1, a2,
-        )),
+        SYS_readlink => as_ret(crate::services::fs::link::readlink_syscall(a0, a1, a2)),
         SYS_link => as_ret(crate::services::fs::link::link_syscall(a0, a1)),
 
         // *at() 系列
         SYS_openat => as_ret(crate::services::fs::open::open_syscall(
             a1, a2 as i32, a3 as i32,
         )),
-        SYS_newfstatat => as_ret(crate::services::fs::stat::fstat_syscall(
-            a1 as i32, a2,
-        )),
+        SYS_newfstatat => as_ret(crate::services::fs::stat::fstat_syscall(a1 as i32, a2)),
         SYS_unlinkat => as_ret(crate::services::fs::access::unlink_syscall(a1)),
         SYS_renameat => as_ret(crate::services::fs::misc::rename_syscall(a1, a3)),
         SYS_linkat => as_ret(crate::services::fs::link::link_syscall(a1, a3)),
         SYS_symlinkat => as_ret(crate::services::fs::link::symlink_syscall(a0, a2)),
-        SYS_readlinkat => as_ret(crate::services::fs::link::readlink_syscall(
-            a1, a2, a3,
-        )),
-        SYS_fchmodat => as_ret(crate::services::fs::mode::chmod_syscall(
-            a1, a2 as u32,
-        )),
+        SYS_readlinkat => as_ret(crate::services::fs::link::readlink_syscall(a1, a2, a3)),
+        SYS_fchmodat => as_ret(crate::services::fs::mode::chmod_syscall(a1, a2 as u32)),
         SYS_faccessat => as_ret(crate::services::fs::access::faccessat_syscall(
             a0 as i32, a1, a2 as i32, a3 as i32,
         )),
-        SYS_fchown => as_ret(crate::services::fs::misc::fchown_syscall(
-            a0 as i32, a1, a2,
-        )),
+        SYS_fchown => as_ret(crate::services::fs::misc::fchown_syscall(a0 as i32, a1, a2)),
         // fchownat (T1 G1 实装): dirfd 相对路径 (当前仅 AT_FDCWD)
         SYS_fchownat => crate::services::fs::file_ops::fchownat_syscall(
             a0 as i32, a1, a2 as u32, a3 as u32, a4 as i32,
@@ -227,12 +204,8 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         // 同步与挂载
         SYS_sync => as_ret(crate::services::fs::misc::sync_syscall()),
         SYS_fsync => as_ret(crate::services::fs::misc::fsync_syscall(a0 as i32)),
-        SYS_mount => as_ret(crate::services::fs::mount::mount_syscall(
-            a0, a1, a2,
-        )),
-        SYS_umount2 => as_ret(crate::services::fs::mount::umount2_syscall(
-            a0, a1 as i32,
-        )),
+        SYS_mount => as_ret(crate::services::fs::mount::mount_syscall(a0, a1, a2)),
+        SYS_umount2 => as_ret(crate::services::fs::mount::umount2_syscall(a0, a1 as i32)),
 
         // 路径
         SYS_getcwd => as_ret(crate::services::fs::path::getcwd_syscall(a0, a1)),
@@ -243,13 +216,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // 文件描述符操作
         SYS_pipe => as_ret(crate::services::fs::io::pipe_syscall(a0)),
-        SYS_pipe2 => as_ret(crate::services::fs::io::pipe2_syscall(
-            a0, a2 as i32,
-        )),
+        SYS_pipe2 => as_ret(crate::services::fs::io::pipe2_syscall(a0, a2 as i32)),
         SYS_dup => as_ret(crate::services::fs::io::dup_syscall(a0 as i32)),
-        SYS_dup2 => as_ret(crate::services::fs::io::dup2_syscall(
-            a0 as i32, a1 as i32,
-        )),
+        SYS_dup2 => as_ret(crate::services::fs::io::dup2_syscall(a0 as i32, a1 as i32)),
         SYS_dup3 => as_ret(crate::services::fs::io::dup3_syscall(
             a0 as i32, a1 as i32, a2 as i32,
         )),
@@ -265,39 +234,31 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_select => crate::services::fs::file_ops::poll_syscall(a0, a1 as u32, a2 as i32),
         SYS_chown => crate::services::fs::file_ops::chown_syscall(a0, a1 as u32, a2 as u32),
         SYS_truncate => crate::services::fs::file_ops::truncate_syscall(a0, a1 as i64),
-        SYS_ftruncate => {
-            crate::services::fs::file_ops::ftruncate_syscall(a0 as i32, a1 as i64)
-        }
+        SYS_ftruncate => crate::services::fs::file_ops::ftruncate_syscall(a0 as i32, a1 as i64),
         // fallocate (T1 G1 实装): 预分配 (仅 mode=0, 扩展文件大小)
-        SYS_fallocate => crate::services::fs::file_ops::fallocate_syscall(
-            a0 as i32, a1 as i32, a2, a3,
-        ),
-        SYS_flock => crate::services::fs::file_ops::flock_syscall(a0 as i32, a1 as i32),
-        SYS_lseek => {
-            crate::services::fs::dir_ops::lseek_syscall(a0 as i32, a1 as i64, a2 as i32)
+        SYS_fallocate => {
+            crate::services::fs::file_ops::fallocate_syscall(a0 as i32, a1 as i32, a2, a3)
         }
+        SYS_flock => crate::services::fs::file_ops::flock_syscall(a0 as i32, a1 as i32),
+        SYS_lseek => crate::services::fs::dir_ops::lseek_syscall(a0 as i32, a1 as i64, a2 as i32),
         SYS_getdents => crate::services::fs::dir_ops::getdents_syscall(a0 as i32, a1, a2),
 
         // inotify
         SYS_inotify_init1 => crate::services::fs::inotify::sys_inotify_init1(a0 as i32),
         // inotify_init (T1 G5 实装): 遗留接口, 等价 inotify_init1(0)
         SYS_inotify_init => crate::services::fs::inotify::sys_inotify_init1(0),
-        SYS_inotify_add_watch => crate::services::fs::inotify::sys_inotify_add_watch(
-            a0 as i64, a1 as u32, a2 as u32,
-        ),
+        SYS_inotify_add_watch => {
+            crate::services::fs::inotify::sys_inotify_add_watch(a0 as i64, a1 as u32, a2 as u32)
+        }
         SYS_inotify_rm_watch => {
             crate::services::fs::inotify::sys_inotify_rm_watch(a0 as i64, a1 as i32)
         }
 
         // 时间与统计
-        SYS_clock_gettime => {
-            crate::services::timer::clock::clock_gettime_syscall(a0 as i32, a1)
-        }
+        SYS_clock_gettime => crate::services::timer::clock::clock_gettime_syscall(a0 as i32, a1),
         SYS_times => as_ret(crate::services::fs::misc::times_syscall(a0)),
         SYS_time => as_ret(crate::services::fs::misc::time_syscall(a0)),
-        SYS_getitimer => as_ret(crate::services::fs::misc::getitimer_syscall(
-            a0 as i32, a1,
-        )),
+        SYS_getitimer => as_ret(crate::services::fs::misc::getitimer_syscall(a0 as i32, a1)),
         SYS_alarm => as_ret(crate::services::fs::misc::alarm_syscall(a0 as u32)),
         SYS_setitimer => as_ret(crate::services::fs::misc::setitimer_syscall(
             a0 as i32, a1, a2,
@@ -313,12 +274,9 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
         // sendfile / splice (T2 批 3, syscall-followup): 零拷贝数据传输,
         // 委托 framework 机制 (VFS/IPC/pipe 访问), services 封装类型安全 API
-        SYS_sendfile => crate::services::fs::sendfile::sys_sendfile(
-            a0 as i32,
-            a1 as i32,
-            a2,
-            a3 as usize,
-        ),
+        SYS_sendfile => {
+            crate::services::fs::sendfile::sys_sendfile(a0 as i32, a1 as i32, a2, a3 as usize)
+        }
         SYS_splice => crate::services::fs::sendfile::sys_splice(
             a0 as i32,
             a1,
@@ -367,23 +325,17 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
             a2 as usize,
             a4,
         )),
-        SYS_removexattr => as_ret(crate::services::fs::xattr::removexattr_syscall(
-            a0, a1, a4,
-        )),
+        SYS_removexattr => as_ret(crate::services::fs::xattr::removexattr_syscall(a0, a1, a4)),
 
         // 快照
-        QX_SNAPSHOT_CREATE => {
-            as_ret(crate::services::fs::snapshot::snapshot_create_syscall(a0))
-        }
-        QX_SNAPSHOT_DESTROY => {
-            as_ret(crate::services::fs::snapshot::snapshot_destroy_syscall(a0))
-        }
+        QX_SNAPSHOT_CREATE => as_ret(crate::services::fs::snapshot::snapshot_create_syscall(a0)),
+        QX_SNAPSHOT_DESTROY => as_ret(crate::services::fs::snapshot::snapshot_destroy_syscall(a0)),
         QX_SNAPSHOT_ROLLBACK => {
             as_ret(crate::services::fs::snapshot::snapshot_rollback_syscall(a0))
         }
-        QX_SNAPSHOT_CLONE => {
-            as_ret(crate::services::fs::snapshot::snapshot_clone_syscall(a0, a1))
-        }
+        QX_SNAPSHOT_CLONE => as_ret(crate::services::fs::snapshot::snapshot_clone_syscall(
+            a0, a1,
+        )),
 
         _ => return None,
     })
@@ -396,17 +348,15 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程相关系统调用
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_adjtimex, SYS_clone, SYS_clone3, SYS_clock_nanosleep, SYS_execve, SYS_execveat, SYS_exit,
-        SYS_exit_group, SYS_fork, SYS_getpgid,
-        SYS_getpid, SYS_getppid, SYS_getpriority, SYS_get_robust_list, SYS_getrlimit,
-        SYS_getrusage, SYS_getsid, SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create,
-        SYS_nanosleep, SYS_nice, SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
-        SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
-        SYS_sched_yield, SYS_seccomp, SYS_setdomainname, SYS_sethostname, SYS_setns,
-        SYS_set_robust_list,
+        SYS_adjtimex, SYS_clock_nanosleep, SYS_clone, SYS_clone3, SYS_execve, SYS_execveat,
+        SYS_exit, SYS_exit_group, SYS_fork, SYS_get_robust_list, SYS_getpgid, SYS_getpid,
+        SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid, SYS_gettid,
+        SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice, SYS_pidfd_getfd,
+        SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot, SYS_rt_sigaction,
+        SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield,
+        SYS_seccomp, SYS_set_robust_list, SYS_setdomainname, SYS_sethostname, SYS_setns,
         SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday, SYS_sysinfo,
-        SYS_tcgetpgrp,
-        SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
+        SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -414,9 +364,7 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         // 进程信息
         SYS_getpid => crate::services::proc::info::getpid_syscall() as i64,
         SYS_getppid => crate::services::proc::info::getppid_syscall() as i64,
-        SYS_getpgid => as_ret(crate::services::proc::info::getpgid_syscall(
-            a0 as i32,
-        )),
+        SYS_getpgid => as_ret(crate::services::proc::info::getpgid_syscall(a0 as i32)),
         SYS_gettid => crate::services::proc::info::gettid_syscall() as i64,
         SYS_setsid => crate::services::proc::session::proc_setsid(),
         SYS_getsid => crate::services::proc::session::proc_getsid(a0 as i32),
@@ -436,9 +384,9 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_rt_sigaction => as_ret(crate::services::proc::signal::rt_sigaction_syscall(
             a0 as i32, a1, a2,
         )),
-        SYS_rt_sigprocmask => {
-            as_ret(crate::services::proc::signal::rt_sigprocmask_syscall(a0 as i32, a1, a2))
-        }
+        SYS_rt_sigprocmask => as_ret(crate::services::proc::signal::rt_sigprocmask_syscall(
+            a0 as i32, a1, a2,
+        )),
         SYS_kill => as_ret(crate::services::proc::signal::kill_syscall(
             a0 as i32, a1 as i32,
         )),
@@ -451,20 +399,16 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getpriority => {
             crate::services::proc::priority::getpriority_syscall(a0 as i32, a1 as u32)
         }
-        SYS_setpriority => crate::services::proc::priority::setpriority_syscall(
-            a0 as i32, a1 as u32, a2 as i32,
-        ),
+        SYS_setpriority => {
+            crate::services::proc::priority::setpriority_syscall(a0 as i32, a1 as u32, a2 as i32)
+        }
 
         // CPU 亲和性
         SYS_sched_setaffinity => {
-            crate::services::proc::affinity::sched_setaffinity_syscall(
-                a0 as i32, a1 as u32, a2,
-            )
+            crate::services::proc::affinity::sched_setaffinity_syscall(a0 as i32, a1 as u32, a2)
         }
         SYS_sched_getaffinity => {
-            crate::services::proc::affinity::sched_getaffinity_syscall(
-                a0 as i32, a1 as u32, a2,
-            )
+            crate::services::proc::affinity::sched_getaffinity_syscall(a0 as i32, a1 as u32, a2)
         }
 
         // 进程生命周期
@@ -488,22 +432,16 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getrlimit => crate::services::proc::sysinfo::getrlimit_syscall(a0 as i32, a1),
         SYS_setrlimit => crate::services::proc::sysinfo::setrlimit_syscall(a0 as i32, a1),
         SYS_uname => as_ret(crate::services::proc::info::uname_syscall(a0)),
-        SYS_gettimeofday => as_ret(crate::services::timer::clock::gettimeofday_syscall(
-            a0,
-        )),
+        SYS_gettimeofday => as_ret(crate::services::timer::clock::gettimeofday_syscall(a0)),
         // T1 G6: 时间组 — 墙钟设置 / 时钟调整 / 带时钟源的睡眠
-        SYS_settimeofday => as_ret(crate::services::timer::clock::settimeofday_syscall(
-            a0, a1,
-        )),
+        SYS_settimeofday => as_ret(crate::services::timer::clock::settimeofday_syscall(a0, a1)),
         SYS_adjtimex => crate::services::timer::clock::adjtimex_syscall(a0),
         SYS_clock_nanosleep => as_ret(crate::services::timer::clock::clock_nanosleep_syscall(
             a0 as i32, a1 as i32, a2, a3,
         )),
 
         // 定时器
-        SYS_nanosleep => as_ret(crate::services::timer::sleep::nanosleep_syscall(
-            a0, a1,
-        )),
+        SYS_nanosleep => as_ret(crate::services::timer::sleep::nanosleep_syscall(a0, a1)),
 
         // 进程创建/等待
         SYS_clone => as_ret(crate::services::proc::clone::clone_syscall(
@@ -591,8 +529,8 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
         SYS_accept, SYS_bind, SYS_connect, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
-        SYS_listen, SYS_recvfrom, SYS_recvmmsg, SYS_recvmsg, SYS_sendmmsg, SYS_sendmsg,
-        SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket, SYS_socketpair,
+        SYS_listen, SYS_recvfrom, SYS_recvmmsg, SYS_recvmsg, SYS_sendmmsg, SYS_sendmsg, SYS_sendto,
+        SYS_setsockopt, SYS_shutdown, SYS_socket, SYS_socketpair,
     };
     let [a0, a1, a2, a3, a4, a5] = args;
 
@@ -643,16 +581,12 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_getsockopt => as_ret(crate::services::net::syscall::getsockopt_syscall(
             a0 as i32, a1 as i32, a2 as i32, a3, a4,
         )),
-        SYS_getsockname => {
-            as_ret(crate::services::net::syscall::getsockname_syscall(
-                a0 as i32, a1, a2,
-            ))
-        }
-        SYS_getpeername => {
-            as_ret(crate::services::net::syscall::getpeername_syscall(
-                a0 as i32, a1, a2,
-            ))
-        }
+        SYS_getsockname => as_ret(crate::services::net::syscall::getsockname_syscall(
+            a0 as i32, a1, a2,
+        )),
+        SYS_getpeername => as_ret(crate::services::net::syscall::getpeername_syscall(
+            a0 as i32, a1, a2,
+        )),
 
         _ => return None,
     })
@@ -684,12 +618,12 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
             use crate::framework::mm::vma_get_current_mm;
             match vma_get_current_mm() {
                 Some(mm) => match i32::try_from(a3) {
-                    Ok(flags) => match crate::services::mm::mremap::mremap_syscall(
-                        mm, a0, a1, a2, flags,
-                    ) {
-                        Ok(addr) => addr as i64,
-                        Err(e) => e.as_ret(),
-                    },
+                    Ok(flags) => {
+                        match crate::services::mm::mremap::mremap_syscall(mm, a0, a1, a2, flags) {
+                            Ok(addr) => addr as i64,
+                            Err(e) => e.as_ret(),
+                        }
+                    }
                     Err(_) => Errno::EINVAL.as_ret(),
                 },
                 None => -1,
@@ -706,14 +640,7 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
 
         // NUMA
         // mbind (T1 G4 实装): 地址范围级 NUMA 策略 (VMA 级落地)
-        SYS_mbind => crate::services::mm::numa::mbind_syscall(
-            a0,
-            a1,
-            a2 as u32,
-            a3,
-            a4,
-            a5 as u32,
-        ),
+        SYS_mbind => crate::services::mm::numa::mbind_syscall(a0, a1, a2 as u32, a3, a4, a5 as u32),
         SYS_get_mempolicy => crate::services::mm::numa::sys_get_mempolicy(a0, a1),
         SYS_set_mempolicy => crate::services::mm::numa::sys_set_mempolicy(a0, a1),
         SYS_migrate_pages => crate::services::mm::numa::sys_migrate_pages(a0),
@@ -746,12 +673,10 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
                 a0, a1 as i32, a2 as i32, a3, a4 as u32,
             ) {
                 Ok(crate::services::sync::futex::FutexResult::Woken) => 0,
-                Ok(crate::services::sync::futex::FutexResult::WokenCount(n)) => {
-                    i64::from(n)
+                Ok(crate::services::sync::futex::FutexResult::WokenCount(n)) => i64::from(n),
+                Ok(crate::services::sync::futex::FutexResult::Requeued { woken, .. }) => {
+                    i64::from(woken)
                 }
-                Ok(crate::services::sync::futex::FutexResult::Requeued {
-                    woken, ..
-                }) => i64::from(woken),
                 Ok(crate::services::sync::futex::FutexResult::Pending) => 0,
                 Err(e) => e.as_ret(),
             }
@@ -792,17 +717,15 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
 
         // timerfd
-        SYS_timerfd_create => as_ret(
-            crate::services::timer::timerfd::timerfd_create_syscall(a0 as i32, a1 as i32),
-        ),
-        SYS_timerfd_settime => as_ret(
-            crate::services::timer::timerfd::timerfd_settime_syscall(
-                a0 as i32, a1 as i32, a2, a3,
-            ),
-        ),
-        SYS_timerfd_gettime => {
-            as_ret(crate::services::timer::timerfd::timerfd_gettime_syscall(a0 as i32, a1))
-        }
+        SYS_timerfd_create => as_ret(crate::services::timer::timerfd::timerfd_create_syscall(
+            a0 as i32, a1 as i32,
+        )),
+        SYS_timerfd_settime => as_ret(crate::services::timer::timerfd::timerfd_settime_syscall(
+            a0 as i32, a1 as i32, a2, a3,
+        )),
+        SYS_timerfd_gettime => as_ret(crate::services::timer::timerfd::timerfd_gettime_syscall(
+            a0 as i32, a1,
+        )),
 
         _ => return None,
     })
@@ -831,20 +754,12 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         // 凭证 - UID/GID
         SYS_getuid => as_ret(crate::services::credo::uid::getuid_syscall()),
         SYS_getgid => as_ret(crate::services::credo::uid::getgid_syscall()),
-        SYS_setuid => as_ret(crate::services::credo::uid::setuid_syscall(
-            a0 as u32,
-        )),
-        SYS_setgid => as_ret(crate::services::credo::uid::setgid_syscall(
-            a0 as u32,
-        )),
+        SYS_setuid => as_ret(crate::services::credo::uid::setuid_syscall(a0 as u32)),
+        SYS_setgid => as_ret(crate::services::credo::uid::setgid_syscall(a0 as u32)),
         SYS_geteuid => as_ret(crate::services::credo::uid::geteuid_syscall()),
         SYS_getegid => as_ret(crate::services::credo::uid::getegid_syscall()),
-        SYS_seteuid => as_ret(crate::services::credo::uid::seteuid_syscall(
-            a0 as u32,
-        )),
-        SYS_setegid => as_ret(crate::services::credo::uid::setegid_syscall(
-            a0 as u32,
-        )),
+        SYS_seteuid => as_ret(crate::services::credo::uid::seteuid_syscall(a0 as u32)),
+        SYS_setegid => as_ret(crate::services::credo::uid::setegid_syscall(a0 as u32)),
         SYS_setreuid => as_ret(crate::services::credo::uid::setreuid_syscall(
             a0 as u32, a1 as u32,
         )),
@@ -860,41 +775,25 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         }
         SYS_CREDO_DELETE_IDENTITY => crate::services::credo::auth::auth_delete_syscall(a0),
         SYS_CREDO_IDENTITY_INFO => crate::services::credo::auth::auth_info_syscall(a0),
-        SYS_CREDO_CHANGE_PASSWORD => {
-            crate::services::credo::auth::auth_changepw_syscall(a0, a1)
-        }
+        SYS_CREDO_CHANGE_PASSWORD => crate::services::credo::auth::auth_changepw_syscall(a0, a1),
         SYS_CREDO_VERIFY_PASSWORD => crate::services::credo::auth::auth_verify_syscall(a0),
-        SYS_CREDO_CREATE_FIRST => {
-            crate::services::credo::auth::auth_create_first_syscall(a0)
-        }
-        SYS_CREDO_GRANT => {
-            crate::services::credo::auth::auth_grant_syscall(a0, a1, a2 as u16, a3)
-        }
+        SYS_CREDO_CREATE_FIRST => crate::services::credo::auth::auth_create_first_syscall(a0),
+        SYS_CREDO_GRANT => crate::services::credo::auth::auth_grant_syscall(a0, a1, a2 as u16, a3),
         SYS_CREDO_REVOKE => {
             crate::services::credo::auth::auth_revoke_syscall(a0, a1, a2 as u16, a3)
         }
         SYS_CREDO_CHECK_CAP => {
             crate::services::credo::auth::auth_check_cap_syscall(a0, a1 as u16, a2)
         }
-        SYS_CREDO_GET_CAPS => {
-            crate::services::credo::auth::auth_get_caps_syscall(a0, a1 as u16)
-        }
+        SYS_CREDO_GET_CAPS => crate::services::credo::auth::auth_get_caps_syscall(a0, a1 as u16),
         SYS_CREDO_GET_PWM => crate::services::credo::auth::pwm_get_syscall(),
         SYS_CREDO_SET_PWM => crate::services::credo::auth::pwm_set_syscall(a0),
 
         // Credo 系统信息
-        SYS_CREDO_GETHOSTNAME => {
-            crate::services::proc::sysinfo::gethostname_syscall(a0, a1)
-        }
-        SYS_CREDO_SETHOSTNAME => {
-            crate::services::proc::sysinfo::sethostname_syscall(a0, a1)
-        }
-        SYS_CREDO_BOOT_CHECK => {
-            crate::services::proc::sysinfo::boot_check_syscall(a0 as i32)
-        }
-        SYS_CREDO_PROC_LIST => {
-            crate::services::proc::proc_mgmt::proc_list_syscall(a0, a1 as u32)
-        }
+        SYS_CREDO_GETHOSTNAME => crate::services::proc::sysinfo::gethostname_syscall(a0, a1),
+        SYS_CREDO_SETHOSTNAME => crate::services::proc::sysinfo::sethostname_syscall(a0, a1),
+        SYS_CREDO_BOOT_CHECK => crate::services::proc::sysinfo::boot_check_syscall(a0 as i32),
+        SYS_CREDO_PROC_LIST => crate::services::proc::proc_mgmt::proc_list_syscall(a0, a1 as u32),
         SYS_CREDO_PROC_SETPRI => {
             crate::services::proc::proc_mgmt::proc_setpri_syscall(a0 as u32, a1 as u32)
         }
@@ -905,16 +804,13 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
             // 单位约定: 输入为毫秒 (Credo 策略), 底层 nanosleep 为纳秒.
             const MS_TO_NS: u64 = 1_000_000;
             let ns = a0 * MS_TO_NS;
-            as_ret(crate::services::timer::sleep::nanosleep_syscall(
-                ns, a1,
-            ))
+            as_ret(crate::services::timer::sleep::nanosleep_syscall(ns, a1))
         }
         SYS_CREDO_REBOOT => crate::services::proc::sysinfo::reboot_syscall(a0 as i32),
 
         // 存储设备
         SYS_CREDO_DISK_LIST => as_ret(
-            crate::services::credo::storage::disk::disk_list(a0, a1 as u32)
-                .map(|n| n as usize),
+            crate::services::credo::storage::disk::disk_list(a0, a1 as u32).map(|n| n as usize),
         ),
         SYS_CREDO_DISK_INFO => {
             match crate::services::credo::storage::disk::disk_info(a0 as u32, a1) {
@@ -959,7 +855,7 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 其他系统调用 (POSIX Timer, 熵源等)
 fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        QX_GET_CANARY, SYS_bpf, SYS_clock_getres, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE,
+        QX_GET_CANARY, SYS_FB_MMAP, SYS_FB_OPEN, SYS_FB_RELEASE, SYS_bpf, SYS_clock_getres,
         SYS_getrandom, SYS_io_uring_enter, SYS_io_uring_setup, SYS_kexec_load, SYS_timer_create,
         SYS_timer_delete, SYS_timer_getoverrun, SYS_timer_gettime, SYS_timer_settime,
     };
@@ -973,17 +869,13 @@ fn dispatch_other(num: u64, args: [u64; 6]) -> Option<i64> {
         }
         SYS_timer_gettime => crate::services::syscall::posix_timer::sys_timer_gettime(a0, a1),
         SYS_timer_delete => crate::services::syscall::posix_timer::sys_timer_delete(a0),
-        SYS_timer_getoverrun => {
-            crate::services::syscall::posix_timer::sys_timer_getoverrun(a0)
-        }
+        SYS_timer_getoverrun => crate::services::syscall::posix_timer::sys_timer_getoverrun(a0),
         SYS_clock_getres => crate::services::syscall::posix_timer::sys_clock_getres(a0, a1),
 
         // io_uring 异步 I/O (T2 批 3, syscall-followup): 委托 framework 机制
         // (IoUring 实例表), services 仅参数转换 + 错误码映射
         SYS_io_uring_setup => crate::services::io::iouring::io_uring_setup_syscall(a0),
-        SYS_io_uring_enter => {
-            crate::services::io::iouring::io_uring_enter_syscall(a0, a1, a2)
-        }
+        SYS_io_uring_enter => crate::services::io::iouring::io_uring_enter_syscall(a0, a1, a2),
 
         // eBPF / kexec (T2 批 4, syscall-followup): 既有安全代理接线,
         // 委托 framework 机制 (debug::sys_bpf / driver::sys_kexec)

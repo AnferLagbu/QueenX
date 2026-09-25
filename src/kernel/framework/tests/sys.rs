@@ -3,7 +3,7 @@
 use crate::framework::credo::constant_time_eq;
 use crate::framework::credo::secure_boot::{sha256_extend, sha256_hash};
 use crate::framework::credo::sha256::sha256;
-use crate::framework::errno::{errno_from_i64, Errno};
+use crate::framework::errno::{Errno, errno_from_i64};
 use crate::framework::proc::elf::{Elf64Header, Elf64Phdr};
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::framework::timer::pit::{
@@ -69,9 +69,9 @@ fn sha256_abc() -> TestResult {
 
 fn sha256_long_message() -> TestResult {
     let expected: [u8; 32] = [
-        0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8, 0xe5, 0xc0, 0x26, 0x93, 0x0c, 0x3e,
-        0x60, 0x39, 0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67, 0xf6, 0xec, 0xed, 0xd4,
-        0x19, 0xdb, 0x06, 0xc1,
+        0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8, 0xe5, 0xc0, 0x26, 0x93, 0x0c, 0x3e, 0x60,
+        0x39, 0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67, 0xf6, 0xec, 0xed, 0xd4, 0x19, 0xdb,
+        0x06, 0xc1,
     ];
     assert_eq_test!(
         sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
@@ -177,7 +177,11 @@ fn secure_boot_sha256_hash_consistency() -> TestResult {
         0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00,
         0x15, 0xad,
     ];
-    assert_eq_test!(sha256_hash(b"abc"), expected, "secure_boot sha256_hash == 规范向量");
+    assert_eq_test!(
+        sha256_hash(b"abc"),
+        expected,
+        "secure_boot sha256_hash == 规范向量"
+    );
     TestResult::Pass
 }
 
@@ -188,7 +192,11 @@ fn secure_boot_sha256_extend_combine() -> TestResult {
     let mut combined = [0u8; 64];
     combined[..32].copy_from_slice(&a);
     combined[32..].copy_from_slice(&b);
-    assert_eq_test!(sha256_extend(&a, &b), sha256(&combined), "extend == hash(A||B)");
+    assert_eq_test!(
+        sha256_extend(&a, &b),
+        sha256(&combined),
+        "extend == hash(A||B)"
+    );
     TestResult::Pass
 }
 
@@ -457,10 +465,7 @@ fn adjtimex_policy() -> TestResult {
         apply_adjtimex(ADJ_FREQUENCY, 0, 65_536, 0, 0) == Ok(0),
         "ADJ_FREQUENCY accepted"
     );
-    check!(
-        sub.get_sync_status().2 == 1_000,
-        "frequency applied as ppb"
-    );
+    check!(sub.get_sync_status().2 == 1_000, "frequency applied as ppb");
     check!(sub.adj_freq(0), "frequency reset");
 
     // ADJ_SETOFFSET: 加性跳变 +1s
@@ -591,7 +596,10 @@ fn execveat_validation() -> TestResult {
 /// 策略返回 `i64` (syscall 约定), 故直接比对 `-EINVAL`.
 fn setdomainname_validation() -> TestResult {
     check!(setdomainname_syscall(0, 4) == -22, "空指针 → EINVAL");
-    check!(setdomainname_syscall(BAD_USER_PTR, 0) == -22, "len=0 → EINVAL");
+    check!(
+        setdomainname_syscall(BAD_USER_PTR, 0) == -22,
+        "len=0 → EINVAL"
+    );
     check!(
         setdomainname_syscall(BAD_USER_PTR, 64) == -22,
         "len > 63 超 UTS_DOMAINNAME_LEN → EINVAL"

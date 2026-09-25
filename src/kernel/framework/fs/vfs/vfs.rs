@@ -12,10 +12,10 @@
 //! 提供 mount/unmount/resolve/alloc_fd 等纯机制操作。
 //! 不含 unsafe, 不直接操作硬件。
 
-use crate::framework::sync::IrqSpinLock as Mutex;
 use crate::framework::fs::vfs::types::{
     FileSystem, FsType, KernelError, VFS_MAX_FDS, VFS_MAX_MOUNTS, VFS_MAX_PATH,
 };
+use crate::framework::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -590,11 +590,7 @@ impl VfsManager {
     /// - 结果恒以 '/' 开头且无尾随 '/' (视图根除外)
     ///
     /// 返回 `None` 表示结果超出 `VFS_MAX_PATH` (调用方按 ENAMETOOLONG 处理).
-    fn normalize_view_path_into(
-        &self,
-        path: &str,
-        out: &mut [u8; VFS_MAX_PATH],
-    ) -> Option<usize> {
+    fn normalize_view_path_into(&self, path: &str, out: &mut [u8; VFS_MAX_PATH]) -> Option<usize> {
         let bytes = path.as_bytes();
         let absolute = bytes.first() == Some(&b'/');
 
@@ -754,10 +750,7 @@ pub fn init() {
     VFS_MANAGER.init();
 
     // barrier 回调注册 (必须在 framework 层, 因为引用 framework::barrier)
-    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER
-        .lock()
-        .find(2)
-    {
+    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER.lock().find(2) {
         *dom.capture_cb.lock() = Some(vfs_barrier_capture_cb);
         *dom.rollback_cb.lock() = Some(vfs_barrier_rollback_cb);
     }

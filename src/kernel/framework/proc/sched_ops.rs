@@ -104,16 +104,13 @@ pub extern "C" fn scheduler_init() {
     // 注册 tick 查询回调, 解耦 barrier→proc::scheduler 依赖
     // SAFETY: get_tick 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
-        crate::framework::tick_query::register_tick_query(
-            crate::framework::proc::get_tick,
-        );
+        crate::framework::tick_query::register_tick_query(crate::framework::proc::get_tick);
     }
     // D2: 初始化 cgroup 子系统
     super::cgroup::cgroup_init();
     // D3: 初始化 NUMA 拓扑 (UMA 回退, 后续接入 ACPI SRAT)
     crate::framework::mm::numa_init(
-        crate::framework::mm::pmm_get_total_pages()
-            * crate::framework::mm::PAGE_SIZE,
+        crate::framework::mm::pmm_get_total_pages() * crate::framework::mm::PAGE_SIZE,
         crate::framework::config::MAX_CPUS as u32,
     );
     // D4/T4-3 (eBPF init + 标准验证器注册) 已反转至 services::debug::ebpf::init
@@ -126,9 +123,7 @@ pub extern "C" fn scheduler_init() {
     // D7: 初始化 CET (Shadow Stack)
     crate::framework::arch::cet_init();
     // D8: 初始化 Tickless (NO_HZ)
-    crate::framework::timer::tickless_init(
-        crate::framework::config::MAX_CPUS as u32,
-    );
+    crate::framework::timer::tickless_init(crate::framework::config::MAX_CPUS as u32);
     // D9: 初始化 NTP/PTP 时钟同步
     crate::framework::timer::timesync_init();
     // D10: 初始化 kexec

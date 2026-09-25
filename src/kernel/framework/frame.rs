@@ -127,12 +127,7 @@ impl Frame {
         let ptr = self.as_virt_ptr();
         // SAFETY: Frame 拥有物理页, phys_to_virt 返回唯一内核映射 VA。
         // `&mut self` 保证独占借用, Frame 生命周期内指针有效。
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                ptr,
-                crate::framework::mm::PAGE_SIZE as usize,
-            )
-        }
+        unsafe { core::slice::from_raw_parts_mut(ptr, crate::framework::mm::PAGE_SIZE as usize) }
     }
 
     /// 零填充帧内容

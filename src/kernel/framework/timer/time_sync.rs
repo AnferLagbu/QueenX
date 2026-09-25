@@ -137,9 +137,7 @@ impl NtpPacket {
     }
 
     fn read_clock_ns() -> u64 {
-        crate::framework::timer::tick::ticks_to_ns(
-            crate::framework::timer::tick::get_ticks(),
-        )
+        crate::framework::timer::tick::ticks_to_ns(crate::framework::timer::tick::get_ticks())
     }
 }
 
@@ -449,9 +447,7 @@ impl TimeSyncSubsystem {
     }
 
     fn read_clock_ns() -> u64 {
-        crate::framework::timer::tick::ticks_to_ns(
-            crate::framework::timer::tick::get_ticks(),
-        )
+        crate::framework::timer::tick::ticks_to_ns(crate::framework::timer::tick::get_ticks())
     }
 }
 

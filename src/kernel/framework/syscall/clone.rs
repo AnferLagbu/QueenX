@@ -138,10 +138,7 @@ pub fn sys_clone(
                     // 子进程已通过 fork 继承了父进程的 namespace
                     // 现在根据 CLONE_NEW* 创建新实例
                     let current_ns = p.namespaces.lock();
-                    crate::framework::proc::NamespaceSet::clone_from(
-                        &current_ns,
-                        new_ns_flags,
-                    )
+                    crate::framework::proc::NamespaceSet::clone_from(&current_ns, new_ns_flags)
                 };
                 *p.namespaces.lock() = parent_ns;
             });
@@ -184,9 +181,7 @@ pub fn sys_clone(
     // 父子各持同一个 PML4 物理地址 ⇒ 两者的 Process::drop 都会释放同一张页表;
     // 无持有计数时先退出者会把另一方仍在使用的页表销毁 (UAF). 计数登记处只此一处
     // (`child_ctx.cr3` 是上下文快照, 不承担所有权, 不重复计数).
-    if !crate::framework::mm::pmm::get_pmm()
-        .frame_inc(crate::framework::mm::PhysAddr(parent_cr3))
-    {
+    if !crate::framework::mm::pmm::get_pmm().frame_inc(crate::framework::mm::PhysAddr(parent_cr3)) {
         // 登记失败 (父 cr3 未处于计数态, 契约违反): 回滚已写入的 cr3,
         // 避免子进程 drop 时误释放父进程地址空间.
         crate::klog_error!(
@@ -287,8 +282,7 @@ pub fn sys_clone(
 
     // 注册到进程表
     api::process_insert(
-        child as *const crate::framework::proc::Process
-            as *mut crate::framework::proc::Process,
+        child as *const crate::framework::proc::Process as *mut crate::framework::proc::Process,
     );
 
     // CLONE_PARENT_SETTID
@@ -310,7 +304,8 @@ pub fn sys_clone(
 
     // CLONE_CHILD_CLEARTID: 登记清除地址, 子进程退出时写 0 并 futex 唤醒
     if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
-        child.clear_child_tid
+        child
+            .clear_child_tid
             .store(child_tidptr, core::sync::atomic::Ordering::Release);
     }
 

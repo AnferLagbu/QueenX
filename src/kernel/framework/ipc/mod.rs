@@ -200,15 +200,11 @@ mod tests {
         let pid: u32 = 300;
 
         // 创建消息队列 (T6-1: 委托 services 策略)
-        let id = match crate::services::ipc::msgq::msgq_create_safe(
-            &mut ns,
-            &mut next_id,
-            0o666,
-            pid,
-        ) {
-            Ok(id) => id,
-            Err(e) => panic!("Failed to create MsgQ: {}", e),
-        };
+        let id =
+            match crate::services::ipc::msgq::msgq_create_safe(&mut ns, &mut next_id, 0o666, pid) {
+                Ok(id) => id,
+                Err(e) => panic!("Failed to create MsgQ: {}", e),
+            };
 
         // 发送消息
         let data = b"Hello, IPC!";

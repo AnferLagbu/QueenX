@@ -42,8 +42,7 @@ struct PidFdEntry {
 static PIDFD_MAP: OnceLock<Mutex<[Option<PidFdEntry>; PIDFD_CAP]>> = OnceLock::new();
 
 /// 单调递增槽位号 (用于 fd 复用后区分新旧映射)
-static NEXT_SLOT_ID: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(1);
+static NEXT_SLOT_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 /// 获取映射表锁 (首次调用时惰性初始化)
 ///
@@ -117,10 +116,7 @@ fn pid_of_fd(fd: i32) -> Option<u32> {
 
 /// 检查 fd 是否属于 pidfd 空间
 pub fn is_pidfd_fd(fd: i32) -> bool {
-    matches!(
-        idx_of(fd),
-        Some((FdSubsystem::PidFd, _))
-    )
+    matches!(idx_of(fd), Some((FdSubsystem::PidFd, _)))
 }
 
 /// `pidfd_open` — 为进程打开一个 pidfd

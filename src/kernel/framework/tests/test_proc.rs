@@ -175,10 +175,7 @@ fn test_oomd_victim_filter() -> TestResult {
         }),
         "zombie must not be selected even with the largest RSS"
     );
-    check!(
-        !walked.get(),
-        "zombie must not trigger the page table walk"
-    );
+    check!(!walked.get(), "zombie must not trigger the page table walk");
 
     check!(
         better_oom_victim(42, ProcessState::Running, 0x1000, 0, || 9999),
@@ -260,8 +257,8 @@ fn test_cr3_transfer_source_cleared() -> TestResult {
 /// `docs/plan/cr3-lifetime-ownership.md` §5.1 门槛 7 的共享用例 (G1).
 #[cfg(not(feature = "host-test"))]
 fn test_cr3_shared_owner_exit_keeps_table() -> TestResult {
-    use crate::framework::mm::pmm::get_pmm;
     use crate::framework::mm::PhysAddr;
+    use crate::framework::mm::pmm::get_pmm;
     use crate::framework::proc::raw;
     use crate::framework::proc::user_proc::raw::create_user_page_table;
     use core::sync::atomic::Ordering;
@@ -276,9 +273,7 @@ fn test_cr3_shared_owner_exit_keeps_table() -> TestResult {
     // 两个 Process 持有同一 cr3: 与 CLONE_VM 的双所有者同形 (均不入进程表)
     let owner = raw::alloc_process(0xFFF0, "cr3-owner", None);
     let sharer = raw::alloc_process(0xFFF1, "cr3-sharer", None);
-    raw::process_ref_mut(owner)
-        .cr3
-        .store(cr3, Ordering::SeqCst);
+    raw::process_ref_mut(owner).cr3.store(cr3, Ordering::SeqCst);
     raw::process_ref_mut(sharer)
         .cr3
         .store(cr3, Ordering::SeqCst);
@@ -325,8 +320,8 @@ fn test_cr3_shared_owner_exit_keeps_table() -> TestResult {
 /// cr3 所有权: 单一所有者退出 ⇒ 计数归零恰好一次, 且归零后不再报告归零 (fail-closed).
 #[cfg(not(feature = "host-test"))]
 fn test_cr3_single_owner_exit_zeroes_once() -> TestResult {
-    use crate::framework::mm::pmm::get_pmm;
     use crate::framework::mm::PhysAddr;
+    use crate::framework::mm::pmm::get_pmm;
     use crate::framework::proc::raw;
     use crate::framework::proc::user_proc::raw::create_user_page_table;
     use core::sync::atomic::Ordering;
@@ -339,9 +334,7 @@ fn test_cr3_single_owner_exit_zeroes_once() -> TestResult {
     );
 
     let owner = raw::alloc_process(0xFFF2, "cr3-single", None);
-    raw::process_ref_mut(owner)
-        .cr3
-        .store(cr3, Ordering::SeqCst);
+    raw::process_ref_mut(owner).cr3.store(cr3, Ordering::SeqCst);
     raw::drop_boxed_process(owner);
     check!(
         get_pmm().frame_ref_count(PhysAddr(cr3)) == 0,
@@ -361,8 +354,8 @@ fn test_cr3_single_owner_exit_zeroes_once() -> TestResult {
 /// 计数), 源必须清空, 否则源 `Process::drop` 会把目标在用的页表计数减到归零.
 #[cfg(not(feature = "host-test"))]
 fn test_cr3_transfer_source_cleared() -> TestResult {
-    use crate::framework::mm::pmm::get_pmm;
     use crate::framework::mm::PhysAddr;
+    use crate::framework::mm::pmm::get_pmm;
     use crate::framework::proc::raw;
     use crate::framework::proc::user_proc::raw::create_user_page_table;
     use core::sync::atomic::Ordering;

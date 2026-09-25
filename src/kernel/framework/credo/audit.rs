@@ -108,7 +108,9 @@ pub(crate) mod raw {
 
     /// 记录一条审计项 (IrqSpinLock 保护)
     pub fn log(pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
-        GLOBAL_AUDIT.lock().log(pwm, action, target_pwm, domain, caps);
+        GLOBAL_AUDIT
+            .lock()
+            .log(pwm, action, target_pwm, domain, caps);
     }
 
     pub fn dump() {

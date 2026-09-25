@@ -215,7 +215,7 @@ pub fn get_parallel_stats() -> (usize, u32) {
 #[cfg(feature = "kernel_test")]
 pub mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
-    use super::{compute_dependency_layers, DependencyLayer, DependencyLayers};
+    use super::{DependencyLayer, DependencyLayers, compute_dependency_layers};
 
     pub fn test_dependency_layer() -> bool {
         let mut layer = DependencyLayer::new(0);

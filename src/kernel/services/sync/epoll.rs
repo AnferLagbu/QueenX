@@ -63,12 +63,7 @@ pub fn epoll_ctl_syscall(
     }
     // DEL 操作允许 event 为 null
     if op == EPOLL_CTL_DEL && event == 0 {
-        let ret = crate::framework::syscall::epoll::sys_epoll_ctl(
-            epfd,
-            op,
-            fd,
-            core::ptr::null(),
-        );
+        let ret = crate::framework::syscall::epoll::sys_epoll_ctl(epfd, op, fd, core::ptr::null());
         return if ret < 0 {
             Err(Errno::from_ret(ret))
         } else {

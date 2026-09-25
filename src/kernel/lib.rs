@@ -262,10 +262,7 @@ fn panic(info: &PanicInfo) -> ! {
     let mut msg_buf = [0u8; 256];
     let mut msg_cursor: usize = 0;
     let _ = core::fmt::write(
-        &mut crate::framework::klog::CursorWriter::new(
-            &mut msg_buf,
-            &mut msg_cursor,
-        ),
+        &mut crate::framework::klog::CursorWriter::new(&mut msg_buf, &mut msg_cursor),
         format_args!("{info}"),
     );
     let msg: &str = core::str::from_utf8(&msg_buf[..msg_cursor]).unwrap_or("PANIC (fmt failed)");
@@ -318,9 +315,7 @@ fn panic(info: &PanicInfo) -> ! {
 
     // 1. 串口输出崩溃信息
     if crate::framework::klog::KLOG_INIT.load(Ordering::Acquire) {
-        crate::framework::klog::serial_write_bytes(
-            b"\n========== KERNEL PANIC ==========\n",
-        );
+        crate::framework::klog::serial_write_bytes(b"\n========== KERNEL PANIC ==========\n");
         crate::framework::klog::serial_write_bytes(msg.as_bytes());
         crate::framework::klog::serial_write_bytes(b"\n--- Register Dump ---\n");
         for i in 0..16 {
@@ -360,9 +355,7 @@ fn panic(info: &PanicInfo) -> ! {
                 b'a' + nibble - 10
             }]);
         }
-        crate::framework::klog::serial_write_bytes(
-            b"\n===================================\n",
-        );
+        crate::framework::klog::serial_write_bytes(b"\n===================================\n");
     }
 
     // 2. 图形控制台输出崩溃信息
@@ -377,10 +370,7 @@ fn panic(info: &PanicInfo) -> ! {
         let mut line_buf = [0u8; 64];
         let mut line_cur = 0usize;
         let _ = core::fmt::write(
-            &mut crate::framework::klog::CursorWriter::new(
-                &mut line_buf,
-                &mut line_cur,
-            ),
+            &mut crate::framework::klog::CursorWriter::new(&mut line_buf, &mut line_cur),
             format_args!(
                 "  {} = {}\n",
                 core::str::from_utf8(&reg_names[i]).unwrap_or("?? "),
@@ -397,10 +387,7 @@ fn panic(info: &PanicInfo) -> ! {
         let mut line_buf = [0u8; 40];
         let mut line_cur = 0usize;
         let _ = core::fmt::write(
-            &mut crate::framework::klog::CursorWriter::new(
-                &mut line_buf,
-                &mut line_cur,
-            ),
+            &mut crate::framework::klog::CursorWriter::new(&mut line_buf, &mut line_cur),
             format_args!(
                 "  CR2= {}\n",
                 core::str::from_utf8(&cr2_str[..cur]).unwrap_or("?")
@@ -414,10 +401,7 @@ fn panic(info: &PanicInfo) -> ! {
         let mut line_buf2 = [0u8; 40];
         let mut line_cur2 = 0usize;
         let _ = core::fmt::write(
-            &mut crate::framework::klog::CursorWriter::new(
-                &mut line_buf2,
-                &mut line_cur2,
-            ),
+            &mut crate::framework::klog::CursorWriter::new(&mut line_buf2, &mut line_cur2),
             format_args!(
                 "  CR3= {}\n",
                 core::str::from_utf8(&cr3_str[..c3]).unwrap_or("?")
@@ -573,8 +557,7 @@ pub extern "C" fn kernel_init() {
             crate::framework::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
         );
         unsafe {
-            crate::framework::mm::kmalloc::get_kmalloc_mut()
-                .init(heap_start, KMALLOC_HEAP_SIZE);
+            crate::framework::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
         }
         // 诊断: kmalloc init 后检查页表
         {
@@ -595,9 +578,7 @@ pub extern "C" fn kernel_init() {
         // 必须包含 heap_end 到 bitmap 之间的 2MB 间隙，
         // 否则 bitmap 与 heap 共享同一个 2MB 块，heap 扩展拆分 2MB 巨页时会覆盖 bitmap 的 PTE。
         // GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 0x200000 + 16MB + 0x200000 = 20MB
-        crate::framework::mm::pmm::pmm_init_bitmap(
-            GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE,
-        );
+        crate::framework::mm::pmm::pmm_init_bitmap(GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE);
 
         // 诊断: dump 页表关键条目 (PML4[256]→pdpt_high[0]→pd[24]/[63])
         {
@@ -629,7 +610,8 @@ pub extern "C" fn kernel_init() {
             crate::framework::arch::x86_64::gdt::gdt_init();
         }
 
-        <crate::framework::arch::CurrentArch as crate::framework::arch::Arch>::interrupt_early_init();
+        <crate::framework::arch::CurrentArch as crate::framework::arch::Arch>::interrupt_early_init(
+        );
         crate::klog_boot_info!("Test mode: interrupt early init done");
 
         crate::framework::smp::init();
@@ -699,8 +681,7 @@ pub extern "C" fn kernel_init() {
             crate::framework::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
         );
         unsafe {
-            crate::framework::mm::kmalloc::get_kmalloc_mut()
-                .init(heap_start, KMALLOC_HEAP_SIZE);
+            crate::framework::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
         }
         crate::klog_boot_info!(
             "kmalloc initialized at 0x{:X}, size={} MB",
@@ -712,7 +693,7 @@ pub extern "C" fn kernel_init() {
         // 必须包含 kernel_end 与 heap_start 之间的 2MB 间隙,
         // 否则 PMM 位图会从 kmalloc 堆内分配
         // (页 7165+), alloc_table() 清零新分配页表页时会导致堆破坏
-        // 
+        //
         // 还必须包含 heap_end 与位图之间的 2MB 间隙,
         // 否则位图与堆共享 2MB 大页, 堆
         // 扩容时的 2MB 大页拆分会覆盖位图 PTE.
@@ -762,7 +743,8 @@ pub extern "C" fn kernel_init() {
             .expect("ipc strategy registered (kernel_init 早期契约点)");
 
         // 6. 中断/异常设置
-        <crate::framework::arch::CurrentArch as crate::framework::arch::Arch>::interrupt_late_init();
+        <crate::framework::arch::CurrentArch as crate::framework::arch::Arch>::interrupt_late_init(
+        );
         crate::klog_boot_info!("Interrupt subsystem ready");
 
         // 6.5. kswapd softirq 注册 (依赖 IRQ 子系统, scheduler tick 触发 wakeup)
@@ -907,7 +889,9 @@ pub extern "C" fn kernel_init() {
         // 判别力来源与注入覆盖见 docs/plan/tlb-shootdown-epoch.md §5 注入 3.
         #[cfg(target_arch = "x86_64")]
         if !crate::framework::mm::tlb_probe_selftest() {
-            crate::klog_kern_warn!("[SMP] TLB probe FAILED — cross-core TLB invalidation unreliable");
+            crate::klog_kern_warn!(
+                "[SMP] TLB probe FAILED — cross-core TLB invalidation unreliable"
+            );
         }
 
         crate::klog_boot_info!("QueenX initialized, entering user mode...");

@@ -575,9 +575,7 @@ impl BpfHelper {
                     cnt
                 }
             }
-            helper_id::GET_SMP_PROCESSOR => {
-                u64::from(crate::framework::cpu::arch::cpu_id())
-            }
+            helper_id::GET_SMP_PROCESSOR => u64::from(crate::framework::cpu::arch::cpu_id()),
             helper_id::TRACE_PRINTK => {
                 // r1 = fmt 指针, r2 = fmt 长度, r3 = arg1
                 // 简化: 仅记录到 ftrace

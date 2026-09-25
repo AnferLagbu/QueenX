@@ -23,12 +23,12 @@ pub use ramfs_data::*;
 pub use ramfs_node::*;
 
 use crate::framework::fs::KernelError;
+use crate::framework::fs::vfs::backend_trait::current_fs_backend;
+use crate::framework::fs::vfs::inode::Inode;
 use crate::framework::fs::{
     FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence,
     VfsStat,
 };
-use crate::framework::fs::vfs::backend_trait::current_fs_backend;
-use crate::framework::fs::vfs::inode::Inode;
 use crate::framework::sync::IrqSpinLock as Mutex;
 
 pub(crate) const RAMFS_MAX_NODES: usize = 256;

@@ -172,10 +172,7 @@ where
 
 /// 获取进程状态
 pub fn get_state(pid: crate::framework::proc::Pid) -> Option<ProcessState> {
-    with(
-        pid,
-        crate::framework::proc::process::Process::get_state,
-    )
+    with(pid, crate::framework::proc::process::Process::get_state)
 }
 
 /// 设置进程状态 (安全版本, 自动检查状态转换合法性)
@@ -192,10 +189,7 @@ pub fn set_state(pid: crate::framework::proc::Pid, state: ProcessState) -> Table
 
 /// 获取进程优先级
 pub fn get_priority(pid: crate::framework::proc::Pid) -> Option<ProcessPriority> {
-    with(
-        pid,
-        crate::framework::proc::process::Process::get_priority,
-    )
+    with(pid, crate::framework::proc::process::Process::get_priority)
 }
 
 #[expect(
@@ -217,10 +211,7 @@ pub fn set_priority(
 
 /// 是否内核进程
 pub fn is_kernel(pid: crate::framework::proc::Pid) -> Option<bool> {
-    with(
-        pid,
-        crate::framework::proc::process::Process::is_kernel,
-    )
+    with(pid, crate::framework::proc::process::Process::is_kernel)
 }
 
 #[expect(
@@ -254,10 +245,7 @@ pub fn get_sched_policy(pid: crate::framework::proc::Pid) -> Option<SchedPolicy>
 /// # Errors
 ///
 /// 本函数始终返回 `Ok(())`; 若进程不存在则静默忽略.
-pub fn set_sched_policy(
-    pid: crate::framework::proc::Pid,
-    policy: SchedPolicy,
-) -> TableResult<()> {
+pub fn set_sched_policy(pid: crate::framework::proc::Pid, policy: SchedPolicy) -> TableResult<()> {
     with_mut(pid, |p| p.set_sched_policy(policy));
     Ok(())
 }
@@ -286,10 +274,7 @@ pub fn set_rt_priority(pid: crate::framework::proc::Pid, priority: u8) -> TableR
 
 /// 获取进程 PMM (Per-Memory Mapping) 字节数
 pub fn get_pwm(pid: crate::framework::proc::Pid) -> Option<u64> {
-    with(
-        pid,
-        crate::framework::proc::process::Process::get_pwm,
-    )
+    with(pid, crate::framework::proc::process::Process::get_pwm)
 }
 
 #[expect(

@@ -32,7 +32,9 @@ fn registration_precedes_interrupt_late_init() {
     // (匹配实际调用语句, 排除注释中的 "interrupt_late_init")
     let src = read_src("src/kernel/lib.rs");
     let reg_line = line_of(&src, "register_default_ipc_strategy");
-    let irq_call = "Arch>::interrupt_late_init()";
+    // 标记不含尾随 "()": 该调用语句按 100 列被 rustfmt 折行时, 括号会被拆到下一行,
+    // 含 "()" 的标记会随折行失效 (而 "Arch>::" 前缀已足以排除注释中的 interrupt_late_init).
+    let irq_call = "Arch>::interrupt_late_init";
     let irq_line = line_of(&src, irq_call);
     assert!(
         reg_line < irq_line,

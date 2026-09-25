@@ -360,13 +360,17 @@ impl MetaStore for RawMetaStore {
     }
 
     fn links_read_prev(&self, idx: usize) -> u64 {
-        let Some(links) = self.links else { return SENTINEL };
+        let Some(links) = self.links else {
+            return SENTINEL;
+        };
         // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
         unsafe { (*links.as_ptr().add(idx)).prev }
     }
 
     fn links_read_next(&self, idx: usize) -> u64 {
-        let Some(links) = self.links else { return SENTINEL };
+        let Some(links) = self.links else {
+            return SENTINEL;
+        };
         // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
         unsafe { (*links.as_ptr().add(idx)).next }
     }
@@ -534,7 +538,9 @@ impl MetaStore for VecMetaStore {
 
     fn links_read_prev(&self, idx: usize) -> u64 {
         let links = self.links.borrow();
-        let Some(l) = links.as_ref() else { return SENTINEL };
+        let Some(l) = links.as_ref() else {
+            return SENTINEL;
+        };
         let off = idx * 16;
         if off + 8 <= l.len() {
             u64::from_le_bytes(l[off..off + 8].try_into().expect("links prev"))
@@ -545,7 +551,9 @@ impl MetaStore for VecMetaStore {
 
     fn links_read_next(&self, idx: usize) -> u64 {
         let links = self.links.borrow();
-        let Some(l) = links.as_ref() else { return SENTINEL };
+        let Some(l) = links.as_ref() else {
+            return SENTINEL;
+        };
         let off = idx * 16 + 8;
         if off + 8 <= l.len() {
             u64::from_le_bytes(l[off..off + 8].try_into().expect("links next"))
@@ -915,7 +923,8 @@ impl PhysicalMemoryManager {
     /// 用例必须在断言前调用 (含失败分支), 否则注入会泄漏到后续用例.
     #[cfg(any(test, feature = "kernel_test"))]
     pub fn disarm_alloc_failure(&self) {
-        self.alloc_fail_countdown.store(ALLOC_FAIL_DISARMED, Ordering::SeqCst);
+        self.alloc_fail_countdown
+            .store(ALLOC_FAIL_DISARMED, Ordering::SeqCst);
     }
 
     /// 消费一次注入计数: 返回 `true` 表示本次分配应失败 (计数已归零).
@@ -930,7 +939,8 @@ impl PhysicalMemoryManager {
         if remaining == 0 {
             return true;
         }
-        self.alloc_fail_countdown.store(remaining - 1, Ordering::SeqCst);
+        self.alloc_fail_countdown
+            .store(remaining - 1, Ordering::SeqCst);
         false
     }
 
@@ -1194,7 +1204,9 @@ impl PhysicalMemoryManager {
 
         let start_pfn = phys_to_page(base.as_u64()) as usize;
         let npages = size / PAGE_SIZE as usize;
-        let end_pfn = start_pfn.checked_add(npages).ok_or("PMM reserve_range: overflow")?;
+        let end_pfn = start_pfn
+            .checked_add(npages)
+            .ok_or("PMM reserve_range: overflow")?;
         let total_pages = self.info.get().total_pages as usize;
         if end_pfn > total_pages {
             return Err("PMM reserve_range: range exceeds PMM size");
@@ -1245,7 +1257,9 @@ impl PhysicalMemoryManager {
 
         let start_pfn = phys_to_page(base.as_u64()) as usize;
         let npages = size / PAGE_SIZE as usize;
-        let end_pfn = start_pfn.checked_add(npages).ok_or("PMM unreserve_range: overflow")?;
+        let end_pfn = start_pfn
+            .checked_add(npages)
+            .ok_or("PMM unreserve_range: overflow")?;
         let total_pages = self.info.get().total_pages as usize;
         if end_pfn > total_pages {
             return Err("PMM unreserve_range: range exceeds PMM size");
@@ -1483,9 +1497,7 @@ impl PhysicalMemoryManager {
     #[expect(clippy::cast_possible_truncation)]
     fn count_free_pages(&self) -> u64 {
         let total = self.info.get().total_pages as usize;
-        let free = self
-            .meta_store()
-            .map_or(0, MetaStore::bitmap_count_free);
+        let free = self.meta_store().map_or(0, MetaStore::bitmap_count_free);
         // 截断到 total (bitmap 在 total_pages 之外可能还有剩余位)
         let extra = (self.bitmap_size.get() * 32).saturating_sub(total) as u32;
         if extra > 0 {
@@ -2119,10 +2131,7 @@ fn pmm_barrier_rollback_cb() -> bool {
 
 pub fn pmm_register_barrier_domain() {
     crate::framework::barrier::recovery_domain_register(3);
-    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER
-        .lock()
-        .find(3)
-    {
+    if let Some(dom) = crate::framework::barrier::RECOVERY_MANAGER.lock().find(3) {
         *dom.capture_cb.lock() = Some(pmm_barrier_capture_cb);
         *dom.rollback_cb.lock() = Some(pmm_barrier_rollback_cb);
     }

@@ -1,9 +1,7 @@
 #![deny(unsafe_code)]
 
 use super::nestfs_data::{NestfsData, get_nestfs};
-use crate::framework::fs::{
-    KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat,
-};
+use crate::framework::fs::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::services::fs::inode::Inode;
 
 /// `NestFS` 文件 Inode — 直接持有 fd 编号
@@ -46,7 +44,8 @@ impl Inode for NestfsInode {
 
     fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
         let nestfs = get_nestfs();
-        nestfs.stat(&self.rel_path, pwm)
+        nestfs
+            .stat(&self.rel_path, pwm)
             .map_or(Err(KernelError::FileNotFound), |obj| {
                 Ok(VfsStat {
                     node_id: obj.obj_id as u32,
@@ -151,8 +150,7 @@ impl crate::framework::fs::FileSystem for NestfsData {
         // DECISION-K 项 6: 封装原 framework fsformat 路径的字段级访问,
         // 磁盘选择策略 (已发现驱动器优先, 回退启动盘) 归 services.
         let (drive_id, part_start) = self.drives_discovered.lock().first().copied().unwrap_or((
-            self.disk_drive
-                .load(core::sync::atomic::Ordering::Acquire),
+            self.disk_drive.load(core::sync::atomic::Ordering::Acquire),
             self.partition_start
                 .load(core::sync::atomic::Ordering::Acquire),
         ));
@@ -169,9 +167,8 @@ impl crate::framework::fs::FileSystem for NestfsData {
         rel_path: &str,
         flags: u32,
         pwm: u64,
-    ) -> crate::framework::fs::KernelResult<
-        alloc::sync::Arc<dyn crate::services::fs::inode::Inode>,
-    > {
+    ) -> crate::framework::fs::KernelResult<alloc::sync::Arc<dyn crate::services::fs::inode::Inode>>
+    {
         match self.open(rel_path, flags, pwm) {
             Ok(fd) => Ok(alloc::sync::Arc::new(NestfsInode::new(
                 fd as u32, 0, rel_path,
@@ -298,11 +295,7 @@ impl crate::framework::fs::FileSystem for NestfsData {
         }
     }
 
-    fn fs_unlink(
-        &self,
-        rel_path: &str,
-        pwm: u64,
-    ) -> crate::framework::fs::KernelResult<()> {
+    fn fs_unlink(&self, rel_path: &str, pwm: u64) -> crate::framework::fs::KernelResult<()> {
         let result = self.unlink(rel_path, pwm);
         if result == 0 {
             Ok(())

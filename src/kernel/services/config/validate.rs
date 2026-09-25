@@ -13,11 +13,11 @@
 //! framework config::init()/pci/net 自检经 trait 调用。
 
 use crate::framework::config::ConfigError;
+use crate::framework::config::{ConfigValidateHook, register_config_validate_hook};
 use crate::framework::config::{
     HUGE_PAGE_2M_SIZE, KERNEL_STACK_SIZE, MAX_CPUS, PAGE_SIZE, SLAB_DEFAULT_SIZE, USER_CODE_BASE,
     USER_STACK_GUARD, USER_STACK_SIZE, USER_STACK_TOP,
 };
-use crate::framework::config::{ConfigValidateHook, register_config_validate_hook};
 use crate::slog_err;
 
 /// 校验 CPU 配置.

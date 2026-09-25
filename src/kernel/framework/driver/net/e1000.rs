@@ -35,9 +35,8 @@ static POLL_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub use crate::framework::driver::net::dma_ring::{
     E1000_RX_BUFFER_SIZE, E1000_RX_RING_SIZE, E1000_RXD_ERR_CE, E1000_RXD_ERR_RXE,
-    E1000_RXD_ERR_SE, E1000_RXD_ERR_SEQ, E1000_RXD_STAT_DD, E1000_TX_RING_SIZE,
-    E1000_TXD_CMD_EOP, E1000_TXD_CMD_IFCS, E1000_TXD_CMD_RS, E1000_TXD_STAT_DD, E1000RxDesc,
-    E1000TxDesc,
+    E1000_RXD_ERR_SE, E1000_RXD_ERR_SEQ, E1000_RXD_STAT_DD, E1000_TX_RING_SIZE, E1000_TXD_CMD_EOP,
+    E1000_TXD_CMD_IFCS, E1000_TXD_CMD_RS, E1000_TXD_STAT_DD, E1000RxDesc, E1000TxDesc,
 };
 
 // B04-AUDIT-005 #4 v2 修复 (2026-08-24): E1000Driver 整体上移 framework.
@@ -348,10 +347,7 @@ impl Default for E1000Device {
             rx_count: 0,
             isr_count: 0,
             link_change_count: 0,
-            info: crate::framework::driver::DeviceInfo::new(
-                "Intel E1000",
-                DeviceType::Network,
-            ),
+            info: crate::framework::driver::DeviceInfo::new("Intel E1000", DeviceType::Network),
         }
     }
 }

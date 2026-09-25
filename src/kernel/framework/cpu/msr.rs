@@ -134,9 +134,7 @@ fn is_msr_likely_valid(msr: u32) -> bool {
         return true;
     }
     // AMD K8/K10/MSR: 0xC0000000..0xC0001FFF + 0xC0010000..0xC0011FFF
-    if (0xC0000000..0xC0002000).contains(&msr)
-        || (0xC0010000..0xC0012000).contains(&msr)
-    {
+    if (0xC0000000..0xC0002000).contains(&msr) || (0xC0010000..0xC0012000).contains(&msr) {
         return true;
     }
     // 其他范围视为非法 (vmx/svm 特权 MSR, 型号特定 MSR 等)

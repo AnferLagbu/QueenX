@@ -222,13 +222,7 @@ impl FileSystem for Ext2FileSystem {
     }
 
     // POSIX utimensat 通路: 路径 → inode → 磁盘写回 (供 syscall 层 `vfs_utimensat`)
-    fn fs_utimensat(
-        &self,
-        rel_path: &str,
-        atime: u64,
-        mtime: u64,
-        pwm: u64,
-    ) -> KernelResult<()> {
+    fn fs_utimensat(&self, rel_path: &str, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
         let inode_num = {
             let mut fs_guard = EXT2_FS.lock();
             let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;

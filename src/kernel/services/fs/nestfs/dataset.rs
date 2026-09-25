@@ -129,7 +129,8 @@ impl NestDataset {
 
     pub fn init(&self, owner_pwm: u64) {
         self.objset.init(owner_pwm);
-        self.state.store(NestDsState::Active as u8, Ordering::Release);
+        self.state
+            .store(NestDsState::Active as u8, Ordering::Release);
         self.mounted.store(true, Ordering::Release);
     }
 

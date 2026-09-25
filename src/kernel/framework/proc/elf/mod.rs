@@ -255,8 +255,7 @@ pub fn elf_load_with_bias(
         let mut cur = vaddr_start;
 
         while cur < vaddr_end as u64 {
-            let phys =
-                crate::framework::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
+            let phys = crate::framework::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
 
             let page_virt = phys.to_virt();
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)

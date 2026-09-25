@@ -1349,9 +1349,7 @@ mod tests {
     // ---- 8. W6: DHCP 策略接入 ----
 
     use crate::framework::net::iface_trait::Ipv4Addr;
-    use crate::services::net::dhcp_policy::{
-        DefaultDhcpPolicy, DhcpPolicy, DhcpPolicyConfig,
-    };
+    use crate::services::net::dhcp_policy::{DefaultDhcpPolicy, DhcpPolicy, DhcpPolicyConfig};
 
     /// 验证: Idle 状态接入默认策略 → Continue.
     #[test]

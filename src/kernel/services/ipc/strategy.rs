@@ -12,8 +12,8 @@
 //! `register_default_ipc_strategy()` 注册 → FFI syscall 使用时经
 //! `current_ipc_strategy()` 获取。由 lib.rs 编排 (crate root 双向编排者)。
 
-use crate::framework::ipc::types::{IpcId, IpcNamespace};
 use crate::framework::ipc::IpcStrategy;
+use crate::framework::ipc::types::{IpcId, IpcNamespace};
 use crate::services::ipc::{msgq, pipe, shm};
 
 /// 默认 IPC 策略 — 包装 services `*_safe` 策略函数

@@ -18,14 +18,14 @@ use crate::framework::config::{
 // DECISION-O ②: CFS_* 权威归 framework/config/sched (机制常量), services 侧
 // 纯 re-export; ConfigError/validate_* 为 services 策略项, tests 经 services
 // 公共 API 访问 (§7.3 允许 framework/tests 访问 services)
-use crate::services::config::{
-    CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
-};
+use crate::framework::tests::{TestResult, runner};
+use crate::register_tests_inner;
 use crate::services::config::validate::{
     validate_cross_module_consistency, validate_memory_config,
 };
-use crate::framework::tests::{TestResult, runner};
-use crate::register_tests_inner;
+use crate::services::config::{
+    CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
+};
 
 // ============================================================================
 // 常量自洽性 (不变式测试)

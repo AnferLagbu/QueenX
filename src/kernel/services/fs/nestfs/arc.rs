@@ -294,7 +294,12 @@ impl NestArc {
         crate::framework::fs::nestfs::arc_safe::ptr_to_slice(ptr, len)
     }
 
-    pub fn insert(&self, key: NestArcKey, data: &[u8], buf_type: NestArcBufType) -> Option<*const u8> {
+    pub fn insert(
+        &self,
+        key: NestArcKey,
+        data: &[u8],
+        buf_type: NestArcBufType,
+    ) -> Option<*const u8> {
         let mut inner = self.inner.lock();
         self.remove_key(&mut inner, &key);
         self.evict_if_needed(&mut inner, data.len());

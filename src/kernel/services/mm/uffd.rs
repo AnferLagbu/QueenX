@@ -13,8 +13,8 @@
 //! - 实例表/#PF 拦截/物理页填充均在 framework (0 unsafe 于本文件)
 
 use crate::framework::mm::uffd::{
-    UFFDIO_API, UFFDIO_COPY, UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE, UFFDIO_ZEROPAGE,
-    UFFD_MSG_SIZE, UffdIoApi, UffdIoCopy, UffdIoRange, UffdIoRegister, UffdIoZeropage,
+    UFFD_MSG_SIZE, UFFDIO_API, UFFDIO_COPY, UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE,
+    UFFDIO_ZEROPAGE, UffdIoApi, UffdIoCopy, UffdIoRange, UffdIoRegister, UffdIoZeropage,
 };
 use crate::framework::syscall::Errno;
 use crate::framework::syscall::api::{read_struct_from_user, write_struct_to_user};
@@ -66,12 +66,8 @@ pub fn ioctl_uffd(fd: i32, request: u64, arg: u64) -> i64 {
             if !read_struct_from_user(arg, &mut reg) {
                 return Errno::EFAULT.as_ret();
             }
-            match crate::framework::mm::uffd_register(
-                fd,
-                reg.range.start,
-                reg.range.len,
-                reg.mode,
-            ) {
+            match crate::framework::mm::uffd_register(fd, reg.range.start, reg.range.len, reg.mode)
+            {
                 Ok(()) => {
                     // Linux 回填 ioctls 支持位图; 本实装注册成功即支持全部已实装 ioctl
                     reg.ioctls = UFFDIO_REGISTER
@@ -183,9 +179,7 @@ pub fn read_event(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             return Err(Errno::EBADF);
         }
         // 无就绪事件: 阻塞当前线程, 由 fault_notify 唤醒
-        crate::framework::proc::scheduler_block(
-            crate::framework::proc::BlockReason::WaitingForIo,
-        );
+        crate::framework::proc::scheduler_block(crate::framework::proc::BlockReason::WaitingForIo);
         crate::framework::proc::scheduler_yield_ex();
     }
 }

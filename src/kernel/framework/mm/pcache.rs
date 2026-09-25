@@ -441,12 +441,7 @@ pub fn pcache_acquire_for_va(
 ///
 /// 帧计数不在此处改: 用户 leaf 的拆除由 `unmap_page_in_table` 承担,
 /// 条目自身那份由 `deref` 在 `ref_count` 归零时释放.
-pub fn pcache_release_for_va(
-    pml4: u64,
-    va: u64,
-    inode_id: u32,
-    page_index: u64,
-) -> Option<u64> {
+pub fn pcache_release_for_va(pml4: u64, va: u64, inode_id: u32, page_index: u64) -> Option<u64> {
     // 用户页表根缺失 ⇒ fail-closed
     if pml4 == 0 {
         return None;

@@ -371,9 +371,7 @@ impl UefiSubsystem {
     )]
     pub fn get_time(&self) -> EfiTime {
         // 简化: 从内核时钟转换
-        let ns = crate::framework::timer::ticks_to_ns(
-            crate::framework::timer::get_ticks(),
-        );
+        let ns = crate::framework::timer::ticks_to_ns(crate::framework::timer::get_ticks());
         let secs = ns / 1_000_000_000;
         let nsec = (ns % 1_000_000_000) as u32;
 

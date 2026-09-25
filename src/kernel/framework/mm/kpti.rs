@@ -571,8 +571,9 @@ pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
     // 每次切换 PA 值恒定, 无并发写冲突 (见本函数文档).
     unsafe {
         let top_page = (kernel_stack_top - 1) & !(PAGE_SIZE as u64 - 1);
-        let user_pml4 =
-            PhysAddr(user_pml4_phys & !(PAGE_SIZE as u64 - 1)).to_virt().0 as *mut u64;
+        let user_pml4 = PhysAddr(user_pml4_phys & !(PAGE_SIZE as u64 - 1))
+            .to_virt()
+            .0 as *mut u64;
         map_text_page(
             user_pml4,
             top_page,
@@ -873,7 +874,13 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     // SAFETY: user_pml4 有效; 页地址来自链接器符号 / 静态布局, 合法;
     // boot 阶段单线程执行或持 VMM_LOCK, 无并发修改.
     unsafe {
-        map_text_page(user_pml4, user_cr3_page, user_cr3_page, FLAGS, "USER_CR3_SAVE LMA");
+        map_text_page(
+            user_pml4,
+            user_cr3_page,
+            user_cr3_page,
+            FLAGS,
+            "USER_CR3_SAVE LMA",
+        );
         map_text_page(
             user_pml4,
             KERNEL_BASE + user_cr3_page,
@@ -896,8 +903,8 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     //    这里以区间方式逐页映射.
     let idt_base = crate::framework::idt::idt_entries_base_lma();
     let idt_page_start = idt_base & !(PAGE_SIZE as u64 - 1);
-    let idt_len =
-        crate::framework::idt::IDT_ENTRIES as u64 * core::mem::size_of::<crate::framework::idt::IdtEntry>() as u64;
+    let idt_len = crate::framework::idt::IDT_ENTRIES as u64
+        * core::mem::size_of::<crate::framework::idt::IdtEntry>() as u64;
     let idt_page_end = (idt_base + idt_len + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
 
     // SAFETY: user_pml4 有效; IDT 表位于内核静态区, 地址合法; 无并发修改.
@@ -926,13 +933,7 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
             let end = (head_end + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
             while p < end {
                 map_text_page(user_pml4, p, p, FLAGS, "GDT head LMA");
-                map_text_page(
-                    user_pml4,
-                    KERNEL_BASE + p,
-                    p,
-                    FLAGS,
-                    "GDT head KERNEL_BASE",
-                );
+                map_text_page(user_pml4, KERNEL_BASE + p, p, FLAGS, "GDT head KERNEL_BASE");
                 map_text_page(
                     user_pml4,
                     LINKER_VMA_OFFSET + p,

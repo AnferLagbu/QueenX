@@ -204,10 +204,9 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
     let end = start + length as usize;
 
     // 目标用户页表根: 用户数据页建在进程用户页表上, 拆除必须作用在同一张表.
-    let cr3 = crate::framework::proc::process_get_cr3(
-        crate::framework::proc::process_get_current_pid(),
-    )
-    .ok_or(Errno::ENOMEM)?;
+    let cr3 =
+        crate::framework::proc::process_get_cr3(crate::framework::proc::process_get_current_pid())
+            .ok_or(Errno::ENOMEM)?;
 
     release_file_pages(mm, start, end, cr3);
 

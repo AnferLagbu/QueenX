@@ -136,7 +136,8 @@ impl E1000Io {
     ///
     /// 当从 PCI BAR 映射物理地址失败时返回 [`E1000IoError::IoMemMap`].
     pub fn new(phys: PhysAddr, len: usize) -> Result<Self, E1000IoError> {
-        let mmio = IoMem::from_pci_bar(phys, len, "e1000-bar0").map_err(|_| E1000IoError::IoMemMap)?;
+        let mmio =
+            IoMem::from_pci_bar(phys, len, "e1000-bar0").map_err(|_| E1000IoError::IoMemMap)?;
         Ok(Self { mmio })
     }
 
@@ -341,9 +342,9 @@ impl E1000Io {
 // 该结构原属 services (业务逻辑). 严格 framekernel 原则要求 framework 不依赖
 // services → E1000Driver 整体上移 framework. services 改为 re-export.
 
-use crate::framework::driver::net::dma_ring::{E1000_RX_RING_SIZE};
-use crate::framework::driver::net::e1000::{RxRing, TxRing};
 use crate::framework::driver::framework::DriverError;
+use crate::framework::driver::net::dma_ring::E1000_RX_RING_SIZE;
+use crate::framework::driver::net::e1000::{RxRing, TxRing};
 use crate::klog_info;
 use crate::klog_warn;
 

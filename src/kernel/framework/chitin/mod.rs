@@ -1164,8 +1164,7 @@ mod tests {
         // 理由同 test_t4_1_chitin_blk_read_via_trait.
         let mock_ptr: *mut MockBlockDevice = Box::leak(Box::new(MockBlockDevice::new()));
         // SAFETY: mock_ptr 由 Box::leak 产生, 在测试进程生命周期内始终有效且独占.
-        let idx =
-            chitin_register_block_dev("small_buf_blk", None, None, unsafe { &mut *mock_ptr });
+        let idx = chitin_register_block_dev("small_buf_blk", None, None, unsafe { &mut *mock_ptr });
 
         let mut small = [0u8; 256];
         let r = chitin_blk_read(idx as u8, 0, &mut small);

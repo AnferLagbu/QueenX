@@ -246,8 +246,7 @@ pub fn wasi_path_readlink(
 
     // 分配临时缓冲区接收 readlink 结果
     let mut link_buf = alloc::vec![0u8; buf_len as usize];
-    let result =
-        crate::framework::fs::vfs::api::vfs_readlink_safe(&abs_path, &mut link_buf, 0);
+    let result = crate::framework::fs::vfs::api::vfs_readlink_safe(&abs_path, &mut link_buf, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -371,8 +370,7 @@ pub fn wasi_path_filestat_set_times(
     let path = read_path(interp, path_ptr, path_len)?;
     let abs_path = resolve_path(ctx, dirfd, &path)?;
 
-    let result =
-        crate::framework::fs::vfs::api::vfs_utimensat_safe(&abs_path, atim, mtim, 0);
+    let result = crate::framework::fs::vfs::api::vfs_utimensat_safe(&abs_path, atim, mtim, 0);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;

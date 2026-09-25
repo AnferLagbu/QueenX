@@ -25,9 +25,7 @@
 
 use crate::framework::mm;
 use crate::framework::mm::{PAGE_SIZE, PageFlags};
-use crate::framework::proc::{
-    RLIM_INFINITY, RLIMIT_CORE, process_get_current_pid, process_with,
-};
+use crate::framework::proc::{RLIM_INFINITY, RLIMIT_CORE, process_get_current_pid, process_with};
 // B08-22: ELF64 头统一引用 elf/mod.rs 单一定义, 消除 coredump 侧重复布局
 use crate::framework::proc::elf::{Elf64Header, Elf64Phdr};
 use core::sync::atomic::Ordering;
@@ -534,11 +532,7 @@ fn write_note_siginfo(fd: u32, sig: u8, offset: &mut u64) {
     let desc_aligned = (u64::from(siginfo_size) + 3) & !3;
     // SAFETY: CoreSiginfo 是 POD 结构体
     unsafe {
-        crate::framework::fs::vfs_write(
-            fd,
-            &si as *const CoreSiginfo as *const u8,
-            siginfo_size,
-        );
+        crate::framework::fs::vfs_write(fd, &si as *const CoreSiginfo as *const u8, siginfo_size);
     }
     *offset += desc_aligned;
 }
@@ -592,9 +586,8 @@ fn fill_regs_from_frame(prstatus: &mut PrStatus, frame_addr: u64) {
         return;
     }
     // SAFETY: frame_addr 由调用方保证为有效的 ExceptionFrame 指针
-    let frame = unsafe {
-        &*(frame_addr as *const crate::framework::arch::exception::ExceptionFrame)
-    };
+    let frame =
+        unsafe { &*(frame_addr as *const crate::framework::arch::exception::ExceptionFrame) };
 
     let regs = &mut prstatus.regs;
     regs[0] = frame.x0;

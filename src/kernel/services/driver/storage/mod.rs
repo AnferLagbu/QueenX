@@ -92,7 +92,10 @@ fn nvme_msix03_selftest(ci: usize) {
         return;
     }
 
-    slog_info!(Driver, "[MSIX-03][services] pre-test hook entered (ctrl {ci})");
+    slog_info!(
+        Driver,
+        "[MSIX-03][services] pre-test hook entered (ctrl {ci})"
+    );
 
     // RAII 句柄: 作用域结束 (含提前 return) 即归还 DMA 缓冲
     let Some(buf) = nvme_alloc_dma_buffer(PAGE_SIZE as usize) else {
@@ -105,7 +108,9 @@ fn nvme_msix03_selftest(ci: usize) {
     let cmd = fw_nvme::NvmeCommand::read(1, 0, 1, buf_phys);
     let submitted = {
         let mut controllers = NVME_CONTROLLERS.lock();
-        controllers.get_mut(ci).map_or(Err(()), |c| c.io_submit_isr(cmd))
+        controllers
+            .get_mut(ci)
+            .map_or(Err(()), |c| c.io_submit_isr(cmd))
     };
     let Ok(before) = submitted else {
         slog_warn!(Driver, "[MSIX-03][services] io submit failed, skip");
@@ -172,9 +177,8 @@ pub fn storage_init() {
     // MSI-X 分发契约注册 (DECISION-K 模式): framework ISR handler 排空
     // framework 注册表后转发 services 注册表。先于任何 enable_msix 调用,
     // 保证中断投递时分发回调已就位 (OnceLock set-once, 重复注册 fail-quiet)。
-    let _ = crate::framework::driver::storage::nvme_register_services_msix_dispatch(
-        nvme_msix_dispatch,
-    );
+    let _ =
+        crate::framework::driver::storage::nvme_register_services_msix_dispatch(nvme_msix_dispatch);
 
     // Step 2: 扫描 PCI 总线寻找存储控制器
     let devices = pci::scan_all_buses();
@@ -268,9 +272,7 @@ pub fn storage_init() {
                 );
 
                 // BAR0 MMIO 区域 0x2000 (HBA 寄存器 0x1000 + I/O 队列门铃区)
-                if let Some(mut controller) =
-                    nvme::NvmeController::new(mmio_base as u64, 0x2000)
-                {
+                if let Some(mut controller) = nvme::NvmeController::new(mmio_base as u64, 0x2000) {
                     // 分段编排 (时序契约): 基础初始化 + Identify (轮询) → MSI-X
                     // 接线 → I/O 队列创建。**I/O CQ 必须在 MSI-X 启用后创建**:
                     // QEMU `nvme_init_cq` 仅在 msix_enabled 时调用
@@ -287,11 +289,7 @@ pub fn storage_init() {
                     // MSI-X 接线 (DECISION-H 2 号子步): 启用 + 注册 ISR,
                     // 任一失败保持轮询 (irq_vector = None)
                     if let Some(vector) = nvme::NvmeController::enable_msix(dev) {
-                        match
-                            crate::framework::driver::storage::nvme_register_msix_isr(
-                                vector,
-                            )
-                        {
+                        match crate::framework::driver::storage::nvme_register_msix_isr(vector) {
                             Ok(()) => {
                                 controller.set_irq_vector(vector);
                                 slog_info!(Driver, "NVMe: MSI-X enabled, vector={vector}");

@@ -302,8 +302,7 @@ pub fn uds_create(sock_type: UnixSockType) -> Result<i32, UdsError> {
         )
         .ok_or(UdsError::NoMem)?;
 
-        let (_sub, slot) =
-            crate::services::proc::fd_alloc::idx_of(fd).ok_or(UdsError::BadFd)?;
+        let (_sub, slot) = crate::services::proc::fd_alloc::idx_of(fd).ok_or(UdsError::BadFd)?;
 
         let idx = slot as u8;
         let id = alloc_socket_id();

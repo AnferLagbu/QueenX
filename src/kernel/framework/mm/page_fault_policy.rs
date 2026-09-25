@@ -99,7 +99,10 @@ mod tests {
         let p = FallbackPageFaultPolicy;
         assert_eq!(p.stack_guard_pages(), 1);
         assert_eq!(p.stack_default_size(), 0x0080_0000);
-        assert_eq!(p.stack_top(), crate::framework::constants::limits::USER_ADDR_MAX);
+        assert_eq!(
+            p.stack_top(),
+            crate::framework::constants::limits::USER_ADDR_MAX
+        );
     }
 
     #[test]

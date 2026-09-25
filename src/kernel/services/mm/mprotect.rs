@@ -74,10 +74,9 @@ pub fn mprotect_syscall(addr: u64, len: u64, prot: i32) -> Result<usize, Errno> 
 
     // 目标用户页表根: 用户页的权限位只存在于进程用户页表中,
     // 改内核表 (全局单表变体) 不会影响用户页权限.
-    let cr3 = crate::framework::proc::process_get_cr3(
-        crate::framework::proc::process_get_current_pid(),
-    )
-    .ok_or(Errno::ENOMEM)?;
+    let cr3 =
+        crate::framework::proc::process_get_cr3(crate::framework::proc::process_get_current_pid())
+            .ok_or(Errno::ENOMEM)?;
 
     // 委托 framework 层执行页表修改
     vma_get_current_mm().map_or(Err(Errno::ENOMEM), |mm| {

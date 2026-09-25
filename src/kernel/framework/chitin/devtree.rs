@@ -429,8 +429,7 @@ mod tests {
     fn test_devtree_hierarchy() {
         devtree_init();
         let root = devtree_root_id();
-        let child =
-            devtree_create_node_impl("child", ChitinProto::Char, Some(root)).unwrap();
+        let child = devtree_create_node_impl("child", ChitinProto::Char, Some(root)).unwrap();
         let grandchild =
             devtree_create_node_impl("grandchild", ChitinProto::Char, Some(child)).unwrap();
 

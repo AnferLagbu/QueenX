@@ -340,9 +340,7 @@ impl<'a> SessionManager<'a> {
                     .create(pwm, matrix_caps, current_tick, expires_tick, pid)
                 {
                     Ok(id) => id,
-                    Err(SessionError::Kernel(
-                        crate::services::error::KernelError::WouldBlock,
-                    )) => {
+                    Err(SessionError::Kernel(crate::services::error::KernelError::WouldBlock)) => {
                         return LoginResult::Denied(LoginDeny::TooManySessions);
                     }
                     Err(SessionError::TableFull) => {

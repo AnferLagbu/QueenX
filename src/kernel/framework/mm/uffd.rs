@@ -151,8 +151,9 @@ const MAX_RANGES: usize = 4;
 /// 每实例事件队列容量
 const MAX_EVENTS: usize = 16;
 /// 实例数 = `USERFAULT_FD` 范围容量 (16)
-const MAX_INSTANCES: usize =
-    crate::framework::proc::fd_alloc::max_slots(crate::framework::proc::fd_alloc::FdSubsystem::UserFaultFd);
+const MAX_INSTANCES: usize = crate::framework::proc::fd_alloc::max_slots(
+    crate::framework::proc::fd_alloc::FdSubsystem::UserFaultFd,
+);
 
 /// 已注册区间
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -242,9 +243,7 @@ impl UffdInstance {
     /// 区间是否覆盖 `page_addr` 且模式匹配
     fn covers(&self, page_addr: u64) -> bool {
         self.ranges[..self.range_count].iter().any(|r| {
-            r.mode & UFFDIO_REGISTER_MODE_MISSING != 0
-                && page_addr >= r.start
-                && page_addr < r.end
+            r.mode & UFFDIO_REGISTER_MODE_MISSING != 0 && page_addr >= r.start && page_addr < r.end
         })
     }
 }
@@ -322,7 +321,11 @@ pub fn release(fd: i32) -> bool {
 ///
 /// # Errors
 /// `api != UFFD_API` 时返回 `EINVAL` (Linux 语义: 不支持的 API 版本).
-pub fn api_negotiate(fd: i32, api: u64, features: u64) -> Result<UffdIoApi, crate::framework::syscall::Errno> {
+pub fn api_negotiate(
+    fd: i32,
+    api: u64,
+    features: u64,
+) -> Result<UffdIoApi, crate::framework::syscall::Errno> {
     use crate::framework::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
         return Err(Errno::EBADF);
@@ -341,11 +344,7 @@ pub fn api_negotiate(fd: i32, api: u64, features: u64) -> Result<UffdIoApi, crat
     Ok(UffdIoApi {
         api: UFFD_API,
         features: 0,
-        ioctls: UFFDIO_REGISTER
-            | UFFDIO_UNREGISTER
-            | UFFDIO_WAKE
-            | UFFDIO_COPY
-            | UFFDIO_ZEROPAGE,
+        ioctls: UFFDIO_REGISTER | UFFDIO_UNREGISTER | UFFDIO_WAKE | UFFDIO_COPY | UFFDIO_ZEROPAGE,
     })
 }
 
@@ -359,7 +358,12 @@ pub fn api_negotiate(fd: i32, api: u64, features: u64) -> Result<UffdIoApi, crat
 /// - fd 无效 → `EBADF`; 未握手 `UFFDIO_API` → `EINVAL`
 /// - `len == 0` / 非页对齐 / 模式不含 MISSING → `EINVAL`
 /// - 区间未被完整映射 → `EFAULT`; 注册区间数超限 → `ENOSPC`
-pub fn register(fd: i32, start: u64, len: u64, mode: u64) -> Result<(), crate::framework::syscall::Errno> {
+pub fn register(
+    fd: i32,
+    start: u64,
+    len: u64,
+    mode: u64,
+) -> Result<(), crate::framework::syscall::Errno> {
     use crate::framework::syscall::Errno;
     let Some(idx) = instance_index(fd) else {
         return Err(Errno::EBADF);

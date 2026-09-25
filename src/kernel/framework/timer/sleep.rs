@@ -220,9 +220,7 @@ pub fn timer_sleep(ms: u64) -> Result<(), i32> {
     crate::framework::timer::hrtimer_start_rel(&timer, delay_ns);
 
     // 阻塞当前进程
-    crate::framework::proc::scheduler_block(
-        crate::framework::proc::BlockReason::Sleeping,
-    );
+    crate::framework::proc::scheduler_block(crate::framework::proc::BlockReason::Sleeping);
 
     // 被唤醒后取消可能残留的 timer
     crate::framework::timer::hrtimer_cancel(&timer);

@@ -26,7 +26,6 @@ pub mod file_handle;
 /// 文件操作策略 — ioctl / clock_gettime / poll / chown / truncate / flock
 pub mod file_ops;
 pub mod flock;
-pub mod nestfs;
 /// Plan B: Inode trait — 文件级操作抽象
 pub mod inode;
 pub mod inotify;
@@ -35,6 +34,7 @@ pub mod link;
 pub mod misc;
 pub mod mode;
 pub mod mount;
+pub mod nestfs;
 pub mod open;
 /// 全局 OpenFile 表 (POSIX 打开文件描述)
 pub mod open_file_table;

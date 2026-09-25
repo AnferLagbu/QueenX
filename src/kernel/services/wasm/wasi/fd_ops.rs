@@ -58,8 +58,7 @@ pub fn wasi_fd_seek(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<(
     };
 
     // 调用 VFS seek
-    let result =
-        crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, offset, whence);
+    let result = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, offset, whence);
 
     if result < 0 {
         interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -221,14 +220,13 @@ pub fn wasi_fd_stat_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     };
 
     // 调用 VFS fstat 获取文件信息
-    let stat = if let Some(s) =
-        crate::framework::fs::vfs::api::vfs_fstat_safe(entry.inner_fd as u32, 0)
-    {
-        s
-    } else {
-        interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
-        return Ok(());
-    };
+    let stat =
+        if let Some(s) = crate::framework::fs::vfs::api::vfs_fstat_safe(entry.inner_fd as u32, 0) {
+            s
+        } else {
+            interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
+            return Ok(());
+        };
 
     // 写入 WASI filestat 结构到线性内存
     // filestat: { dev: u64, ino: u64, filetype: u8, nlink: u64, size: u64, atim: u64, mtim: u64, ctim: u64 }
@@ -356,8 +354,7 @@ pub fn wasi_fd_write(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
 
         // 使用 safe wrapper 调用 VFS write
-        let n =
-            crate::framework::fs::vfs::api::vfs_write_safe(entry.inner_fd as u32, slice);
+        let n = crate::framework::fs::vfs::api::vfs_write_safe(entry.inner_fd as u32, slice);
 
         if n < 0 {
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
@@ -411,11 +408,7 @@ pub fn wasi_fd_pread(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
         let n = crate::framework::fs::vfs::api::vfs_read_safe(entry.inner_fd as u32, slice);
         if n < 0 {
-            let _ = crate::framework::fs::vfs::api::vfs_seek(
-                entry.inner_fd as u32,
-                saved_pos,
-                0,
-            );
+            let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }
@@ -468,14 +461,9 @@ pub fn wasi_fd_pwrite(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
             .ok_or(WasmError::MemoryOutOfBounds)?
             .get_slice(iov.buf, iov.len)
             .map_err(|_| WasmError::MemoryOutOfBounds)?;
-        let n =
-            crate::framework::fs::vfs::api::vfs_write_safe(entry.inner_fd as u32, slice);
+        let n = crate::framework::fs::vfs::api::vfs_write_safe(entry.inner_fd as u32, slice);
         if n < 0 {
-            let _ = crate::framework::fs::vfs::api::vfs_seek(
-                entry.inner_fd as u32,
-                saved_pos,
-                0,
-            );
+            let _ = crate::framework::fs::vfs::api::vfs_seek(entry.inner_fd as u32, saved_pos, 0);
             interp.stack.push(Value::I32(wasi_errno(WasiErrno::Io)))?;
             return Ok(());
         }

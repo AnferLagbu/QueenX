@@ -52,7 +52,9 @@ static UDS_SETOPT_HOOK: crate::framework::sync::OnceLock<fn(i32, bool) -> i32> =
 ///
 /// # Errors
 /// 钩子已被注册过时返回 Err (幂等语义由调用方忽略重复注册)。
-pub fn register_uds_setsockopt_hook(hook: fn(i32, bool) -> i32) -> Result<(), fn(i32, bool) -> i32> {
+pub fn register_uds_setsockopt_hook(
+    hook: fn(i32, bool) -> i32,
+) -> Result<(), fn(i32, bool) -> i32> {
     UDS_SETOPT_HOOK.set(hook)
 }
 
@@ -88,9 +90,7 @@ pub(crate) fn wire_to_smol(a: crate::framework::net::iface_trait::IpAddr) -> IpA
 
 /// 把 trait 抽象的 `NetEndpoint` 翻译成 smoltcp 的 `IpEndpoint`.
 #[inline]
-pub(crate) fn endpoint_to_smol(
-    e: crate::framework::net::iface_trait::NetEndpoint,
-) -> IpEndpoint {
+pub(crate) fn endpoint_to_smol(e: crate::framework::net::iface_trait::NetEndpoint) -> IpEndpoint {
     IpEndpoint {
         addr: wire_to_smol(e.addr),
         port: e.port,
@@ -106,18 +106,14 @@ pub(crate) fn endpoint_from_smol(
     ep: IpEndpoint,
 ) -> Option<crate::framework::net::iface_trait::NetEndpoint> {
     match ep.addr {
-        IpAddress::Ipv4(v4) => Some(
-            crate::framework::net::iface_trait::NetEndpoint::new_v4(
-                crate::framework::net::iface_trait::Ipv4Addr::from_octets(v4.octets()),
-                ep.port,
-            ),
-        ),
-        IpAddress::Ipv6(v6) => Some(
-            crate::framework::net::iface_trait::NetEndpoint::new_v6(
-                crate::framework::net::iface_trait::Ipv6Addr::from_octets(v6.octets()),
-                ep.port,
-            ),
-        ),
+        IpAddress::Ipv4(v4) => Some(crate::framework::net::iface_trait::NetEndpoint::new_v4(
+            crate::framework::net::iface_trait::Ipv4Addr::from_octets(v4.octets()),
+            ep.port,
+        )),
+        IpAddress::Ipv6(v6) => Some(crate::framework::net::iface_trait::NetEndpoint::new_v6(
+            crate::framework::net::iface_trait::Ipv6Addr::from_octets(v6.octets()),
+            ep.port,
+        )),
     }
 }
 
@@ -231,23 +227,19 @@ pub(crate) unsafe fn parse_endpoint_trait(
                 let sin = &*(addr as *const SockaddrIn);
                 let octets = sin.sin_addr;
                 let port = u16::from_be(sin.sin_port);
-                Some(
-                    crate::framework::net::iface_trait::NetEndpoint::new_v4(
-                        crate::framework::net::iface_trait::Ipv4Addr::from_octets(octets),
-                        port,
-                    ),
-                )
+                Some(crate::framework::net::iface_trait::NetEndpoint::new_v4(
+                    crate::framework::net::iface_trait::Ipv4Addr::from_octets(octets),
+                    port,
+                ))
             }
             10 => {
                 let sin6 = &*(addr as *const SockaddrIn6);
                 let octets = sin6.sin6_addr;
                 let port = u16::from_be(sin6.sin6_port);
-                Some(
-                    crate::framework::net::iface_trait::NetEndpoint::new_v6(
-                        crate::framework::net::iface_trait::Ipv6Addr::from_octets(octets),
-                        port,
-                    ),
-                )
+                Some(crate::framework::net::iface_trait::NetEndpoint::new_v6(
+                    crate::framework::net::iface_trait::Ipv6Addr::from_octets(octets),
+                    port,
+                ))
             }
             _ => None,
         }

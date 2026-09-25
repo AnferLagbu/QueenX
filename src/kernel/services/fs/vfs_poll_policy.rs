@@ -26,9 +26,7 @@
 //! - 互补: LEGACY-4 (`BlockDevice` trait 化) - 类似的机制/策略分离范式
 
 use crate::framework::fs::VfsFileType;
-use crate::framework::fs::vfs_poll_trait::{
-    EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollPolicy,
-};
+use crate::framework::fs::vfs_poll_trait::{EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, VfsPollPolicy};
 
 // ============================================================================
 // StandardVfsPollPolicy — 标准 VFS 轮询策略

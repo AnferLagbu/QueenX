@@ -15,8 +15,8 @@
 //! - framework 层: 用户内存拷贝机制 (`mm::copy_user`), 特殊 fd 权威实现,
 //!   实际访问 VFS / 创建内核对象
 
-use crate::framework::syscall::raw;
 use crate::framework::syscall::Errno;
+use crate::framework::syscall::raw;
 
 /// 将 i64 返回码 (负数 = -errno) 转为 services 层 Result
 #[inline]
@@ -61,13 +61,19 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     }
     // 特殊 fd 路由: 顺序与原 framework 实现一致
     if crate::framework::syscall::eventfd::is_eventfd_fd(fd) {
-        return ret_to_result(crate::framework::syscall::eventfd::sys_eventfd_read(fd, buf));
+        return ret_to_result(crate::framework::syscall::eventfd::sys_eventfd_read(
+            fd, buf,
+        ));
     }
     if crate::framework::syscall::signalfd::is_signalfd_fd(fd) {
-        return ret_to_result(crate::framework::syscall::signalfd::sys_signalfd_read(fd, buf));
+        return ret_to_result(crate::framework::syscall::signalfd::sys_signalfd_read(
+            fd, buf,
+        ));
     }
     if crate::framework::syscall::timerfd::is_timerfd_fd(fd) {
-        return ret_to_result(crate::framework::syscall::timerfd::sys_timerfd_read(fd, buf));
+        return ret_to_result(crate::framework::syscall::timerfd::sys_timerfd_read(
+            fd, buf,
+        ));
     }
     if crate::framework::fs::is_inotify_fd(fd) {
         return ret_to_result(crate::framework::fs::sys_inotify_read(
@@ -310,11 +316,8 @@ pub fn copy_file_range_syscall(
         let to_read = remaining.min(chunk_size);
 
         // 从源 fd 读取
-        let read_ret = crate::framework::fs::api::vfs_read(
-            fd_in as u32,
-            buf.as_mut_ptr(),
-            to_read as u32,
-        );
+        let read_ret =
+            crate::framework::fs::api::vfs_read(fd_in as u32, buf.as_mut_ptr(), to_read as u32);
         if read_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
@@ -327,11 +330,8 @@ pub fn copy_file_range_syscall(
         }
 
         // 写入目标 fd
-        let write_ret = crate::framework::fs::api::vfs_write(
-            fd_out as u32,
-            buf.as_ptr(),
-            bytes_read as u32,
-        );
+        let write_ret =
+            crate::framework::fs::api::vfs_write(fd_out as u32, buf.as_ptr(), bytes_read as u32);
         if write_ret < 0 {
             if total_copied > 0 {
                 return Ok(total_copied);
@@ -378,10 +378,7 @@ fn read_iovecs(iov_ptr: u64, iovcnt: u64) -> Result<alloc::vec::Vec<(u64, u64)>,
     let mut iovs = alloc::vec::Vec::with_capacity(iovcnt as usize);
     for i in 0..iovcnt {
         let mut entry = [0u64; 2];
-        if !crate::framework::syscall::api::read_struct_from_user(
-            iov_ptr + i * 16,
-            &mut entry,
-        ) {
+        if !crate::framework::syscall::api::read_struct_from_user(iov_ptr + i * 16, &mut entry) {
             return Err(Errno::EFAULT);
         }
         iovs.push((entry[0], entry[1]));

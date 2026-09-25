@@ -212,12 +212,11 @@ impl NestfsData {
                 // 其余磁盘也添加为 vdev
                 for (drive_id, part_start) in &discovered[1..] {
                     self.disk_drive.store(*drive_id, Ordering::Release);
-                    let mut vdev_cfg =
-                        crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
-                            u16::from(*drive_id),
-                            "disk",
-                            12,
-                        );
+                    let mut vdev_cfg = crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
+                        u16::from(*drive_id),
+                        "disk",
+                        12,
+                    );
                     vdev_cfg.asize = self.probe_partition_size_for_drive(*drive_id, *part_start);
                     vdev_cfg.partition_start = *part_start;
                     self.spa.add_vdev(vdev_cfg);
@@ -235,9 +234,10 @@ impl NestfsData {
             );
         } else {
             crate::slog_info!(FS, "[NestFS] No disk, running in memory mode");
-            self.spa.add_vdev(
-                crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(0, "ata0", 12),
-            );
+            self.spa
+                .add_vdev(crate::services::fs::nestfs::vdev::NestVdevConfig::new_disk(
+                    0, "ata0", 12,
+                ));
         }
 
         self.setup_zil_datasets();
@@ -689,7 +689,9 @@ impl NestfsData {
                 let end = (start + to_read).min(disk_buf.len());
                 buf[..end - start].copy_from_slice(&disk_buf[start..end]);
                 let arc_key = NestArcKey::new(0, (obj_id << 40) | block_offset, obj.birth_txg);
-                self.spa.arc.insert(arc_key, &disk_buf, NestArcBufType::Data);
+                self.spa
+                    .arc
+                    .insert(arc_key, &disk_buf, NestArcBufType::Data);
             }
         }
         {
@@ -773,8 +775,12 @@ impl NestfsData {
                 txg_group.add_dirty_to_open(obj.bp);
             }
         }
-        self.zil
-            .add_record(NestZilRecord::new_write(txg, obj_id, offset, to_write as u32));
+        self.zil.add_record(NestZilRecord::new_write(
+            txg,
+            obj_id,
+            offset,
+            to_write as u32,
+        ));
         {
             let mut fds = self.fds.lock();
             fds[fd as usize].offset += to_write as u64;

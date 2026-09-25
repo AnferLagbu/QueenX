@@ -103,12 +103,7 @@ pub fn write_fat_entry(
     sector_data[fat_offset as usize + 3] = bytes[3];
 
     let result = with_device(device_idx as usize, |dev| {
-        crate::framework::driver::block::write_sectors(
-            dev,
-            u64::from(fat_sector),
-            1,
-            &sector_data,
-        )
+        crate::framework::driver::block::write_sectors(dev, u64::from(fat_sector), 1, &sector_data)
     });
 
     match result {

@@ -145,7 +145,11 @@ pub fn init() {
     }
 
     // 汇总在线 CPU 数; `make test-smp` 以 "[SMP] online CPUs: 2" 作为 2 核启动成功判据.
-    crate::klog_info!(Kernel, "[SMP] online CPUs: {}", crate::framework::smp::get_cpu_count());
+    crate::klog_info!(
+        Kernel,
+        "[SMP] online CPUs: {}",
+        crate::framework::smp::get_cpu_count()
+    );
 
     AP_STARTED_COUNT.store(cpu_index, Ordering::Release);
     SMP_FULLY_INITIALIZED.store(true, Ordering::Release);
@@ -227,7 +231,8 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
         // ready/done 偏移由 Rust 端 offset_of! 计算, 与 trampoline.asm SINFO_* 符号互校
         // (DECISION-050: 单一来源, 避免 magic 偏移扩散).
         let mut timeout = READY_TIMEOUT_LOOPS;
-        let ready_ptr: *const u32 = (TRAMPOLINE_BASE + AP_INFO_OFFSET + READY_OFFSET as u64) as *const u32;
+        let ready_ptr: *const u32 =
+            (TRAMPOLINE_BASE + AP_INFO_OFFSET + READY_OFFSET as u64) as *const u32;
         while timeout > 0 {
             if core::ptr::read_volatile(ready_ptr) != 0 {
                 break;
@@ -238,7 +243,8 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
 
         if timeout > 0 {
             // AP 已就绪，等待 ap_entry 完成 per-CPU GDT+TSS 初始化
-            let done_ptr: *const u32 = (TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET as u64) as *const u32;
+            let done_ptr: *const u32 =
+                (TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET as u64) as *const u32;
             let mut wait = AP_ENTRY_TIMEOUT_LOOPS;
             while wait > 0 {
                 if core::ptr::read_volatile(done_ptr) != 0 {

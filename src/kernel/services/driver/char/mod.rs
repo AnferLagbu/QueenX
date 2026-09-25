@@ -31,8 +31,8 @@ pub mod vga;
 /// 接入时按 §6.2 补 framework 提供的 CharOps 安全桥 trait (unsafe 转换留 framework)。
 #[cfg(target_arch = "x86_64")]
 pub fn char_init() {
-    use alloc::boxed::Box;
     use crate::framework::chitin::{ChitinProto, chitin_register_driver};
+    use alloc::boxed::Box;
     use serial::{ComPort, SerialConfig, SerialPort};
     use vga::VgaConsole;
 

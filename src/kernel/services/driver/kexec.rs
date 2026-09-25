@@ -9,9 +9,7 @@ pub use crate::framework::driver::{
     KEXEC_MAX_KERNEL_SIZE, KexecSegType, KexecSegment, KexecState, KexecSubsystem,
 };
 
-use crate::framework::driver::{
-    kexec_init, kexec_is_initialized, kexec_subsystem, sys_kexec,
-};
+use crate::framework::driver::{kexec_init, kexec_is_initialized, kexec_subsystem, sys_kexec};
 
 /// 初始化 kexec
 pub fn init() {

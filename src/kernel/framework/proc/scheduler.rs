@@ -869,10 +869,7 @@ impl Scheduler {
             unsafe {
                 let prev_ctx = core::ptr::addr_of_mut!(*((*prev_ctx_ptr).get_mut_unchecked()));
                 let next_ctx = core::ptr::addr_of!(*((*next_ctx_ptr).get_mut_unchecked()));
-                crate::arch!(context_switch(
-                    prev_ctx as *mut u8,
-                    next_ctx as *const u8
-                ));
+                crate::arch!(context_switch(prev_ctx as *mut u8, next_ctx as *const u8));
             }
         }
 
@@ -1358,8 +1355,7 @@ impl Scheduler {
 
         // 周期性负载均衡
         if new_tick.is_multiple_of(64) {
-            let local_load =
-                self.total_runnable_for(crate::framework::smp::get_current_cpu());
+            let local_load = self.total_runnable_for(crate::framework::smp::get_current_cpu());
             if local_load < 2 {
                 self.load_balance();
             }

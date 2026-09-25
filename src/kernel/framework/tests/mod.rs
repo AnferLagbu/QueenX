@@ -37,12 +37,12 @@ pub mod test_config;
 // (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑用例, 双端共享 (kernel_test + host-test).
 pub mod test_credo;
 pub mod test_devfs;
+pub mod test_ipc;
+pub mod test_mm;
 #[cfg(target_arch = "x86_64")]
 pub mod test_nestfs;
 #[cfg(target_arch = "x86_64")]
 pub mod test_nestfs_ext;
-pub mod test_ipc;
-pub mod test_mm;
 pub mod test_new_features;
 pub mod test_pi_mutex;
 pub mod test_proc;

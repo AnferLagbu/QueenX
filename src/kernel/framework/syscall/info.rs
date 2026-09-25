@@ -84,7 +84,9 @@ pub fn sys_uname(buf: u64) -> i64 {
     let nodename = uts_ns
         .as_ref()
         .map_or_else(default_nodename, |n| n.get_nodename());
-    let domainname = uts_ns.as_ref().map_or_else(String::new, |n| n.get_domainname());
+    let domainname = uts_ns
+        .as_ref()
+        .map_or_else(String::new, |n| n.get_domainname());
 
     copy_str(&mut uts.sysname, b"QueenX");
     copy_str(&mut uts.nodename, nodename.as_bytes());

@@ -78,7 +78,8 @@ pub unsafe extern "C" fn qx_net_static_ip(cidr_str: *const u8, gw_str: *const u8
             Some(v) => v,
             None => return -1,
         };
-        let ip = smoltcp::wire::Ipv4Address::new(ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]);
+        let ip =
+            smoltcp::wire::Ipv4Address::new(ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3]);
 
         // 解析网关 (复用 dns::parse_ipv4_literal)
         let gw_str = match cstr_to_str(gw_str) {
@@ -89,7 +90,8 @@ pub unsafe extern "C" fn qx_net_static_ip(cidr_str: *const u8, gw_str: *const u8
             Some(v) => v,
             None => return -1,
         };
-        let gw = smoltcp::wire::Ipv4Address::new(gw_octets[0], gw_octets[1], gw_octets[2], gw_octets[3]);
+        let gw =
+            smoltcp::wire::Ipv4Address::new(gw_octets[0], gw_octets[1], gw_octets[2], gw_octets[3]);
 
         let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(ip, prefix));
         stack.iface.update_ip_addrs(|addrs| {

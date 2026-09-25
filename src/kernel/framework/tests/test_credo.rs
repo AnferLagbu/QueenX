@@ -12,6 +12,7 @@
 //! test_pwm.rs 测) 是不同对象.
 
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
+use crate::register_tests_inner;
 use crate::services::credo::capability::{
     FS_CAP_CHOWN, FS_CAP_DELETE, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE, PROC_CAP_EXEC,
     PROC_CAP_FORK, PROC_CAP_KILL, SYS_CAP_ALL,
@@ -19,7 +20,6 @@ use crate::services::credo::capability::{
 use crate::services::credo::policy::{
     CapBits, CapDomain, CapMatrix, CapabilityMatrix, InMemoryMatrix, VIABLE_FLOOR,
 };
-use crate::register_tests_inner;
 
 fn cap_bits_has() -> TestResult {
     let cb = CapBits(FS_CAP_READ | FS_CAP_WRITE);
@@ -60,22 +60,31 @@ fn cap_matrix_new_empty() -> TestResult {
 
 fn cap_matrix_grant_revoke() -> TestResult {
     let cm = InMemoryMatrix::new();
-    cm.set(CapDomain::FS, CapBits(FS_CAP_READ | FS_CAP_WRITE)).unwrap();
+    cm.set(CapDomain::FS, CapBits(FS_CAP_READ | FS_CAP_WRITE))
+        .unwrap();
     check!(
-        cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_READ)),
+        cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_READ)),
         "FS has READ"
     );
     check!(
-        cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_WRITE)),
+        cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_WRITE)),
         "FS has WRITE"
     );
     cm.set(CapDomain::FS, CapBits(FS_CAP_READ)).unwrap();
     check!(
-        cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_READ)),
+        cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_READ)),
         "FS still has READ"
     );
     check!(
-        !cm.get(CapDomain::FS).unwrap().contains(CapBits(FS_CAP_WRITE)),
+        !cm.get(CapDomain::FS)
+            .unwrap()
+            .contains(CapBits(FS_CAP_WRITE)),
         "FS lost WRITE"
     );
     TestResult::Pass
@@ -192,15 +201,22 @@ fn cap_matrix_delegation_chain() -> TestResult {
     user.set(CapDomain::PROC, CapBits(PROC_CAP_FORK | PROC_CAP_EXEC))
         .unwrap();
     check!(
-        root.get(CapDomain::FS).contains(admin.get(CapDomain::FS).unwrap()),
+        root.get(CapDomain::FS)
+            .contains(admin.get(CapDomain::FS).unwrap()),
         "root contains admin"
     );
     check!(
-        admin.get(CapDomain::FS).unwrap().contains(user.get(CapDomain::FS).unwrap()),
+        admin
+            .get(CapDomain::FS)
+            .unwrap()
+            .contains(user.get(CapDomain::FS).unwrap()),
         "admin contains user"
     );
     check!(
-        !user.get(CapDomain::FS).unwrap().contains(admin.get(CapDomain::FS).unwrap()),
+        !user
+            .get(CapDomain::FS)
+            .unwrap()
+            .contains(admin.get(CapDomain::FS).unwrap()),
         "user not contains admin"
     );
     TestResult::Pass
@@ -208,7 +224,9 @@ fn cap_matrix_delegation_chain() -> TestResult {
 
 fn cap_matrix_revocation_partial() -> TestResult {
     let all = CapMatrix::all();
-    let fs_bits = all.get(CapDomain::FS).diff(CapBits(FS_CAP_DELETE | FS_CAP_CHOWN));
+    let fs_bits = all
+        .get(CapDomain::FS)
+        .diff(CapBits(FS_CAP_DELETE | FS_CAP_CHOWN));
     check!(fs_bits.contains(CapBits(FS_CAP_READ)), "has READ");
     check!(fs_bits.contains(CapBits(FS_CAP_WRITE)), "has WRITE");
     check!(!fs_bits.contains(CapBits(FS_CAP_DELETE)), "lacks DELETE");
@@ -233,7 +251,10 @@ fn cap_matrix_viable_is_not_all() -> TestResult {
 fn cap_matrix_grant_out_of_range_silent() -> TestResult {
     let cm = InMemoryMatrix::new();
     check!(cm.set(CapDomain(16), CapBits(0xFF)).is_err(), "16 set err");
-    check!(cm.set(CapDomain(255), CapBits(0xFF)).is_err(), "255 set err");
+    check!(
+        cm.set(CapDomain(255), CapBits(0xFF)).is_err(),
+        "255 set err"
+    );
     assert_eq_test!(cm.get(CapDomain(16)), None, "16 still None");
     assert_eq_test!(cm.get(CapDomain(255)), None, "255 still None");
     TestResult::Pass

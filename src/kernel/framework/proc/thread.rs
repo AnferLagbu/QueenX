@@ -119,10 +119,8 @@ impl Thread {
         self.state_change_count.fetch_add(1, Ordering::Relaxed);
 
         if new_state == ThreadState::Frozen {
-            self.frozen_since.store(
-                crate::framework::timer::get_ticks(),
-                Ordering::Relaxed,
-            );
+            self.frozen_since
+                .store(crate::framework::timer::get_ticks(), Ordering::Relaxed);
         }
 
         Ok(())

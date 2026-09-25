@@ -32,10 +32,10 @@ pub use ahci::H2dFis;
 pub use nvme::{NvmeCommand, NvmeCompletion};
 
 use super::framework;
-use crate::framework::dma_buf::{DmaDirection, DmaStream};
-use crate::framework::iomem::IoMem;
 #[cfg(target_arch = "x86_64")]
 use crate::framework::arch::InterruptArch;
+use crate::framework::dma_buf::{DmaDirection, DmaStream};
+use crate::framework::iomem::IoMem;
 
 /// 初始化存储子系统 (framework 退位版: 仅 ATA 回退路径)
 ///
@@ -62,9 +62,7 @@ pub fn storage_init() -> framework::Result<()> {
         crate::framework::chitin::ChitinProto::Block,
         None,
         None,
-        alloc::boxed::Box::new(
-            crate::framework::driver::storage::ata::AtaController::new(),
-        ),
+        alloc::boxed::Box::new(crate::framework::driver::storage::ata::AtaController::new()),
     );
 
     // Step 2: 将 ATA 磁盘注册到 Chitin (唯一注册入口)
@@ -183,8 +181,7 @@ pub fn nvme_with_interrupts_enabled<R>(f: impl FnOnce() -> R) -> R {
 ///
 /// 仅 x86_64 (MSI-X 路径专属, 与 `nvme_msix_irq_handler` 同 cfg).
 #[cfg(target_arch = "x86_64")]
-static NVME_MSIX_IRQ_COUNT: core::sync::atomic::AtomicU64 =
-    core::sync::atomic::AtomicU64::new(0);
+static NVME_MSIX_IRQ_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// 注册 NVMe MSI-X ISR (services 可调用的 0 unsafe 入口, DECISION-H 2 号子步)
 ///

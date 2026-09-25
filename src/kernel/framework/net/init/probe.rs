@@ -17,13 +17,12 @@ use crate::framework::net::ChitinNetDevice;
 use super::raw;
 
 #[cfg(not(feature = "kernel_test"))]
-static E1000_NET_OPS_STATIC: crate::framework::chitin::NetOps =
-    crate::framework::chitin::NetOps {
-        send: crate::framework::driver::e1000_net_send,
-        try_receive: crate::framework::driver::e1000_net_recv,
-        get_mac: crate::framework::driver::e1000_net_get_mac,
-        handle_irq: Some(crate::framework::driver::e1000_net_irq),
-    };
+static E1000_NET_OPS_STATIC: crate::framework::chitin::NetOps = crate::framework::chitin::NetOps {
+    send: crate::framework::driver::e1000_net_send,
+    try_receive: crate::framework::driver::e1000_net_recv,
+    get_mac: crate::framework::driver::e1000_net_get_mac,
+    handle_irq: Some(crate::framework::driver::e1000_net_irq),
+};
 
 /// # Safety
 ///
@@ -72,9 +71,7 @@ pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
         // 经 framework 槽位单向拉取 (framework 不引用 services, F2 合规)。
         // 未注册/探测失败返回 None → nic_probe_all 返回 None (与旧行为一致)。
         {
-            if let Some(reg) =
-                crate::framework::net::net_device_ops::net_services_driver()
-            {
+            if let Some(reg) = crate::framework::net::net_device_ops::net_services_driver() {
                 let nic = ChitinNetDevice::new(reg.ops, reg.driver_data, reg.mac);
                 raw::klog_msg("virtio-net: probed successfully (services bridge)");
                 return Some(nic);

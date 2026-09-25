@@ -749,7 +749,11 @@ impl MmStruct {
 
         // 缩小: 截断尾部
         if new_size_aligned <= old_size_aligned {
-            self.remove_range(old_addr + new_size_aligned, old_addr + old_size_aligned, cr3);
+            self.remove_range(
+                old_addr + new_size_aligned,
+                old_addr + old_size_aligned,
+                cr3,
+            );
             return Ok(old_addr);
         }
 

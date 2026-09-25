@@ -232,7 +232,7 @@ fn test_numa_policy_linux_mode() -> TestResult {
 /// userfaultfd 实例生命周期 + `UFFDIO_API` 握手
 fn test_uffd_instance_lifecycle() -> TestResult {
     use crate::framework::mm::uffd::{
-        UFFDIO_COPY, UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE, UFFDIO_ZEROPAGE, UFFD_API,
+        UFFD_API, UFFDIO_COPY, UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE, UFFDIO_ZEROPAGE,
     };
     use crate::framework::mm::{
         api_negotiate, is_uffd_fd, uffd_create, uffd_is_active, uffd_is_open, uffd_release,
@@ -275,7 +275,7 @@ fn test_uffd_instance_lifecycle() -> TestResult {
 )]
 /// userfaultfd 参数校验 (不触及当前地址空间的前置校验分支)
 fn test_uffd_register_arg_validation() -> TestResult {
-    use crate::framework::mm::uffd::{UFFDIO_REGISTER_MODE_MISSING, UFFD_API};
+    use crate::framework::mm::uffd::{UFFD_API, UFFDIO_REGISTER_MODE_MISSING};
     use crate::framework::mm::{
         api_negotiate, provide_page, uffd_create, uffd_register, uffd_release, uffd_unregister,
         uffd_wake,
@@ -395,11 +395,11 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
 #[cfg(not(feature = "host-test"))]
 fn uffd_flow_body(fd: i32) -> TestResult {
     use crate::framework::mm::uffd::{
-        UFFDIO_REGISTER_MODE_MISSING, UFFD_API, UFFD_EVENT_PAGEFAULT, UFFD_PAGEFAULT_FLAG_WRITE,
+        UFFD_API, UFFD_EVENT_PAGEFAULT, UFFD_PAGEFAULT_FLAG_WRITE, UFFDIO_REGISTER_MODE_MISSING,
     };
     use crate::framework::mm::{
-        UffdFaultOutcome, api_negotiate, fault_notify, fill_provided_page, pop_event,
-        provide_page, uffd_is_active, uffd_register, uffd_unregister,
+        UffdFaultOutcome, api_negotiate, fault_notify, fill_provided_page, pop_event, provide_page,
+        uffd_is_active, uffd_register, uffd_unregister,
     };
 
     /// `UffdInstance::ranges` 容量 (`framework/mm/uffd.rs::MAX_RANGES`)
@@ -424,7 +424,10 @@ fn uffd_flow_body(fd: i32) -> TestResult {
         uffd_register(fd, BASE, PAGE_SIZE, MODE).is_err(),
         "exceeding MAX_RANGES should fail"
     );
-    check!(uffd_is_active(fd), "instance should be active after register");
+    check!(
+        uffd_is_active(fd),
+        "instance should be active after register"
+    );
 
     // 未注册页 → 交回内核 demand paging
     check!(
@@ -441,7 +444,10 @@ fn uffd_flow_body(fd: i32) -> TestResult {
         Some(ev) => {
             check!(ev.event == UFFD_EVENT_PAGEFAULT, "event code mismatch");
             check!(ev.address == BASE, "fault address mismatch");
-            check!(ev.flags == UFFD_PAGEFAULT_FLAG_WRITE, "fault flags mismatch");
+            check!(
+                ev.flags == UFFD_PAGEFAULT_FLAG_WRITE,
+                "fault flags mismatch"
+            );
         }
         None => return TestResult::Fail("page fault event should be queued"),
     }
@@ -587,7 +593,11 @@ pub(super) fn cow_setup_mapped_page() -> Result<(u64, PhysAddr), &'static str> {
     vmm_map_page_in_table(pml4, COW_TEST_VA, phys.as_u64(), flags.bits());
     // SAFETY: phys 由 PMM 分配, to_virt 得到内核直接映射地址; 写满一页不越界
     unsafe {
-        core::ptr::write_bytes(phys.to_virt().0 as *mut u8, COW_TEST_BYTE, PAGE_SIZE as usize);
+        core::ptr::write_bytes(
+            phys.to_virt().0 as *mut u8,
+            COW_TEST_BYTE,
+            PAGE_SIZE as usize,
+        );
     }
     Ok((pml4, phys))
 }
@@ -683,7 +693,10 @@ fn test_cow_child_write_isolated_from_parent() -> TestResult {
         "仅销毁子不得释放父仍在用的帧"
     );
     vmm_destroy_page_table(parent);
-    check!(pmm.frame_ref_count(phys) == 0, "最后一个持有者拆除后计数归零");
+    check!(
+        pmm.frame_ref_count(phys) == 0,
+        "最后一个持有者拆除后计数归零"
+    );
     TestResult::Pass
 }
 
@@ -771,10 +784,7 @@ fn test_cow_unique_mapping_fault_reuses_frame() -> TestResult {
         reused == Some(phys.as_u64()),
         "唯一引用必须就地恢复可写 (不得复制)"
     );
-    check!(
-        pmm.frame_ref_count(phys) == 1,
-        "就地恢复不得改变持有者数"
-    );
+    check!(pmm.frame_ref_count(phys) == 1, "就地恢复不得改变持有者数");
     check!(
         vmm_get_physical_in_table(pml4, COW_TEST_VA) == phys.as_u64(),
         "就地恢复后映射仍指向同一帧"
@@ -904,7 +914,10 @@ fn test_mprotect_targets_user_table() -> TestResult {
 
     // 改为只读
     let ro = PageFlags::PRESENT | PageFlags::USER;
-    if mm.mprotect(va as usize, PAGE_SIZE as usize, ro, pml4).is_err() {
+    if mm
+        .mprotect(va as usize, PAGE_SIZE as usize, ro, pml4)
+        .is_err()
+    {
         vmm_destroy_page_table(pml4);
         return TestResult::Fail("mprotect 至只读失败");
     }
@@ -926,7 +939,10 @@ fn test_mprotect_targets_user_table() -> TestResult {
     );
 
     // 改回可写 ⇒ 精确还原
-    if mm.mprotect(va as usize, PAGE_SIZE as usize, rw, pml4).is_err() {
+    if mm
+        .mprotect(va as usize, PAGE_SIZE as usize, rw, pml4)
+        .is_err()
+    {
         vmm_destroy_page_table(pml4);
         return TestResult::Fail("mprotect 改回可写失败");
     }
@@ -969,7 +985,10 @@ fn test_frame_handle_clone_drop_pairing() -> TestResult {
     };
     let phys = frame.phys();
     check!(pmm.frame_ref_count(phys) == 1, "分配后持有者数应为 1");
-    check!(alloc.free_pages() == free_before - 1, "分配应从 PMM 取走一页");
+    check!(
+        alloc.free_pages() == free_before - 1,
+        "分配应从 PMM 取走一页"
+    );
     check!(frame.ref_count() == 1, "Frame::ref_count 应读同一计数面");
 
     let shared = frame.clone();
@@ -1108,7 +1127,10 @@ fn test_pcache_ref_count_matches_mapping_matrix() -> TestResult {
     };
     check!(inserted, "首次访问应为新插入条目");
     vmm_map_page_in_table(pml4, PCACHE_TEST_VA1, phys, flags.bits());
-    check!(pcache_ref_count(inode, 0) == Some(1), "首个映射持有者应为 1");
+    check!(
+        pcache_ref_count(inode, 0) == Some(1),
+        "首个映射持有者应为 1"
+    );
     check!(
         pmm.frame_ref_count(PhysAddr(phys)) == 2,
         "帧持有 = 条目自身 1 + 映射 1"

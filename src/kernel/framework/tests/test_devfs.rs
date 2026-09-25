@@ -1,8 +1,8 @@
 use super::check;
 use crate::framework::fs::devfs::{DEVFS_DATA, DEVFS_MAX_DEVICES};
 use crate::framework::tests::{TestResult, runner};
-use crate::services::fs::devfs;
 use crate::register_tests_inner;
+use crate::services::fs::devfs;
 
 fn test_devfs_mount() -> TestResult {
     let result = DEVFS_DATA.mount("/dev");

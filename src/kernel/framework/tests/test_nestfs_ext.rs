@@ -2,6 +2,7 @@
 use crate::register_tests_inner;
 
 use super::check;
+use crate::framework::tests::{TestResult, runner};
 use crate::services::fs::nestfs::arc::{NestArc, NestArcBufType, NestArcKey};
 use crate::services::fs::nestfs::bp::{NestBlockPointer, NestCompType};
 use crate::services::fs::nestfs::compress;
@@ -10,7 +11,6 @@ use crate::services::fs::nestfs::dmu::{NestDmuObject, NestObjSet, NestObjType};
 use crate::services::fs::nestfs::snapshot::{NestSnapshot, NestSnapshotManager};
 use crate::services::fs::nestfs::txg::NestTxg;
 use crate::services::fs::nestfs::zap::NestZap;
-use crate::framework::tests::{TestResult, runner};
 
 fn test_dmu_objset_alloc() -> TestResult {
     let os = NestObjSet::new();

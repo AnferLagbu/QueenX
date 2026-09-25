@@ -213,10 +213,8 @@ fn alloc_mmio_virt(size: usize) -> Option<VirtAddr> {
 
     let mut regions = MMIO_ALLOC.lock();
     // BTreeMap 默认按 key 排序, 收集 (virt, size) 对.
-    let sorted: alloc::vec::Vec<(VirtAddr, usize)> = regions
-        .iter()
-        .map(|(v, r)| (*v, r.size))
-        .collect();
+    let sorted: alloc::vec::Vec<(VirtAddr, usize)> =
+        regions.iter().map(|(v, r)| (*v, r.size)).collect();
 
     // 在 MMIO_VIRT_BASE 之上扫描空闲区间.
     let mut cursor = MMIO_VIRT_BASE;
@@ -224,7 +222,12 @@ fn alloc_mmio_virt(size: usize) -> Option<VirtAddr> {
         if cursor + alloc_size <= v.0 {
             // 找到足够大的空洞
             let result = VirtAddr(cursor);
-            regions.insert(result, MmioRegion { size: alloc_size as usize });
+            regions.insert(
+                result,
+                MmioRegion {
+                    size: alloc_size as usize,
+                },
+            );
             return Some(result);
         }
         // 跳过当前已分配区间
@@ -236,7 +239,12 @@ fn alloc_mmio_virt(size: usize) -> Option<VirtAddr> {
 
     // 末尾追加
     let result = VirtAddr(cursor);
-    regions.insert(result, MmioRegion { size: alloc_size as usize });
+    regions.insert(
+        result,
+        MmioRegion {
+            size: alloc_size as usize,
+        },
+    );
     Some(result)
 }
 

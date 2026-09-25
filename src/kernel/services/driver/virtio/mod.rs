@@ -88,7 +88,7 @@ pub fn net_init() {
 pub fn blk_init() {
     use crate::framework::chitin::proto_block::register_block_device;
     use crate::framework::driver::virtio::{
-        VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE, VIRTIO_ID_BLOCK,
+        VIRTIO_ID_BLOCK, VIRTIO_MMIO_BASE, VIRTIO_MMIO_MAX_DEVICES, VIRTIO_MMIO_STRIDE,
         VirtioMmioDevice,
     };
     use blk::VirtioBlkDriver;

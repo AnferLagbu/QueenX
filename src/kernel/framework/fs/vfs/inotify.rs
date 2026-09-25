@@ -585,12 +585,10 @@ pub fn inotify_notify(ino: u32, mask: u32, name: &str, is_dir: bool) {
         for i in 0..INOTIFY_MAX_INSTANCES {
             if notified_fds[i] {
                 // TD-02 V3: 通过 fd_alloc 集中计算 FD 编号
-                crate::framework::syscall::epoll::epoll_pwake(
-                    crate::framework::proc::fd_at(
-                        crate::framework::proc::FdSubsystem::Inotify,
-                        i,
-                    ),
-                );
+                crate::framework::syscall::epoll::epoll_pwake(crate::framework::proc::fd_at(
+                    crate::framework::proc::FdSubsystem::Inotify,
+                    i,
+                ));
             }
         }
     }

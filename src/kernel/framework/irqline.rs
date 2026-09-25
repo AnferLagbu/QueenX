@@ -135,9 +135,8 @@ const MAX_ISR_VECTORS: usize = 256;
 
 /// 全局 ISR 函数指针表, 由 idt handlers 分发调用。
 /// 使用 `IrqSpinLock` 保护, 中断安全 (`dispatch_irq` 在中断上下文调用).
-static ISR_TABLE: crate::framework::sync::IrqSpinLock<
-    [Option<InterruptHandler>; MAX_ISR_VECTORS],
-> = crate::framework::sync::IrqSpinLock::new([None; MAX_ISR_VECTORS]);
+static ISR_TABLE: crate::framework::sync::IrqSpinLock<[Option<InterruptHandler>; MAX_ISR_VECTORS]> =
+    crate::framework::sync::IrqSpinLock::new([None; MAX_ISR_VECTORS]);
 
 /// 注册中断向量对应的 ISR 处理器。
 ///

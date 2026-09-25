@@ -184,7 +184,13 @@ pub fn tlb_gen_publish_and_shoot() -> u64 {
     // SIMPLIFIED: 每次 shootdown 都打印一行日志 (无采样/无阈值); 高频 unmap 负载下串口输出
     // 量线性增长, 可能拖慢该路径; 当 shootdown 成为热路径或日志刷屏时, 改为首次/每 N 次采样打印.
     let count = TLB_SHOOTDOWN_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    crate::klog_info!(Kernel, "[SMP] TLB shootdown #{} gen={} targets={}", count, g, targets);
+    crate::klog_info!(
+        Kernel,
+        "[SMP] TLB shootdown #{} gen={} targets={}",
+        count,
+        g,
+        targets
+    );
     g
 }
 

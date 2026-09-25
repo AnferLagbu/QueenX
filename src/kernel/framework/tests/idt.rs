@@ -223,7 +223,10 @@ fn cpu_features_no_panic() -> TestResult {
     {
         check!(!features.has_apic, "aarch64 must not report APIC");
         check!(!features.has_x2apic, "aarch64 must not report x2APIC");
-        check!(features.max_cpuid_leaf == 0, "aarch64 max_cpuid_leaf default");
+        check!(
+            features.max_cpuid_leaf == 0,
+            "aarch64 max_cpuid_leaf default"
+        );
     }
     TestResult::Pass
 }

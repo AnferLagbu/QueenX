@@ -564,7 +564,10 @@ mod tests {
             p.time_slice_for(ThreadPriority::Realtime),
             SCHED_LEVEL_0_QUANTUM
         );
-        assert_eq!(p.time_slice_for(ThreadPriority::High), SCHED_LEVEL_1_QUANTUM);
+        assert_eq!(
+            p.time_slice_for(ThreadPriority::High),
+            SCHED_LEVEL_1_QUANTUM
+        );
         assert_eq!(
             p.time_slice_for(ThreadPriority::Normal),
             SCHED_LEVEL_2_QUANTUM

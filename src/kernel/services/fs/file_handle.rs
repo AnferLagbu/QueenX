@@ -199,11 +199,9 @@ pub fn open_by_handle_at_syscall(
     let inode: Arc<dyn Inode> = fs.fs_resolve_inode(inode_id, mount_idx).unwrap_or_else(|| {
         // 回退: 使用 LegacyInode (stat/chmod 等需要路径的操作将不可用)
         let rel_path = alloc::string::String::new();
-        Arc::new(
-            crate::services::fs::inode::LegacyInode::from_fs_result(
-                inode_id, mount_idx, 0, &rel_path,
-            ),
-        )
+        Arc::new(crate::services::fs::inode::LegacyInode::from_fs_result(
+            inode_id, mount_idx, 0, &rel_path,
+        ))
     });
 
     // 通过 stat 获取 file_type (避免硬编码)

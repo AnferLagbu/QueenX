@@ -247,7 +247,11 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
     }
     // SAFETY: pmm 分配的页 4KB 对齐且属内核; phys_to_virt 给出可写内核 VA.
     unsafe {
-        core::ptr::write_bytes(phys_to_virt(tramp_l0_phys) as *mut u8, 0, PAGE_SIZE as usize);
+        core::ptr::write_bytes(
+            phys_to_virt(tramp_l0_phys) as *mut u8,
+            0,
+            PAGE_SIZE as usize,
+        );
     }
 
     // 3. 页级最小化映射 (高半区别名 VA → 同物理页, EL1 RW 可执行, 无 USER 位).
@@ -274,9 +278,15 @@ pub unsafe fn kpti_init(vmm: &super::vmm::Aarch64Vmm, kernel_ttbr1: u64) {
     );
 
     // 4. 公开状态 (写入顺序: 先数据后 ready, ready 兼作 Release 屏障)
-    KPTI_GLOBALS.kernel_ttbr0.store(kernel_ttbr0, Ordering::Release);
-    KPTI_GLOBALS.kernel_ttbr1.store(kernel_ttbr1, Ordering::Release);
-    KPTI_GLOBALS.tramp_ttbr1.store(tramp_l0_phys, Ordering::Release);
+    KPTI_GLOBALS
+        .kernel_ttbr0
+        .store(kernel_ttbr0, Ordering::Release);
+    KPTI_GLOBALS
+        .kernel_ttbr1
+        .store(kernel_ttbr1, Ordering::Release);
+    KPTI_GLOBALS
+        .tramp_ttbr1
+        .store(tramp_l0_phys, Ordering::Release);
     KPTI_GLOBALS.ready.store(1, Ordering::Release);
 }
 

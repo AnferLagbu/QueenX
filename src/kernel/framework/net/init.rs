@@ -300,8 +300,7 @@ unsafe fn net_save() {
 
             // 状态
             s.net_ready = crate::framework::net::NET_READY.load(Ordering::Acquire);
-            s.net_configured =
-                crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire);
+            s.net_configured = crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire);
             s.sockets_initialized = SOCKETS_INITIALIZED.load(Ordering::Acquire);
             s.init_state = G_INIT_STATE.load(Ordering::Acquire);
         });
@@ -537,9 +536,7 @@ pub extern "C" fn qx_net_init() {
 
         if !crate::framework::net::NET_CONFIGURED.load(Ordering::Acquire) {
             // I-46: 引用 net::types 中的集中常量, 不再硬编码 10.0.2.15/24/10.0.2.2.
-            use crate::framework::net::types::{
-                FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX,
-            };
+            use crate::framework::net::types::{FALLBACK_GATEWAY, FALLBACK_IPV4, FALLBACK_PREFIX};
             let cidr = IpCidr::Ipv4(smoltcp::wire::Ipv4Cidr::new(
                 smoltcp::wire::Ipv4Address::new(
                     FALLBACK_IPV4[0],

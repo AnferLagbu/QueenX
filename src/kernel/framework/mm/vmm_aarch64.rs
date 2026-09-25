@@ -1120,8 +1120,8 @@ impl Aarch64Vmm {
             return;
         }
         // SAFETY: el1_l0 是本进程 EL1 视图根表页, 槽位 0 为 → L1_el1 的表描述符.
-        let el1_l1 = unsafe { ptr::read_volatile(phys_to_virt(el1_l0) as *const u64) }
-            & DESC_ADDR_MASK;
+        let el1_l1 =
+            unsafe { ptr::read_volatile(phys_to_virt(el1_l0) as *const u64) } & DESC_ADDR_MASK;
         self.free_table(el1_l1);
         self.free_table(el1_l0);
     }

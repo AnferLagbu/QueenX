@@ -77,8 +77,11 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     }
 
     // 进程替换 (framework 机制: ELF 加载 + 地址空间切换)
-    let result =
-        crate::framework::proc::proc_exec_replace(path as *const u8, argv as *const *const u8, argc);
+    let result = crate::framework::proc::proc_exec_replace(
+        path as *const u8,
+        argv as *const *const u8,
+        argc,
+    );
     if result < 0 {
         Err(Errno::ENOENT)
     } else {

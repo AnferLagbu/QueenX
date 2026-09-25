@@ -628,8 +628,7 @@ pub fn do_signal_deliver(frame: *mut crate::framework::idt::InterruptFrame) -> b
                     )
                 };
 
-                let ok_ret =
-                    crate::framework::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
+                let ok_ret = crate::framework::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
                 let ok_frame = crate::framework::mm::copy_to_user(
                     frame_rsp + 8,
                     sigframe_bytes,

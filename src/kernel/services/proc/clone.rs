@@ -40,9 +40,7 @@ pub fn clone_syscall(
     const CLONE_THREAD: u64 = 0x00010000;
     const CLONE_SIGHAND: u64 = 0x00000800;
 
-    if ((flags & CLONE_VM) != 0 || (flags & CLONE_THREAD) != 0)
-        && (flags & CLONE_SIGHAND) == 0
-    {
+    if ((flags & CLONE_VM) != 0 || (flags & CLONE_THREAD) != 0) && (flags & CLONE_SIGHAND) == 0 {
         return Err(Errno::EINVAL);
     }
 

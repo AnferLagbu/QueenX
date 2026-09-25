@@ -149,8 +149,8 @@ pub fn block_with_timeout(wait_queue: &mut WaitQueue, timeout_ms: u64) -> Result
     let timeout_nanos = timeout_ms.saturating_mul(1_000_000);
     // 周期性检查等待队列是否仍需要阻塞 (被外部唤醒则退出).
     // 简化: 有限次重试 + hrtimer 睡眠, 期间被唤醒则立即返回.
-    let deadline = crate::framework::timer::hrtimer::hrtimer_clock_read()
-        .saturating_add(timeout_nanos);
+    let deadline =
+        crate::framework::timer::hrtimer::hrtimer_clock_read().saturating_add(timeout_nanos);
     loop {
         if wait_queue.count() == 0 {
             // 已无等待者 (被唤醒或条件满足)

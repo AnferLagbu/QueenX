@@ -94,20 +94,14 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             revents: 0,
         };
 
-        if !crate::framework::syscall::api::read_struct_from_user(
-            fds_ptr + offset,
-            &mut pfd,
-        ) {
+        if !crate::framework::syscall::api::read_struct_from_user(fds_ptr + offset, &mut pfd) {
             continue;
         }
 
         pfd.revents = 0;
         if pfd.fd < 0 {
             // 写回原位
-            let _ = crate::framework::syscall::api::write_struct_to_user(
-                fds_ptr + offset,
-                &pfd,
-            );
+            let _ = crate::framework::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
             continue;
         }
         if pfd.events & POLLIN != 0 {
@@ -125,8 +119,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             ready += 1;
         }
 
-        let _ =
-            crate::framework::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
+        let _ = crate::framework::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
     }
     i64::from(ready)
 }
@@ -175,11 +168,9 @@ pub fn ppoll_syscall(
         timeout_ms = ms.min(i64::from(i32::MAX)) as i32;
     }
 
-    match crate::services::proc::signal::with_temporary_sigmask(
-        sigmask_ptr,
-        sigsetsize,
-        || Ok(poll_syscall(fds_ptr, nfds, timeout_ms)),
-    ) {
+    match crate::services::proc::signal::with_temporary_sigmask(sigmask_ptr, sigsetsize, || {
+        Ok(poll_syscall(fds_ptr, nfds, timeout_ms))
+    }) {
         Ok(ret) => ret,
         Err(e) => e.as_ret(),
     }
@@ -209,18 +200,11 @@ pub fn chown_syscall(path_ptr: u64, uid: u32, gid: u32) -> i64 {
 
 /// truncate(path, length) 策略
 pub fn truncate_syscall(path_ptr: u64, length: i64) -> i64 {
-    if path_ptr == 0
-        || !crate::framework::syscall::api::validate_user_ptr(path_ptr)
-        || length < 0
-    {
+    if path_ptr == 0 || !crate::framework::syscall::api::validate_user_ptr(path_ptr) || length < 0 {
         return Errno::EINVAL.as_ret();
     }
     let path = path_ptr as *const u8;
-    let fd = crate::framework::fs::vfs_open(
-        path,
-        0o2,
-        crate::framework::credo::pwm_get_current(),
-    );
+    let fd = crate::framework::fs::vfs_open(path, 0o2, crate::framework::credo::pwm_get_current());
     if fd < 0 {
         return Errno::ENOENT.as_ret();
     }
@@ -298,8 +282,7 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
 
     let ino = {
         let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used
-        {
+        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used {
             return Errno::EBADF.as_ret();
         }
         fd_table[fd as usize].node_id

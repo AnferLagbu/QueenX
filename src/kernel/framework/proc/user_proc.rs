@@ -849,8 +849,7 @@ impl UserProcManager {
         // 转移给其他进程 (转移时源已清空, 见 proc_ops::proc_exec_replace).
         let cr3 = proc_ref.load_cr3();
         if cr3 != 0
-            && crate::framework::mm::pmm::get_pmm()
-                .frame_dec(crate::framework::mm::PhysAddr(cr3))
+            && crate::framework::mm::pmm::get_pmm().frame_dec(crate::framework::mm::PhysAddr(cr3))
         {
             raw::destroy_user_page_table(cr3);
         }
@@ -1195,8 +1194,8 @@ impl UserProcManager {
 
             // 检查用户代码页 (0x400000) — 含 PTE 权限位自检
             let code_page_virt = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) = vmm
-                .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page_virt))
+            if let Some(phys) =
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page_virt))
             {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_code virt={:#X} -> phys={:#X} ✓",
@@ -1243,10 +1242,9 @@ impl UserProcManager {
 
             // 检查用户栈页 (第一次压栈将访问 rsp - 8 所在页)
             let first_access_virt = (rsp_val - 8) & !(PAGE_SIZE - 1);
-            if let Some(phys) = vmm.get_physical_in_pml4(
-                cr3,
-                crate::framework::mm::VirtAddr(first_access_virt),
-            ) {
+            if let Some(phys) =
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(first_access_virt))
+            {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: user_stack_first_access virt={:#X} (rsp-8={:#X}) -> phys={:#X} ✓",
                     first_access_virt,
@@ -1266,7 +1264,9 @@ impl UserProcManager {
             // guard 页即其下方一页 (stack_bottom - USER_STACK_GUARD).
             // 注意: `initial_rsp` = 栈顶边界 - 8 (见 `create`), 即 rsp 恒落在栈顶
             // 已映射页内, 故不能以 "含 rsp 的页" 判定 guard —— 该判据恒报 unexpected.
-            let guard_page = proc_ref.load_stack_bottom().saturating_sub(USER_STACK_GUARD);
+            let guard_page = proc_ref
+                .load_stack_bottom()
+                .saturating_sub(USER_STACK_GUARD);
             if let Some(phys) =
                 vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(guard_page))
             {
@@ -1284,8 +1284,8 @@ impl UserProcManager {
 
             // 检查内核栈页 (RSP0, iretq 帧所在页)
             let rsp0_check_virt = (kstack - 40) & !(PAGE_SIZE - 1);
-            if let Some(phys) = vmm
-                .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(rsp0_check_virt))
+            if let Some(phys) =
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(rsp0_check_virt))
             {
                 crate::klog_boot_info!(
                     "[USER] SELF-CHECK: rsp0_stack virt={:#X} -> phys={:#X} ✓",
@@ -1334,8 +1334,8 @@ impl UserProcManager {
 
             // 扩展自检: 验证用户代码页内容 (检查是否有有效指令)
             let code_page_virt = rip_val & !(PAGE_SIZE - 1);
-            if let Some(phys) = vmm
-                .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page_virt))
+            if let Some(phys) =
+                vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(code_page_virt))
             {
                 // 通过内核映射读取用户代码页内容
                 let kernel_virt = phys.0 + crate::framework::mm::KERNEL_BASE as u64;
@@ -1387,8 +1387,7 @@ impl UserProcManager {
                 let lstar = crate::framework::cpu::msr::read_msr(IA32_LSTAR);
                 let sfmask = crate::framework::cpu::msr::read_msr(IA32_SFMASK);
                 let gs_base = crate::framework::cpu::msr::read_msr(IA32_GS_BASE);
-                let kernel_gs_base =
-                    crate::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
+                let kernel_gs_base = crate::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
 
                 let sce = (efer & 1) != 0;
                 crate::klog_boot_info!(
@@ -1422,8 +1421,8 @@ impl UserProcManager {
                 // 验证 LSTAR 页面在用户页表中映射且可执行
                 let lstar_page = lstar & !(PAGE_SIZE - 1);
                 let vmm = crate::framework::mm::get_vmm();
-                if let Some(phys) = vmm
-                    .get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(lstar_page))
+                if let Some(phys) =
+                    vmm.get_physical_in_pml4(cr3, crate::framework::mm::VirtAddr(lstar_page))
                 {
                     if let Some(pte_raw) =
                         vmm.get_pte_value(cr3, crate::framework::mm::VirtAddr(lstar_page))
@@ -1476,8 +1475,7 @@ impl UserProcManager {
 
             // SAFETY: 使用物理地址 + KERNEL_BASE 访问页表, 只读操作
             unsafe {
-                let pml4_virt =
-                    (cr3 + crate::framework::mm::KERNEL_BASE as u64) as *const u64;
+                let pml4_virt = (cr3 + crate::framework::mm::KERNEL_BASE as u64) as *const u64;
                 let pml4e = pml4_virt.add(pml4_idx as usize).read_volatile();
                 let pml4e_present = (pml4e & 1) != 0;
                 let pml4e_user = (pml4e & 4) != 0;
@@ -1499,8 +1497,8 @@ impl UserProcManager {
                 }
 
                 if pml4e_present {
-                    let pdpt_virt = (pml4e_frame + crate::framework::mm::KERNEL_BASE as u64)
-                        as *const u64;
+                    let pdpt_virt =
+                        (pml4e_frame + crate::framework::mm::KERNEL_BASE as u64) as *const u64;
                     let pdpte = pdpt_virt.add(pdpt_idx as usize).read_volatile();
                     let pdpte_present = (pdpte & 1) != 0;
                     let pdpte_user = (pdpte & 4) != 0;
@@ -1523,9 +1521,8 @@ impl UserProcManager {
                     }
 
                     if pdpte_present && !pdpte_huge {
-                        let pd_virt = (pdpte_frame
-                            + crate::framework::mm::KERNEL_BASE as u64)
-                            as *const u64;
+                        let pd_virt =
+                            (pdpte_frame + crate::framework::mm::KERNEL_BASE as u64) as *const u64;
                         let pde = pd_virt.add(pd_idx as usize).read_volatile();
                         let pde_present = (pde & 1) != 0;
                         let pde_user = (pde & 4) != 0;
@@ -1548,8 +1545,7 @@ impl UserProcManager {
                         }
 
                         if pde_present && !pde_huge {
-                            let pt_virt = (pde_frame
-                                + crate::framework::mm::KERNEL_BASE as u64)
+                            let pt_virt = (pde_frame + crate::framework::mm::KERNEL_BASE as u64)
                                 as *const u64;
                             let pte = pt_virt.add(pt_idx as usize).read_volatile();
                             let pte_present = (pte & 1) != 0;

@@ -5,9 +5,9 @@
 
 // 地址校验常量按架构分组: `KERNEL_BASE` 仅 x86_64 使用 (aarch64 恒等映射下为 0,
 // 用户/内核分界改用 `KERNEL_TEXT_BASE`), 其余三个双架构共用.
-use crate::framework::mm::{KERNEL_TEXT_BASE, USER_ADDR_FLOOR, USER_ADDR_MIN};
 #[cfg(target_arch = "x86_64")]
 use crate::framework::mm::KERNEL_BASE;
+use crate::framework::mm::{KERNEL_TEXT_BASE, USER_ADDR_FLOOR, USER_ADDR_MIN};
 
 /// CPU 特性检测结果
 #[derive(Debug, Clone)]

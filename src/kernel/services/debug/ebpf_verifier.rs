@@ -140,8 +140,8 @@ fn helper_min_args(id: u32) -> usize {
     match id {
         helper_id::MAP_UPDATE_ELEM => 3, // R1=map, R2=key, R3=value
         helper_id::MAP_LOOKUP_ELEM | helper_id::MAP_DELETE_ELEM => 2, // R1=map, R2=key
-        helper_id::TRACE_PRINTK => 1, // R1=fmt
-        _ => 0,                       // KTIME_GET_NS / GET_SMP_PROCESSOR 无参数
+        helper_id::TRACE_PRINTK => 1,    // R1=fmt
+        _ => 0,                          // KTIME_GET_NS / GET_SMP_PROCESSOR 无参数
     }
 }
 

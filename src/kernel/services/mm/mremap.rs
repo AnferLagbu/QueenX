@@ -62,10 +62,9 @@ pub fn mremap_syscall(
 
     // 2. 委托 framework 层执行搬迁
     // 目标用户页表根: 被裁掉区间的页表项必须从进程用户页表拆除.
-    let cr3 = crate::framework::proc::process_get_cr3(
-        crate::framework::proc::process_get_current_pid(),
-    )
-    .ok_or(Errno::ENOMEM)?;
+    let cr3 =
+        crate::framework::proc::process_get_cr3(crate::framework::proc::process_get_current_pid())
+            .ok_or(Errno::ENOMEM)?;
     mm.mremap(
         old_addr as usize,
         old_size as usize,

@@ -444,11 +444,10 @@ impl DmaEngine {
                 let cache_line = CACHE_LINE_SIZE;
                 let start = addr.0 & !(cache_line - 1);
                 let end = addr.0 + size as u64;
-                let has_clflushopt =
-                    crate::framework::cpu::get_cpu_info().is_some_and(|info| {
-                        info.features
-                            .contains(crate::framework::cpu::CpuFeatures::CLFLUSHOPT)
-                    });
+                let has_clflushopt = crate::framework::cpu::get_cpu_info().is_some_and(|info| {
+                    info.features
+                        .contains(crate::framework::cpu::CpuFeatures::CLFLUSHOPT)
+                });
                 let mut line = start;
                 while line < end {
                     if has_clflushopt {

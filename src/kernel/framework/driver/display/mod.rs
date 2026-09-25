@@ -208,8 +208,7 @@ unsafe fn read_bochs_disp_mode_mmio(mmio_base: u64) -> Option<(u32, u32, u8)> {
 /// 通过 PCI 探测 VGA 设备 BAR0 获取帧缓冲信息
 #[cfg(target_arch = "x86_64")]
 fn probe_vga_fb_via_pci() -> Option<VgaFbInfo> {
-    let devices =
-        crate::framework::pci::find_by_class(crate::framework::pci::CLASS_DISPLAY);
+    let devices = crate::framework::pci::find_by_class(crate::framework::pci::CLASS_DISPLAY);
     for dev in &devices {
         if dev.subclass_code != 0x00 {
             crate::klog_info!(

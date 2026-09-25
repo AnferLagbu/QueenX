@@ -181,11 +181,7 @@ impl SwapArea {
         };
 
         if let Err(e) = pmm_inst.reserve_range(phys_base, swap_bytes) {
-            crate::klog_warn!(
-                Swap,
-                "[SWAP] init: reserve_range failed: {}",
-                e
-            );
+            crate::klog_warn!(Swap, "[SWAP] init: reserve_range failed: {}", e);
             return false;
         }
 

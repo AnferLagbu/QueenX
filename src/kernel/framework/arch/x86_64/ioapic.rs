@@ -244,9 +244,7 @@ pub fn set_irq(irq: u8, vector: u8, apic_id: u8, masked: bool) {
 
 /// 向后兼容: 按 IRQ 设置投递模式
 pub fn set_irq_with_mode(irq: u8, vector: u8, apic_id: u8, masked: bool, mode: u64) {
-    if let Some((idx, local_irq)) =
-        crate::framework::arch::acpi::gsi_to_ioapic(u32::from(irq))
-    {
+    if let Some((idx, local_irq)) = crate::framework::arch::acpi::gsi_to_ioapic(u32::from(irq)) {
         set_irq_on(idx, local_irq, vector, apic_id, masked, mode);
     }
 }

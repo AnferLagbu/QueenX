@@ -4,9 +4,9 @@
 //! + 缓存配置检测 (`detect_cache`, 仅 x86_64, 依赖 cpuid)。
 
 #[cfg(target_arch = "x86_64")]
-use super::cpuid;
-#[cfg(target_arch = "x86_64")]
 use super::CpuVendor;
+#[cfg(target_arch = "x86_64")]
+use super::cpuid;
 
 /// 缓存配置信息
 #[derive(Debug, Clone, Copy, Default)]
@@ -56,7 +56,12 @@ impl CacheInfo {
     clippy::similar_names,
     reason = "变量名相似表达同族概念 (pd/pt/bm 等); 重命名会破坏阅读连续性, 仅在确实混淆时才人工拆分"
 )]
-pub(super) fn detect_cache(cache_out: &mut CacheInfo, max_std: u32, max_ext: u32, vendor: CpuVendor) {
+pub(super) fn detect_cache(
+    cache_out: &mut CacheInfo,
+    max_std: u32,
+    max_ext: u32,
+    vendor: CpuVendor,
+) {
     // 设置默认保守值
     *cache_out = CacheInfo {
         l1d_size: 32 * 1024,  // 32KB

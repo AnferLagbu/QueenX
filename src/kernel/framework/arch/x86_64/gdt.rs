@@ -376,7 +376,10 @@ struct PerCpuGdt {
 }
 
 impl PerCpuGdt {
-    #[expect(clippy::large_stack_arrays, reason="PerCpuGdt 的 syscall/IST 栈数组布局于静态 PER_CPU_GDT, 非栈上分配")]
+    #[expect(
+        clippy::large_stack_arrays,
+        reason = "PerCpuGdt 的 syscall/IST 栈数组布局于静态 PER_CPU_GDT, 非栈上分配"
+    )]
     const fn new() -> Self {
         Self {
             entries: [GdtEntry::null(); GDT_MAX_ENTRIES],
@@ -507,9 +510,7 @@ fn init_stack_tops(gdt: &mut PerCpuGdt) {
 #[inline]
 fn ist_tops_of(gdt: &PerCpuGdt) -> [u64; 4] {
     let bias = crate::framework::mm::KERNEL_BASE;
-    let top = |s: &AlignedStack<PER_CPU_IST_SIZE>| {
-        bias + s.0.as_ptr() as u64 + s.0.len() as u64
-    };
+    let top = |s: &AlignedStack<PER_CPU_IST_SIZE>| bias + s.0.as_ptr() as u64 + s.0.len() as u64;
     [
         top(&gdt.ist0),
         top(&gdt.ist1),
@@ -636,16 +637,12 @@ pub fn gdt_init() -> i32 {
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
         const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
-        crate::framework::cpu::msr::write_msr(
-            IA32_GS_BASE,
-            &gdt.syscall as *const _ as u64,
-        );
+        crate::framework::cpu::msr::write_msr(IA32_GS_BASE, &gdt.syscall as *const _ as u64);
         crate::framework::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
 
         // 诊断: 验证 write_msr 后 IA32_GS_BASE 的实际值
         let gs_base_readback = crate::framework::cpu::msr::read_msr(IA32_GS_BASE);
-        let kernel_gs_base_readback =
-            crate::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
+        let kernel_gs_base_readback = crate::framework::cpu::msr::read_msr(IA32_KERNEL_GS_BASE);
         crate::klog_boot_info!(
             "[GDT] GS MSR verify: IA32_GS_BASE={:#x} (expect {:#x}), IA32_KERNEL_GS_BASE={:#x} (expect 0)",
             gs_base_readback,
@@ -751,10 +748,7 @@ pub fn gdt_init_ap(cpu_index: u32) {
             reason = "item 紧邻使用点声明以便阅读上下文; 移至 scope 顶部会割裂逻辑块, 必要时手动重构"
         )]
         const IA32_KERNEL_GS_BASE: u32 = 0xC0000102;
-        crate::framework::cpu::msr::write_msr(
-            IA32_KERNEL_GS_BASE,
-            &ap.syscall as *const _ as u64,
-        );
+        crate::framework::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, &ap.syscall as *const _ as u64);
     }
 }
 

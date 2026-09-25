@@ -161,9 +161,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> i64 {
     // offset 20: l_pid    i32
     const FLOCK_STRUCT_SIZE: usize = 24;
 
-    if arg == 0
-        || !crate::framework::syscall::raw::check_user_buf(arg, FLOCK_STRUCT_SIZE as u64)
-    {
+    if arg == 0 || !crate::framework::syscall::raw::check_user_buf(arg, FLOCK_STRUCT_SIZE as u64) {
         return Errno::EFAULT.as_ret();
     }
 
@@ -204,8 +202,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> i64 {
     // 获取 fd 对应的 inode 号
     let ino = {
         let fd_table = crate::framework::fs::VFS_MANAGER.fd_table.lock();
-        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used
-        {
+        if (fd as usize) >= crate::framework::fs::VFS_MAX_FDS || !fd_table[fd as usize].used {
             return Errno::EBADF.as_ret();
         }
         fd_table[fd as usize].node_id

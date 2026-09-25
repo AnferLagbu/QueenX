@@ -177,10 +177,13 @@ impl InterruptArch for X8664 {
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
     // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 cast), 用 cfg_attr
     // 条件化 expect, 避免 unfulfilled_lint_expectations.
-    #[cfg_attr(not(feature = "host-test"), expect(
-        clippy::cast_possible_truncation,
-        reason = "cast_possible_truncation: 硬件字段宽度, 寄存器/MMIO 定义保证; 当前优先 expect"
-    ))]
+    #[cfg_attr(
+        not(feature = "host-test"),
+        expect(
+            clippy::cast_possible_truncation,
+            reason = "cast_possible_truncation: 硬件字段宽度, 寄存器/MMIO 定义保证; 当前优先 expect"
+        )
+    )]
     #[expect(
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
@@ -220,10 +223,13 @@ impl InterruptArch for X8664 {
     #[inline(always)]
     // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 asm), inline_always
     // lint 不触发 → 用 cfg_attr 条件化 expect, 避免 unfulfilled_lint_expectations.
-    #[cfg_attr(not(feature = "host-test"), expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    ))]
+    #[cfg_attr(
+        not(feature = "host-test"),
+        expect(
+            clippy::inline_always,
+            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
+        )
+    )]
     fn interrupt_restore(flags: usize) {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 sti 为特权指令,
         // 用户态执行 → SIGSEGV. 桩化 no-op (与 B08-14 sync::restore_interrupts 桩一致).
@@ -253,10 +259,13 @@ impl InterruptArch for X8664 {
     #[inline(always)]
     // E-04 (2026-09-06): host-test 下函数体退化为桩 (无 asm), inline_always
     // lint 不触发 → 用 cfg_attr 条件化 expect, 避免 unfulfilled_lint_expectations.
-    #[cfg_attr(not(feature = "host-test"), expect(
-        clippy::inline_always,
-        reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
-    ))]
+    #[cfg_attr(
+        not(feature = "host-test"),
+        expect(
+            clippy::inline_always,
+            reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
+        )
+    )]
     fn interrupt_enable() {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test 下 sti 为特权指令,
         // 用户态执行 → SIGSEGV (如 do_softirq 内 arch!(interrupt_enable())).
@@ -810,4 +819,3 @@ impl SystemArch for X8664 {
 // ── Arch: 超 trait (空 body) ─────────────────────────────────────────
 
 impl Arch for X8664 {}
-

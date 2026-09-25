@@ -9,8 +9,7 @@ use crate::register_tests_inner;
 // ============================================================
 
 fn test_pf_info_from_error_code() -> TestResult {
-    let info =
-        crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x4000, 0x06);
+    let info = crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x4000, 0x06);
     check!(info.fault_addr == 0x4000, "fault_addr");
     check!(info.write, "write flag");
     check!(info.user, "user flag");
@@ -21,8 +20,7 @@ fn test_pf_info_from_error_code() -> TestResult {
 }
 
 fn test_pf_info_not_present() -> TestResult {
-    let info =
-        crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x1000, 0x00);
+    let info = crate::framework::mm::page_fault::PageFaultInfo::from_error_code(0x1000, 0x00);
     check!(!info.present, "not present");
     check!(!info.write, "not write");
     check!(!info.user, "not user");

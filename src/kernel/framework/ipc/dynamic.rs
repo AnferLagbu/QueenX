@@ -51,7 +51,11 @@ pub(crate) mod raw {
         pub fn next(&self) -> *mut Message {
             // SAFETY: self 来自 `from_non_null`, 指向有效 Message。
             // B03-24: Message.next 为 AtomicPtr, 队列操作在持锁下执行, Relaxed 足够.
-            unsafe { (*self.0.as_ptr()).next.load(core::sync::atomic::Ordering::Relaxed) }
+            unsafe {
+                (*self.0.as_ptr())
+                    .next
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            }
         }
 
         /// 通过 `Box::from_raw` 释放, 触发 Drop

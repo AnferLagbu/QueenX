@@ -5,8 +5,8 @@ use crate::framework::ipc::types::{
 };
 // T6-1: pipe/shm 策略函数已迁移到 services; DECISION-J: sem 壳已删, 亦走 services
 use crate::framework::tests::{TestResult, runner};
-use crate::services::ipc::{pipe, sem, shm};
 use crate::register_tests_inner;
+use crate::services::ipc::{pipe, sem, shm};
 // UT-06 (2026-09-24): 迁移用例 (裸机 PMM 依赖) 专属导入, host-test 下编译为空
 #[cfg(not(feature = "host-test"))]
 use super::assert_eq_test;

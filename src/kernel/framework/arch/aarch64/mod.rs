@@ -148,27 +148,43 @@ impl InterruptArch for Aarch64 {
         let daif = flags as u64;
         // F (FIQ) — bit 3 in immediate
         if (daif & (1 << 9)) == 0 {
-            unsafe { asm!("msr daifclr, #8"); }
+            unsafe {
+                asm!("msr daifclr, #8");
+            }
         } else {
-            unsafe { asm!("msr daifset, #8"); }
+            unsafe {
+                asm!("msr daifset, #8");
+            }
         }
         // A (SError) — bit 2 in immediate
         if (daif & (1 << 8)) == 0 {
-            unsafe { asm!("msr daifclr, #4"); }
+            unsafe {
+                asm!("msr daifclr, #4");
+            }
         } else {
-            unsafe { asm!("msr daifset, #4"); }
+            unsafe {
+                asm!("msr daifset, #4");
+            }
         }
         // I (IRQ) — bit 1 in immediate
         if (daif & (1 << 7)) == 0 {
-            unsafe { asm!("msr daifclr, #2"); }
+            unsafe {
+                asm!("msr daifclr, #2");
+            }
         } else {
-            unsafe { asm!("msr daifset, #2"); }
+            unsafe {
+                asm!("msr daifset, #2");
+            }
         }
         // D (Debug) — bit 0 in immediate
         if (daif & (1 << 6)) == 0 {
-            unsafe { asm!("msr daifclr, #1"); }
+            unsafe {
+                asm!("msr daifclr, #1");
+            }
         } else {
-            unsafe { asm!("msr daifset, #1"); }
+            unsafe {
+                asm!("msr daifset, #1");
+            }
         }
     }
 

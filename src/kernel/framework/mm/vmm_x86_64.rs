@@ -1529,61 +1529,62 @@ impl VirtualMemoryManager {
             } else if create {
                 let pmm = get_pmm();
 
-                pmm.alloc_page().map_or((core::ptr::null_mut(), false), |page| {
-                    let page_virt = page.to_virt();
-                    let pt = page_virt.0 as *mut PageTableEntry;
-                    core::ptr::write_bytes(pt as *mut u8, 0, PAGE_SIZE as usize);
+                pmm.alloc_page()
+                    .map_or((core::ptr::null_mut(), false), |page| {
+                        let page_virt = page.to_virt();
+                        let pt = page_virt.0 as *mut PageTableEntry;
+                        core::ptr::write_bytes(pt as *mut u8, 0, PAGE_SIZE as usize);
 
-                    let split = e.is_huge();
-                    if split {
-                        // 拆分巨页: 从巨页帧填充 512 个子条目
-                        // step = PAGE_SIZE → PD→PT (2MB→4KB), 新 PT 条目不需要 HUGE_PAGE
-                        // step = HUGE_PAGE_2M_SIZE → PDPT→PD (1GB→2MB), 新 PD 条目需要 HUGE_PAGE
-                        let huge_frame = e.frame();
-                        let huge_flags = e.flags();
-                        let step = if huge_step > 0 {
-                            huge_step
-                        } else {
-                            PAGE_SIZE as u64
-                        };
-                        let mut new_flags =
-                            (huge_flags & !PageFlags::HUGE_PAGE) | PageFlags::PRESENT;
-                        if step == HUGE_PAGE_2M_SIZE {
-                            // PDPT→PD 拆分: 新 PD 条目必须标记为 2MB 巨页,
-                            // 否则 CPU 会将帧地址解释为 PT 指针, 导致页表遍历读取垃圾数据.
-                            new_flags |= PageFlags::HUGE_PAGE;
+                        let split = e.is_huge();
+                        if split {
+                            // 拆分巨页: 从巨页帧填充 512 个子条目
+                            // step = PAGE_SIZE → PD→PT (2MB→4KB), 新 PT 条目不需要 HUGE_PAGE
+                            // step = HUGE_PAGE_2M_SIZE → PDPT→PD (1GB→2MB), 新 PD 条目需要 HUGE_PAGE
+                            let huge_frame = e.frame();
+                            let huge_flags = e.flags();
+                            let step = if huge_step > 0 {
+                                huge_step
+                            } else {
+                                PAGE_SIZE as u64
+                            };
+                            let mut new_flags =
+                                (huge_flags & !PageFlags::HUGE_PAGE) | PageFlags::PRESENT;
+                            if step == HUGE_PAGE_2M_SIZE {
+                                // PDPT→PD 拆分: 新 PD 条目必须标记为 2MB 巨页,
+                                // 否则 CPU 会将帧地址解释为 PT 指针, 导致页表遍历读取垃圾数据.
+                                new_flags |= PageFlags::HUGE_PAGE;
+                            }
+                            crate::klog_boot_info!(
+                                "[VMM] huge split: entry={:#X} frame={:#X} new_pt={:#X} step={:#X}",
+                                entry as u64,
+                                huge_frame.as_u64(),
+                                page.as_u64(),
+                                step
+                            );
+                            for i in 0..512 {
+                                // SAFETY: pt points to a full 4KB page; add(i) stays within bounds
+                                let pte = &mut *pt.add(i);
+                                pte.set_frame(PhysAddr(huge_frame.as_u64() + i as u64 * step));
+                                pte.set_flags(new_flags);
+                            }
                         }
-                        crate::klog_boot_info!(
-                            "[VMM] huge split: entry={:#X} frame={:#X} new_pt={:#X} step={:#X}",
-                            entry as u64,
-                            huge_frame.as_u64(),
-                            page.as_u64(),
-                            step
-                        );
-                        for i in 0..512 {
-                            // SAFETY: pt points to a full 4KB page; add(i) stays within bounds
-                            let pte = &mut *pt.add(i);
-                            pte.set_frame(PhysAddr(huge_frame.as_u64() + i as u64 * step));
-                            pte.set_flags(new_flags);
-                        }
-                    }
 
-                    // SAFETY: `entry` 是合法 PDE/PDPTE 指针; 使用 set_value 一次性写入
-                    // 新帧地址 + 标志, 避免 set_frame→set_flags 两步操作中间出现
-                    // "帧=新PT, 标志=旧值(含HUGE)" 的瞬时不一致状态.
-                    // 单次原子 store 保证 CPU 页表遍历器不会观察到中间态.
-                    // 修复 (TRACK-INIT-RING3-PDE): 中间页表条目禁止设置 NX.
-                    // PDE 的 NX 位语义是"该条目覆盖的整个区域不可执行" (2MB/1GB),
-                    // 原 M9 修复 (16667750) 在此加 NX 意图防"用户态执行页表页",
-                    // 但实际导致用户代码区 (0x400000 所在 PDE) 整体禁执行 →
-                    // 用户态取指 #PF (e=0x15, P=1 U=1 I/D=1). 页表页的安全性由
-                    // "用户页表低半区不映射页表页帧" 保证, 无需中间条目 NX.
-                    let new_val = (page.as_u64() & 0x000FFFFFFFFFF000)
-                        | (PageFlags::PRESENT | PageFlags::WRITABLE).bits();
-                    (*entry).set_value(new_val);
+                        // SAFETY: `entry` 是合法 PDE/PDPTE 指针; 使用 set_value 一次性写入
+                        // 新帧地址 + 标志, 避免 set_frame→set_flags 两步操作中间出现
+                        // "帧=新PT, 标志=旧值(含HUGE)" 的瞬时不一致状态.
+                        // 单次原子 store 保证 CPU 页表遍历器不会观察到中间态.
+                        // 修复 (TRACK-INIT-RING3-PDE): 中间页表条目禁止设置 NX.
+                        // PDE 的 NX 位语义是"该条目覆盖的整个区域不可执行" (2MB/1GB),
+                        // 原 M9 修复 (16667750) 在此加 NX 意图防"用户态执行页表页",
+                        // 但实际导致用户代码区 (0x400000 所在 PDE) 整体禁执行 →
+                        // 用户态取指 #PF (e=0x15, P=1 U=1 I/D=1). 页表页的安全性由
+                        // "用户页表低半区不映射页表页帧" 保证, 无需中间条目 NX.
+                        let new_val = (page.as_u64() & 0x000FFFFFFFFFF000)
+                            | (PageFlags::PRESENT | PageFlags::WRITABLE).bits();
+                        (*entry).set_value(new_val);
 
-                    (page_virt.0 as *mut PageTableEntry, split)
-                })
+                        (page_virt.0 as *mut PageTableEntry, split)
+                    })
             } else {
                 (core::ptr::null_mut(), false)
             }

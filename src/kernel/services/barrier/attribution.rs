@@ -31,9 +31,7 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::services::credo::policy::{
-    CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix,
-};
+use crate::services::credo::policy::{CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix};
 
 /// 故障归属决策
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

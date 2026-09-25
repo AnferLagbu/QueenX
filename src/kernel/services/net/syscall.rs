@@ -587,12 +587,7 @@ pub fn socketpair_syscall(
 ///
 /// `fd` 为负时返回 `Err(Errno::EBADF)`; `vlen` 超过 `UIO_MAXIOV` 时返回 `Err(Errno::EINVAL)`;
 /// entry 或 iov 用户缓冲无效时返回 `Err(Errno::EFAULT)`; 首条发送失败透传底层 `Errno`。
-pub fn sendmmsg_syscall(
-    fd: i32,
-    msgvec_ptr: u64,
-    vlen: u32,
-    flags: u32,
-) -> Result<usize, Errno> {
+pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::EBADF);
     }
@@ -758,10 +753,7 @@ pub fn recvmmsg_syscall(
     let waitforone = (flags & MSG_WAITFORONE_FLAG) != 0;
     // UDS 接收分流: 套接字类型决定 Stream/Dgram 接收原语 (逐 entry 一致)
     let st = if uds::is_uds_fd(fd) {
-        Some(
-            uds::uds_sock_type(fd)
-                .map_err(|e| super::unix::UnixSocketError::from(e).to_errno())?,
-        )
+        Some(uds::uds_sock_type(fd).map_err(|e| super::unix::UnixSocketError::from(e).to_errno())?)
     } else {
         None
     };

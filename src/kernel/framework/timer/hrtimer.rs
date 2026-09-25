@@ -489,9 +489,7 @@ pub fn hrtimer_clock_read() -> u64 {
     }
 
     // 回退: tick 计数 → 纳秒
-    crate::framework::timer::tick::ticks_to_ns(
-        crate::framework::timer::tick::get_ticks(),
-    )
+    crate::framework::timer::tick::ticks_to_ns(crate::framework::timer::tick::get_ticks())
 }
 
 /// 将纳秒转换为时钟周期数

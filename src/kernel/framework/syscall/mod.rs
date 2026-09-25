@@ -43,8 +43,8 @@ pub use epoll::{EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_pwake};
 pub use sendfile::{
     SPLICE_F_GIFT, SPLICE_F_MORE, SPLICE_F_MOVE, SPLICE_F_NONBLOCK, sys_sendfile, sys_splice,
 };
-pub use types::*;
 pub use types::Errno;
+pub use types::*;
 
 // dispatch_trait 公共接口 re-export - T-03 策略-机制分离
 pub use dispatch_trait::{
@@ -85,9 +85,7 @@ pub unsafe extern "C" fn syscall_init() {
     // 注册 epoll 的 fd 关闭通知回调, 解耦 fs→syscall 依赖
     // SAFETY: epoll_pwake 是 'static 函数指针, 在内核运行期间始终有效.
     unsafe {
-        crate::framework::fd_notify::register_pwake(
-            crate::framework::syscall::epoll::epoll_pwake,
-        );
+        crate::framework::fd_notify::register_pwake(crate::framework::syscall::epoll::epoll_pwake);
     }
 }
 

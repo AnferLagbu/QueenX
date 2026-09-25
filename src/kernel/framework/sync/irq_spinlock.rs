@@ -31,9 +31,7 @@ use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::framework::sync::{
-    IrqSaveFlags, SpinLock, disable_interrupts, restore_interrupts,
-};
+use crate::framework::sync::{IrqSaveFlags, SpinLock, disable_interrupts, restore_interrupts};
 #[cfg(debug_assertions)]
 use crate::framework::sync::{LockClassDesc, LockClassId, LockKind};
 

@@ -855,11 +855,7 @@ impl TransferRing {
         // 创建 raw pointer 是 safe 操作; 实际解引用由 framework 内部 unsafe 完成
         let vaddr = self.dma.cpu_addr().as_ptr() as u64;
         let trb_ptr: *const u8 = &trb as *const Trb as *const u8;
-        crate::framework::driver::storage::xhci_write_trb(
-            vaddr,
-            self.enqueue_index,
-            trb_ptr,
-        );
+        crate::framework::driver::storage::xhci_write_trb(vaddr, self.enqueue_index, trb_ptr);
 
         self.enqueue_index += 1;
 
@@ -870,11 +866,7 @@ impl TransferRing {
                 | u32::from(self.cycle);
             let link_trb = Trb::new(self.dma.dma_addr().as_u64(), 0, link_control);
             let link_ptr: *const u8 = &link_trb as *const Trb as *const u8;
-            crate::framework::driver::storage::xhci_write_trb(
-                vaddr,
-                self.enqueue_index,
-                link_ptr,
-            );
+            crate::framework::driver::storage::xhci_write_trb(vaddr, self.enqueue_index, link_ptr);
             self.enqueue_index = 0;
             self.cycle = !self.cycle;
         }

@@ -306,9 +306,7 @@ impl TicklessSubsystem {
 
     /// 读取当前时钟 (ns)
     fn read_clock_ns() -> u64 {
-        crate::framework::timer::tick::ticks_to_ns(
-            crate::framework::timer::tick::get_ticks(),
-        )
+        crate::framework::timer::tick::ticks_to_ns(crate::framework::timer::tick::get_ticks())
     }
 
     /// 编程 one-shot 定时器

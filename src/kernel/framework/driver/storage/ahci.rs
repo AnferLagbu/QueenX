@@ -229,5 +229,4 @@ mod tests {
     fn test_prdt_structure() {
         assert_eq!(core::mem::size_of::<PhysicalRegionDescriptor>(), 16);
     }
-
 }

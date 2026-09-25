@@ -8,16 +8,13 @@ use core::sync::atomic::Ordering;
 
 use super::raw;
 use super::types::{
-    Errno, SYS_accept, SYS_bind, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE,
-    QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT, QX_CGROUP_SET_LIMIT, SYS_connect,
-    QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT, QX_FW_DETACH, QX_FW_GET,
-    QX_FW_GET_INFO, QX_FW_LOAD, SYS_getpeername, SYS_getsockname, SYS_getsockopt,
-    QX_IO_URING_SUBMIT, QX_KGDB_ENTER,
-    SYS_listen, QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, SYS_recvfrom, SYS_recvmsg,
-    QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY, QX_SECURE_BOOT,
-    SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown,
-    SYS_socket, QX_TICKLESS, QX_TIMESYNC, QX_TPM,
-    QX_UEFI,
+    Errno, QX_CET, QX_CGROUP_ATTACH, QX_CGROUP_CREATE, QX_CGROUP_DESTROY, QX_CGROUP_GET_STAT,
+    QX_CGROUP_SET_LIMIT, QX_FTRACE_DISABLE, QX_FTRACE_ENABLE, QX_FTRACE_READ, QX_FTRACE_STAT,
+    QX_FW_DETACH, QX_FW_GET, QX_FW_GET_INFO, QX_FW_LOAD, QX_IO_URING_SUBMIT, QX_KGDB_ENTER,
+    QX_NF_ADD_RULE, QX_NF_DEL_RULE, QX_PM, QX_ROUTE_ADD, QX_ROUTE_DEL, QX_ROUTE_QUERY,
+    QX_SECURE_BOOT, QX_TICKLESS, QX_TIMESYNC, QX_TPM, QX_UEFI, SYS_accept, SYS_bind, SYS_connect,
+    SYS_getpeername, SYS_getsockname, SYS_getsockopt, SYS_listen, SYS_recvfrom, SYS_recvmsg,
+    SYS_sendmsg, SYS_sendto, SYS_setsockopt, SYS_shutdown, SYS_socket,
 };
 // SYS_CREDO_DISK_INSTALL 分支已迁至 services (T2 批 5), 编号常量仅在 types.rs 保留
 // (aarch64 生产构建不引用, 与迁移前 cfg 门控语义一致)
@@ -329,20 +326,14 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (services::debug::ebpf::bpf_syscall, 委托 framework debug::sys_bpf).
 
         // ==================== D5: 电源管理 ====================
-        QX_PM => dispatch!(
-            crate::framework::driver::sys_pm(a0, a1, a2),
-            b"pm\0"
-        ),
+        QX_PM => dispatch!(crate::framework::driver::sys_pm(a0, a1, a2), b"pm\0"),
 
         // ==================== D6: 安全启动 + TPM ====================
         QX_SECURE_BOOT => dispatch!(
             crate::framework::credo::sys_secure_boot(a0, a1, a2, a3),
             b"secure_boot\0"
         ),
-        QX_TPM => dispatch!(
-            crate::framework::credo::sys_tpm(a0, a1, a2, a3),
-            b"tpm\0"
-        ),
+        QX_TPM => dispatch!(crate::framework::credo::sys_tpm(a0, a1, a2, a3), b"tpm\0"),
 
         // ==================== D7: Shadow Stack (CET) ====================
         QX_CET => dispatch!(
@@ -367,10 +358,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // (services::driver::kexec::kexec_syscall, 委托 framework driver::sys_kexec).
 
         // ==================== D11: UEFI ====================
-        QX_UEFI => dispatch!(
-            crate::framework::driver::sys_uefi(a0, a1, a2),
-            b"uefi\0"
-        ),
+        QX_UEFI => dispatch!(crate::framework::driver::sys_uefi(a0, a1, a2), b"uefi\0"),
 
         // ==================== 进程 ====================
         // T2 批 2 (syscall-followup): SYS_tcgetpgrp / SYS_tcsetpgrp 分支已迁至
@@ -382,9 +370,9 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // 优先命中); 本回退层仅保留 not(net) 哨兵, 禁止新增与 services 重叠的
         // 真实实现分支 (见 mod.rs 分层契约).
         #[cfg(not(feature = "net"))]
-        SYS_socket | SYS_connect | SYS_accept | SYS_sendto | SYS_recvfrom | SYS_shutdown | SYS_bind
-        | SYS_listen | SYS_sendmsg | SYS_recvmsg | SYS_setsockopt | SYS_getsockopt | SYS_getsockname
-        | SYS_getpeername => {
+        SYS_socket | SYS_connect | SYS_accept | SYS_sendto | SYS_recvfrom | SYS_shutdown
+        | SYS_bind | SYS_listen | SYS_sendmsg | SYS_recvmsg | SYS_setsockopt | SYS_getsockopt
+        | SYS_getsockname | SYS_getpeername => {
             dispatch!(Errno::ENOSYS.as_ret(), b"net_nosys\0")
         }
 
@@ -825,12 +813,9 @@ pub fn sys_fb_mmap(target_vaddr: u64, size: u64, _prot: u64) -> i64 {
     let pages = (size + offset).div_ceil(crate::framework::mm::PAGE_SIZE);
 
     for i in 0..pages {
-        let pa = crate::framework::mm::PhysAddr(
-            phys_page_aligned + i * crate::framework::mm::PAGE_SIZE,
-        );
-        let va = crate::framework::mm::VirtAddr(
-            target_vaddr + i * crate::framework::mm::PAGE_SIZE,
-        );
+        let pa =
+            crate::framework::mm::PhysAddr(phys_page_aligned + i * crate::framework::mm::PAGE_SIZE);
+        let va = crate::framework::mm::VirtAddr(target_vaddr + i * crate::framework::mm::PAGE_SIZE);
         vmm.map_page_in_table(cr3, va, pa, flags);
     }
 
@@ -963,9 +948,7 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
         unsafe {
             core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
         }
-        if crate::framework::driver::hdd_write_sector(disk_id as u8, u64::from(1 + s), &buf)
-            < 0
-        {
+        if crate::framework::driver::hdd_write_sector(disk_id as u8, u64::from(1 + s), &buf) < 0 {
             return Errno::EIO.as_ret();
         }
     }

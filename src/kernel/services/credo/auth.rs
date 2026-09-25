@@ -38,11 +38,7 @@ pub fn auth_logout_syscall() -> i64 {
 /// `auth_create(password`, note, level) 策略
 pub fn auth_create_syscall(password_ptr: u64, note_ptr: u64, _level: u8) -> i64 {
     let creator = crate::framework::credo::pwm_get_current();
-    crate::framework::credo::pwm_create(
-        password_ptr as *const u8,
-        note_ptr as *const u8,
-        creator,
-    )
+    crate::framework::credo::pwm_create(password_ptr as *const u8, note_ptr as *const u8, creator)
 }
 
 /// `auth_delete(target)` 策略
@@ -52,9 +48,7 @@ pub fn auth_delete_syscall(target: u64) -> i64 {
 
 /// `auth_info(target)` 策略
 pub fn auth_info_syscall(target: u64) -> i64 {
-    i64::from(crate::framework::credo::pwm_get_privilege_level(
-        target,
-    ))
+    i64::from(crate::framework::credo::pwm_get_privilege_level(target))
 }
 
 /// `auth_changepw(old_pw`, `new_pw`) 策略
@@ -122,15 +116,10 @@ pub fn pwm_get_syscall() -> i64 {
 /// 原实现无任何校验, 任意进程可把自身 PWM 改为 root, 绕过全部 UID/GID 检查
 /// (任意提权漏洞 P0-07).
 pub fn pwm_set_syscall(pwm: u64) -> i64 {
-    use crate::services::credo::capability::{
-        CAP_DOMAIN_SYSTEM, SYSTEM_CAP_SET_PWM,
-    };
+    use crate::services::credo::capability::{CAP_DOMAIN_SYSTEM, SYSTEM_CAP_SET_PWM};
     let current = crate::framework::credo::pwm_get_current();
-    if !crate::framework::credo::pwm_has_capability(
-        current,
-        CAP_DOMAIN_SYSTEM,
-        SYSTEM_CAP_SET_PWM,
-    ) {
+    if !crate::framework::credo::pwm_has_capability(current, CAP_DOMAIN_SYSTEM, SYSTEM_CAP_SET_PWM)
+    {
         return Errno::EPERM.as_ret();
     }
     let pid = crate::framework::proc::process_get_current_pid();

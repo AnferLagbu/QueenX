@@ -99,6 +99,6 @@ where
 // 拆分后的子模块 re-export — 保持对外符号名与调用路径不变
 // (`#[no_mangle]` 全局符号不受模块位置影响)
 // ============================================================================
+pub use super::handle::*;
 pub use super::mount::*;
 pub use super::path::*;
-pub use super::handle::*;
