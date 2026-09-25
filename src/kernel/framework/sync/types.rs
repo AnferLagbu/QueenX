@@ -477,9 +477,3 @@ mod tests {
         assert_ne!(acquired, would_block);
     }
 }
-
-// E-03 (2026-09-06): feature 语义拆分 — 纯逻辑测试注册委托, host-test 下同样编译
-#[cfg(any(feature = "kernel_test", feature = "host-test"))]
-pub fn register_sync_types_tests() {
-    crate::framework::tests::sync::register_sync_types_tests();
-}

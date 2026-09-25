@@ -1,11 +1,9 @@
+// UT-07 (2026-09-25): mm::slab 注册副本已删 — 其纯逻辑断言以
+// framework/mm/slab.rs 的 #[cfg(test)] 为唯一归属.
 use crate::framework::credo::constant_time_eq;
 use crate::framework::credo::secure_boot::{sha256_extend, sha256_hash};
 use crate::framework::credo::sha256::sha256;
 use crate::framework::errno::{errno_from_i64, Errno};
-use crate::framework::mm::slab::{
-    GENERAL_CACHE_SIZES, KmemCache, SLAB_MAX_OBJECT_SIZE, SLAB_MIN_OBJECT_SIZE,
-    find_general_cache_index,
-};
 use crate::framework::proc::elf::{Elf64Header, Elf64Phdr};
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::framework::timer::pit::{
@@ -22,47 +20,6 @@ use crate::services::timer::clock::{
     adjtimex_syscall, apply_adjtimex, apply_settimeofday, clock_gettime_syscall,
     clock_nanosleep_syscall, clock_nanosleep_wait_ns, settimeofday_syscall,
 };
-
-fn slab_cache_creation() -> TestResult {
-    let cache = KmemCache::create("test_cache", 64);
-    check!(cache.is_ok(), "cache creation should succeed");
-    let cache = cache.unwrap();
-    assert_eq_test!(cache.object_size, 64, "object size");
-    check!(cache.objects_per_slab > 0, "objects per slab");
-    assert_eq_test!(cache.slab_count, 0, "initial slab count");
-    TestResult::Pass
-}
-
-fn slab_cache_invalid_size() -> TestResult {
-    check!(KmemCache::create("zero", 0).is_err(), "size 0 rejected");
-    check!(
-        KmemCache::create("huge", SLAB_MAX_OBJECT_SIZE + 1).is_err(),
-        "oversize rejected"
-    );
-    TestResult::Pass
-}
-
-fn slab_cache_min_size() -> TestResult {
-    let cache = KmemCache::create("tiny", 8).unwrap();
-    assert_eq_test!(cache.object_size, SLAB_MIN_OBJECT_SIZE, "min size enforced");
-    TestResult::Pass
-}
-
-fn slab_general_cache_sizes() -> TestResult {
-    assert_eq_test!(GENERAL_CACHE_SIZES[0], 16, "size 0");
-    assert_eq_test!(GENERAL_CACHE_SIZES[3], 128, "size 3");
-    assert_eq_test!(GENERAL_CACHE_SIZES[7], 2048, "size 7");
-    TestResult::Pass
-}
-
-fn slab_find_general_cache_index() -> TestResult {
-    assert_eq_test!(find_general_cache_index(16), Some(0), "idx 16");
-    assert_eq_test!(find_general_cache_index(32), Some(1), "idx 32");
-    assert_eq_test!(find_general_cache_index(64), Some(2), "idx 64");
-    assert_eq_test!(find_general_cache_index(2048), Some(7), "idx 2048");
-    assert_eq_test!(find_general_cache_index(3000), None, "idx 3000");
-    TestResult::Pass
-}
 
 fn syscall_error_conversion() -> TestResult {
     assert_eq_test!(Errno::EPERM.as_ret(), -1, "EPERM");
@@ -278,19 +235,6 @@ fn pit_frequency_bounds() -> TestResult {
     let min_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MAX_COUNT);
     check!(min_freq < 20, "min freq < 20Hz");
     TestResult::Pass
-}
-
-pub fn register_slab_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "mm::slab": {
-            "cache_creation": slab_cache_creation,
-            "cache_invalid_size": slab_cache_invalid_size,
-            "cache_min_size": slab_cache_min_size,
-            "general_cache_sizes": slab_general_cache_sizes,
-            "find_general_cache_index": slab_find_general_cache_index,
-        },
-    }
 }
 
 pub fn register_syscall_ffi_tests() {
@@ -725,7 +669,6 @@ pub fn register_fs_tests() {
 }
 
 pub fn register_tests() {
-    register_slab_tests();
     register_syscall_ffi_tests();
     register_sha256_tests();
     register_pit_tests();

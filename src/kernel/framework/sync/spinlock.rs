@@ -434,8 +434,3 @@ mod tests {
         .expect_err("assert_held should panic when not holding lock");
     }
 }
-
-#[cfg(feature = "kernel_test")]
-pub fn register_spinlock_tests() {
-    crate::framework::tests::sync::register_spinlock_tests();
-}

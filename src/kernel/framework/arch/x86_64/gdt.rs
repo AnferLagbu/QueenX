@@ -990,7 +990,3 @@ mod tests {
         assert_eq!(SELECTOR_TSS, 0x28);
     }
 }
-#[cfg(feature = "kernel_test")]
-pub fn register_gdt_tests() {
-    crate::framework::tests::arch::register_gdt_tests();
-}

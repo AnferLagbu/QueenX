@@ -1215,8 +1215,3 @@ mod tests {
         assert_eq!(find_general_cache_index(3000), None); // 超出范围
     }
 }
-
-#[cfg(feature = "kernel_test")]
-pub fn register_slab_tests() {
-    crate::framework::tests::sys::register_slab_tests();
-}

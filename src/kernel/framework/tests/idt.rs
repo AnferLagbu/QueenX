@@ -1,4 +1,5 @@
-use crate::framework::idt::DetailedStatistics;
+// UT-07 (2026-09-25): idt::statistics 注册副本已删 — 其纯逻辑断言以
+// framework/idt/statistics.rs 的 #[cfg(test)] 为唯一归属.
 use crate::framework::idt::handlers::{
     AccessType, DefaultHandler, DivisionByZeroHandler, ExceptionCategory, ExceptionHandler,
     ExceptionStatisticsCollector, FaultCause, Mode, PageFaultHandler, PanicInfo, RecoveryAction,
@@ -190,126 +191,6 @@ fn panic_info_creation() -> TestResult {
     TestResult::Pass
 }
 
-fn detailed_stats_init() -> TestResult {
-    let stats = DetailedStatistics::new();
-    assert_eq_test!(stats.total_count.load(Ordering::Relaxed), 0, "total init");
-    assert_eq_test!(
-        stats.nested_interrupts.load(Ordering::Relaxed),
-        0,
-        "nested init"
-    );
-    TestResult::Pass
-}
-
-fn detailed_stats_record_exception() -> TestResult {
-    let stats = DetailedStatistics::new();
-    let frame = InterruptFrame::new_test_frame(14, 0x400000, 0x23);
-    stats.record_exception(14, &frame);
-    assert_eq_test!(
-        stats.total_count.load(Ordering::Relaxed),
-        1,
-        "total after exception"
-    );
-    assert_eq_test!(stats.get_vector_count(14), 1, "vector 14 count");
-    assert_eq_test!(
-        stats.user_mode_interrupts.load(Ordering::Relaxed),
-        1,
-        "user mode count"
-    );
-    assert_eq_test!(
-        stats.kernel_mode_interrupts.load(Ordering::Relaxed),
-        0,
-        "kernel mode count"
-    );
-    TestResult::Pass
-}
-
-fn detailed_stats_record_irq() -> TestResult {
-    let stats = DetailedStatistics::new();
-    stats.record_irq(1);
-    stats.record_irq(0);
-    stats.record_irq(1);
-    assert_eq_test!(
-        stats.total_count.load(Ordering::Relaxed),
-        3,
-        "total after IRQs"
-    );
-    assert_eq_test!(
-        stats.irq_counts[1].load(Ordering::Relaxed),
-        2,
-        "IRQ 1 count"
-    );
-    assert_eq_test!(
-        stats.irq_counts[0].load(Ordering::Relaxed),
-        1,
-        "IRQ 0 count"
-    );
-    TestResult::Pass
-}
-
-fn detailed_stats_nested() -> TestResult {
-    let stats = DetailedStatistics::new();
-    stats.record_nested(1);
-    stats.record_nested(2);
-    stats.record_nested(3);
-    stats.record_nested(2);
-    assert_eq_test!(
-        stats.nested_interrupts.load(Ordering::Relaxed),
-        4,
-        "nested count"
-    );
-    assert_eq_test!(
-        stats.max_nesting_depth.load(Ordering::Relaxed),
-        3,
-        "max depth"
-    );
-    TestResult::Pass
-}
-
-fn detailed_stats_reset() -> TestResult {
-    let stats = DetailedStatistics::new();
-    stats.record_exception(0, &InterruptFrame::new_test_frame(0, 0x1000, 0x08));
-    stats.record_irq(5);
-    stats.record_nested(1);
-    stats.reset();
-    assert_eq_test!(
-        stats.total_count.load(Ordering::Relaxed),
-        0,
-        "total after reset"
-    );
-    assert_eq_test!(stats.get_vector_count(0), 0, "vector 0 after reset");
-    assert_eq_test!(
-        stats.irq_counts[5].load(Ordering::Relaxed),
-        0,
-        "IRQ 5 after reset"
-    );
-    TestResult::Pass
-}
-
-fn detailed_stats_recovery_action_tracking() -> TestResult {
-    let stats = DetailedStatistics::new();
-    stats.record_recovery_action(&RecoveryAction::Recovered);
-    stats.record_recovery_action(&RecoveryAction::TerminateProcess(42));
-    stats.record_recovery_action(&RecoveryAction::DomainRecovery);
-    stats.record_recovery_action(&RecoveryAction::Panic(PanicInfo::new("test", 0, 0)));
-    assert_eq_test!(stats.recoveries.load(Ordering::Relaxed), 1, "recoveries");
-    assert_eq_test!(
-        stats.process_terminations.load(Ordering::Relaxed),
-        1,
-        "terminations"
-    );
-    assert_eq_test!(stats.domain_recoveries.load(Ordering::Relaxed), 1, "domain");
-    assert_eq_test!(stats.panics.load(Ordering::Relaxed), 1, "panics");
-    TestResult::Pass
-}
-
-fn detailed_stats_invalid_vector_count() -> TestResult {
-    let stats = DetailedStatistics::new();
-    assert_eq_test!(stats.get_vector_count(255), 0, "vec 255");
-    assert_eq_test!(stats.get_vector_count(100), 0, "vec 100");
-    TestResult::Pass
-}
-
 fn address_validation() -> TestResult {
     check!(is_null_or_invalid(0), "null is invalid");
     check!(is_null_or_invalid(0xFFF), "0xFFF is invalid");
@@ -379,21 +260,6 @@ pub fn register_idt_handlers_tests() {
     }
 }
 
-pub fn register_idt_statistics_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "idt::statistics": {
-            "init": detailed_stats_init,
-            "record_exception": detailed_stats_record_exception,
-            "record_irq": detailed_stats_record_irq,
-            "nested": detailed_stats_nested,
-            "recovery_action_tracking": detailed_stats_recovery_action_tracking,
-            "reset": detailed_stats_reset,
-            "invalid_vector_count": detailed_stats_invalid_vector_count,
-        },
-    }
-}
-
 pub fn register_idt_safety_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -407,6 +273,5 @@ pub fn register_idt_safety_tests() {
 pub fn register_tests() {
     register_idt_types_tests();
     register_idt_handlers_tests();
-    register_idt_statistics_tests();
     register_idt_safety_tests();
 }

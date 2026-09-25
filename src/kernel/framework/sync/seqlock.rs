@@ -195,8 +195,3 @@ mod tests {
         assert_eq!(lock.sequence.load(Ordering::Relaxed), 2);
     }
 }
-
-#[cfg(feature = "kernel_test")]
-pub fn register_seqlock_tests() {
-    crate::framework::tests::sync::register_seqlock_tests();
-}

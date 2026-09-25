@@ -1,72 +1,11 @@
 use crate::framework::cpu::{CacheInfo, CpuSignature, CpuVendor, TopologyInfo};
+// UT-07 (2026-09-25): arch::gdt 注册副本已删 — 其纯逻辑断言以
+// framework/arch/x86_64/gdt.rs 的 #[cfg(test)] 为唯一归属.
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 
 #[cfg(target_arch = "x86_64")]
-use crate::framework::arch::x86_64::gdt::{
-    AccessByte, GdtEntry, Granularity, SELECTOR_KERNEL_CODE, SELECTOR_KERNEL_DATA, SELECTOR_NULL,
-    SELECTOR_TSS, SELECTOR_USER_CODE, SELECTOR_USER_DATA,
-};
-#[cfg(target_arch = "x86_64")]
 use crate::framework::arch::x86_64::tss::{DEFAULT_IOMAP_BASE, TSS_SIZE, TaskStateSegment};
-
-#[cfg(target_arch = "x86_64")]
-fn gdt_entry_null() -> TestResult {
-    let null_desc = GdtEntry::null();
-    // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-    let bytes = unsafe {
-        core::ptr::read_volatile(core::ptr::from_ref(&null_desc) as *const u64)
-    };
-    check!(bytes == 0, "Null descriptor should be all zeros");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn gdt_access_byte_constants() -> TestResult {
-    assert_eq_test!(AccessByte::kernel_code().0, 0x9A, "kernel_code access byte");
-    assert_eq_test!(AccessByte::kernel_data().0, 0x92, "kernel_data access byte");
-    assert_eq_test!(AccessByte::user_code().0, 0xFA, "user_code access byte");
-    assert_eq_test!(AccessByte::user_data().0, 0xF2, "user_data access byte");
-    assert_eq_test!(AccessByte::tss().0, 0x89, "tss access byte");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn gdt_granularity_constants() -> TestResult {
-    let code_gran = Granularity::code_64bit();
-    check!(
-        code_gran.0 & Granularity::PAGE_GRANULARITY != 0,
-        "code gran should have page granularity"
-    );
-    check!(
-        code_gran.0 & Granularity::LONG_MODE != 0,
-        "code gran should have long mode"
-    );
-
-    let data_gran = Granularity::data_32bit();
-    check!(
-        data_gran.0 & Granularity::PAGE_GRANULARITY != 0,
-        "data gran should have page granularity"
-    );
-    check!(
-        data_gran.0 & Granularity::SIZE_32BIT != 0,
-        "data gran should have size 32bit"
-    );
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn gdt_selector_values() -> TestResult {
-    assert_eq_test!(SELECTOR_NULL, 0x00, "NULL selector");
-    assert_eq_test!(SELECTOR_KERNEL_CODE, 0x08, "kernel code selector");
-    assert_eq_test!(SELECTOR_KERNEL_DATA, 0x10, "kernel data selector");
-    // 2026-06-29 修复: 原测试 USER_CODE/USER_DATA 位置写反 (与实装相反).
-    // 实装: USER_DATA = 0x18, USER_CODE = 0x20 (同 gdt.rs:720-721 内嵌 assert_eq).
-    assert_eq_test!(SELECTOR_USER_DATA, 0x18, "user data selector");
-    assert_eq_test!(SELECTOR_USER_CODE, 0x20, "user code selector");
-    assert_eq_test!(SELECTOR_TSS, 0x28, "TSS selector");
-    TestResult::Pass
-}
 
 #[cfg(target_arch = "x86_64")]
 fn tss_zeroed() -> TestResult {
@@ -233,22 +172,6 @@ fn cpu_topology_threads_per_core() -> TestResult {
 }
 
 #[cfg(target_arch = "x86_64")]
-pub fn register_gdt_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "arch::gdt": {
-            "null_descriptor": gdt_entry_null,
-            "access_byte_constants": gdt_access_byte_constants,
-            "granularity_constants": gdt_granularity_constants,
-            "selector_values": gdt_selector_values,
-        },
-    }
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub fn register_gdt_tests() {}
-
-#[cfg(target_arch = "x86_64")]
 pub fn register_tss_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -280,7 +203,6 @@ pub fn register_cpu_tests() {
 pub fn register_cpuid_tests() {}
 
 pub fn register_tests() {
-    register_gdt_tests();
     register_tss_tests();
     register_cpu_tests();
     register_cpuid_tests();

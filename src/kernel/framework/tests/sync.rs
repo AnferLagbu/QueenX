@@ -1,11 +1,9 @@
-use crate::framework::sync::{
-    AtomicBool, CondVar, IrqSaveFlags, Mutex, MutexInner, RwLock, RwLockInner, SeqLock, SpinLock,
-    SpinLockInner, TryLockResult, atomic_add, atomic_cmpxchg, atomic_dec, atomic_inc, atomic_read,
-    atomic_set, atomic_sub,
-};
+// UT-07 (2026-09-25): sync::{seqlock,spinlock,types,atomic} 四组注册副本已删 —
+// 其纯逻辑断言以源文件 #[cfg(test)] 为唯一归属 (见
+// docs/plan/kernel-unit-test-harness-unification.md 的 UT-07 A 类清单).
+use crate::framework::sync::{CondVar, Mutex, RwLock};
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
-use core::sync::atomic::Ordering;
 
 fn mutex_basic() -> TestResult {
     let mutex = Mutex::new(42i32);
@@ -51,67 +49,6 @@ fn mutex_reentrant() -> TestResult {
 
 fn condvar_creation() -> TestResult {
     let _cond = CondVar::new();
-    TestResult::Pass
-}
-
-fn seqlock_basic() -> TestResult {
-    let lock = SeqLock::new(42u32);
-    {
-        let guard = lock.read();
-        check!(guard.is_valid(), "read should be valid");
-        assert_eq_test!(*guard, 42, "value mismatch");
-    }
-    TestResult::Pass
-}
-
-fn seqlock_write() -> TestResult {
-    let lock = SeqLock::new(0u32);
-    {
-        let mut w = lock.write();
-        *w = 100;
-    }
-    let r = lock.read();
-    check!(r.is_valid(), "read should be valid after write");
-    assert_eq_test!(*r, 100, "value after write");
-    TestResult::Pass
-}
-
-fn seqlock_sequence_increments() -> TestResult {
-    let lock = SeqLock::new(0u32);
-    assert_eq_test!(lock.sequence.load(Ordering::Relaxed), 0, "initial seq");
-    {
-        let _w = lock.write();
-        assert_eq_test!(lock.sequence.load(Ordering::Relaxed), 1, "seq during write");
-    }
-    assert_eq_test!(lock.sequence.load(Ordering::Relaxed), 2, "seq after write");
-    TestResult::Pass
-}
-
-fn spinlock_basic() -> TestResult {
-    let mut lock = SpinLock::new();
-    check!(!lock.is_locked(), "should not be locked");
-    lock.raw_lock();
-    check!(lock.is_locked(), "should be locked");
-    lock.raw_unlock();
-    check!(!lock.is_locked(), "should be unlocked");
-    TestResult::Pass
-}
-
-fn spinlock_trylock() -> TestResult {
-    let mut lock = SpinLock::new();
-    assert_eq_test!(lock.try_lock(), TryLockResult::Acquired, "first trylock");
-    check!(lock.is_locked(), "should be locked");
-    assert_eq_test!(lock.try_lock(), TryLockResult::WouldBlock, "second trylock");
-    lock.raw_unlock();
-    TestResult::Pass
-}
-
-fn spinlock_irqsave() -> TestResult {
-    let mut lock = SpinLock::new();
-    let flags = lock.lock_irqsave();
-    check!(lock.is_locked(), "should be locked after irqsave");
-    lock.unlock_irqrestore(&flags);
-    check!(!lock.is_locked(), "should be unlocked after irqrestore");
     TestResult::Pass
 }
 
@@ -183,100 +120,6 @@ fn rwlock_read_blocks_write() -> TestResult {
     TestResult::Pass
 }
 
-fn spinlock_inner_default() -> TestResult {
-    let lock = SpinLockInner::default();
-    assert_eq_test!(
-        lock.locked.load(Ordering::Relaxed),
-        0,
-        "spinlock inner default"
-    );
-    TestResult::Pass
-}
-
-fn mutex_inner_default() -> TestResult {
-    let m = MutexInner::default();
-    assert_eq_test!(m.locked.load(Ordering::Relaxed), 0, "mutex inner locked");
-    assert_eq_test!(m.owner.load(Ordering::Relaxed), -1, "mutex inner owner");
-    assert_eq_test!(m.depth.load(Ordering::Relaxed), 0, "mutex inner depth");
-    TestResult::Pass
-}
-
-fn rwlock_inner_default() -> TestResult {
-    let rw = RwLockInner::default();
-    assert_eq_test!(
-        rw.readers.load(Ordering::Relaxed),
-        0,
-        "rwlock inner readers"
-    );
-    assert_eq_test!(rw.writer.load(Ordering::Relaxed), 0, "rwlock inner writer");
-    assert_eq_test!(
-        rw.pending_writers.load(Ordering::Relaxed),
-        0,
-        "rwlock inner pending"
-    );
-    TestResult::Pass
-}
-
-fn irq_save_flags() -> TestResult {
-    let flags = IrqSaveFlags(0x202);
-    check!(flags.interrupts_enabled(), "IF=1 should be enabled");
-    let flags_disabled = IrqSaveFlags(0x002);
-    check!(
-        !flags_disabled.interrupts_enabled(),
-        "IF=0 should be disabled"
-    );
-    TestResult::Pass
-}
-
-fn try_lock_result_variants() -> TestResult {
-    let acquired = TryLockResult::Acquired;
-    let would_block = TryLockResult::WouldBlock;
-    assert_eq_test!(acquired, TryLockResult::Acquired, "acquired eq");
-    check!(acquired != would_block, "acquired != would_block");
-    TestResult::Pass
-}
-
-fn atomic_bool_basic() -> TestResult {
-    let b = AtomicBool::new(false);
-    check!(!b.load(Ordering::Relaxed), "initial false");
-    b.swap(true, Ordering::Relaxed);
-    check!(b.load(Ordering::Relaxed), "after swap true");
-    check!(
-        b.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst),
-        "cas success"
-    );
-    check!(!b.load(Ordering::Relaxed), "after cas false");
-    check!(
-        !b.compare_exchange(true, true, Ordering::SeqCst, Ordering::SeqCst),
-        "cas fail"
-    );
-    TestResult::Pass
-}
-
-fn atomic_operations() -> TestResult {
-    let mut val: i32 = 10;
-    let ptr = &raw mut val;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        assert_eq_test!(atomic_inc(ptr), 10, "inc returns old");
-        assert_eq_test!(*ptr, 11, "inc result");
-        assert_eq_test!(atomic_dec(ptr), 11, "dec returns old");
-        assert_eq_test!(*ptr, 10, "dec result");
-        assert_eq_test!(atomic_add(ptr, 5), 10, "add returns old");
-        assert_eq_test!(*ptr, 15, "add result");
-        assert_eq_test!(atomic_sub(ptr, 3), 15, "sub returns old");
-        assert_eq_test!(*ptr, 12, "sub result");
-        atomic_set(ptr, 42);
-        assert_eq_test!(*ptr, 42, "set result");
-        assert_eq_test!(atomic_read(ptr), 42, "read result");
-        check!(atomic_cmpxchg(ptr, 42, 100), "cmpxchg success");
-        assert_eq_test!(*ptr, 100, "cmpxchg result");
-        check!(!atomic_cmpxchg(ptr, 99, 200), "cmpxchg fail");
-        assert_eq_test!(*ptr, 100, "cmpxchg fail no change");
-    }
-    TestResult::Pass
-}
-
 pub fn register_mutex_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -286,28 +129,6 @@ pub fn register_mutex_tests() {
             // G-17 (2026-09-08): 递归锁定回归
             "reentrant": mutex_reentrant,
             "condvar_creation": condvar_creation,
-        },
-    }
-}
-
-pub fn register_seqlock_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "sync::seqlock": {
-            "basic": seqlock_basic,
-            "write": seqlock_write,
-            "sequence_increments": seqlock_sequence_increments,
-        },
-    }
-}
-
-pub fn register_spinlock_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "sync::spinlock": {
-            "basic": spinlock_basic,
-            "trylock": spinlock_trylock,
-            "irqsave": spinlock_irqsave,
         },
     }
 }
@@ -326,34 +147,7 @@ pub fn register_rwlock_tests() {
     }
 }
 
-pub fn register_sync_types_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "sync::types": {
-            "spinlock_inner_default": spinlock_inner_default,
-            "mutex_inner_default": mutex_inner_default,
-            "rwlock_inner_default": rwlock_inner_default,
-            "irq_save_flags": irq_save_flags,
-            "try_lock_result_variants": try_lock_result_variants,
-        },
-    }
-}
-
-pub fn register_atomic_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "sync::atomic": {
-            "bool_basic": atomic_bool_basic,
-            "operations": atomic_operations,
-        },
-    }
-}
-
 pub fn register_tests() {
     register_mutex_tests();
-    register_seqlock_tests();
-    register_spinlock_tests();
     register_rwlock_tests();
-    register_sync_types_tests();
-    register_atomic_tests();
 }

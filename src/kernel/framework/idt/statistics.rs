@@ -542,8 +542,3 @@ mod tests {
         assert_eq!(stats.get_vector_count(100), 0); // Not exception or IRQ
     }
 }
-
-#[cfg(feature = "kernel_test")]
-pub fn register_idt_statistics_tests() {
-    crate::framework::tests::idt::register_idt_statistics_tests();
-}

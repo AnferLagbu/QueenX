@@ -1,3 +1,6 @@
+// UT-07 (2026-09-25): rcu / kmalloc_slab / zil_persist 注册副本已删 —
+// 其纯逻辑断言分别以 framework/sync/rcu.rs, framework/mm/kmalloc_slab.rs,
+// services/fs/nestfs/zil_persist.rs 的 #[cfg(test)] 为唯一归属.
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 
@@ -148,25 +151,6 @@ fn test_elf_valid_minimal() -> TestResult {
 }
 
 // ============================================================
-// RCU
-// ============================================================
-
-fn test_rcu_read_lock_unlock() -> TestResult {
-    crate::framework::sync::rcu::rcu_read_lock();
-    // 单核上下文中嵌套层数应为 1
-    crate::framework::sync::rcu::rcu_read_unlock();
-    TestResult::Pass
-}
-
-fn test_rcu_nested_locks() -> TestResult {
-    crate::framework::sync::rcu::rcu_read_lock();
-    crate::framework::sync::rcu::rcu_read_lock();
-    crate::framework::sync::rcu::rcu_read_unlock();
-    crate::framework::sync::rcu::rcu_read_unlock();
-    TestResult::Pass
-}
-
-// ============================================================
 // Chitin 设备树
 // ============================================================
 
@@ -202,43 +186,6 @@ fn test_devtree_set_compatible() -> TestResult {
         }
         None => {}
     }
-    TestResult::Pass
-}
-
-// ============================================================
-// Kmalloc-Slab 集成
-// ============================================================
-
-fn test_slab_cache_index_selection() -> TestResult {
-    use crate::framework::mm::kmalloc_slab;
-    // Test via the public API
-    let p1 = kmalloc_slab::slab_kmalloc(8);
-    let p2 = kmalloc_slab::slab_kmalloc(32);
-    let p3 = kmalloc_slab::slab_kmalloc(4096);
-    // 大块分配走堆
-    if let Some(p) = p1 {
-        kmalloc_slab::slab_kfree(p, 8);
-    }
-    if let Some(p) = p2 {
-        kmalloc_slab::slab_kfree(p, 32);
-    }
-    if let Some(p) = p3 {
-        kmalloc_slab::slab_kfree(p, 4096);
-    }
-    TestResult::Pass
-}
-
-// ============================================================
-// ZIL Persistence
-// ============================================================
-
-fn test_zil_crc32_deterministic() -> TestResult {
-    // CRC32 在 zil_persist.rs 中定义; 通过 roundtrip 测试
-    let data = b"Hello, ZIL!";
-    let c1 = crate::services::fs::nestfs::zil_persist::crc32_test_wrapper(data);
-    let c2 = crate::services::fs::nestfs::zil_persist::crc32_test_wrapper(data);
-    assert_eq_test!(c1, c2, "crc32 deterministic");
-    check!(c1 != 0, "crc32 non-zero");
     TestResult::Pass
 }
 
@@ -415,19 +362,9 @@ pub fn register_new_tests() {
             "magic_rejected": test_elf_magic_rejected,
             "valid_minimal": test_elf_valid_minimal,
         },
-        "rcu": {
-            "read_lock_unlock": test_rcu_read_lock_unlock,
-            "nested_locks": test_rcu_nested_locks,
-        },
         "devtree": {
             "create_node": test_devtree_create_node,
             "set_compatible": test_devtree_set_compatible,
-        },
-        "kmalloc_slab": {
-            "cache_index_selection": test_slab_cache_index_selection,
-        },
-        "zil_persist": {
-            "crc32_deterministic": test_zil_crc32_deterministic,
         },
         "mmap": {
             "prot_to_vma_flags": test_prot_to_vma_flags,

@@ -252,6 +252,72 @@
   - 方案：以 B09-19 的处置判据为输入 —— 纯逻辑断言以 `cfg(test)` 侧为准（删注册表副本或删源副本，取覆盖更强者）；硬件路径断言保留在 `kernel_test` 载体。
   - 状态：[]
   - 详情：**先出收敛清单再动手**（逐例标注保留侧与删除侧），避免历史那种「半成品」；本步可分批，且允许按用户裁定延期执行。
+  - 详情（调研口径 —— 本清单的数据来源与判定方法）
+    - 规模（实测，排除 vendored `services/net/smoltcp/`）：注册表侧 **108 命名空间组 / 459 条用例 / 25 个 `framework/tests/*.rs`**；源 `#[cfg(test)]` 侧 **104 文件 / 754 例**。
+    - 匹配方法：case 名与注册 fn 名同时归一化（去 `test_` 前缀 + 去下划线 + 小写），再与「同 basename 源文件」的源侧 test 名比对。
+    - **判定粒度 = 命名空间，不是逐例** —— 断言可跨不同函数名分布（实例：注册侧 `timer::pit::frequency_bounds` 的 `PIT_MAX_COUNT == 65535` 实由源侧 `test_pit_constants` 覆盖），逐例比会大量误报。命名空间亦可能跨多个注册文件（`pwm::sha256` 分布在 `sys.rs` + `test_pwm.rs`），须聚合全部承载文件。
+    - 断言原子比对（归一化后再比集合包含关系）：`check!`/`assert!` → `assert`；`assert_eq_test!`/`assert_eq!` → `assert_eq`；丢弃尾部消息串；归一 `&raw mut x` / `&mut x as *mut T`、`{ x.field }`（packed 解引用规避）、`alloc::format!("{}",x)` / `x.to_string()`、`as u32` / `as u8`、`assert(a!=b)` / `assert_ne!(a,b)`。
+    - 硬件路径判据（唯一可靠信号）：注册 fn 若存在 `#[cfg(feature = "host-test")]` 的 `TestResult::Skip` 桩变体 ⇒ 依赖裸机 PMM/VMM/SMP ⇒ **保留注册载体，不参与收敛**。
+    - 机器配对脚本（可重跑）：`/tmp/ut07_enum3.py`（枚举，出 `/tmp/ut07_matrix3.json`）；`/tmp/ut07_bodies.py`（逐例函数体对照）；`/tmp/ut07_ns.py`（命名空间级覆盖比对，出 `/tmp/ut07_ns.json`）。
+    - 已知盲区（如实登记）：源侧 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn ...() -> bool }` 形态的断言（如 `framework/barrier/reset/audit.rs`、`bbr.rs`、`bsr.rs`）**不是 cargo 可发现的 `#[test]`**，且 `cfg(test)` 关闭时不编译 ⇒ 其特征是"注册侧仅有薄包装 `check!(tests::xxx())`"。此类须**改写为源侧 `#[cfg(test)] #[test]`** 才算真正收敛（见 C 类 `barrier::audit`）。
+  - 详情（分类结果 —— 34 个双份命名空间）
+    - **A 类：可整组删注册副本（10 组，源侧断言 ⊇ 注册侧，零登记负担）**：`arch::gdt`(4 组/16 条)、`idt::statistics`(7/20)、`kmalloc_slab`(1/0)、`mm::slab`(5/15)、`rcu`(2/0)、`sync::atomic`(2/19)、`sync::seqlock`(3/7)、`sync::spinlock`(3/8)、`sync::types`(5/11)、`zil_persist`(1/2)。
+    - **A′ 类：等价但须逐例登记理由（5 组）**：
+      - `idt::types`(8 组/23 条)：4 条 MISSING 为 packed 解引用归一化残留（`entry.offset_low` vs `{ entry.offset_low }`），语义等价。
+      - `page_fault`(3/12)：3 条为 `as u32` / `as u8` 判别式转换差异，值断言相同。
+      - `net::e1000`(4/12)：`virt_to_phys(0x12345678)` 低地址形态**源侧已按 UT-06 实测修正**为 `virt_to_phys(KERNEL_BASE + 0x12345678)`（原断言会下溢 panic）⇒ 源侧更强。
+      - `lib::string`(13/34)：2 条 `safe_memcmp` 由源侧 `test_rust_safe_interfaces` 以**同性质不同数据**覆盖（Equal/Less 各一）；raw `memcmp` 由源侧 `test_memcmp` 覆盖。
+      - `mmap`(1/5)：注册侧 `test_prot_to_vma_flags` 因函数私有**只测 `PageFlags` 位运算**（弱代理），源侧 `test_prot_to_flags` 直调真实 `prot_to_vma_flags` ⇒ 删注册即**覆盖增强**（与 DECISION-080 第 4 条所指 B09-19 弱化同型，方向相反）。
+    - **B 类：硬件路径，保留注册副本（3 组，不收敛）**：`mm::cow`（`child_write_isolated_from_parent` / `shared_frame_survives_owner_exit` / `unique_mapping_fault_reuses_frame`）、`mm::frame`（`handle_clone_drop_pairing` / `dma_buffer_raii_release`）、`cow`（`shared_frame_alloc_starts_at_one` / `shared_frame_inc_dec_paired`）—— 全部依赖裸机 PMM/VMM 页表与物理帧，host 变体为 `Skip` 桩。
+    - **C 类：注册轨独有纯逻辑断言 → 先迁入源侧 `cfg(test)`，再删注册副本（16 组）**，逐组见下条。
+  - 详情（C 类迁移清单 —— 逐组「独有断言 → 源侧目标文件」）
+    - `arch::tss` → `framework/arch/x86_64/tss.rs`：真独有 1 条（`tss.get_ist(i) == Some(0)`，注册侧走公有取值器，源侧现只读裸字段 → 源侧改用取值器，API 级断言不降级）；其余 7 条为 packed 归一化残留。另 `TSS_SIZE >= 92` 与 `TSS_SIZE % 2 == 0` 两条**弱于**源侧 `TSS_SIZE >= TSS_MINIMUM_SIZE`(104) 与 `== TSS_MINIMUM_SIZE` ⇒ 登记理由"被更强断言蕴含"后丢弃。
+    - `barrier::audit` → `framework/barrier/reset/audit.rs`：注册侧为薄包装 `check!(tests::test_audit_log())` / `check!(tests::test_audit_count_by_layer())`，实际断言在 `#[cfg(feature = "kernel_test")] pub mod tests` 内（host 不编译、非 cargo 可发现）⇒ 须改写为 `#[cfg(test)] #[test]`，并连带解除 `framework/tests/reset.rs` 的 `cfg(feature = "kernel_test")` 整模块门控依赖（`mod.rs` E-03 注记）。
+    - `devtree` → `framework/chitin/devtree.rs`：3 条（`id > 0`、`node.is_some()`、`found.is_some()`）。
+    - `driver::ata` → `framework/driver/storage/ata.rs`：3 条（`name()`、`device_type() == Block`、`!status().is_empty()`）。
+    - `driver::framework` → `framework/driver/framework.rs`：12 条（`DeviceInfo` 构造/builder 字段面 7 条 + `DeviceType`/`DriverError` 的 `Display` 3 条 + 2 条 builder 覆写）。删注册侧 `device_info_creation` / `device_info_builder` / `result_type` 三组。
+    - `driver::keyboard` → `framework/driver/input/keyboard.rs`：4 条（`name()`、`device_type() == Input`、`!status().is_empty()`、`!is_ready()`）。删 `driver_trait` 等 5 组。
+    - `idt::handlers` → `framework/idt/handlers.rs`：3 条 —— ① `handler99.category() == ExceptionCategory::Unknown`（源侧只断 `name()`）；② `analyze_error_code(0x02)` 场景的 `access_type == Write` / `mode == Kernel`（源侧只覆盖 UT-06 修正后的 `0x04` Read/User 场景，**两侧输入不同 → 互补而非重复**，须把 0x02 场景一并补入源侧）。
+    - `idt::safety` → `framework/idt/safety.rs`：`address_validation` 的 7 条地址谓词断言**迁源侧**；`cpu_features_no_panic`（5 条）依赖 CPUID 读宿主 CPU ⇒ **待裁定**（建议保留注册载体，见末条）。
+    - `pwm::audit` → `services/credo/audit.rs`：3 条（`entry.pwm/as_u64() == 42`、`action.as_u32() == 3`、`result.as_u32() == 0`）。
+    - `pwm::policy` → `services/credo/policy.rs`：**最大批** —— 注册侧 23 组 `CapBits`/`CapMatrix`/`InMemoryMatrix` 用例（45 条独有断言），源侧现只覆盖 `PolicyEngine`（13 fn）；须在源侧补 `CapBits`/`CapMatrix` 的 `cfg(test)` 用例组后删注册侧 23 组。
+    - `pwm::sha256` → `framework/credo/sha256.rs`：10 条独有（`known_vectors` 的 `hash[0..2]` 精确字节、boundary 55/56/63/64 分块等），源侧现仅 5 fn / 2 条 ⇒ 须整组迁入。
+    - `pwm::types` → `framework/credo/types.rs`：17 条（`PwmId`/`CapDomain`/`CapBits` newtype 行为：`is_valid`/`as_u64`/`as_u16`/`as_usize`/`contains`），源侧现只测 `PwmEntry`（10 fn）⇒ 须新增 newtype 用例组。
+    - `vfs::types` → `framework/fs/vfs/types.rs`：**源侧该文件 `#[cfg(test)]` 数为 0** ⇒ 须新建 `cfg(test)` 模块，迁入 17 条（`FsType::from_name/as_str`、`VfsFileType`/`VfsSeekWhence` 的 `from_u8/from_u32` + 往返、`VfsDirent` 字段）。
+    - `sync::mutex` → `framework/sync/mutex.rs`：4 条（`reentrant` 用例的 `depth() == 2/1`、`owner() == -1`、内层 guard 取值）⇒ 源侧新增递归锁定回归用例（G-17）。
+    - `sync::rwlock` → `framework/sync/rwlock.rs`：8 条（`multiple_readers` / `write_blocks_read` / `read_blocks_write` 三用例的 `try_read`/`try_write` 取得与阻塞判据）⇒ 源侧新增（源侧现仅 `test_rwlock_concurrent_readers`）。
+    - `timer::pit` → `framework/timer/pit.rs`：2 条 —— `u64::from(PIT_MAX_COUNT) == 65535` 由源侧 `test_pit_constants` 覆盖（**登记理由**）；`(actual_freq as i64 - 1000).abs() < 5` 的**双侧容差**在源侧被写成单侧 `(actual_freq - 1000) < 5`（更弱）⇒ 源侧改回 `.abs()` 形态后删注册副本。
+  - 详情（门槛核算 —— AGENTS §2.3 第 6 条 + UT-07「断言净增不净减」）
+    - A 类删注册断言 ≈ 98 条（全部被源侧同断言或更强断言覆盖，逐条由脚本核验 `源 ⊇ 注册`）。
+    - A′ 类删注册断言 ≈ 86 条（逐例理由已在上条列明）。
+    - C 类为**先迁后删**：迁入源侧的断言数 ≥ 删掉的注册断言数（迁入时以源侧口径为准，遇 UT-06 已修正的口径取修正版），净不减少。
+    - B 类零改动。
+    - 收敛后 `MAX_TESTS = 640` 有富余，无需调整；但注册表用例数下降约 250 条，须核对 `framework/tests/mod.rs` 各 `register_*` 调用点是否有随之失效的薄包装函数（F9 死代码零容忍：被删组的专属 fn 必须一并删除，不留空壳与 `#[allow(dead_code)]`）。
+  - 详情（待用户裁定项）
+    - `idt::safety::cpu_features_no_panic`：断言「宿主 CPUID 必须暴露 APIC / x2APIC 蕴含 APIC」。CPUID 非 DECISION-080 列举的硬件路径（MMIO/中断/STAC-CLAC/页表实机行为），但断言内容依赖运行环境 ⇒ 迁源侧会在 CI runner 上执行真实 CPUID（x86_64 runner 通常满足）。**建议保留注册载体**（属"裸机不变量"）。请裁定。
+    - 分批节拍：建议先 A 类（零登记负担，风险最低）→ A′ 类（逐例理由已备）→ C 类（改动面最大，可再按「源侧已有同名文件」与「源侧零覆盖」两小批）。每批跑 §2.3 门槛（至少 `make test-kernel-host` + `make test-unit` + `./ci/build.sh all`）。
+  - 详情（裁定结果 —— 用户裁定）
+    - `idt::safety::cpu_features_no_panic`（5 条断言）⇒ **保留注册载体**，归入 **B 类**（B 类由 3 组增为 4 组，见上条分类结果）。理由：其断言为"运行环境必须满足的硬件不变量"，迁源侧后随 CI runner 的 CPUID 差异产生环境相关脆弱性，与 DECISION-080「硬件路径留 `kernel_test` 载体」的取向一致。
+    - 施工节拍 ⇒ **先 A 类，逐批停下确认**。
+  - 详情（A 类施工完成 —— 10 组 / 33 用例 / 98 条断言）
+    - 处置形态：逐组删注册副本 + 删对应的 `#[cfg(feature = "kernel_test")] pub fn register_*_tests()` 转发 shim（F9 死代码零容忍），并在承载文件顶部加中文注记指向源侧唯一归属。
+    - 明细：`arch::gdt` 4 / `idt::statistics` 7 / `kmalloc_slab` 1 / `mm::slab` 5 / `rcu` 2 / `sync::atomic` 2 / `sync::seqlock` 3 / `sync::spinlock` 3 / `sync::types` 5 / `zil_persist` 1 = **33 用例**（对应门槛核算中的 98 条断言）。
+    - 改动文件：`framework/tests/{arch,idt,sync,sys,test_new_features}.rs`（删注册组/用例）+ `framework/{arch/x86_64/gdt,idt/statistics,mm/slab,sync/{types,atomic,seqlock,spinlock}}.rs`（删转发 shim）。
+    - 零覆盖损失核验（逐组）：`rcu`（2 用例）与 `kmalloc_slab`（1 用例）的注册侧**断言数为 0**（仅调用后返回 `Pass`，无任何 `assert`），源侧 `framework/sync/rcu.rs::test_rcu_read_lock_unlock`（3 条断言，含嵌套锁场景）与 `framework/mm/kmalloc_slab.rs::test_cache_index_selection` 为唯一且更强的载体 ⇒ 删注册副本无断言损失。
+    - 随删清理（本次删除直接导致，非工程外）：`framework/tests/sys.rs` 的 `use crate::framework::mm::slab::{..}` 整块随之失效 ⇒ 一并删除；`framework/tests/test_new_features.rs` 三处空节横幅（RCU / Kmalloc-Slab / ZIL Persistence）在用例删除后一并删除。
+    - 明确**不删**：`services/fs/nestfs/zil_persist.rs::crc32_test_wrapper` —— `host-tests/tests/zil_replay_test.rs` 仍以它为入口（源侧与 host-tests 双载体，非本次收敛对象）。
+  - 详情（A 类验证实测 —— 六门槛本机复跑）
+    - `make test-kernel-host`：**749 passed / 0 failed**。
+    - `make test-unit`（QEMU）：**489/489 ALL TESTS PASSED**；注册用例数 **522 → 489（-33）**，与上条 A 类明细逐组吻合。
+    - `./ci/build.sh all`：**Passed: 5 / Failed: 0**（x86_64 build / aarch64 build / host-tests / forbidden patterns / x86_64 link）。
+    - `./ci/audit.sh quick`：通过（含 clippy `kernel_test` 维 + `host-test` 维与全部核心审计）。
+    - clippy pedantic（x86_64 release 裸机维）：0 error / 0 warning。
+    - fmt 核验：本次改动引入的 `cargo fmt --check` 差异为 **0**（改动行区间与 fmt 报告行号无交集；曾出现的 4 处空行残留已归一）。
+  - 详情（A 类期间暴露的预存问题，登记不擅改 —— §12.5）
+    - `make test-unit` 首次运行报 `构建产物缺失: build/user/init.bin`，须先 `make` 生成裸机产物 —— 与 UT-08「前置条件」同源（隐式 make 耦合残余），非本次改动导致。
+    - `cargo fmt --manifest-path src/kernel/Cargo.toml -- --check`（CI `clippy-pedantic` job 末步）在本机对**未改动**文件亦报差异（如 `framework/arch/aarch64/mod.rs`、`exception.rs`），全库 **415 处**。已核验本次 UT-07 改动贡献 0 处 ⇒ 属预存问题（rustfmt 版本/配置漂移），待用户裁定是否单开处置。
+  - 详情（A 类之后的剩余批次）
+    - A′ 类 5 组（逐例理由已备，见分类结果）→ C 类 16 组（先迁源侧 `cfg(test)` 再删注册副本，最大批为 `pwm::policy` 23 组/45 条）。按裁定节拍，每批完成后停下确认。
 
 - **UT-08. §2.3 六门槛全跑 + CI 接入**
   - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。
