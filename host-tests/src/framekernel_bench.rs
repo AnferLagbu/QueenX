@@ -163,7 +163,9 @@ pub fn pte_set_flags_bench(iters: u64) -> u128 {
         if pte.is_present() { sink ^= 1; }
     }
     std::hint::black_box(sink);
-    start.elapsed().as_nanos()
+    // 归一化到 "单操作时间" (1 轮 = 1 次 PTE 位域更新), 转 ps 避免精度损失
+    let elapsed = start.elapsed().as_nanos();
+    elapsed.saturating_mul(1_000) / iters as u128
 }
 
 // ====== 3. IoMem 别名区间注册 (来自 framework/iomem.rs) ======
@@ -284,6 +286,9 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for _ in 0..iters {
+        // black_box 阻断状态机折叠: 否则编译器证明状态迁移确定性后可将整个循环消除
+        // (实测未阻断时 12.8M 次迁移仅耗时 90ns, 记录值恒为 0)
+        let s = std::hint::black_box(&mut s);
         for _ in 0..BATCH {
             if s.sync_for_device().is_ok() { sink ^= 1; }
             if s.sync_for_cpu().is_ok() { sink ^= 2; }
@@ -314,7 +319,9 @@ pub fn sha256_block_bench(iters: u64) -> u128 {
         sink ^= sha256(std::hint::black_box(&block))[0];
     }
     std::hint::black_box(sink);
-    start.elapsed().as_nanos()
+    // 归一化到 "单操作时间" (1 轮 = 1 次完整 `sha256` 调用), 转 ps 避免精度损失
+    let elapsed = start.elapsed().as_nanos();
+    elapsed.saturating_mul(1_000) / iters as u128
 }
 
 // ====== 7. Attribution classify (来自 services/barrier/attribution.rs) ======
@@ -347,7 +354,9 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
         }
     }
     std::hint::black_box(sink);
-    start.elapsed().as_nanos()
+    // 归一化到 "单操作时间" (1 轮 = 1 次归属判定), 转 ps 避免精度损失
+    let elapsed = start.elapsed().as_nanos();
+    elapsed.saturating_mul(1_000) / iters as u128
 }
 
 // ====== 8. Recovery decide (来自 services/barrier/recovery_policy.rs) ======
@@ -1210,21 +1219,23 @@ pub struct BenchReport {
     pub results: Vec<BenchEntry>,
 }
 
-fn measure<F: Fn() -> u128>(name: &str, category: &str, default_iters: u64, f: F) -> BenchEntry {
-    // 约定: f(iters) 执行总耗时 (ns), bench 内部按需做 BATCH 倍数工作.
-    // measure 自适应放大 iters 直到总耗时 >= 50ms (或达到 10M 上限), 然后归一化.
-    // 输出 ps_per_op 保留亚纳秒精度, ns_per_op_frac 是浮点表示.
-    let mut iters = default_iters;
-    let total_ns = loop {
-        let t = f();
-        if t >= 50_000_000 || iters >= 10_000_000 {
-            break t;
-        }
-        iters = (iters * 10).min(10_000_000);
-    };
-    let ps_per_op = if iters > 0 { total_ns.saturating_mul(1_000) / iters as u128 } else { 0 };
-    let ns_per_op = ps_per_op / 1000;
-    let ns_per_op_frac = (ps_per_op as f64) / 1000.0;
+/// 约定: `f(iters)` 执行 `iters` 轮工作, 并返回该轮工作量的**单操作皮秒数**
+/// (bench 内已按自身总操作数归一化 —— 含 BATCH 倍数, 故归一化只能留在 bench 内,
+/// measure 不再二次归一化). 闭包/函数接收 `iters`, 与本函数记账的 `iterations` 同源.
+///
+/// 修复 (G-07 收尾轮, 详见 docs/plan/framekernel-bench-measure-fix.md): 历史上闭包
+/// 捕获字面量 iters, 自适应放大值从未传入 bench; 且 measure 把 bench 返回的
+/// ps_per_op 当作"总耗时"再除以放大后的 iters, 二次归一化使记录值 = 实际/10⁴
+/// (单操作 < 10ns 者直接折叠为 0). 现为「一次预热 + 一次计时」, 三项字段自洽:
+/// `iterations` = 实际轮数, `total_ns` = 计时轮实测墙钟, `ps_per_op` = bench 自报单操作值.
+fn measure<F: Fn(u64) -> u128>(name: &str, category: &str, iters: u64, f: F) -> BenchEntry {
+    // 预热一次消除首次调用的冷 cache / 惰性初始化偏差, 只对第二次计时
+    let _ = f(iters);
+    let start = Instant::now();
+    let ps_per_op = f(iters);
+    let total_ns = start.elapsed().as_nanos();
+    let ns_per_op = ps_per_op / 1_000;
+    let ns_per_op_frac = (ps_per_op as f64) / 1_000.0;
     let ops_per_sec = if ns_per_op_frac > 0.0 { (1_000_000_000.0 / ns_per_op_frac) as u128 } else { 0 };
     BenchEntry {
         name: name.to_string(),
@@ -1241,64 +1252,42 @@ fn measure<F: Fn() -> u128>(name: &str, category: &str, default_iters: u64, f: F
 #[allow(clippy::vec_init_then_push)] // 23 项基准测试, vec![] 宏可读性差
 pub fn run_all() -> BenchReport {
     let mut results = Vec::new();
-    results.push(measure("page_flags_bits", "mm", 100_000, ||
-        page_flags_bench(100_000)));
-    results.push(measure("pte_set_flags", "mm", 100_000, ||
-        pte_set_flags_bench(100_000)));
-    results.push(measure("iomem_alias_check", "iomem", 100_000, ||
-        iomem_alias_bench(100_000)));
-    results.push(measure("capability_check", "credo", 100_000, ||
-        capability_check_bench(100_000)));
-    results.push(measure("dma_state_machine", "dma", 100_000, ||
-        dma_state_machine_bench(100_000)));
-    results.push(measure("sha256_block", "credo", 1_000, ||
-        sha256_block_bench(1_000)));
-    results.push(measure("attribution_classify", "barrier", 100_000, ||
-        attribution_classify_bench(100_000)));
-    results.push(measure("recovery_decide", "barrier", 100_000, ||
-        recovery_decide_bench(100_000)));
-    results.push(measure("bitmap_scan", "pmm", 100_000, ||
-        bitmap_scan_bench(100_000)));
-    results.push(measure("socket_wait_queue", "net", 10_000, ||
-        socket_wait_queue_bench(10_000)));
-    results.push(measure("virtio_blk_io", "storage", 10_000, ||
-        virtio_blk_io_bench(10_000)));
+    // 第三参数 = 该 bench 的执行轮数 (measure 记账用, 同时传给 bench 本体, 单一来源)
+    results.push(measure("page_flags_bits", "mm", 100_000, page_flags_bench));
+    results.push(measure("pte_set_flags", "mm", 100_000, pte_set_flags_bench));
+    results.push(measure("iomem_alias_check", "iomem", 100_000, iomem_alias_bench));
+    results.push(measure("capability_check", "credo", 100_000, capability_check_bench));
+    results.push(measure("dma_state_machine", "dma", 100_000, dma_state_machine_bench));
+    results.push(measure("sha256_block", "credo", 1_000, sha256_block_bench));
+    results.push(measure("attribution_classify", "barrier", 100_000, attribution_classify_bench));
+    results.push(measure("recovery_decide", "barrier", 100_000, recovery_decide_bench));
+    results.push(measure("bitmap_scan", "pmm", 100_000, bitmap_scan_bench));
+    results.push(measure("socket_wait_queue", "net", 10_000, socket_wait_queue_bench));
+    results.push(measure("virtio_blk_io", "storage", 10_000, virtio_blk_io_bench));
     // EBPF-3: eBPF verifier trait dispatch bench
-    results.push(measure("bpf_verifier_dispatch", "ebpf", 100_000, ||
-        bpf_verifier_dispatch_bench(100_000)));
+    results.push(measure("bpf_verifier_dispatch", "ebpf", 100_000, bpf_verifier_dispatch_bench));
     // SYSCTL-2: sysctl register/write bench
-    results.push(measure("sysctl_rw", "config", 10_000, ||
-        sysctl_bench(10_000)));
+    results.push(measure("sysctl_rw", "config", 10_000, sysctl_bench));
     // T-4.1: BlockDevice trait dispatch bench (LEGACY-4 验证)
-    results.push(measure("blk_dev_dispatch", "block", 100_000, ||
-        blk_dev_dispatch_bench(100_000)));
+    results.push(measure("blk_dev_dispatch", "block", 100_000, blk_dev_dispatch_bench));
     // REVAL-6.1: VfsPollPolicy dispatch bench
-    results.push(measure("vfs_poll_dispatch", "epoll", 100_000, ||
-        vfs_poll_dispatch_bench(100_000)));
+    results.push(measure("vfs_poll_dispatch", "epoll", 100_000, vfs_poll_dispatch_bench));
     // LEGACY-5.1: ZAP dispatch bench (线性扫描 + 键名 format, 故缩小 iters)
-    results.push(measure("zap_dispatch", "nestfs", 10_000, ||
-        zap_dispatch_bench(10_000)));
+    results.push(measure("zap_dispatch", "nestfs", 10_000, zap_dispatch_bench));
     // LEGACY-5.2: TXG dispatch bench (脏块 Vec 累积, 故缩小 iters)
-    results.push(measure("txg_dispatch", "nestfs", 10_000, ||
-        txg_dispatch_bench(10_000)));
+    results.push(measure("txg_dispatch", "nestfs", 10_000, txg_dispatch_bench));
     // LEGACY-5.4: DMU dispatch bench (get_obj/obj_count 为 O(n) 线性扫描, 故缩小 iters)
-    results.push(measure("dmu_dispatch", "nestfs", 1_000, ||
-        dmu_dispatch_bench(1_000)));
+    results.push(measure("dmu_dispatch", "nestfs", 1_000, dmu_dispatch_bench));
     // LEGACY-5.5: SPA dispatch bench
-    results.push(measure("spa_dispatch", "nestfs", 100_000, ||
-        spa_dispatch_bench(100_000)));
+    results.push(measure("spa_dispatch", "nestfs", 100_000, spa_dispatch_bench));
     // LEGACY-5.7: RAID-Z 几何查询 dispatch bench
-    results.push(measure("raidz_dispatch", "nestfs", 100_000, ||
-        raidz_dispatch_bench(100_000)));
+    results.push(measure("raidz_dispatch", "nestfs", 100_000, raidz_dispatch_bench));
     // LEGACY-5.8: ARC 缓存 dispatch bench
-    results.push(measure("arc_dispatch", "nestfs", 100_000, ||
-        arc_dispatch_bench(100_000)));
+    results.push(measure("arc_dispatch", "nestfs", 100_000, arc_dispatch_bench));
     // LEGACY-5.10: ZIL 日志 dispatch bench
-    results.push(measure("zil_log_dispatch", "nestfs", 100_000, ||
-        zil_log_dispatch_bench(100_000)));
+    results.push(measure("zil_log_dispatch", "nestfs", 100_000, zil_log_dispatch_bench));
     // LEGACY-5.11: ZIL 持久化 dispatch bench (含 CRC32 逐位计算, 故缩小 iters)
-    results.push(measure("zil_persist_dispatch", "nestfs", 1_000, ||
-        zil_persist_dispatch_bench(1_000)));
+    results.push(measure("zil_persist_dispatch", "nestfs", 1_000, zil_persist_dispatch_bench));
 
     BenchReport { version: 1, results }
 }

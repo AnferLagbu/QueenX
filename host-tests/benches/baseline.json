@@ -2,168 +2,168 @@
   "version": 1,
   "machine": "x86_64-Linux-7.2.5-200.fc44.x86_64",
   "python": "3.14.7",
-  "recorded_at": "2026-09-25T11:57:28Z",
+  "recorded_at": "2026-09-25T13:04:15Z",
   "results": [
     {
       "name": "page_flags_bits",
       "category": "mm",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "iterations": 100000,
+      "ns_per_op_frac": 1.251,
+      "ps_per_op": 1251
     },
     {
       "name": "pte_set_flags",
       "category": "mm",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.036,
-      "ps_per_op": 36
+      "iterations": 100000,
+      "ns_per_op_frac": 3.606,
+      "ps_per_op": 3606
     },
     {
       "name": "iomem_alias_check",
       "category": "iomem",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.005,
-      "ps_per_op": 5
+      "iterations": 100000,
+      "ns_per_op_frac": 54.204,
+      "ps_per_op": 54204
     },
     {
       "name": "capability_check",
       "category": "credo",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "iterations": 100000,
+      "ns_per_op_frac": 2.231,
+      "ps_per_op": 2231
     },
     {
       "name": "dma_state_machine",
       "category": "dma",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "iterations": 100000,
+      "ns_per_op_frac": 0.297,
+      "ps_per_op": 297
     },
     {
       "name": "sha256_block",
       "category": "credo",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.045,
-      "ps_per_op": 45
+      "iterations": 1000,
+      "ns_per_op_frac": 454.409,
+      "ps_per_op": 454409
     },
     {
       "name": "attribution_classify",
       "category": "barrier",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.046,
-      "ps_per_op": 46
+      "iterations": 100000,
+      "ns_per_op_frac": 4.859,
+      "ps_per_op": 4859
     },
     {
       "name": "recovery_decide",
       "category": "barrier",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.007,
-      "ps_per_op": 7
+      "iterations": 100000,
+      "ns_per_op_frac": 72.963,
+      "ps_per_op": 72963
     },
     {
       "name": "bitmap_scan",
       "category": "pmm",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.051,
-      "ps_per_op": 51
+      "iterations": 100000,
+      "ns_per_op_frac": 442.648,
+      "ps_per_op": 442648
     },
     {
       "name": "socket_wait_queue",
       "category": "net",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.003,
-      "ps_per_op": 3
+      "iterations": 10000,
+      "ns_per_op_frac": 32.547,
+      "ps_per_op": 32547
     },
     {
       "name": "virtio_blk_io",
       "category": "storage",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.003,
-      "ps_per_op": 3
+      "iterations": 10000,
+      "ns_per_op_frac": 29.935,
+      "ps_per_op": 29935
     },
     {
       "name": "bpf_verifier_dispatch",
       "category": "ebpf",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.001,
-      "ps_per_op": 1
+      "iterations": 100000,
+      "ns_per_op_frac": 10.362,
+      "ps_per_op": 10362
     },
     {
       "name": "sysctl_rw",
       "category": "config",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.002,
-      "ps_per_op": 2
+      "iterations": 10000,
+      "ns_per_op_frac": 29.535,
+      "ps_per_op": 29535
     },
     {
       "name": "blk_dev_dispatch",
       "category": "block",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.002,
-      "ps_per_op": 2
+      "iterations": 100000,
+      "ns_per_op_frac": 26.613,
+      "ps_per_op": 26613
     },
     {
       "name": "vfs_poll_dispatch",
       "category": "epoll",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "iterations": 100000,
+      "ns_per_op_frac": 1.553,
+      "ps_per_op": 1553
     },
     {
       "name": "zap_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.016,
-      "ps_per_op": 16
+      "iterations": 10000,
+      "ns_per_op_frac": 163.399,
+      "ps_per_op": 163399
     },
     {
       "name": "txg_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.002,
-      "ps_per_op": 2
+      "iterations": 10000,
+      "ns_per_op_frac": 27.44,
+      "ps_per_op": 27440
     },
     {
       "name": "dmu_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.016,
-      "ps_per_op": 16
+      "iterations": 1000,
+      "ns_per_op_frac": 189.741,
+      "ps_per_op": 189741
     },
     {
       "name": "spa_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.001,
-      "ps_per_op": 1
+      "iterations": 100000,
+      "ns_per_op_frac": 11.886,
+      "ps_per_op": 11886
     },
     {
       "name": "raidz_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.0,
-      "ps_per_op": 0
+      "iterations": 100000,
+      "ns_per_op_frac": 1.423,
+      "ps_per_op": 1423
     },
     {
       "name": "arc_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.006,
-      "ps_per_op": 6
+      "iterations": 100000,
+      "ns_per_op_frac": 66.048,
+      "ps_per_op": 66048
     },
     {
       "name": "zil_log_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.001,
-      "ps_per_op": 1
+      "iterations": 100000,
+      "ns_per_op_frac": 18.59,
+      "ps_per_op": 18590
     },
     {
       "name": "zil_persist_dispatch",
       "category": "nestfs",
-      "iterations": 10000000,
-      "ns_per_op_frac": 0.729,
-      "ps_per_op": 729
+      "iterations": 1000,
+      "ns_per_op_frac": 7331.145,
+      "ps_per_op": 7331145
     }
   ]
 }
