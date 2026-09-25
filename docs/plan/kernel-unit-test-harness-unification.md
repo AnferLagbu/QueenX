@@ -256,11 +256,28 @@
 - **UT-08. §2.3 六门槛全跑 + CI 接入**
   - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。
   - 方案：CI 侧接入点待定 —— 候选为 `ci/build.sh` 的 host tests 步骤内并联，或 `.github/workflows/ci-x86.yml` 新增一步；须先实测耗时再定，避免阻塞。
-  - 状态：[]
+  - 状态：[X]
+  - 详情（CI 接入点选定 —— ci-x86.yml 新增独立 job，未改 build.sh）
+    - 候选二选一实测后选定 **`ci-x86.yml` 新增 job `kernel-host-tests`**（Job 4，原 clippy job 顺延为 Job 5）。理由：① `grep` 实测三个 workflow **无一处调用 `ci/build.sh` / `ci/audit.sh`**，故接入 build.sh 只能服务本地、无法形成 CI 强制；② 独立 job 与既有 job 并行，不延长 `host-tests` job 时长（无阻塞风险）。
+    - 实测耗时（本机）：冷编译 18–20s + 运行 20s ≈ 40s；热态 `make test-kernel-host` 全程 41s ⇒ 未构成阻塞，不再考虑并入既有 job。
+    - 形态：`working-directory: src/kernel`（必须在该目录内执行以加载其 `.cargo/config.toml`）；缓存 `src/rust/target`（独立 key `kernel-host-tests-*`，与 clippy job 隔离以免并发 save 冲突；该目录即 `src/kernel/.cargo/config.toml` 的 `target-dir`）；`PIPESTATUS` 捕获 cargo 真实退出码（B01-25 fail-open 模式）；日志落 `build/log/kernel_host_tests.txt` 并上传 artifact。
+    - 依赖确认：host 构建**不需要** `build/` 裸机产物（UT-10 的 `target_os = "none"` 判据与 `build.rs` 的 G-06 判据均为裸机专属）⇒ CI 干净 checkout 可直接跑；`RUSTFLAGS: -D warnings`（workflow 全局）下实测 0 error / 0 warning。
+    - 附带同步：`ci.yml` 合规报告的两处描述文本补「内核 host 单测」。
+  - 详情（验证实测 —— 六门槛全跑，本机）
+    - ① `./ci/build.sh all` → **Passed: 5 / Failed: 0**；② clippy pedantic（lib）+ `kernel_test` / `host-test` 两维 → 全过；③ `./ci/audit.sh quick` → 全绿（含 FP-06 aarch64 白名单外 FP/SIMD = 0；该步前置需先 `./ci/build.sh aarch64`）；④ host-tests 随 ① 通过；⑤ `make test-unit` QEMU **ALL TESTS PASSED (exit 33)** + `./scripts/qemu_boot_test.sh all` **2/2 通过**（x86_64 Ring 3 / aarch64 EL0 + KPTI-09 双架构断言均通过）；⑥ `make test-kernel-host` **749 passed / 0 failed**。
+    - 计数口径修正：UT-06 记载的 748 现为 **749**，差额 1 例为 `PolicyEngine::check` 零下限域回归测试（P1 修复时随修新增，见 `services/credo/policy.rs::tests::policy_zero_floor_domain_allowed`）。
+  - 详情（本轮暴露的预存易用性缺陷，登记不擅改 —— §12.5）
+    - 非规范顺序下 `make test-unit` 失败：`test-unit` 的 prereq 序列为 `build/kernel_test.bin user`，而 `build/kernel_test.bin` → `RUST_LIB_TEST` → `build.rs` 要求 `build/user/init.bin` **已存在** ⇒ 若构建树刚被 arch-switch-clean 清空（例：先 `./ci/build.sh aarch64` 再 `make test-unit`），make 会先编 lib 后建 user 产物，panic 于 `build.rs:10`。
+    - 影响面：规范流程（先 `make`）与 `qemu_boot_test.sh`（`sync_make_state` 内部先 `make all`）均不受影响；仅"跨架构切换后直接 `make test-unit`"触发。是否调整 prereq 顺序或显式加 `user` 前置，待用户裁定。
 
 - **UT-09. 文档回写**
   - 描述：B09-19 补方向变更指针与状态；`docs/plan/progress-active-tasks.md` 同步；本文件 UT 状态回写。
-  - 状态：[]
+  - 状态：[X]
+  - 详情（回写范围与判据）
+    - `audit-fix-09-hard-rules-deadcode.md` B09-19：方向变更指针早前已落盘（该条「方向变更（本轮，用户重新裁定）」段）；本次补**状态注记**（承接工程进度），原文与历史验证记录保持不动。
+    - `progress-active-tasks.md` 工程计划 C：把**规范性**表述「§2.4 验证门槛 5 条」同步为现行 **§2.3 验证门槛 6 条**（AGENTS.md 现文），并在活跃文档全景表补一行登记本工程。
+    - 判据（历史记录 vs 规范性表述）：该文件内**历史验证记录**行（形如「§2.4 5 条门槛全过 ... host-tests 838 passed」）**不改** —— 它们记录当时实跑口径，改写即伪造历史；只改**当前生效的规范引用**。
+    - 本文件：UT-08 / UT-09 置 `[X]`；UT-07 保持 `[]`（收敛清单待出，见该条详情）。
 
 - **UT-10. host 侧编译裸机产物依赖消除（G-06 漏项，本轮插入项）**
   - 描述：UT-01 验证过程中实测发现：host 侧编译（host-tests / 新第 6 条门槛 / `ci/audit.sh` 的两个 host clippy 维）**硬依赖裸机产物**。经用户裁定「本轮一并修复」。

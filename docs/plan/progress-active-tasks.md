@@ -43,6 +43,8 @@
 > 本节基于 [future-roadmap.md](./future-roadmap.md) / [ipv6-dual-stack.md](./ipv6-dual-stack.md) / [clippy-pedantic-cleanup.md](./archive/clippy-pedantic-cleanup.md) / [archive/code-review-findings-2026-08-01.md](./archive/code-review-findings-2026-08-01.md) / [test-compile-issues-2026-07-31.md](./archive/test-compile-issues-2026-07-31.md) 的静态分析 + 源码 grep 验证.
 >
 > **2026-08-09 更新** (`a656c91e`): option_if_let_else 全部根治 (185 → 0) + 10 处永久 expect 兜底全部消除. DECISION-044 nursery 评估结论推翻. stage-engineering-master.md 阶段 17 已同步更新.
+>
+> **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。
 
 - **活跃 plan 文档与实装对齐总览**
   - 描述: 5 份文档中 1 份 (ipv6-dual-stack) 与源码完全对齐, 1 份 (test-compile-issues) 已归档为历史, 3 份 (clippy-pedantic / code-review-2026-08-01 / future-roadmap) 一致性各有差异
@@ -229,7 +231,7 @@
 
 - **活跃任务全景每轮更新**
   - 描述: 本工程计划每轮开发后更新 §现状表
-  - 方案: 任务推进到 `[X]` 立即同步, 更新验证门槛 5 条
+  - 方案: 任务推进到 `[X]` 立即同步, 更新验证门槛 §2.3 六门槛
   - 状态: []
 
 ### 决策记录
@@ -583,7 +585,7 @@
 ### 方案
 
 - **建立每轮更新机制**
-  - 描述: 每轮开发完成后, 重跑 §2.4 验证门槛 5 条, 更新本工程计划 §现状表
+  - 描述: 每轮开发完成后, 重跑 §2.3 验证门槛 6 条, 更新本工程计划 §现状表
   - 方案: 任务推进到 `[X]` 立即同步; 新增任务登记到对应 plan 文档 + 本工程计划交叉引用
   - 状态: []
 
@@ -616,28 +618,29 @@
 
 ### 背景
 
-- **§2.4 验证门槛 5 条**
-  - 描述: AGENTS.md §2.4 规定每轮开发完成必须满足 5 条验证门槛
-  - 方案: 本工程计划任何 P1/P2 项推进后必须重跑 5 条
+- **§2.3 验证门槛 6 条**
+  - 描述: AGENTS.md §2.3 规定每轮开发完成必须满足 6 条验证门槛
+  - 方案: 本工程计划任何 P1/P2 项推进后必须重跑 6 条
   - 状态: []
 
 ### 目标
 
 - **每项推进后重跑验证门槛**
-  - 描述: 5 条全部满足
+  - 描述: 6 条全部满足
   - 方案:
   - 状态: []
 
 ### 方案
 
 - **验证步骤**
-  - 描述: 按 AGENTS.md §2.4 顺序执行
+  - 描述: 按 AGENTS.md §2.3 顺序执行
   - 方案:
     1. 双架构 `cargo check --release` 0 error / 0 warning
     2. clippy 0 warning (`cargo clippy --release -- -D warnings`)
     3. 三审计通过 (services_boundary + safety_coverage + deadlock_matrix)
     4. host-tests 全部通过
     5. QEMU 集成测试通过 (如改动 boot/架构相关)
+    6. host 侧内核单元测试 0 failed (`make test-kernel-host`; 2026-09-25 新增, 见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md))
   - 状态: []
 
 - **文档同步**
@@ -647,8 +650,8 @@
 
 ### 待办
 
-- **每项 P1/P2 推进后执行 5 条验证门槛**
-  - 描述: AGENTS.md §2.4 强制
+- **每项 P1/P2 推进后执行 6 条验证门槛**
+  - 描述: AGENTS.md §2.3 强制
   - 方案: 验证失败 → 本轮未完成
   - 状态: []
 
@@ -657,6 +660,11 @@
 - (本工程计划 C 为流程约束, 无独立决策)
 
 ### 变更历史
+
+- **2026-09-25**
+  - 描述: 门槛引用同步为 AGENTS.md 现行 §2.3 验证门槛 6 条（含第 6 条 host 侧内核单元测试）
+  - 方案: 只改规范性表述; 历史验证记录行（记录当时实跑口径）保持原样
+  - 状态: [X]
 
 - **2026-08-03**
   - 描述: 创建工程计划 C
@@ -671,7 +679,7 @@
   - 描述: 10 个依赖源
   - 方案:
     - [docs/README.md](../README.md) — 文档写作规范 (计划文档格式来源)
-    - [AGENTS.md](../../AGENTS.md) — §2.4 验证门槛 5 条 / §6 硬规则 F1-F9 / §10 预存问题处理 / §15 AI 行为准则
+    - [AGENTS.md](../../AGENTS.md) — §2.3 验证门槛 6 条 / §6 硬规则 F1-F9 / §10 预存问题处理 / §15 AI 行为准则
     - [docs/explain/explain-framekernel.md](../explain/explain-framekernel.md) — framekernel 架构 (services→framework 单向数据流)
     - [docs/explain/ref-naming.md](../explain/ref-naming.md) — syscall 编号空间立场 (与 framework/syscall/mod.rs 矛盾)
     - [docs/explain/vision-hope.md](../explain/vision-hope.md) — 项目愿景 (linuxulator 翻译层立场)
