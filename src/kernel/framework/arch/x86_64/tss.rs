@@ -261,9 +261,10 @@ mod tests {
         assert_eq!({ tss.rsp2 }, 0);
         assert_eq!({ tss.iomap_base }, DEFAULT_IOMAP_BASE);
 
-        let ist = tss.ist;
-        for value in ist.iter() {
-            assert_eq!(*value, 0);
+        // UT-07 (2026-09-26): 原读裸字段 ist (packed 规避) 改用公有取值器 get_ist —
+        // 与注册侧 arch::tss::zeroed 的 API 级断言对齐 (覆盖不降级).
+        for i in 0..7 {
+            assert_eq!(tss.get_ist(i), Some(0));
         }
     }
 
@@ -327,8 +328,4 @@ mod tests {
         // 故不存在"16 字节对齐"性质 (2026-09-24 UT-06 实测原断言不成立).
         assert_eq!(TSS_SIZE, TSS_MINIMUM_SIZE);
     }
-}
-#[cfg(feature = "kernel_test")]
-pub fn register_tss_tests() {
-    crate::framework::tests::arch::register_tss_tests();
 }

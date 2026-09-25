@@ -9,9 +9,7 @@ use crate::framework::sync::once_lock::OnceLock;
 // 语义: any(kernel_test, host-test) = 纯逻辑测试辅助; kernel_test = 硬件路径切换.
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod arch;
-#[cfg(feature = "kernel_test")]
-pub mod driver;
-// E-03: host 不可编译（依赖 idt/types.rs::InterruptFrame::new_test_frame 与
+// E-03 (2026-09-06): host 不可编译（依赖 idt/types.rs::InterruptFrame::new_test_frame 与
 // idt/statistics.rs::DetailedStatistics::reset, 二者 cfg(any(test, kernel_test))
 // 门控在 host-test 下关闭），保持 kernel_test
 #[cfg(feature = "kernel_test")]
@@ -20,22 +18,21 @@ pub mod idt;
 // e1000 硬件路径注册组删除后本模块仅剩纯逻辑用例 (net::utils), 按 E-03 双端约定.
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod net;
-// E-03: host 不可编译（依赖 barrier::reset::{bbr,bsr,audit,parallel}::tests,
-// 其 cfg(feature = "kernel_test") 门控在 host-test 下关闭），保持 kernel_test
-#[cfg(feature = "kernel_test")]
+// UT-07 (2026-09-26): reset 由 kernel_test 专属改归 any(kernel_test, host-test) —
+// barrier::reset::{audit,bbr,bsr,parallel}::tests 已由 cfg(feature = "kernel_test")
+// 的 `pub mod tests { pub fn .. -> bool }` 改写为源侧 `#[cfg(test)] #[test]`,
+// reset.rs 对 kernel_test 门控的依赖随之解除 (config::tests 本就是 any 双端).
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod reset;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sched;
-#[cfg(any(feature = "kernel_test", feature = "host-test"))]
-pub mod sync;
 #[cfg(any(feature = "kernel_test", feature = "host-test"))]
 pub mod sys;
 pub mod test_barrier;
 pub mod test_barrier_ext;
 pub mod test_config;
-// E-06 (2026-09-07): host-tests/src/capability.rs 去重载体迁入 — services::credo::policy
-// (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑用例, 双端共享 (kernel_test + host-test).
-pub mod test_credo;
+// UT-07 (2026-09-26): test_credo 注册载体已删 — services::credo::policy
+// (CapBits/CapMatrix/InMemoryMatrix) 纯逻辑断言以该文件源侧 #[cfg(test)] 为唯一归属.
 pub mod test_devfs;
 pub mod test_ipc;
 pub mod test_mm;
@@ -452,7 +449,7 @@ pub fn test_runner_init() {
 // kernel_test 启动路径 (test_runner_init) 与 host-test 入口 (host_test_runner_main)
 // 共用同一注册逻辑, 保证双端注册同一套纯逻辑测试集 (注册数一致).
 // 门控外 15 mod + any(kernel_test, host-test) 5 mod 在双端均注册;
-// kernel_test 硬件路径 (driver/net/idt/reset/timer/signal/...) 保持 kernel_test 专属,
+// kernel_test 硬件路径 (driver/idt/timer/signal/...) 保持 kernel_test 专属,
 // host-test 下不编译 (这些 mod 在 host 下不存在).
 pub fn register_all_tests() {
     // FS 全局单例初始化 — 测试模式下需主动 init, 否则后续
@@ -471,7 +468,6 @@ pub fn register_all_tests() {
         test_nestfs_ext::register_nestfs_ext_tests();
     }
     test_pwm::register_pwm_tests();
-    test_credo::register_credo_tests();
     test_mm::register_mm_tests();
     test_vfs::register_vfs_tests();
     test_ipc::register_ipc_tests();
@@ -492,24 +488,21 @@ pub fn register_all_tests() {
             sys::register_tests();
         }
         sched::register_tests();
-        sync::register_tests();
         net::register_tests();
+        reset::register_tests();
     }
 
     // E-03 (2026-09-06): 硬件路径测试注册 — 依赖裸机硬件 (驱动/网络/定时器/中断等),
     // 仅 kernel_test (QEMU 裸机测试) 生效; host-test 下不编译.
-    // 注: idt/reset 因依赖 kernel_test 门控的框架测试辅助 (见上), 注册同样留在本块.
+    // 注: idt 因依赖 kernel_test 门控的框架测试辅助 (见上), 注册同样留在本块.
     #[cfg(feature = "kernel_test")]
     {
         #[cfg(target_arch = "x86_64")]
         {
-            driver::register_tests();
             idt::register_tests();
         }
-        reset::register_tests();
         #[cfg(target_arch = "x86_64")]
         {
-            crate::framework::timer::pit::register_pit_tests();
             crate::framework::timer::calibration::register_timer_calibration_tests();
         }
         crate::framework::timer::tick::register_timer_tick_tests();

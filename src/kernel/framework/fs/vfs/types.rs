@@ -648,3 +648,68 @@ impl OpenFile {
         self.flags = flags;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // UT-07 (2026-09-26): 注册侧 vfs::types 组全量迁入 —
+    // framework/tests/test_vfs.rs 的 5 例 (FsType 名称映射与回写 /
+    // VfsFileType 编码 / VfsSeekWhence 编码 / VfsDirEntry 名称存取)
+    // 逐例归并等价判据, 断言数净增不净减; 该注册子块随后删除.
+
+    #[test]
+    fn fstype_from_name() {
+        assert_eq!(FsType::from_name("ramfs"), FsType::RamFs, "ramfs");
+        assert_eq!(FsType::from_name("nestfs"), FsType::NestFs, "nestfs");
+        assert_eq!(FsType::from_name("ext4"), FsType::Unknown, "未知名称");
+    }
+
+    #[test]
+    fn fstype_as_str() {
+        assert_eq!(FsType::RamFs.as_str(), "ramfs", "RamFs 回写");
+        assert_eq!(FsType::NestFs.as_str(), "nestfs", "NestFs 回写");
+        assert_eq!(FsType::Unknown.as_str(), "unknown", "Unknown 回写");
+    }
+
+    #[test]
+    fn vfs_file_type() {
+        assert_eq!(VfsFileType::from_u8(0), Some(VfsFileType::File), "0=File");
+        assert_eq!(VfsFileType::from_u8(1), Some(VfsFileType::Dir), "1=Dir");
+        assert_eq!(VfsFileType::from_u8(2), Some(VfsFileType::Dev), "2=Dev");
+        assert_eq!(
+            VfsFileType::from_u8(3),
+            Some(VfsFileType::Symlink),
+            "3=Symlink"
+        );
+        assert_eq!(VfsFileType::from_u8(99), None, "非法值应为 None");
+        assert_eq!(VfsFileType::Dir.as_u8(), 1, "Dir 编码");
+    }
+
+    #[test]
+    fn vfs_seek_whence() {
+        assert_eq!(
+            VfsSeekWhence::from_u32(0),
+            Some(VfsSeekWhence::Set),
+            "0=Set"
+        );
+        assert_eq!(
+            VfsSeekWhence::from_u32(1),
+            Some(VfsSeekWhence::Cur),
+            "1=Cur"
+        );
+        assert_eq!(
+            VfsSeekWhence::from_u32(2),
+            Some(VfsSeekWhence::End),
+            "2=End"
+        );
+        assert_eq!(VfsSeekWhence::from_u32(99), None, "非法值应为 None");
+    }
+
+    #[test]
+    fn vfs_dirent() {
+        let mut dirent = VfsDirEntry::new();
+        dirent.set_name("test.txt");
+        assert_eq!(dirent.get_name(), "test.txt", "目录项名称");
+    }
+}

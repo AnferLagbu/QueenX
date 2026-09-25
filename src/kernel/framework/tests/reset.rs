@@ -24,49 +24,6 @@ fn config_stats() -> TestResult {
     TestResult::Pass
 }
 
-fn audit_log_basic() -> TestResult {
-    use crate::framework::barrier::reset::audit::tests;
-    check!(tests::test_audit_log(), "audit log");
-    TestResult::Pass
-}
-
-fn audit_log_count() -> TestResult {
-    use crate::framework::barrier::reset::audit::tests;
-    check!(tests::test_audit_count_by_layer(), "audit count by layer");
-    TestResult::Pass
-}
-
-fn bbr_fingerprint() -> TestResult {
-    use crate::framework::barrier::reset::bbr::tests;
-    check!(tests::test_compute_fingerprint(), "compute fingerprint");
-    TestResult::Pass
-}
-
-fn bbr_should_attempt() -> TestResult {
-    use crate::framework::barrier::reset::bbr::tests;
-    check!(tests::test_should_attempt(), "should attempt");
-    TestResult::Pass
-}
-
-fn bsr_freeze_unfreeze() -> TestResult {
-    use crate::framework::barrier::reset::bsr::tests;
-    check!(tests::test_freeze_unfreeze(), "bsr freeze/unfreeze");
-    TestResult::Pass
-}
-
-fn parallel_dependency_layer() -> TestResult {
-    use crate::framework::barrier::reset::parallel::tests;
-    check!(tests::test_dependency_layer(), "dependency layer");
-    check!(tests::test_dependency_layers(), "dependency layers");
-    TestResult::Pass
-}
-
-fn parallel_compute_layers() -> TestResult {
-    use crate::framework::barrier::reset::parallel::tests;
-    check!(tests::test_compute_layers(), "compute layers");
-    TestResult::Pass
-}
-
 fn device_type_enum() -> TestResult {
     use crate::framework::barrier::DeviceType;
 
@@ -166,6 +123,9 @@ fn recovery_status_api() -> TestResult {
     TestResult::Pass
 }
 
+// UT-07 (2026-09-26): barrier::audit / bbr / bsr / parallel 四组注册副本已删 —
+// 其源侧断言由 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`
+// 改写为 `#[cfg(test)] #[test]` (见对应源文件), 以源侧为唯一归属.
 pub fn register_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -173,21 +133,6 @@ pub fn register_tests() {
             "recovery_result": config_recovery_result,
             "default": config_default,
             "stats": config_stats,
-        },
-        "barrier::audit": {
-            "basic": audit_log_basic,
-            "count": audit_log_count,
-        },
-        "barrier::bbr": {
-            "fingerprint": bbr_fingerprint,
-            "should_attempt": bbr_should_attempt,
-        },
-        "barrier::bsr": {
-            "freeze_unfreeze": bsr_freeze_unfreeze,
-        },
-        "barrier::parallel": {
-            "dependency_layer": parallel_dependency_layer,
-            "compute_layers": parallel_compute_layers,
         },
         "barrier::snapshot": {
             "device_type": device_type_enum,

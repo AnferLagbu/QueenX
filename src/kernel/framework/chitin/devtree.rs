@@ -423,6 +423,10 @@ mod tests {
         devtree_set_compatible(node_id, vec!["vendor,test-device"]);
         let found = devtree_find_compatible("vendor,test-device");
         assert_eq!(found, Some(node_id));
+
+        // UT-07 (2026-09-26): 注册侧 devtree 组独有断言迁入 —
+        // devtree_get_node 可达性 (源侧原仅经 find_compatible 间接验证).
+        assert!(devtree_get_node(node_id).is_some());
     }
 
     #[test]

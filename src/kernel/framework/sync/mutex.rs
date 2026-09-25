@@ -404,14 +404,29 @@ mod tests {
         assert!(!mutex.is_locked());
     }
 
+    // UT-07 (2026-09-26): 注册侧 `sync::mutex::reentrant` 迁入 — G-17 (2026-09-08)
+    // 回归: 同一线程对已持有 Mutex 再次 lock. 修复前 raw_lock 无 owner 重入检测,
+    // 二次 lock 在 slow path 死等自死锁 (G-11 kill 广播 / G-12 signalfd 受害);
+    // 修复后 depth 递增, 逐层 drop 释放.
+    #[test]
+    fn test_mutex_reentrant() {
+        let mutex = Mutex::new(42i32);
+        let guard1 = mutex.lock();
+        let guard2 = mutex.lock();
+        assert!(mutex.is_locked());
+        assert_eq!(mutex.depth(), 2);
+        assert_eq!(*guard2, 42);
+        drop(guard2);
+        assert!(mutex.is_locked());
+        assert_eq!(mutex.depth(), 1);
+        drop(guard1);
+        assert!(!mutex.is_locked());
+        assert_eq!(mutex.owner(), -1);
+    }
+
     #[test]
     fn test_condvar_creation() {
         let cond = CondVar::new();
         let _ = cond; // 仅验证可以创建
     }
-}
-
-#[cfg(feature = "kernel_test")]
-pub fn register_mutex_tests() {
-    crate::framework::tests::sync::register_mutex_tests();
 }

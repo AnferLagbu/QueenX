@@ -320,6 +320,20 @@ pub fn is_valid_kernel_address(addr: u64) -> bool {
 mod tests {
     use super::*;
 
+    // UT-07 (2026-09-26): 注册侧 idt::safety::address_validation 七条地址谓词迁入
+    // (谓词实现即本文件 pub fn); CPU 特性不变量 (cpu_features_no_panic) 保留在
+    // 注册载体 (B 类: 属运行环境硬件不变量).
+    #[test]
+    fn test_address_validation() {
+        assert!(is_null_or_invalid(0));
+        assert!(is_null_or_invalid(0xFFF));
+        assert!(!is_null_or_invalid(0x1000));
+        assert!(is_valid_user_address(0x400000));
+        assert!(!is_valid_user_address(KERNEL_BASE));
+        assert!(is_valid_kernel_address(KERNEL_TEXT_BASE));
+        assert!(!is_valid_kernel_address(0x400000));
+    }
+
     #[test]
     fn test_cpu_features_detection() {
         let features = CpuFeatures::detect();

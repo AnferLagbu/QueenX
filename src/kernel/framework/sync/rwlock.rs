@@ -399,9 +399,44 @@ mod tests {
         // 写尝试应成功 (没有其他读者/写者)
         assert!(rwlock.try_write().is_some());
     }
-}
 
-#[cfg(feature = "kernel_test")]
-pub fn register_rwlock_tests() {
-    crate::framework::tests::sync::register_rwlock_tests();
+    // UT-07 (2026-09-26): 注册侧 `sync::rwlock::{multiple_readers,write_blocks_read,
+    // read_blocks_write}` 三用例迁入 — 源侧 concurrent_readers 未覆盖归零与阻塞判据.
+
+    #[test]
+    fn test_rwlock_multiple_readers() {
+        let rwlock = RwLock::new(0i32);
+        let r1 = rwlock.try_read();
+        assert!(r1.is_some());
+        let r2 = rwlock.try_read();
+        assert!(r2.is_some());
+        assert_eq!(rwlock.reader_count(), 2);
+        drop(r1);
+        drop(r2);
+        assert_eq!(rwlock.reader_count(), 0);
+    }
+
+    #[test]
+    fn test_rwlock_write_blocks_read() {
+        let rwlock = RwLock::new(0i32);
+        let writer = rwlock.try_write();
+        assert!(writer.is_some());
+        let reader = rwlock.try_read();
+        assert!(reader.is_none());
+        drop(writer);
+        let reader2 = rwlock.try_read();
+        assert!(reader2.is_some());
+    }
+
+    #[test]
+    fn test_rwlock_read_blocks_write() {
+        let rwlock = RwLock::new(0i32);
+        let reader = rwlock.try_read();
+        assert!(reader.is_some());
+        let writer = rwlock.try_write();
+        assert!(writer.is_none());
+        drop(reader);
+        let writer2 = rwlock.try_write();
+        assert!(writer2.is_some());
+    }
 }

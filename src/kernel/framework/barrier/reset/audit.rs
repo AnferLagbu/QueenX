@@ -146,25 +146,31 @@ pub fn audit_clear() {
     log.clear();
 }
 
-#[cfg(feature = "kernel_test")]
-pub mod tests {
+// UT-07 (2026-09-26): 原 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`
+// 形态 (host 不编译, 且非 cargo 可发现的 `#[test]`) 改写为源侧 `#[cfg(test)] #[test]` —
+// 注册侧 `framework/tests/reset.rs::barrier::audit` 的薄包装 `check!(tests::test_*())` 随之删除,
+// 断言以本模块为唯一归属.
+#[cfg(test)]
+mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::{RecoveryLayer, RecoveryResult, ResetAuditLog};
 
-    pub fn test_audit_log() -> bool {
+    #[test]
+    fn audit_log() {
         let mut log = ResetAuditLog::new();
         log.record_simple(100, RecoveryLayer::Layer1, RecoveryResult::Success, 0);
         log.record_simple(200, RecoveryLayer::Layer2, RecoveryResult::Escalate, 1);
-        log.count == 2
+        assert_eq!(log.count, 2, "两条记录");
     }
 
-    pub fn test_audit_count_by_layer() -> bool {
+    #[test]
+    fn audit_count_by_layer() {
         let mut log = ResetAuditLog::new();
         log.record_simple(100, RecoveryLayer::Layer1, RecoveryResult::Success, 0);
         log.record_simple(200, RecoveryLayer::Layer2, RecoveryResult::Success, 0);
         log.record_simple(300, RecoveryLayer::Layer1, RecoveryResult::Failed, 1);
 
-        log.count_by_layer(RecoveryLayer::Layer1) == 2
-            && log.count_by_layer(RecoveryLayer::Layer2) == 1
+        assert_eq!(log.count_by_layer(RecoveryLayer::Layer1), 2, "Layer1 计数");
+        assert_eq!(log.count_by_layer(RecoveryLayer::Layer2), 1, "Layer2 计数");
     }
 }

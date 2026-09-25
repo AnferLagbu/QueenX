@@ -1,81 +1,13 @@
 use super::check;
 use crate::framework::credo::capability;
 use crate::framework::credo::engine;
-use crate::framework::credo::sha256;
-use crate::framework::credo::types::{
-    AuditAction, AuditEntry, AuditResult, CapBits, CapDomain, GrantRecord, PwmEntry, PwmFlags,
-    PwmId,
-};
+use crate::framework::credo::types::{CapBits, CapDomain, GrantRecord, PwmEntry, PwmFlags, PwmId};
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
-fn test_sha256_vectors() -> TestResult {
-    let hash = sha256::sha256(b"");
-    check!(hash[0] == 0xe3, "SHA-256('') byte 0 mismatch");
-    check!(hash[1] == 0xb0, "SHA-256('') byte 1 mismatch");
-    check!(hash[2] == 0xc4, "SHA-256('') byte 2 mismatch");
-
-    let hash2 = sha256::sha256(b"abc");
-    check!(hash2[0] == 0xba, "SHA-256('abc') byte 0 mismatch");
-    check!(hash2[1] == 0x78, "SHA-256('abc') byte 1 mismatch");
-    TestResult::Pass
-}
-
-fn test_pwm_id_newtype() -> TestResult {
-    let id = PwmId(42);
-    check!(id.is_valid(), "non-zero PwmId should be valid");
-    check!(id.as_u64() == 42, "as_u64 mismatch");
-
-    let zero = PwmId::ZERO;
-    check!(!zero.is_valid(), "zero PwmId should be invalid");
-    check!(zero.as_u64() == 0, "ZERO as_u64 mismatch");
-
-    // 注意: 历史上此处使用 PwmId::TEST 验证 is_valid, 但 TEST 常量已被
-    // 移除 (P0-I-29d): 硬编码的"魔法值"权限字会绕过访问控制。
-    // 现在改用任意非零 PwmId 即可验证 is_valid 语义。
-    let arbitrary = PwmId(0xDEAD_BEEF_CAFE_F00D);
-    check!(arbitrary.is_valid(), "non-zero PwmId should be valid");
-    check!(
-        arbitrary.as_u64() == 0xDEAD_BEEF_CAFE_F00D,
-        "arbitrary as_u64 mismatch"
-    );
-    TestResult::Pass
-}
-
-fn test_cap_domain_newtype() -> TestResult {
-    let fs = CapDomain::FS;
-    check!(fs.as_u16() == 1, "FS domain should be 1");
-    check!(fs.as_usize() == 1, "FS domain usize should be 1");
-
-    let from_raw: CapDomain = 2u16.into();
-    check!(from_raw == CapDomain::NET, "u16->CapDomain should be NET");
-
-    let sys = CapDomain::SYSTEM;
-    check!(sys.as_usize() == 0, "SYSTEM domain usize should be 0");
-    TestResult::Pass
-}
-
-fn test_cap_bits_newtype() -> TestResult {
-    let none = CapBits::NONE;
-    check!(none.as_u64() == 0, "NONE should be 0");
-
-    let all = CapBits::ALL;
-    check!(all.as_u64() == u64::MAX, "ALL should be u64::MAX");
-
-    let read = CapBits(capability::FS_CAP_READ);
-    let write = CapBits(capability::FS_CAP_WRITE);
-    let rw = read | write;
-    check!(rw.contains(read), "rw should contain read");
-    check!(rw.contains(write), "rw should contain write");
-    check!(!read.contains(write), "read should not contain write");
-
-    let mut caps = CapBits::NONE;
-    caps |= read;
-    check!(caps.contains(read), "after |= should contain read");
-    caps &= !read;
-    check!(!caps.contains(read), "after &= ! should not contain read");
-    TestResult::Pass
-}
+// UT-07 (2026-09-26): pwm::sha256 / pwm::types / pwm::audit 三组注册副本已删 —
+// 纯算法与纯类型断言分别以 framework/credo/sha256.rs 与
+// framework/credo/types.rs 的 #[cfg(test)] 为唯一归属.
 
 fn test_pwmentry_caps() -> TestResult {
     let entry = PwmEntry::new();
@@ -171,21 +103,6 @@ fn test_grant_record() -> TestResult {
     TestResult::Pass
 }
 
-fn test_audit_entry() -> TestResult {
-    let entry = AuditEntry {
-        timestamp: 1000,
-        pwm: PwmId(42),
-        action: AuditAction::Create,
-        result: AuditResult::Success,
-        target_pwm: PwmId(0),
-        details: 0,
-    };
-    check!(entry.pwm.as_u64() == 42, "audit pwm mismatch");
-    check!(entry.action.as_u32() == 3, "Create action should be 3");
-    check!(entry.result.as_u32() == 0, "Success result should be 0");
-    TestResult::Pass
-}
-
 fn test_pwmentry_note() -> TestResult {
     // T4-1: 全 Atomic 化后 set_note 接受 &self, 验证用 note_equals
     let entry = PwmEntry::new();
@@ -226,14 +143,6 @@ fn test_pwmentry_cow_bp() -> TestResult {
 pub fn register_pwm_tests() {
     let r = runner();
     register_tests_inner! { r:
-        "pwm::sha256": {
-            "known_vectors": test_sha256_vectors,
-        },
-        "pwm::types": {
-            "pwm_id_newtype": test_pwm_id_newtype,
-            "cap_domain_newtype": test_cap_domain_newtype,
-            "cap_bits_newtype": test_cap_bits_newtype,
-        },
         "pwm::entry": {
             "caps": test_pwmentry_caps,
             "flags": test_pwmentry_flags,
@@ -241,9 +150,6 @@ pub fn register_pwm_tests() {
         },
         "pwm::grant_record": {
             "basic": test_grant_record,
-        },
-        "pwm::audit": {
-            "entry": test_audit_entry,
         },
         "pwm::capability": {
             "viable_floor": test_viable_floor,

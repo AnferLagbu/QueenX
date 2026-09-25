@@ -191,4 +191,89 @@ mod tests {
 
         assert_eq!(sha256(b"abc"), expected);
     }
+
+    // UT-07 (2026-09-26): 注册侧 pwm::sha256 组全量迁入 — framework/tests/sys.rs 的 15 例
+    // (长消息/确定性/不同输入/单字节/边界长度 55、56、63、64/多块/全零/全一/雪崩/大输入)
+    // 与 framework/tests/test_pwm.rs::known_vectors 的字节级判据; 源侧原仅空串/abc 两例.
+    // 逐例归并等价判据, 断言数净增不净减.
+
+    #[test]
+    fn test_sha256_long_message() {
+        let expected: [u8; 32] = [
+            0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8, 0xe5, 0xc0, 0x26, 0x93, 0x0c, 0x3e,
+            0x60, 0x39, 0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67, 0xf6, 0xec, 0xed, 0xd4,
+            0x19, 0xdb, 0x06, 0xc1,
+        ];
+        assert_eq!(
+            sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_sha256_deterministic() {
+        assert_eq!(sha256(b"hello world"), sha256(b"hello world"));
+    }
+
+    #[test]
+    fn test_sha256_different_inputs() {
+        assert_ne!(sha256(b"hello"), sha256(b"world"));
+    }
+
+    #[test]
+    fn test_sha256_single_byte() {
+        assert_ne!(sha256(b"a"), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_sha256_block_boundaries() {
+        // 55/56/63/64 字节: 单块尾补齐与跨块边界各一 (注册侧 boundary_55/56/63/64 四例)
+        for len in [55usize, 56, 63, 64] {
+            let data: alloc::vec::Vec<u8> = (0..len).map(|i| (i % 256) as u8).collect();
+            assert_ne!(sha256(&data), [0u8; 32], "len {len} 非零");
+        }
+    }
+
+    #[test]
+    fn test_sha256_multi_block_deterministic() {
+        let data: alloc::vec::Vec<u8> = (0..200u32).map(|i| (i % 256) as u8).collect();
+        assert_eq!(sha256(&data), sha256(&data));
+    }
+
+    #[test]
+    fn test_sha256_all_zeros_and_ones() {
+        assert_ne!(sha256(&[0u8; 64]), [0u8; 32]);
+        assert_ne!(sha256(&[0xFFu8; 64]), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_sha256_avalanche_effect() {
+        let h1 = sha256(b"hello");
+        let h2 = sha256(b"hellp");
+        let diff_bits: u32 = h1
+            .iter()
+            .zip(h2.iter())
+            .map(|(a, b)| (a ^ b).count_ones())
+            .sum();
+        assert!(diff_bits > 32);
+    }
+
+    #[test]
+    fn test_sha256_large_input() {
+        let data: alloc::vec::Vec<u8> = (0..10_000u32).map(|i| (i % 256) as u8).collect();
+        assert_ne!(sha256(&data), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_sha256_known_vector_prefix_bytes() {
+        // 注册侧 framework/tests/test_pwm.rs::test_sha256_vectors 的字节级判据迁入
+        let h = sha256(b"");
+        assert_eq!(h[0], 0xe3);
+        assert_eq!(h[1], 0xb0);
+        assert_eq!(h[2], 0xc4);
+
+        let h2 = sha256(b"abc");
+        assert_eq!(h2[0], 0xba);
+        assert_eq!(h2[1], 0x78);
+    }
 }

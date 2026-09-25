@@ -739,6 +739,15 @@ mod tests {
         assert_eq!(analysis.access_type, AccessType::Read);
         assert_eq!(analysis.mode, Mode::User);
         assert_eq!(analysis.cause, FaultCause::PageNotPresent);
+
+        // UT-07 (2026-09-26): 注册侧 idt::handlers::page_fault_analysis 的互补场景迁入 —
+        // 0x02 = bit1 (Write) 置位, bit0 (Present)/bit2 (User) 清零 ⇒ 内核态写缺页;
+        // 与上方 0x04 (Read/User) 输入不同, 属互补而非重复断言.
+        let analysis = PageFaultHandler::analyze_error_code(0x02);
+        assert!(!analysis.present);
+        assert_eq!(analysis.access_type, AccessType::Write);
+        assert_eq!(analysis.mode, Mode::Kernel);
+        assert_eq!(analysis.cause, FaultCause::PageNotPresent);
     }
 
     #[test]
@@ -758,6 +767,10 @@ mod tests {
         assert_eq!(handler0.name(), "Division By Zero");
         assert_eq!(handler13.name(), "General Protection Fault");
         assert_eq!(handler99.name(), "Unknown");
+
+        // UT-07 (2026-09-26): 注册侧 idt::handlers::factory_pattern 独有断言迁入 —
+        // 未知向量 (#99) 须归 ExceptionCategory::Unknown.
+        assert_eq!(handler99.category(), ExceptionCategory::Unknown);
     }
 
     #[test]
@@ -781,9 +794,4 @@ mod tests {
         assert_eq!(info.rip, 0xDEADBEEF);
         assert_eq!(info.reason, "Test panic");
     }
-}
-
-#[cfg(feature = "kernel_test")]
-pub fn register_idt_handlers_tests() {
-    crate::framework::tests::idt::register_idt_handlers_tests();
 }

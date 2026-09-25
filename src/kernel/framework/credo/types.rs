@@ -530,6 +530,7 @@ pub(crate) mod raw {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framework::credo::capability;
     use core::sync::atomic::Ordering;
 
     #[test]
@@ -626,5 +627,73 @@ mod tests {
         assert!(c.current_entry.is_null());
         assert_eq!(c.cached_uid, 0);
         assert_eq!(c.active_domain_id, DomainId(0));
+    }
+
+    // UT-07 (2026-09-26): 注册侧 pwm::types 的 PwmId/CapDomain/CapBits newtype 用例迁入
+    // (源侧原仅覆盖 PwmEntry/PwmContext).
+
+    #[test]
+    fn pwm_id_newtype() {
+        let id = PwmId(42);
+        assert!(id.is_valid());
+        assert_eq!(id.as_u64(), 42);
+
+        // 历史上此处用 PwmId::TEST 验证 is_valid, 该常量已移除 (P0-I-29d:
+        // 硬编码"魔法值"权限字会绕过访问控制); 改用任意非零 PwmId 验证语义.
+        let zero = PwmId::ZERO;
+        assert!(!zero.is_valid());
+        assert_eq!(zero.as_u64(), 0);
+
+        let arbitrary = PwmId(0xDEAD_BEEF_CAFE_F00D);
+        assert!(arbitrary.is_valid());
+        assert_eq!(arbitrary.as_u64(), 0xDEAD_BEEF_CAFE_F00D);
+    }
+
+    #[test]
+    fn cap_domain_newtype() {
+        assert_eq!(CapDomain::FS.as_u16(), 1);
+        assert_eq!(CapDomain::FS.as_usize(), 1);
+
+        let from_raw: CapDomain = 2u16.into();
+        assert_eq!(from_raw, CapDomain::NET);
+
+        assert_eq!(CapDomain::SYSTEM.as_usize(), 0);
+    }
+
+    #[test]
+    fn cap_bits_newtype() {
+        assert_eq!(CapBits::NONE.as_u64(), 0);
+        assert_eq!(CapBits::ALL.as_u64(), u64::MAX);
+
+        let read = CapBits(capability::FS_CAP_READ);
+        let write = CapBits(capability::FS_CAP_WRITE);
+        let rw = read | write;
+        assert!(rw.contains(read));
+        assert!(rw.contains(write));
+        assert!(!read.contains(write));
+
+        let mut caps = CapBits::NONE;
+        caps |= read;
+        assert!(caps.contains(read));
+        caps &= !read;
+        assert!(!caps.contains(read));
+    }
+
+    #[test]
+    fn audit_entry_newtype_fields() {
+        // UT-07 (2026-09-26): 注册侧 pwm::audit::entry 三条例行迁入 —
+        // AuditAction/AuditResult 判别式取值 (Create=3 / Success=0) 与 pwm newtype 取值.
+        // (判据对象为 framework::credo::types 内的类型, 故归本模块而非 services/credo/audit.rs.)
+        let entry = AuditEntry {
+            timestamp: 1000,
+            pwm: PwmId(42),
+            action: AuditAction::Create,
+            result: AuditResult::Success,
+            target_pwm: PwmId(0),
+            details: 0,
+        };
+        assert_eq!(entry.pwm.as_u64(), 42);
+        assert_eq!(entry.action.as_u32(), 3);
+        assert_eq!(entry.result.as_u32(), 0);
     }
 }

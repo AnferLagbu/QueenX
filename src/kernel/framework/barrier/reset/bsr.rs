@@ -108,15 +108,19 @@ pub fn execute() -> RecoveryResult {
     RecoveryResult::Success
 }
 
-#[cfg(feature = "kernel_test")]
-pub mod tests {
+// UT-07 (2026-09-26): 原 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`
+// 形态改写为源侧 `#[cfg(test)] #[test]`; 注册侧 `framework/tests/reset.rs::barrier::bsr`
+// 的薄包装 `check!(tests::test_freeze_unfreeze())` 随之删除.
+#[cfg(test)]
+mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::{freeze_all_domains, unfreeze_all_domains};
 
-    pub fn test_freeze_unfreeze() -> bool {
+    #[test]
+    fn freeze_unfreeze() {
+        // 全域冻结/解冻为纯簿记 (遍历 RECOVERY_MANAGER 域状态), 断言"可调用不 panic"
         freeze_all_domains();
         unfreeze_all_domains();
-        true
     }
 }
 

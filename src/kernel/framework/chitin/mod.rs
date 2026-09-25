@@ -62,8 +62,6 @@ pub mod proto_block;
 
 // devtree 公共接口 re-export — 避免跨子系统直接访问 chitin::devtree 内部
 pub use devtree::*;
-// devtree 内部接口 re-export (pub(crate), 供同 crate 测试使用)
-pub(crate) use devtree::devtree_create_node_impl;
 pub mod proto_char;
 pub mod proto_input;
 pub mod proto_net;

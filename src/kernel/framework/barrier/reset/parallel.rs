@@ -212,29 +212,34 @@ pub fn get_parallel_stats() -> (usize, u32) {
     )
 }
 
-#[cfg(feature = "kernel_test")]
-pub mod tests {
+// UT-07 (2026-09-26): 原 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`
+// 形态改写为源侧 `#[cfg(test)] #[test]`; 注册侧 `framework/tests/reset.rs::barrier::parallel`
+// 的薄包装 `check!(tests::test_*())` 随之删除.
+#[cfg(test)]
+mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::{DependencyLayer, DependencyLayers, compute_dependency_layers};
 
-    pub fn test_dependency_layer() -> bool {
+    #[test]
+    fn dependency_layer() {
         let mut layer = DependencyLayer::new(0);
         layer.add(1);
         layer.add(2);
-        layer.count == 2
+        assert_eq!(layer.count, 2, "单层依赖计数");
     }
 
-    pub fn test_dependency_layers() -> bool {
+    #[test]
+    fn dependency_layers() {
         let mut layers = DependencyLayers::new();
         layers.add_to_layer(0, 1);
         layers.add_to_layer(1, 2);
-        layers.count == 2
+        assert_eq!(layers.count, 2, "分层依赖计数");
     }
 
-    pub fn test_compute_layers() -> bool {
+    #[test]
+    fn compute_layers() {
         // J-01 (2026-09-08): 原 `layers.count > 0 || true` 恒真 (overly_complex_bool_expr) —
         // 语义为"compute_dependency_layers 可调用不 panic", 化简并丢弃返回值
         let _ = compute_dependency_layers();
-        true
     }
 }

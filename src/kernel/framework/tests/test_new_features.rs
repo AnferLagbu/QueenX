@@ -119,44 +119,8 @@ fn test_elf_valid_minimal() -> TestResult {
     TestResult::Pass
 }
 
-// ============================================================
-// Chitin 设备树
-// ============================================================
-
-fn test_devtree_create_node() -> TestResult {
-    let node_id = crate::framework::chitin::devtree_create_node_impl(
-        "test_device",
-        crate::framework::chitin::ChitinProto::Other,
-        None,
-    );
-    if let Some(id) = node_id {
-        check!(id > 0, "node id positive");
-        let node = crate::framework::chitin::devtree_get_node(id);
-        check!(node.is_some(), "can get node");
-    } else {
-        // DevTree may not be initialized
-    }
-    TestResult::Pass
-}
-
-fn test_devtree_set_compatible() -> TestResult {
-    use alloc::vec;
-    let node_id = crate::framework::chitin::devtree_create_node_impl(
-        "compat_device",
-        crate::framework::chitin::ChitinProto::Other,
-        None,
-    );
-    match node_id {
-        Some(id) => {
-            let compat = vec!["test,device"];
-            crate::framework::chitin::devtree_set_compatible(id, compat);
-            let found = crate::framework::chitin::devtree_find_compatible("test,device");
-            check!(found.is_some(), "find by compatible");
-        }
-        None => {}
-    }
-    TestResult::Pass
-}
+// UT-07 (2026-09-26): devtree 组注册副本已删 — 其断言以 framework/chitin/devtree.rs
+// 的 #[cfg(test)] 为唯一归属 (Chitin 设备树节横幅随之移除).
 
 // ============================================================
 // IPC Dynamic Namespace
@@ -304,10 +268,6 @@ pub fn register_new_tests() {
             "validation_small": test_elf_validation_small,
             "magic_rejected": test_elf_magic_rejected,
             "valid_minimal": test_elf_valid_minimal,
-        },
-        "devtree": {
-            "create_node": test_devtree_create_node,
-            "set_compatible": test_devtree_set_compatible,
         },
         "ipc_dynamic": {
             "pipe_no_limit": test_dyn_ipc_pipe_no_limit,

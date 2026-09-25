@@ -1,127 +1,13 @@
 // UT-07 (2026-09-25): idt::statistics 与 idt::types 注册副本已删 —
 // 其纯逻辑断言分别以 framework/idt/statistics.rs 与 framework/idt/types.rs
 // 的 #[cfg(test)] 为唯一归属.
-use crate::framework::idt::handlers::{
-    AccessType, DefaultHandler, DivisionByZeroHandler, ExceptionCategory, ExceptionHandler,
-    ExceptionStatisticsCollector, FaultCause, Mode, PageFaultHandler, PanicInfo, RecoveryAction,
-    Severity, create_handler,
-};
-use crate::framework::idt::{
-    CpuFeatures, is_null_or_invalid, is_valid_kernel_address, is_valid_user_address,
-};
-use crate::framework::mm::{KERNEL_BASE, KERNEL_TEXT_BASE};
-use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
+// UT-07 (2026-09-26): idt::handlers 注册副本 (8 组) 已删 — 源侧
+// framework/idt/handlers.rs #[cfg(test)] 为唯一归属 (含互补的 0x02 内核态写缺页
+// 场景与 #99 未知分类断言); idt::safety 仅保留 cpu_features_no_panic —
+// 其 address_validation 七条地址谓词已迁 framework/idt/safety.rs #[cfg(test)].
+use crate::framework::idt::CpuFeatures;
+use crate::framework::tests::{TestResult, check, runner};
 use crate::register_tests_inner;
-use core::sync::atomic::Ordering;
-
-fn recovery_action_variants() -> TestResult {
-    assert_eq_test!(
-        RecoveryAction::Recovered,
-        RecoveryAction::Recovered,
-        "Recovered eq"
-    );
-    check!(
-        RecoveryAction::TerminateProcess(1) != RecoveryAction::Recovered,
-        "TerminateProcess neq"
-    );
-    TestResult::Pass
-}
-
-fn severity_ordering() -> TestResult {
-    check!(Severity::Info < Severity::Warning, "Info < Warning");
-    check!(Severity::Warning < Severity::Error, "Warning < Error");
-    check!(Severity::Error < Severity::Fatal, "Error < Fatal");
-    check!(
-        Severity::Fatal < Severity::Catastrophic,
-        "Fatal < Catastrophic"
-    );
-    TestResult::Pass
-}
-
-fn exception_categories() -> TestResult {
-    let handler = DivisionByZeroHandler;
-    assert_eq_test!(
-        handler.category(),
-        ExceptionCategory::Arithmetic,
-        "category"
-    );
-    assert_eq_test!(handler.name(), "Division By Zero", "name");
-    TestResult::Pass
-}
-
-fn page_fault_analysis() -> TestResult {
-    let analysis = PageFaultHandler::analyze_error_code(0x02);
-    check!(!analysis.present, "not present");
-    assert_eq_test!(analysis.access_type, AccessType::Write, "access type");
-    assert_eq_test!(analysis.mode, Mode::Kernel, "mode");
-    assert_eq_test!(analysis.cause, FaultCause::PageNotPresent, "cause");
-    TestResult::Pass
-}
-
-fn default_handler() -> TestResult {
-    let handler = DefaultHandler::new(7);
-    assert_eq_test!(handler.name(), "No Coprocessor", "name");
-    assert_eq_test!(handler.severity(), Severity::Warning, "severity");
-    TestResult::Pass
-}
-
-fn factory_pattern() -> TestResult {
-    let handler0 = create_handler(0);
-    let handler13 = create_handler(13);
-    let handler99 = create_handler(99);
-    assert_eq_test!(handler0.name(), "Division By Zero", "handler 0");
-    assert_eq_test!(handler13.name(), "General Protection Fault", "handler 13");
-    check!(
-        handler99.category() == ExceptionCategory::Unknown,
-        "handler 99 should be unknown category"
-    );
-    TestResult::Pass
-}
-
-fn statistics_collector() -> TestResult {
-    let collector = ExceptionStatisticsCollector::new();
-    let handler = DivisionByZeroHandler;
-    let action = RecoveryAction::TerminateProcess(42);
-    collector.record(&handler, &action);
-    assert_eq_test!(
-        collector.total_exceptions.load(Ordering::Relaxed),
-        1,
-        "total exceptions"
-    );
-    assert_eq_test!(
-        collector.process_terminations.load(Ordering::Relaxed),
-        1,
-        "terminations"
-    );
-    assert_eq_test!(
-        collector.by_category[0].load(Ordering::Relaxed),
-        1,
-        "arithmetic category"
-    );
-    TestResult::Pass
-}
-
-fn panic_info_creation() -> TestResult {
-    let info = PanicInfo::new("Test panic", 14, 0xDEADBEEF);
-    assert_eq_test!(info.vector, 14, "vector");
-    assert_eq_test!(info.rip, 0xDEADBEEF, "rip");
-    assert_eq_test!(info.reason, "Test panic", "reason");
-    TestResult::Pass
-}
-
-fn address_validation() -> TestResult {
-    check!(is_null_or_invalid(0), "null is invalid");
-    check!(is_null_or_invalid(0xFFF), "0xFFF is invalid");
-    check!(!is_null_or_invalid(0x1000), "0x1000 is valid");
-    check!(is_valid_user_address(0x400000), "0x400000 is user");
-    check!(!is_valid_user_address(KERNEL_BASE), "kernel is not user");
-    check!(
-        is_valid_kernel_address(KERNEL_TEXT_BASE),
-        "kernel addr is valid"
-    );
-    check!(!is_valid_kernel_address(0x400000), "user is not kernel");
-    TestResult::Pass
-}
 
 fn cpu_features_no_panic() -> TestResult {
     let features = CpuFeatures::detect();
@@ -149,33 +35,15 @@ fn cpu_features_no_panic() -> TestResult {
     TestResult::Pass
 }
 
-pub fn register_idt_handlers_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "idt::handlers": {
-            "recovery_action_variants": recovery_action_variants,
-            "severity_ordering": severity_ordering,
-            "exception_categories": exception_categories,
-            "page_fault_analysis": page_fault_analysis,
-            "default_handler": default_handler,
-            "factory_pattern": factory_pattern,
-            "statistics_collector": statistics_collector,
-            "panic_info_creation": panic_info_creation,
-        },
-    }
-}
-
 pub fn register_idt_safety_tests() {
     let r = runner();
     register_tests_inner! { r:
         "idt::safety": {
-            "address_validation": address_validation,
             "cpu_features_no_panic": cpu_features_no_panic,
         },
     }
 }
 
 pub fn register_tests() {
-    register_idt_handlers_tests();
     register_idt_safety_tests();
 }

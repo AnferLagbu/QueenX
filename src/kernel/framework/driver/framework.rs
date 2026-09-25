@@ -357,6 +357,27 @@ mod tests {
     }
 
     #[test]
+    fn test_device_info_creation() {
+        // UT-07 (2026-09-26): 注册侧 driver::framework::device_info_creation 迁入.
+        let info = DeviceInfo::new("test_device", DeviceType::Other);
+        assert!(info.id > 0);
+        assert_eq!(info.name, "test_device");
+        assert!(!info.initialized);
+        assert!(info.io_base.is_none());
+        assert!(info.irq.is_none());
+    }
+
+    #[test]
+    fn test_device_info_builder() {
+        // UT-07 (2026-09-26): 注册侧 driver::framework::device_info_builder 迁入.
+        let info = DeviceInfo::new("serial0", DeviceType::Char)
+            .with_io_base(0x3F8)
+            .with_irq(4);
+        assert_eq!(info.io_base, Some(0x3F8));
+        assert_eq!(info.irq, Some(4));
+    }
+
+    #[test]
     fn test_result_type_alias() {
         fn returns_ok() -> Result<u32> {
             Ok(42)

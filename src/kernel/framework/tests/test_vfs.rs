@@ -1,81 +1,11 @@
 use super::check;
-use crate::framework::fs::vfs::types::{
-    FsType, VFS_MAX_PATH, VfsDirEntry, VfsFileType, VfsSeekWhence,
-};
+use crate::framework::fs::vfs::types::{FsType, VFS_MAX_PATH};
 use crate::framework::fs::vfs::vfs::VfsManager;
 use crate::framework::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
-fn test_fstype_from_name() -> TestResult {
-    let ramfs = FsType::from_name("ramfs");
-    check!(ramfs == FsType::RamFs, "ramfs should be RamFs");
-
-    let nestfs = FsType::from_name("nestfs");
-    check!(nestfs == FsType::NestFs, "nestfs should be NestFs");
-
-    let unknown = FsType::from_name("ext4");
-    check!(unknown == FsType::Unknown, "ext4 should be Unknown");
-    TestResult::Pass
-}
-
-fn test_fstype_as_str() -> TestResult {
-    check!(FsType::RamFs.as_str() == "ramfs", "RamFs as_str mismatch");
-    check!(
-        FsType::NestFs.as_str() == "nestfs",
-        "NestFs as_str mismatch"
-    );
-    check!(
-        FsType::Unknown.as_str() == "unknown",
-        "Unknown as_str mismatch"
-    );
-    TestResult::Pass
-}
-
-fn test_vfs_file_type() -> TestResult {
-    check!(
-        VfsFileType::from_u8(0) == Some(VfsFileType::File),
-        "0 should be File"
-    );
-    check!(
-        VfsFileType::from_u8(1) == Some(VfsFileType::Dir),
-        "1 should be Dir"
-    );
-    check!(
-        VfsFileType::from_u8(2) == Some(VfsFileType::Dev),
-        "2 should be Dev"
-    );
-    check!(
-        VfsFileType::from_u8(3) == Some(VfsFileType::Symlink),
-        "3 should be Symlink"
-    );
-    check!(
-        VfsFileType::from_u8(99).is_none(),
-        "invalid should return None"
-    );
-
-    check!(VfsFileType::Dir.as_u8() == 1, "Dir as_u8 should be 1");
-    TestResult::Pass
-}
-
-fn test_vfs_seek_whence() -> TestResult {
-    check!(
-        VfsSeekWhence::from_u32(0) == Some(VfsSeekWhence::Set),
-        "0 should be Set"
-    );
-    check!(
-        VfsSeekWhence::from_u32(1) == Some(VfsSeekWhence::Cur),
-        "1 should be Cur"
-    );
-    check!(
-        VfsSeekWhence::from_u32(2) == Some(VfsSeekWhence::End),
-        "2 should be End"
-    );
-    check!(
-        VfsSeekWhence::from_u32(99).is_none(),
-        "invalid should return None"
-    );
-    TestResult::Pass
-}
+// UT-07 (2026-09-26): vfs::types 注册子块已收敛 —
+// 纯类型编码/映射断言以 framework/fs/vfs/types.rs 的 #[cfg(test)] 为唯一归属.
 
 fn test_vfs_mount_unmount() -> TestResult {
     let mgr = VfsManager::new();
@@ -128,14 +58,6 @@ fn test_vfs_fd_alloc_free() -> TestResult {
     mgr.free_fd(fd1.unwrap());
     let fd3 = mgr.alloc_fd();
     check!(fd3.is_some(), "alloc after free should succeed");
-    TestResult::Pass
-}
-
-fn test_vfs_dirent() -> TestResult {
-    let mut dirent = VfsDirEntry::new();
-    dirent.set_name("test.txt");
-    let name = dirent.get_name();
-    check!(name == "test.txt", "dirent name mismatch");
     TestResult::Pass
 }
 
@@ -538,13 +460,6 @@ fn test_resolve_with_root_prefix() -> TestResult {
 pub fn register_vfs_tests() {
     let r = runner();
     register_tests_inner! { r:
-        "vfs::types": {
-            "fstype_from_name": test_fstype_from_name,
-            "fstype_as_str": test_fstype_as_str,
-            "file_type": test_vfs_file_type,
-            "seek_whence": test_vfs_seek_whence,
-            "dirent": test_vfs_dirent,
-        },
         "vfs::mgr": {
             "mount_unmount": test_vfs_mount_unmount,
             "resolve_mount": test_vfs_resolve_mount,

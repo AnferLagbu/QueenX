@@ -143,17 +143,24 @@ pub fn should_attempt_recovery(domain_id: u64) -> bool {
     })
 }
 
-#[cfg(feature = "kernel_test")]
-pub mod tests {
+// UT-07 (2026-09-26): 原 `#[cfg(feature = "kernel_test")] pub mod tests { pub fn .. -> bool }`
+// 形态改写为源侧 `#[cfg(test)] #[test]`; 注册侧 `framework/tests/reset.rs::barrier::bbr`
+// 的薄包装 `check!(tests::test_*())` 随之删除.
+#[cfg(test)]
+mod tests {
     // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
     use super::should_attempt_recovery;
 
-    pub fn test_compute_fingerprint() -> bool {
-        true
+    #[test]
+    fn compute_fingerprint() {
+        // 原注册侧薄包装 `check!(tests::test_compute_fingerprint(), ..)` 的载体本身
+        // 即"可调用性占位"(函数体恒返回 true, 无任何比对): `compute_fingerprint`
+        // 形参为 `&PanicInfo`, stable Rust 无法构造, 故此处保留同语义的空用例.
     }
 
-    pub fn test_should_attempt() -> bool {
-        let result = should_attempt_recovery(999);
-        !result
+    #[test]
+    fn should_attempt() {
+        // 未注册域 (999) 无法定位 ⇒ 不应尝试恢复
+        assert!(!should_attempt_recovery(999), "未注册域不应尝试恢复");
     }
 }

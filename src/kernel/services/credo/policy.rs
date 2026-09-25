@@ -547,4 +547,300 @@ mod tests {
         assert_eq!(m.get(CapDomain::NET), Some(CapBits::ALL));
         assert_eq!(m.get(CapDomain::PROC), Some(CapBits::NONE));
     }
+
+    // UT-07 (2026-09-26): 注册侧 pwm::policy 组全量迁入 —
+    // framework/tests/test_credo.rs 的 23 例 (CapBits 位运算语义 +
+    // CapMatrix 快照 + InMemoryMatrix 可变矩阵 + 域边界) 逐例归并等价判据,
+    // 断言数净增不净减; 该注册载体随后整体删除.
+
+    use crate::services::credo::capability::{
+        FS_CAP_CHOWN, FS_CAP_DELETE, FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE, PROC_CAP_EXEC,
+        PROC_CAP_FORK, PROC_CAP_KILL, SYS_CAP_ALL,
+    };
+
+    #[test]
+    fn cap_bits_has() {
+        let cb = CapBits(FS_CAP_READ | FS_CAP_WRITE);
+        assert!(cb.contains(CapBits(FS_CAP_READ)), "应含 READ");
+        assert!(cb.contains(CapBits(FS_CAP_WRITE)), "应含 WRITE");
+        assert!(!cb.contains(CapBits(FS_CAP_EXECUTE)), "不应含 EXEC");
+    }
+
+    #[test]
+    fn cap_bits_grant() {
+        let cb = CapBits(FS_CAP_READ) | CapBits(FS_CAP_WRITE);
+        assert!(cb.contains(CapBits(FS_CAP_READ)), "应含 READ");
+        assert!(cb.contains(CapBits(FS_CAP_WRITE)), "应含 WRITE");
+    }
+
+    #[test]
+    fn cap_bits_revoke() {
+        let cb = CapBits(FS_CAP_READ | FS_CAP_WRITE).diff(CapBits(FS_CAP_READ));
+        assert!(!cb.contains(CapBits(FS_CAP_READ)), "READ 已撤销");
+        assert!(cb.contains(CapBits(FS_CAP_WRITE)), "WRITE 保留");
+    }
+
+    #[test]
+    fn cap_bits_superset() {
+        let full = CapBits(FS_CAP_READ | FS_CAP_WRITE | FS_CAP_EXECUTE);
+        let partial = CapBits(FS_CAP_READ);
+        assert!(full.contains(partial), "全集包含子集");
+        assert!(!partial.contains(full), "子集不包含全集");
+    }
+
+    #[test]
+    fn cap_matrix_new_empty() {
+        let cm = InMemoryMatrix::new();
+        assert_eq!(cm.get(CapDomain::FS), Some(CapBits::NONE), "FS 为空");
+        assert_eq!(cm.get(CapDomain::PROC), Some(CapBits::NONE), "PROC 为空");
+    }
+
+    #[test]
+    fn cap_matrix_grant_revoke() {
+        let cm = InMemoryMatrix::new();
+        cm.set(CapDomain::FS, CapBits(FS_CAP_READ | FS_CAP_WRITE))
+            .unwrap();
+        assert!(
+            cm.get(CapDomain::FS)
+                .unwrap()
+                .contains(CapBits(FS_CAP_READ)),
+            "FS 应含 READ"
+        );
+        assert!(
+            cm.get(CapDomain::FS)
+                .unwrap()
+                .contains(CapBits(FS_CAP_WRITE)),
+            "FS 应含 WRITE"
+        );
+        cm.set(CapDomain::FS, CapBits(FS_CAP_READ)).unwrap();
+        assert!(
+            cm.get(CapDomain::FS)
+                .unwrap()
+                .contains(CapBits(FS_CAP_READ)),
+            "FS 仍含 READ"
+        );
+        assert!(
+            !cm.get(CapDomain::FS)
+                .unwrap()
+                .contains(CapBits(FS_CAP_WRITE)),
+            "FS 已失去 WRITE"
+        );
+    }
+
+    #[test]
+    fn cap_matrix_all() {
+        let cm = CapMatrix::all();
+        for d in 0..16u8 {
+            assert_eq!(cm.get(CapDomain(d)), CapBits::ALL, "全域均为 ALL");
+        }
+    }
+
+    #[test]
+    fn cap_matrix_viable() {
+        let cm = CapMatrix::from_bits(VIABLE_FLOOR);
+        assert!(
+            cm.get(CapDomain::FS).contains(CapBits(FS_CAP_READ)),
+            "FS 下界含 READ"
+        );
+        assert!(
+            cm.get(CapDomain::FS).contains(CapBits(FS_CAP_EXECUTE)),
+            "FS 下界含 EXEC"
+        );
+        assert!(
+            !cm.get(CapDomain::FS).contains(CapBits(FS_CAP_WRITE)),
+            "FS 下界不含 WRITE"
+        );
+        assert!(
+            cm.get(CapDomain::PROC).contains(CapBits(PROC_CAP_FORK)),
+            "PROC 下界含 FORK"
+        );
+        assert!(
+            cm.get(CapDomain::PROC).contains(CapBits(PROC_CAP_EXEC)),
+            "PROC 下界含 EXEC"
+        );
+    }
+
+    #[test]
+    fn cap_matrix_superset() {
+        let parent = CapMatrix::all();
+        let child = CapMatrix::from_bits(VIABLE_FLOOR);
+        for d in 0..16u8 {
+            assert!(
+                parent.get(CapDomain(d)).contains(child.get(CapDomain(d))),
+                "父集包含子集"
+            );
+            assert!(
+                !child.get(CapDomain(d)).contains(parent.get(CapDomain(d))),
+                "子集不包含父集"
+            );
+        }
+    }
+
+    #[test]
+    fn cap_matrix_out_of_range() {
+        let cm = InMemoryMatrix::new();
+        assert!(!CapDomain(16).is_valid(), "16 非法");
+        assert!(!CapDomain(255).is_valid(), "255 非法");
+        assert_eq!(cm.get(CapDomain(16)), None, "get 16 为 None");
+        assert_eq!(cm.get(CapDomain(255)), None, "get 255 为 None");
+    }
+
+    #[test]
+    fn cap_bits_empty_has_nothing() {
+        let cb = CapBits::NONE;
+        assert!(!cb.contains(CapBits(FS_CAP_READ)), "NONE 不含 READ");
+        assert!(!cb.contains(CapBits(FS_CAP_WRITE)), "NONE 不含 WRITE");
+        assert!(!cb.contains(CapBits(SYS_CAP_ALL)), "NONE 不含 SYS_ALL");
+    }
+
+    #[test]
+    fn cap_bits_grant_all_then_revoke_one() {
+        let cb = CapBits::ALL;
+        assert!(cb.contains(CapBits(FS_CAP_READ)), "ALL 含 READ");
+        assert!(cb.contains(CapBits(SYS_CAP_ALL)), "ALL 含 SYS_ALL");
+        let cb = cb.diff(CapBits(FS_CAP_READ));
+        assert!(!cb.contains(CapBits(FS_CAP_READ)), "READ 已撤销");
+        assert!(cb.contains(CapBits(FS_CAP_WRITE)), "WRITE 保留");
+    }
+
+    #[test]
+    fn cap_bits_revoke_nonexistent_is_noop() {
+        let cb = CapBits(FS_CAP_READ).diff(CapBits(FS_CAP_WRITE));
+        assert!(cb.contains(CapBits(FS_CAP_READ)), "READ 保留");
+        assert!(!cb.contains(CapBits(FS_CAP_WRITE)), "WRITE 本就不存在");
+    }
+
+    #[test]
+    fn cap_bits_grant_idempotent() {
+        let cb = CapBits(FS_CAP_READ) | CapBits(FS_CAP_READ);
+        assert!(cb.contains(CapBits(FS_CAP_READ)), "应含 READ");
+        assert_eq!(cb, CapBits(FS_CAP_READ), "幂等值不变");
+    }
+
+    #[test]
+    fn cap_matrix_delegation_chain() {
+        let root = CapMatrix::all();
+        let admin = InMemoryMatrix::new();
+        admin
+            .set(
+                CapDomain::FS,
+                CapBits(FS_CAP_READ | FS_CAP_WRITE | FS_CAP_EXECUTE | (1 << 3) | (1 << 4)),
+            )
+            .unwrap();
+        admin
+            .set(
+                CapDomain::PROC,
+                CapBits(PROC_CAP_FORK | PROC_CAP_EXEC | PROC_CAP_KILL),
+            )
+            .unwrap();
+        let user = InMemoryMatrix::new();
+        user.set(CapDomain::FS, CapBits(FS_CAP_READ | FS_CAP_EXECUTE))
+            .unwrap();
+        user.set(CapDomain::PROC, CapBits(PROC_CAP_FORK | PROC_CAP_EXEC))
+            .unwrap();
+        assert!(
+            root.get(CapDomain::FS)
+                .contains(admin.get(CapDomain::FS).unwrap()),
+            "root 包含 admin"
+        );
+        assert!(
+            admin
+                .get(CapDomain::FS)
+                .unwrap()
+                .contains(user.get(CapDomain::FS).unwrap()),
+            "admin 包含 user"
+        );
+        assert!(
+            !user
+                .get(CapDomain::FS)
+                .unwrap()
+                .contains(admin.get(CapDomain::FS).unwrap()),
+            "user 不包含 admin"
+        );
+    }
+
+    #[test]
+    fn cap_matrix_revocation_partial() {
+        let all = CapMatrix::all();
+        let fs_bits = all
+            .get(CapDomain::FS)
+            .diff(CapBits(FS_CAP_DELETE | FS_CAP_CHOWN));
+        assert!(fs_bits.contains(CapBits(FS_CAP_READ)), "含 READ");
+        assert!(fs_bits.contains(CapBits(FS_CAP_WRITE)), "含 WRITE");
+        assert!(!fs_bits.contains(CapBits(FS_CAP_DELETE)), "不含 DELETE");
+        assert!(!fs_bits.contains(CapBits(FS_CAP_CHOWN)), "不含 CHOWN");
+    }
+
+    #[test]
+    fn cap_matrix_viable_is_not_all() {
+        let viable = CapMatrix::from_bits(VIABLE_FLOOR);
+        let all = CapMatrix::all();
+        assert!(
+            all.get(CapDomain::FS).contains(viable.get(CapDomain::FS)),
+            "ALL 包含下界"
+        );
+        assert!(
+            !viable.get(CapDomain::FS).contains(all.get(CapDomain::FS)),
+            "下界不包含 ALL"
+        );
+    }
+
+    #[test]
+    fn cap_matrix_grant_out_of_range_silent() {
+        let cm = InMemoryMatrix::new();
+        assert!(cm.set(CapDomain(16), CapBits(0xFF)).is_err(), "16 set 报错");
+        assert!(
+            cm.set(CapDomain(255), CapBits(0xFF)).is_err(),
+            "255 set 报错"
+        );
+        assert_eq!(cm.get(CapDomain(16)), None, "16 仍为 None");
+        assert_eq!(cm.get(CapDomain(255)), None, "255 仍为 None");
+    }
+
+    #[test]
+    fn cap_matrix_revoke_out_of_range_silent() {
+        // 内核 set 对非法域返回 Err, 矩阵内容不变 (等价原 revoke 静默失败)
+        let cm = InMemoryMatrix::new();
+        assert!(cm.set(CapDomain(16), CapBits::ALL).is_err(), "16 set 报错");
+        assert!(
+            cm.set(CapDomain(255), CapBits::ALL).is_err(),
+            "255 set 报错"
+        );
+        for d in 0..16u8 {
+            assert_eq!(cm.get(CapDomain(d)), Some(CapBits::NONE), "全为 NONE");
+        }
+    }
+
+    #[test]
+    fn cap_matrix_cross_domain_isolation() {
+        let cm = InMemoryMatrix::new();
+        cm.set(CapDomain::FS, CapBits(FS_CAP_READ)).unwrap();
+        assert_eq!(cm.get(CapDomain::PROC), Some(CapBits::NONE), "PROC 为空");
+        assert_eq!(cm.get(CapDomain::NET), Some(CapBits::NONE), "NET 为空");
+    }
+
+    #[test]
+    fn cap_matrix_empty_not_superset_of_viable() {
+        let empty = CapMatrix::empty();
+        let viable = CapMatrix::from_bits(VIABLE_FLOOR);
+        assert!(
+            !empty.get(CapDomain::FS).contains(viable.get(CapDomain::FS)),
+            "空矩阵不包含下界"
+        );
+    }
+
+    #[test]
+    fn cap_bits_superset_reflexive() {
+        let cb = CapBits(FS_CAP_READ | FS_CAP_WRITE);
+        assert!(cb.contains(cb), "自反");
+    }
+
+    #[test]
+    fn cap_matrix_superset_reflexive() {
+        let cm = CapMatrix::from_bits(VIABLE_FLOOR);
+        assert!(
+            cm.get(CapDomain::FS).contains(cm.get(CapDomain::FS)),
+            "自反"
+        );
+    }
 }

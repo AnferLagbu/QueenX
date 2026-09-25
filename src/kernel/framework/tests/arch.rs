@@ -1,73 +1,12 @@
 use crate::framework::cpu::{CacheInfo, CpuSignature, CpuVendor, TopologyInfo};
 // UT-07 (2026-09-25): arch::gdt 注册副本已删 — 其纯逻辑断言以
 // framework/arch/x86_64/gdt.rs 的 #[cfg(test)] 为唯一归属.
+// UT-07 (2026-09-26): arch::tss 注册副本已删 — 其断言以
+// framework/arch/x86_64/tss.rs 的 #[cfg(test)] 为唯一归属 (源侧 zeroed 已改用
+// 公有取值器 get_ist, API 级断言不降级; 注册侧 `TSS_SIZE >= 92` / `% 2 == 0`
+// 两条弱于源侧 `>= TSS_MINIMUM_SIZE` / `== TSS_MINIMUM_SIZE`, 被蕴含故丢弃).
 use crate::framework::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
-
-#[cfg(target_arch = "x86_64")]
-use crate::framework::arch::x86_64::tss::{DEFAULT_IOMAP_BASE, TSS_SIZE, TaskStateSegment};
-
-#[cfg(target_arch = "x86_64")]
-fn tss_zeroed() -> TestResult {
-    let tss = TaskStateSegment::zeroed();
-    assert_eq_test!(tss.rsp0, 0, "rsp0 should be 0");
-    assert_eq_test!(tss.rsp1, 0, "rsp1 should be 0");
-    assert_eq_test!(tss.rsp2, 0, "rsp2 should be 0");
-    assert_eq_test!(tss.iomap_base, DEFAULT_IOMAP_BASE, "iomap_base default");
-    for i in 0..7 {
-        assert_eq_test!(tss.get_ist(i), Some(0), "IST should be 0");
-    }
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn tss_set_kernel_stack() -> TestResult {
-    let mut tss = TaskStateSegment::zeroed();
-    tss.set_kernel_stack(0xDEAD_BEEF_CAFE_BABE);
-    assert_eq_test!(
-        tss.get_kernel_stack(),
-        0xDEAD_BEEF_CAFE_BABE,
-        "kernel stack mismatch"
-    );
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn tss_ist_operations() -> TestResult {
-    let mut tss = TaskStateSegment::zeroed();
-    tss.set_ist(0, 0x1111_2222_3333_4444);
-    tss.set_ist(6, 0xAAAA_BBBB_CCCC_DDDD);
-    assert_eq_test!(tss.get_ist(0), Some(0x1111_2222_3333_4444), "IST0 mismatch");
-    assert_eq_test!(tss.get_ist(6), Some(0xAAAA_BBBB_CCCC_DDDD), "IST6 mismatch");
-    assert_eq_test!(tss.get_ist(3), Some(0), "unset IST should be 0");
-    assert_eq_test!(tss.get_ist(7), None, "out-of-range IST should be None");
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn tss_iomap() -> TestResult {
-    let mut tss = TaskStateSegment::zeroed();
-    check!(!tss.has_iomap(), "should not have iomap by default");
-    let offset = (TSS_SIZE / 2) as u16;
-    tss.enable_iomap(offset);
-    check!(tss.has_iomap(), "should have iomap after enable");
-    assert_eq_test!(tss.iomap_base, offset, "iomap_base mismatch");
-    tss.disable_iomap();
-    check!(!tss.has_iomap(), "should not have iomap after disable");
-    assert_eq_test!(
-        tss.iomap_base,
-        DEFAULT_IOMAP_BASE,
-        "iomap_base should reset"
-    );
-    TestResult::Pass
-}
-
-#[cfg(target_arch = "x86_64")]
-fn tss_size() -> TestResult {
-    check!(TSS_SIZE >= 92, "TSS too small");
-    assert_eq_test!(TSS_SIZE % 2, 0, "TSS not 2-byte aligned");
-    TestResult::Pass
-}
 
 fn cpu_vendor_recognition() -> TestResult {
     assert_eq_test!(
@@ -171,23 +110,6 @@ fn cpu_topology_threads_per_core() -> TestResult {
     TestResult::Pass
 }
 
-#[cfg(target_arch = "x86_64")]
-pub fn register_tss_tests() {
-    let r = runner();
-    register_tests_inner! { r:
-        "arch::tss": {
-            "zeroed": tss_zeroed,
-            "set_kernel_stack": tss_set_kernel_stack,
-            "ist_operations": tss_ist_operations,
-            "iomap": tss_iomap,
-            "size": tss_size,
-        },
-    }
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-pub fn register_tss_tests() {}
-
 pub fn register_cpu_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -203,7 +125,6 @@ pub fn register_cpu_tests() {
 pub fn register_cpuid_tests() {}
 
 pub fn register_tests() {
-    register_tss_tests();
     register_cpu_tests();
     register_cpuid_tests();
 }

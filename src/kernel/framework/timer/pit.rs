@@ -287,6 +287,8 @@ pub fn pit_shutdown() {
 // 单元测试
 // ============================================================================
 
+// UT-07 (2026-09-26): timer::pit 双份注册副本已删 (本文件内联注册 fn 与
+// framework/tests/sys.rs 的 timer::pit 组) — 本 #[cfg(test)] 模块为唯一归属.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,8 +308,10 @@ mod tests {
         assert_eq!(divisor, 1193);
 
         // 验证实际频率接近目标
+        // UT-07 (2026-09-26): 原单侧容差 (actual_freq - 1000) < 5 弱于注册侧
+        // 双侧形态, 改回 .abs() 双侧以免收敛后覆盖降级.
         let actual_freq = PIT_BASE_FREQUENCY / divisor;
-        assert!((actual_freq - 1000) < 5);
+        assert!((actual_freq as i64 - 1000).abs() < 5);
     }
 
     #[test]
@@ -336,52 +340,4 @@ mod tests {
         assert!(pit_read_count().is_none());
         assert!(pit_elapsed_since_tick_us().is_none());
     }
-}
-
-#[cfg(feature = "kernel_test")]
-// J-01 (2026-09-08): items_after_statements — 测试注册函数内嵌套测试 fn 是
-// 本内核测试惯用模式 (let r = runner() 语句后定义 fn), 保留风格加函数级 expect.
-#[expect(
-    clippy::items_after_statements,
-    reason = "items_after_statements: 测试注册函数内嵌套测试 fn 为内核测试惯用模式; 当前优先 expect"
-)]
-pub fn register_pit_tests() {
-    use crate::framework::tests::{TestFn, TestResult, runner};
-    let r = runner();
-
-    fn constants() -> TestResult {
-        crate::assert_eq_test!(PIT_BASE_FREQUENCY, 1_193_182u64, "base freq");
-        crate::check!(DEFAULT_INTERRUPT_FREQ_HZ > 0, "default freq positive");
-        crate::assert_eq_test!(PIT_MAX_COUNT, 65535u16, "max count");
-        crate::assert_eq_test!(PIT_MIN_COUNT, 1u16, "min count");
-        TestResult::Pass
-    }
-
-    fn divisor_calculation() -> TestResult {
-        let divisor = PIT_BASE_FREQUENCY / 1000;
-        crate::assert_eq_test!(divisor, 1193u64, "1000Hz divisor");
-        let actual_freq = PIT_BASE_FREQUENCY / divisor;
-        crate::check!((actual_freq - 1000) < 5, "actual freq close to 1000");
-        TestResult::Pass
-    }
-
-    fn frequency_bounds() -> TestResult {
-        crate::check!(PIT_MIN_COUNT >= 1, "min count >= 1");
-        // J-01 (2026-09-08): 删除恒真断言 `PIT_MAX_COUNT as u64 <= 65535`
-        // (u16 max 恒 <= 65535, invalid_upcast_comparisons) — 等价精确断言
-        // `u64::from(PIT_MAX_COUNT) == 65535` 已由 tests/sys.rs pit_frequency_bounds 覆盖.
-        let max_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MIN_COUNT);
-        crate::check!(max_freq > 1_000_000, "max freq > 1MHz");
-        let min_freq = PIT_BASE_FREQUENCY / u64::from(PIT_MAX_COUNT);
-        crate::check!(min_freq < 20, "min freq < 20Hz");
-        TestResult::Pass
-    }
-
-    r.register("timer::pit", "constants", constants as TestFn);
-    r.register(
-        "timer::pit",
-        "divisor_calculation",
-        divisor_calculation as TestFn,
-    );
-    r.register("timer::pit", "frequency_bounds", frequency_bounds as TestFn);
 }
