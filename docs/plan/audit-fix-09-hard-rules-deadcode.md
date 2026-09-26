@@ -52,14 +52,14 @@
 - **B09-04. 死代码零容忍（§9.3）**
   - 描述：第 6.5 章对死代码分类标注：R1 pub fn 死代码 362 项、R2 未接线 syscall 161 项、R3 零引用 pub mod 36 项、R4 核心 pub struct/enum 零引用 1 项。
   - 方案：按处置工作流（阶段 1 高确定删除 → 阶段 2 中确定 → 阶段 3 决策类）推进。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 总纲收敛：**无独立施工面**，由 B09-05/06/07/08 + 工程计划 D 承接。四类清单实测终态——**R1 = 439（431 已分类 + 8 未分类 HIGH 待甄别）/ R2 = 7（功能缺口，归 D-2）/ R3 = 0 / R4 = 1（DomainFlags 待裁）**；F9 形式残留 = `unused` 族 5 处（其中 2 处 B09-20 已定性保留、3 处 F9 适用边界待裁，见 D-7 表））
 
 ### 待办
 
 - **B09-05. R2 未接线 syscall 处置（161 项）**
   - 描述：表 A `[A:激活]` 5 项（dispatch 缺项，函数已实装）→ 接线；表 R `[R:替代]` 119 项（QX_* 备用命名，禁用）→ 核实后删除或保留；表 D `[D:删除]` 37 项（真未实装）→ 删除。
   - 方案：用 `audit_unwired_pub_fn.py`（分册 01 修复后）生成清单，按表分类逐项处置。
-  - 状态：[]
+  - 状态：[]（2026-09-26 实测刷新：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 7 项**（非登记 161）——`SYS_fdatasync` / `SYS_process_vm_readv` / `SYS_process_vm_writev` / `SYS_arch_prctl` / `SYS_capget` / `SYS_capset` / `SYS_sigaltstack`，全部为 Linux 标准编号**未实装**功能缺口 ⇒ 属性已由编号治理（B09-17）剥离，**余项归 D-2 实现治理**（独立功能工程，非清理范畴）；表 A/R/D 三分类口径随 B09-17 归位与 T5 甄别失效）
 
 - **B09-06. R1 pub fn 死代码（362 项）**
   - 描述：pub fn 死代码 362 项，高密度文件 Top 5 需优先（vfs/api.rs、syscall/types.rs 等）；已确认 `[X:CFG]` 跨架构项 3 项保留。
@@ -72,12 +72,12 @@
 - **B09-07. R3 零引用 pub mod（36 项）**
   - 描述：36 个 pub mod 零引用。
   - 方案：核实后删除（或确认 cfg 条件引用）。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 实测刷新：`audit_unwired_pub_fn.py` **WARN=R3=0 项**（登记 36 为历史口径，B09-18 实测已修正为 7）；7 项 nestfs trait 抽象模块已由 D-3 / T4 处置完毕（核实为纯预留抽象 ⇒ 直接删））
 
 - **B09-08. R4 核心 pub struct/enum 零引用（1 项）**
   - 描述：核心 pub struct/enum 零引用 1 项。
   - 方案：核实后删除。
-  - 状态：[]
+  - 状态：[]（2026-09-26 实测：仍为 1 项——`framework/credo/types.rs:102 struct DomainFlags`，全仓**仅声明处 1 处命中**（`grep -rn DomainFlags src/kernel host-tests --include=*.rs`）。判据「内核需不需要」：credo domain 体系该位标志当前无使用者 ⇒ **待裁（删 or 转正式预留）**，属裁定六授权边界）
 
 - **B09-09. framework 78 处 pub use re-export 反向依赖（H.3.5 P2-B，2026-09-11 定性修正）**
   - 描述：原登记"services 策略上移违反 OSTD Minimalism"——**2026-09-11 依据 Asterinas framekernel 定义（APSys'24）定性为错误分类**：策略放 services（Service OS）是 framekernel 标准设计（Asterinas aster-kernel 承担 all OS policy），OSTD Minimalism 约束的是 Framework 层最小化而非 Services 策略量——**"策略上移 vs Minimalism"冲突不存在**。P2-B 实际内容 = framework 约 78 处 `pub use crate::kernel::services::*` re-export 壳（config/credo/driver/nestfs 等），属 **F2 反向依赖**（framework 引用 services 类型）。
@@ -87,7 +87,8 @@
 - **B09-10. 28 处 TODO(TRACK-...) 注释（H.3.5 P2-C）**
   - 描述：28 处 `TODO(TRACK-...)` 注释违反 AGENTS.md §9.4"不留 TODO"；其中 ISSUE-SRC-002（Ed25519）等已在分册 07 登记。
   - 方案：逐一处置——实装、转 plan 任务或删除；完成后 grep 复核为 0。
-  - 状态：[X]（2026-09-14 处置完成，全仓 grep `TODO(TRACK-` **0 残留**；普通 `TODO` **尚余 1 处**——`framework/net/init.rs:610` 的 skb 投递 TODO（即 D-5「net-init」所指项，依赖 NAPI/中断驱动模式，状态 []），故「普通 `TODO` 均 0 残留」表述失实，已订正）：
+  - 状态：[X]（2026-09-14 处置完成，全仓 grep `TODO(TRACK-` **0 残留**；普通 `TODO` **尚余 1 处**——`framework/net/init.rs:610` 的 skb 投递 TODO（即 D-5「net-init」所指项，依赖 NAPI/中断驱动模式，状态 []），故「普通 `TODO` 均 0 残留」表述失实，已订正）
+    - **2026-09-26 实测复核**：`grep -rn "TODO(TRACK-" src/ host-tests/` ⇒ **0 命中**；`grep -rn TODO src/kernel --include=*.rs`（排除 vendored smoltcp）⇒ **0 命中**——上文所记「普通 TODO 尚余 1 处（`framework/net/init.rs:610`）」**已随 D-5/D-7 处置消除**，全仓 TODO 现为 0 残留。
     - **8 处过时删除**（功能已实装，注释残留）：framework/syscall/types.rs 的 mremap/getitimer/setitimer/clone/hard links/symlinks/fchown/times（dispatch 均已接线）。
     - **16 处转 plan**（简化实现 + 完整实装待办，代码删 TODO 标记保留简化实现）：tickless hrtimer 集成、uefi EFI_SYSTEM_TABLE 解析 + SetTime、power 调频压 + S3 挂起、shadow_stack PMM 物理页 + CR4 #GP 检测、signal 处理注册/blocked 位图/分发 ×4、idt CPUID 完整解析、iouring VFS fd 表/网络异步/超时/缓冲区注册 ×4。
     - **2 处 host-tests 注释引用更新**：td11_12_13（历史清理描述）、mmap_pwm_test（TRACK-5B3EBC 失同步引用，内核 TRACK- 已清零）。
@@ -111,6 +112,7 @@
     - R4 struct 实际 **1 项**（DomainFlags，与文档一致）
   - 方案：按 2026-09-09 治理决策三分层（DECISION-052）重排 B09-05/06/07 处置——垃圾删除 / 已实装接线 / 未来预留迁移文档。R1 445 项高密度文件 Top：apic.rs 19、xhci.rs 14、display/controller.rs 11、nestfs/dedup.rs 10、aarch64/mmu.rs 9、credo/identity.rs 9、cgroup.rs 8。
   - 状态：[]（2026-09-15 注记：dispatch 层三分类数据已由 [syscall-dispatch-cleanup.md](archive/syscall-dispatch-cleanup.md) B2 audit 刷新——framework 回退层 65 编号 = 27 机制独有（QX_*）/24 未迁移（登记）/14 ENOSYS 哨兵；全量 R1/R3 清单刷新仍随 B09-06/07 处置时更新）
+  - **2026-09-26 全量实测刷新（`python3 scripts/audit_unwired_pub_fn.py`）**：扫描 619 文件 / pub fn 5874（豁免 1165）⇒ **R2 = 7（CRITICAL，见 B09-05）/ R1 = 439（HIGH 8 未分类 + INFO 431 已分类）/ R3 = 0（WARN）/ R4 = 1（INFO，DomainFlags）**，汇总 `CRITICAL=7 / HIGH=8 / WARN=0 / INFO=432`。**新增未分类 HIGH 8 项**（B-6 区块外，待甄别）：`mm/kpti_aarch64.rs:118 kpti_kernel_ttbr0`、`:130 kpti_user_ttbr0`、`mm/kmalloc_slab.rs:76 slab_kmalloc`、`:90 slab_kfree`、`services/fs/nestfs/txg.rs:243 add_free_to_open`、`:249 add_io_to_open`、`services/driver/char/serial.rs:468 send_str`、`services/driver/char/vga.rs:370 write_string_at`（均实测 `total=1, decl=1, cross=0`，即全仓零调用）。其中 `kpti_aarch64` / `kmalloc_slab` 属 **TCB 核心（MMU / 内存分配器）** ⇒ 按裁定六**上报待裁，不自主处置**。
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
   - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
@@ -131,7 +133,7 @@
     - **批次 4**（framework proc/timer/ipc/chitin/driver/net + services barrier/driver，18+ 处）：删 5（elf/dynamic/driver·framework/driver·mod/keyboard）；迁 ~25——sched.rs（scheduler_ex 10 缺）、tick/calibration 已有载体注册补缺、test_ipc（ipc/mod msgq/signal_validation + stress_tests 缺失项）、新 chitin 载体（mod 13 kernel_test / composite 2 / user_driver 2 / devtree 补）、driver.rs（xhci 12 kernel_test / usb_core 5）、新 test_net 或修 net.rs 死载（net/init 7 纯逻辑 + 3 kernel_test、iface_trait 16）、services barrier 新载体 ×5（recovery_policy/cascade/audit_export/attribution/health_monitor）、dhcp_policy、proc/signal、display/dp 30（kernel_test 无 DpIo fallback）
     - **批次 5**：全量验证——双架构 0w0e + `make test-host` + QEMU + 断言审计（断言总数 ≥ 迁移前、逐载体 0 丢失）+ `grep '#[cfg(test)]'` 复核源码 0 残留
   - 验证：迁移后双架构 0w0e + `make test-host`（host_test_runner_main 全量注册无 Fail）+ QEMU（kernel_test 硬件路径）；断言审计——迁移后断言总数 ≥ 迁移前，逐载体比对 0 丢失。
-  - 状态：[ ]（2026-09-11 **整体回退**：批次 1 + 波 1B 代码改动已全部还原至 HEAD `94ba4281`，工作区仅剩本规划文档改动。下文"批次 1 完成/波 1B 完成/漏删修复/验证补全"均为**历史验证记录**（代码已不生效），保留作为外部委托人交接依据——判据/批次计划/处置清单/盲区登记全部有效，**全部实施待委托人**）（2026-09-25 注记：承接工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛；本条**终态形态改由该文件的 DECISION-080 定义**，其批次 2–5 载体迁移计划不再执行，仅余 UT-07 双轨收敛待办）
+  - 状态：[X]（2026-09-26 收口：承接工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 UT-01..UT-10 **全部完成并过 §2.3 六门槛**，UT-07 已置 `[X]`（该文件「孤儿清理 —— UT-07 收尾」：A 类 10 组 / A′ 类 5 组 / C 类 16 组均已收敛，B 类 4 组按裁定保留 `kernel_test` 载体，无残留待办）；本条终态形态由该文件 DECISION-080 定义，本册不再推进）〔历史记录（2026-09-11 **整体回退**：批次 1 + 波 1B 代码改动已全部还原至 HEAD `94ba4281`，工作区仅剩本规划文档改动。下文"批次 1 完成/波 1B 完成/漏删修复/验证补全"均为**历史验证记录**（代码已不生效），保留作为外部委托人交接依据——判据/批次计划/处置清单/盲区登记全部有效，**全部实施待委托人**）（2026-09-25 注记：承接工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛；本条**终态形态改由该文件的 DECISION-080 定义**，其批次 2–5 载体迁移计划不再执行，仅余 UT-07 双轨收敛待办）
     - **方向变更（本轮，用户重新裁定）**：本条"源码零 `#[cfg(test)]`"的方向已变更为**方案 A 完整版** —— 保留内联 `cfg(test)` 作为纯逻辑断言的唯一归属（由新增的 AGENTS §2.3 第 6 条 host 侧门槛强制执行），硬件路径断言留在 `kernel_test` 载体。变更理由：本条立论前提「`cfg(test)` 不可用」（DECISION-021 / E0152 双 core lang item 冲突）经实测已消失。裁定与实施计划见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 DECISION-080；本文档保留为交接依据与方向变更的依据链，其**批次 2–5 的载体迁移计划不再执行**。
     - **批次 1（12 处，host 352 PASSED / kernel_test 0w0e / clippy 0 新增）**：
       - 删除残留副本 5：sync/mutex、sync/atomic、sync/seqlock、sync/rwlock、cpu/mod（源 effective_family 0x0F bug 随删消除，载体已修正 0x15）
@@ -162,7 +164,8 @@
 - **B09-11. framework→services 反向依赖**
   - 描述：实测 framework→services 反向依赖 84 文件 / 146 处（TOP 20 #19、决策点 D8），vfs/api.rs 严重违反 F2 单向数据流。
   - 方案：按子模块分类治理（决策点 D8），DECISION-039 仅修 userctx 一处，覆盖不足。
-  - 状态：[] (2026-08-31 注记：**部分进展**——vfs/api.rs 反向依赖已由 B09-12 治理（api.rs 3 处直 use 消除，见 B09-12 状态）；但 framework 仍有 ~10 处直接 `use crate::kernel::services`（net/syscall.rs、sm_fi.rs、user_proc.rs、sendfile.rs 等）+ ~70 处 pub use re-export 壳，全量治理未完成，详见 B09-13)
+  - 状态：[X] (2026-08-31 注记：**部分进展**——vfs/api.rs 反向依赖已由 B09-12 治理（api.rs 3 处直 use 消除，见 B09-12 状态）；但 framework 仍有 ~10 处直接 `use crate::kernel::services`（net/syscall.rs、sm_fi.rs、user_proc.rs、sendfile.rs 等）+ ~70 处 pub use re-export 壳，全量治理未完成，详见 B09-13)
+  - **2026-09-26 实测闭环**：`grep -rn "crate::services" src/kernel/framework --include=*.rs` ⇒ 命中 **56 处 / 12 文件**，其中**生产路径 0 处**——56 处全部落在测试载体（`framework/tests/{test_devfs,test_ipc,test_uds,test_config,test_nestfs,test_nestfs_ext,test_pwm,sys,test_vfs,mod}.rs`）与 `framework/ipc/mod.rs` 的 `#[cfg(test)] mod tests` / `framework/ipc/stress_tests.rs`（测试代码），另含 `framework/config/*` 中仅描述壳已删的**注释文字**（非代码依赖）。⇒ framework→services 生产反向依赖**已清零**，治理由 [framekernel-paradigm-enforcement.md](../plan/framekernel-paradigm-enforcement.md) §6.5（壳删除 82 文件）+ §7（trait 化改造）完成。其余 dead 项见 B09-13。
   - 2026-09-11 全量复查（grep `kernel::services` 含内联路径）：**当前 136 处 / 78 文件**（较登记 146/84 少 10 处/6 文件，B09-12 治理后自然减少）——子模块分布 ipc 31、fs 24、syscall 20、proc 14、net 11、config 10、credo 6、wasm 5、driver 3、mm 2、sync/io/barrier 各 1（tests 7 为测试载体访问 services 真实代码，非生产路径）；形态：pub use 壳 ~70+ 处 + 直接 use ~20 处（sm_fi/syscall/sendfile/user_proc 为生产重点）+ tests 7
 
 ### 待办
@@ -176,31 +179,32 @@
 - **B09-13. framework→services 全量反向依赖清单与治理（D8）**
   - 描述：**136 处反向依赖 / 78 文件**（2026-09-11 全量复查，grep `kernel::services` 含内联路径；原登记 146 处，B09-12 治理后减少）按子模块分类（ipc 31、fs 24、syscall 20、proc 14、net 11、config 10、credo 6、wasm 5、driver 3、mm 2、sync/io/barrier 1）；含 B09-09 并入的 ~78 处 pub use re-export 壳。
   - 方案：建立清单 → 分类（类型迁回 / 顶层 re-export / 接口抽象）→ 分批治理；**20 处直接 use（sm_fi/syscall/sendfile/user_proc 等）为生产治理重点，优先于 re-export 壳**；每批跑 F2 门禁（分册 01 修复后）+ audit_services_boundary 0 违规。
-  - 状态：[]（2026-09-11 **优先级让位**：本条目被独立工程 [framekernel-paradigm-enforcement.md](../plan/framekernel-paradigm-enforcement.md) §7 吸收——该工程优先于分册 9，含逐文件下沉清单 + trait 化改造 + 残留调用点接口方案；实施并入该工程）
+  - 状态：[X]（2026-09-11 **优先级让位**：本条目被独立工程 [framekernel-paradigm-enforcement.md](../plan/framekernel-paradigm-enforcement.md) §7 吸收——该工程优先于分册 9，含逐文件下沉清单 + trait 化改造 + 残留调用点接口方案；实施并入该工程）
+  - **2026-09-26 实测闭环（接收方已交付 ⇒ 本项闭合）**：与 B09-11 同一实测——framework 子树 `crate::services` 命中 56 处**全在测试载体与注释**，**生产反向依赖 0 处**；B09-09 并入的 ~78 处 pub use 壳亦已删除（`framework/config/mod.rs` 等注释明载「framework 侧壳已删除，由 services::config 提供」）。⇒ 全量清单目标（生产路径 0 反向依赖）达成，**无需重复施工**。
 
 - **B09-14. F3 循环依赖门禁接入**
   - 描述：audit_coupling.py 修复（分册 01）后接入 CI，新增代码禁止引入模块间循环依赖。
   - 方案：见分册 01 coupling/invariants 接入项。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 实测：已由分册 01 / B01-18 接入 CI——[.github/workflows/ci-lint.yml](../../.github/workflows/ci-lint.yml#L271-L300) **Job 8 `audit-coupling`** 运行 `scripts/audit_coupling.py`，退出码语义 HIGH/severe_circular > 0 即 `exit 1`；且 B01-25 已移除 `|| true` 掩盖退出码的 fail-open 写法（源码摘录 `COUPLING_RC=$?` … `if [ "$COUPLING_RC" -ne 0 ]`），**fail-closed**；`ci/audit.sh` 亦联动 `audit_invariants.py`）
 
 ### 验证门槛
 
 - **B09-15. 死代码回归**
   - 描述：每批删除后跑双架构编译（0 error/0 warning）+ host-tests。
   - 方案：`./ci/build.sh all` + `make test-host`。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 实测：本册各批均已执行该回归——D-9-6 改动批次 `./ci/build.sh all` 双架构 0w0e + `make test-host` 全过；**属常驻流程项**，后续任何新增删除项仍须逐批执行）
 
 - **B09-16. 边界回归**
   - 描述：F2 治理后跑修复版 `audit_services_boundary.py` 0 违规。
   - 方案：分册 01 完成后的门禁脚本。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 实测：`python3 scripts/audit_services_boundary.py` 退出码 0、`>>> services 边界检查通过 <<<`、报告 `target/audit/services-boundary.json`；与 B09-11/B09-13 的生产反向依赖清零结论一致）
 
 ### 决策记录
 
 - **DECISION-051**
   - 描述：死代码治理采用"审计清单驱动"方式，每批删除后立即跑验证门槛，不做无目标的大规模清扫。
   - 方案：R2 表 A 接线优先，表 D 删除次之，表 R 核实后处置。
-  - 状态：[]
+  - 状态：[X]（2026-09-26：**已按此执行并生效**——T5 逐项甄别以「试删 + 既有五门槛全量（任一新维硬失败即回退）」为判据（见 B09-06 历次修订），本册 D-9-6 批次同遵循；R2 表 A/R/D 三分口径随 B09-17 编号归位与 T5 甄别失效，余项归 D-2）
 
 - **DECISION-052（2026-09-09 用户决策：死代码/TODO 三层治理模式）**
   - 描述：死代码与 TODO **不一律消除**——部分死代码/TODO 是未来内核真实需要的功能记录（如 QX_* 预留 API 面、TRACK- 追踪的功能规划），全消除（无论删除或实装）会破坏记录。
@@ -347,11 +351,11 @@
 
 | 项 | 删除理由 | 状态 |
 |---|---|---|
-| **mremap TODO(TRACK-90BFB0)**（[syscall/types.rs:72](../../src/kernel/services/syscall/types.rs#L72)）| ✅ 已确认——dispatch 已实装 `mremap_syscall`（[dispatch.rs:228](../../src/kernel/framework/syscall/dispatch.rs#L228)），TODO 过期 | [] |
-| **R4 DomainFlags**（[credo/types.rs:101](../../src/kernel/services/credo/types.rs#L101)）| 零引用，仅定义一处——按"内核需不需要"判据核实：credo domain 体系需要 → 转 D-1/D-4；不需要 → 删 | [] |
-| **R3 trait 误报项**（D-3 核实为无用的）| 非架构预留接口，内核不需要 → 删 | [] |
+| **mremap TODO(TRACK-90BFB0)**（[syscall/types.rs:72](../../src/kernel/services/syscall/types.rs#L72)）| ✅ 已确认——dispatch 已实装 `mremap_syscall`（[dispatch.rs:228](../../src/kernel/framework/syscall/dispatch.rs#L228)），TODO 过期 | [X]（2026-09-26 实测：`grep -rn "TODO(TRACK-" src/ host-tests/` **0 命中**，注释已删）|
+| **R4 DomainFlags**（[credo/types.rs:101](../../src/kernel/services/credo/types.rs#L101)）| 零引用，仅定义一处——按"内核需不需要"判据核实：credo domain 体系需要 → 转 D-1/D-4；不需要 → 删 | []（2026-09-26 实测仍零引用，见 B09-08 待裁）|
+| **R3 trait 误报项**（D-3 核实为无用的）| 非架构预留接口，内核不需要 → 删 | [X]（D-3 / T4 已核实 7 项为纯预留抽象 ⇒ 直接删；实测 R3 = 0，见 B09-07）|
 | **R1 筛出的无用函数**（D-4 核实为无价值的）| 内核不需要 → 删（如部分 apic/xhci 只读操作）| []（批 1 完成 2026-09-18：删 9 项「重复能力/等价公共入口/废弃兼容壳」，R1 447 → 438；实测确认其余主体为 API 面预留，不再按"无价值"删——详见 [syscall-followup.md](syscall-followup.md) T5 实施记录）|
-| **F9 豁免残留**（已激活代码上的 allow）| 对应代码已接线 → 删豁免（limits.rs 等）| [] |
+| **F9 豁免残留**（已激活代码上的 allow）| 对应代码已接线 → 删豁免（limits.rs 等）| [X]（`limits.rs` 模块级 `#![allow(dead_code)]` 已删，见 B09-20；**2026-09-26 复核新增登记**：`unused` 族 allow 尚余 5 处——[lib.rs:97](../../src/kernel/lib.rs#L97) crate 级 `#![allow(unused_unsafe)]`（注「16个: 过度保守的 unsafe 块」）、lib.rs:278 `allow(unused_mut)`、lib.rs:306/308 `allow(unused_mut, unused_assignments)`（panic handler 跨架构未读变量）、[dma/engine.rs:513](../../src/kernel/framework/dma/engine.rs#L513) `cfg_attr(x86_64, allow(unused_variables))`、[ebpf_verifier.rs:29](../../src/kernel/services/debug/ebpf_verifier.rs#L29) `allow(unused_imports)`；后两者已由 B09-20 定性为"有使用者保留"，**前三者的 F9 适用边界（unused_unsafe 是否属"死代码注释"）待用户裁决**，未自主处置）|
 
 > 2026-09-09 判据更新注记：**ext2/exfat/nestfs 时间戳 TODO 3 处经"内核需不需要"判据确认 = 内核需要**（POSIX stat mtime 语义完善项）→ **转 D-5 转正式**（实现治理，低优先级），不再列入直接删待核实。DomainFlags/R3/R1 待核实项按"内核需不需要"判据核实后回填本表。
 
@@ -410,7 +414,7 @@
 - **D-9-4. `Makefile` 的 `test-host` 目标退出码恒 0（门槛 fail-open）**
   - 描述：`Makefile` 的 `test-host` 目标（约 414-420 行）末尾带 `; true`，**退出码恒 0**，即该门槛 fail-open（与「审计脚本 fail-closed」原则相悖）；本次实测：`test-host` 目标退出码 0，但报告内容本身为 99 个 `test result: ok`、0 failed。
   - 方案：移除 `; true`，让 `cargo test` 退出码直接决定目标成败（fail-closed）。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 实测：已修复——[Makefile](../../Makefile#L424-L430) 的 `test-host` 配方现为 `cargo test --quiet > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status;`，**无 `; true`**，退出码由 `cargo test` 直接决定（fail-closed）；`test-kernel-host` 同模式亦已 fail-closed）
 
 - **D-9-5. 首次真正生效的 2 核门控路径（跨核 TLB shootdown）**
   - 描述：`vmm_x86_64.rs` 约 2007-2012 行 `smp::is_enabled() && smp::get_cpu_count() > 1` 现走 `smp::broadcast_tlb_invalidate()` 分支；2 核下是否自洽**未核实**（本次仅确认 boot 到 Ring 3 的窗口未触发）。
@@ -421,7 +425,7 @@
 - **D-9-6. `acpi.rs` MADT 日志占位串失真**
   - 描述：`arch/x86_64/acpi.rs` 约 436-441 行仍打印占位串 `LAPIC base=0xXXXXXXXX, AP count=N`，日志失真。经核实：该处把 `AP_COUNT` 读出到 `_count` 却未格式化进日志，占位串确实未被真实值替换。
   - 方案：以 `klog_info` 格式化输出真实 LAPIC base 与 `AP_COUNT` 值。
-  - 状态：[]
+  - 状态：[X]（2026-09-26 实装：[acpi.rs](../../src/kernel/framework/arch/x86_64/acpi.rs#L432-L438) 的 `parse_madt_entries` 结尾删除占位串 FFI 调用与 `_count` 死读，改为 `crate::klog_info!(Acpi, "[ACPI] MADT: LAPIC base=0x{:X}, AP count={}", lapic_base, AP_COUNT.load(Ordering::Acquire))`；`_lapic_base` 改名为实际使用的 `lapic_base`，日志输出真实值；顺带移除仅因 FFI 调用而存在的 `unsafe` 块。**运行验证**：`./scripts/qemu_boot_test.sh x86_64` 串口日志实测 `0.100886 [INFO] [ACPI] [ACPI] MADT: LAPIC base=0xFEE00000, AP count=1`——占位串已消失，输出真实值）
 
 - **D-9-7. aarch64 与 x86_64 的 `smp` 行为不对称**
   - 描述：x86_64 有生产 CPU 上线路径——`arch/x86_64/smp_init.rs` 的 `ap_entry` 调用 `smp::register_cpu`（`smp_init.rs:310`），使 `SMP_ENABLED=true`/`CPU_COUNT=2`；aarch64 侧无对应路径——`arch/aarch64/` 全目录无 `register_cpu` / `ap_entry` / `smp_init` 调用点（`send_ipi`/`broadcast_ipi` 虽已由 GICv3 SGI 实装，但无 AP 上线路径调用 `register_cpu`）⇒ aarch64 侧 `SMP_ENABLED` 仍恒 false、`CPU_COUNT` 恒 1。
