@@ -101,94 +101,10 @@ pub fn kpti_is_active() -> bool {
     KPTI_GLOBALS.ready.load(Ordering::Acquire) != 0
 }
 
-/// 返回 trampoline TTBR1 物理地址 (供异常入口汇编读取).
-#[inline(always)]
-pub fn kpti_trampoline_ttbr1() -> u64 {
-    KPTI_GLOBALS.tramp_ttbr1.load(Ordering::Acquire)
-}
-
-/// 返回完整内核 TTBR1 物理地址.
-#[inline(always)]
-pub fn kpti_kernel_ttbr1() -> u64 {
-    KPTI_GLOBALS.kernel_ttbr1.load(Ordering::Acquire)
-}
-
-/// 返回内核恒等 TTBR0 物理地址.
-#[inline(always)]
-pub fn kpti_kernel_ttbr0() -> u64 {
-    KPTI_GLOBALS.kernel_ttbr0.load(Ordering::Acquire)
-}
-
 /// 记录当前用户进程 TTBR0 物理地址 (由 `enter_user` 在进入 EL0 前调用).
 #[inline(always)]
 pub fn kpti_set_user_ttbr0(ttbr0: u64) {
     KPTI_GLOBALS.user_ttbr0.store(ttbr0, Ordering::Release);
-}
-
-/// 返回当前用户进程 TTBR0 物理地址.
-#[inline(always)]
-pub fn kpti_user_ttbr0() -> u64 {
-    KPTI_GLOBALS.user_ttbr0.load(Ordering::Acquire)
-}
-
-/// 进入内核态: 切换 TTBR0/TTBR1 到完整内核地址空间.
-///
-/// 异常入口汇编 (`handle_el0_*`) 已内联同一序列; 本函数供 Rust 侧诊断/兜底使用.
-///
-/// # Safety
-///
-/// 调用方必须是异常入口 trampoline (EL0→EL1 切换的第一时间), 且切换后
-/// 的取指必须位于高半区映射内.
-#[inline(never)]
-pub unsafe fn kpti_enter_kernel() {
-    let kernel_ttbr0 = KPTI_GLOBALS.kernel_ttbr0.load(Ordering::Acquire);
-    let kernel_ttbr1 = KPTI_GLOBALS.kernel_ttbr1.load(Ordering::Acquire);
-    if kernel_ttbr0 == 0 || kernel_ttbr1 == 0 {
-        return;
-    }
-    // SAFETY: 写入 TTBR0/TTBR1_EL1 是特权操作; 两个值来自 init 阶段可信来源.
-    unsafe {
-        core::arch::asm!(
-            "dsb ish",
-            "msr ttbr0_el1, {0}",
-            "msr ttbr1_el1, {1}",
-            "isb",
-            "tlbi vmalle1is",
-            "dsb ish",
-            "isb",
-            in(reg) kernel_ttbr0,
-            in(reg) kernel_ttbr1,
-        );
-    }
-}
-
-/// 返回用户态: 切换 TTBR0/TTBR1 到 (用户页表 + trampoline 表).
-///
-/// # Safety
-///
-/// 调用方必须是异常出口 trampoline (即将 eret 返回 EL0), 且所在代码
-/// 必须位于高半区 (.vectors); 调用方随后立即 eret.
-#[inline(never)]
-pub unsafe fn kpti_exit_to_user() {
-    let user_ttbr0 = KPTI_GLOBALS.user_ttbr0.load(Ordering::Acquire);
-    let tramp_ttbr1 = KPTI_GLOBALS.tramp_ttbr1.load(Ordering::Acquire);
-    if user_ttbr0 == 0 || tramp_ttbr1 == 0 {
-        return;
-    }
-    // SAFETY: 写入 TTBR0/TTBR1_EL1 是特权操作; 两个值来自 kernel→user 边界可信来源.
-    unsafe {
-        core::arch::asm!(
-            "dsb ish",
-            "msr ttbr1_el1, {0}",
-            "msr ttbr0_el1, {1}",
-            "isb",
-            "tlbi vmalle1is",
-            "dsb ish",
-            "isb",
-            in(reg) tramp_ttbr1,
-            in(reg) user_ttbr0,
-        );
-    }
 }
 
 // ── 初始化 ────────────────────────────────────────────────────────

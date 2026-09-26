@@ -147,9 +147,11 @@ fn kernel_error_exposes_all_fs_posix_variants() {
 #[test]
 fn usages_all_use_kernel_wrapper() {
     let src = read(RAMFS_RS);
-    // 至少 10 处用 FsError::Kernel(KernelError::...) 包装
-    // (7×NotFound + 1×NotADirectory + 3×InvalidArgument + 1×NameTooLong = 12,
-    //  减去 doc 注释中 1 行 引用 = 11 实际, 取保守下界 10)
+    // 至少 8 处用 FsError::Kernel(KernelError::...) 包装
+    // (7×NotFound + 1×NotADirectory + 1×InvalidArgument = 9,
+    //  减去 doc 注释中 1 行 引用 = 8 实际.
+    //  原下界 10 含已删死的 ramfs 辅助 split_path/validate_path 之 3 处
+    //  (2×InvalidArgument + 1×NameTooLong), 随 B09 冗余定型删除后下调为 8)
     // rustfmt 拆 FsError::Kernel(crate::...::KernelError::Xxx) 为多行; 鲁棒匹配
     // 拆行后: "FsError::Kernel(" 在前, "KernelError::" 在后, ")" 闭合.
     // 改为独立子串 count (klog 风格).
@@ -157,8 +159,8 @@ fn usages_all_use_kernel_wrapper() {
     // 鲁棒计数: FsError::Kernel(\n (跨行) ...KernelError::\n 模式; 用前缀 (FsError::Kernel( 单 token) + 后缀 (KernelError:: 单 token) 最小值.
     let kernel_count = src.matches("FsError::Kernel(").count().min(src.matches("KernelError::").count());
     assert!(
-        kernel_count >= 10,
-        "FsError 至少应有 10 处用 Kernel(KernelError::...) 包装, 实际: {}",
+        kernel_count >= 8,
+        "FsError 至少应有 8 处用 Kernel(KernelError::...) 包装, 实际: {}",
         kernel_count
     );
 }

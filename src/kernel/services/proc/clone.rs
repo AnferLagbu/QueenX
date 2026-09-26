@@ -94,9 +94,10 @@ pub fn set_robust_list_syscall(head: u64, len: u64) -> Result<usize, Errno> {
 /// `pid == 0` 表示当前进程. `head_ptr`/`len_ptr` 为 NULL 时跳过对应写回
 /// (Linux 允许).
 ///
-// SIMPLIFIED: 不做跨进程读权限校验 (Linux 要求 PTRACE_MODE_READ, 当前无
-// ptrace/uid 模型); 影响面: 任意进程可探测他进程是否登记 robust list
-// (仅元数据, 非内存内容); 何时需扩展: 引入 ptrace 权限模型后补 EPERM 判定.
+// SIMPLIFIED: 不做跨进程读权限校验 (Linux 要求 PTRACE_MODE_READ); 当前缺
+// ptrace attach 关系跟踪 (uid/capability 模型已具备, 无统一判定入口);
+// 影响面: 任意进程可探测他进程是否登记 robust list (仅元数据, 非内存内容);
+// 何时需扩展: 引入 ptrace attach 关系跟踪与统一判定入口后补 EPERM 判定.
 ///
 /// # Errors
 ///

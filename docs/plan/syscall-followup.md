@@ -633,8 +633,8 @@ T7 (预存登记)
 |---|---|---|---|
 | 删候选 | **0** | 四次修订 2 − 试删删除 1（`write_log_line`）− 判据待补退桶 1（`format_duration`，A-6）⇒ **清零（裁定四.1 达成）** | ✅ 是 |
 | 完整性保留（原「硬件原语完整性保留」） | **75** | 43（41 硬件原语＝x86_64 侧 31 + aarch64 侧 10，优先级裁定见 A-1；+ 安全面「族残缺」档 2 `ct_eq_salt`/`ct_eq_password`）+ **32**（**六次修订**：B-5.2 判据待补补齐后定桶，G1-G8 明细见 B-5.2） | ✅ 是（**仅登记**，不施工） |
-| 待裁 | **2** | **六次修订**：47 − 13（B-5.1 等路线图 ⇒ 未来功能）− 32（B-5.2 ⇒ 完整性保留）= **2**（`split_path`/`validate_path`，**安全面待 T3**）；**三字段齐备，无裸待裁（裁定四.2 达成）** | ✅ 是（**裁定四.2 验收**） |
-| **T5 内合计** | **77** | **算术闭合**：0 + 75 + 2 = 77 ＝ 436 − 0（接线已清零）− 359（未来功能）；六次修订前为 90（＝438−1−8−339）；**甲批 C-1 后为 436 − 0 − 359**（见 B-8） | — |
+| 待裁 | **0** | **七次修订**：六次修订后余 **2**（`split_path`/`validate_path`，安全面待 T3）⇒ **已裁决删除**（裁定七证据链定型「冗余」+ reviewer 授权解除裁定六阻塞，见 B-5.3 / B-10.8）；**三字段齐备，无裸待裁（裁定四.2 达成）** | ✅ 是（**裁定四.2 验收**） |
+| **T5 内合计** | **75** | **算术闭合**：0 + 75 + 0 = 75 ＝ 436 − 2（**七次修订**：`split_path`/`validate_path` 已删除, 退出甄别池）− 359（未来功能）；六次修订前为 90（＝438−1−8−339）；**甲批 C-1 后为 436 − 0 − 359**（见 B-8） | — |
 | — 接线 | **0** | 8 项**已全部处置**（**甲批 C-1**，见 B-8）：1 项接线落地（`set_fd`）+ 7 项「仅缺此半」判据不成立 ⇒ 转「未来功能」 | ❌ **否**——已完结（原「功能接线批次」，与 T3 联动） |
 | — 未来功能（DECISION-052 第三层） | **359** | 339（来源合成：原「接线」剩余 134 ＝142−8，排除法所得，非实测 + 原「预留」205）+ **13**（**六次修订**：B-5.1 等路线图转入——CET 5 / NUMA 5 / PCID 1 / IOMMU-DMAR 2）+ **7**（**甲批 C-1**：判据不成立退桶，见 B-8.2） | ❌ **否**——移出，归 **DECISION-052 第三层** |
 
@@ -882,9 +882,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**433 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**429 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝2026-09-26 分册 9 批次 3 R2 接线**（移除 1 项已接线条目 `services/proc/signal.rs::sigaltstack_syscall`；逐项依据见 **B-10.6**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝分册 9 批次 3/4 后续「七次修订裁定落地」**（移除 4 项已删除条目：`kpti_aarch64.rs::kpti_kernel_ttbr1` / `::kpti_trampoline_ttbr1`、`services/fs/ramfs.rs::split_path` / `::validate_path`；逐项依据见 **B-10.8**；上一轮为批次 3 R2 接线移除 `services/proc/signal.rs::sigaltstack_syscall`，见 **B-10.6**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -1056,8 +1056,6 @@ src/kernel/framework/mm/kpti.rs::invpcid_flush_single
 src/kernel/framework/mm/kpti.rs::kpti_kernel_pml4
 src/kernel/framework/mm/kpti.rs::kpti_user_pml4_or_kernel
 src/kernel/framework/mm/kpti.rs::pcid_is_enabled
-src/kernel/framework/mm/kpti_aarch64.rs::kpti_kernel_ttbr1
-src/kernel/framework/mm/kpti_aarch64.rs::kpti_trampoline_ttbr1
 src/kernel/framework/mm/numa.rs::all_nodes
 src/kernel/framework/mm/numa.rs::best_alloc_node
 src/kernel/framework/mm/numa.rs::contains_cpu
@@ -1279,8 +1277,6 @@ src/kernel/services/fs/process_fd_table.rs::clear_non_cloexec
 src/kernel/services/fs/process_fd_table.rs::close_cloexec_fds
 src/kernel/services/fs/process_fd_table.rs::get_fd
 src/kernel/services/fs/ramfs.rs::is_read_only
-src/kernel/services/fs/ramfs.rs::split_path
-src/kernel/services/fs/ramfs.rs::validate_path
 src/kernel/services/fs/sysfs.rs::has_node
 src/kernel/services/fs/sysfs.rs::mount_sysfs
 src/kernel/services/fs/sysfs.rs::umount_sysfs
@@ -1526,8 +1522,6 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 **B-10.5 实测计数（脚本正向复跑）**
 
 - 脚本：`python3 scripts/audit_unwired_pub_fn.py` ⇒ `已分类清单 434 项` / `[HIGH] R1 未分类零引用 pub fn: **4 项**`（＝ B-10.3 的 kpti ×2 + kmalloc_slab ×2）/ 汇总 **`CRITICAL=7 / HIGH=4 / WARN=0 / INFO=435`**（`rc=0`；CRITICAL 7 为 R2 预存未接线 syscall，与本批无关）。
-- R1 总数守恒：**438 ＝ 434（INFO）+ 4（HIGH）**（本批**未改变零引用事实**，仅调整分级与区块条目）。
-- 对 B-9.3 的时序说明：B-9.3 记录的「HIGH 0 / INFO 435 / 清单 436」为**甲批后基线**；其后 UT-07 收敛与本次 D-9-6 改动使若干条目接线 / 遮蔽 / 消失，故本期基线为「HIGH 4 / INFO 435 / 清单 434」。
 
 **B-10.6 R2 接线（分册 9 批次 3；R2 7 → 2 / B-6 移除 1 项 ⇒ `433`）**
 
@@ -1557,6 +1551,19 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 - **新增 syscall 编号记录**：`SYS_CREDO_GET_DOMAIN_FLAGS = 414` / `SYS_CREDO_SET_DOMAIN_FLAGS = 415`（**QX 独有功能** —— Linux 无对应 syscall，沿用 `SYS_CREDO_*` 族既有编号段；`416-419` 仍为保留号）。二者**均已 dispatch**，非 R2 范畴；编译期 `PRIVATE_NUMS` 断言同步追加。
 - **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`**。R4 **1 → 0**；`扫描 SYS_/QX_ 编号 231`（批次 3 为 229，+2 ＝ 本轮新增）且 `已 dispatch 229 → 231` 全部命中。
 - **B-6 区块同步**：**无需同步**（清单仍 `433` 项）——本轮新增的 `proc/domain.rs::{domain_gate_check,domain_flags_get,domain_flags_set}` 与 `services/credo/domain.rs::{domain_flags_get_syscall,domain_flags_set_syscall}` **均已被引用**（前者被 framework dispatch / services 策略消费），非零引用，不入 B-6。
+
+**B-10.8 裁定落地（七次修订：TCB 4 项 + 安全面 2 项）**
+
+| 项 | 裁定 | 落地 |
+|---|---|---|
+| `kpti_aarch64.rs::kpti_kernel_ttbr0` / `::kpti_user_ttbr0` | B-10.3 候选 ② **删除** | **扩至整族删除**：4 getter（+ 同族已在 B-6 区块的 `kpti_kernel_ttbr1` / `kpti_trampoline_ttbr1`）+ `kpti_enter_kernel` / `kpti_exit_to_user` 对。**机制本身保留**（`KPTI_GLOBALS` 由异常入口/出口汇编按 `offset_of!` 锁定偏移直读；`kpti_is_active` / `kpti_set_user_ttbr0` / `kpti_init` / `kpti_trampoline_ttbr1_or_kernel` 全在用）。**B 条件（符号级零消费）已核实**：全仓无 `.S` / `.ld` / `global_asm!` 按名引用上述各项 |
+| `kmalloc_slab.rs::slab_kmalloc` / `::slab_kfree` | B-10.3 候选 ① 接线 / ② 删除 —— **仍挂起** | 只读核实发现删除面远超原估（`slab.rs` 的 `KmemCache` 唯一消费者即本模块；`slab_trait.rs` 查询侧全死但**注册侧 `services/mm/slab_policy.rs` 为活代码**，属 T2-3「策略-机制分离」架构面；`alloc/slab_alloc.rs` trait 面）⇒ 超出「3 文件 / 5 入口」授权范围，**不自主处置**，另单列裁定 |
+| `services/fs/ramfs.rs::split_path` / `::validate_path` | 定型「冗余」+ reviewer 授权 ⇒ **删除** | 三合一判据全过（零引用 + 下层 VFS 等价校验 + services 层非 API/FFI/硬件原语面）；连带 `VFS_MAX_PATH` / `alloc::string::String` 去接线、host-tests `td18` 源文本下界 10 → 8 |
+
+- **B-6 区块同步**：移除 4 行（`kpti_aarch64` ttbr1 ×2 + `ramfs` ×2）⇒ 已分类清单 433 → **429** 项（脚本实测口径）。
+- **门槛**：双架构 0w0e / fmt / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ 核心审计（SAFETY 1937 → **1933**，覆盖仍 100%）/ host-tests 全绿 / kernel-host **817 passed 0 failed** / QEMU `kernel_test` exit 33 —— 全过。
+- **R1 实测（脚本正向复跑）**：`已分类清单 429 项` / 汇总 **`CRITICAL=2 / HIGH=2 / WARN=0 / INFO=429`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关；HIGH 4 → 2，余 2 项为 `kmalloc_slab.rs` 孤岛）。**零引用事实随删除同步核销**，非仅改分级。
+- 对 B-9.3 的时序说明：B-9.3 记录的「HIGH 0 / INFO 435 / 清单 436」为**甲批后基线**；其后 UT-07 收敛、批次 3/4 接线实装与本次 D-9-6 改动使若干条目接线 / 遮蔽 / 消失，故本期基线为「HIGH 2 / INFO 429 / 清单 429」。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
@@ -1695,7 +1702,7 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 13. **六次修订（B-5 待裁 47 归零；裁定二 / 裁定四.2）**：每项均按**裁定二**落**三态**并补**三字段**（等待原因 + 解锁条件 + 责任方），**47 项逐项可追**：
     - **等路线图 13 项 ⇒ 转「未来功能」**（路线图 + 登记处均经核实，见 B-5.1）：CET 5（`set_ssp`/`alloc_kernel_shadow_stack`/`configure_user_cet_msr`/`configure_interrupt_ssp_table`/`is_ssp_valid`）、NUMA 5（`set_distance`/`best_alloc_node`/`nearest_free_node`/`contains_cpu`/`all_nodes`）、PCID 1（`pcid_is_enabled`）、IOMMU-DMAR 2（`get_dmar_drhd_list`/`get_dmar_host_addr_width`）。**台账事实订正**：`kpti.rs:23` 所引 `engineering-progress.md` §五 **已失效**（该文件在现行 `docs/plan/` 不存在；`kernel-roadmap.md` 已归档且无 PCID 条目）⇒ PCID 登记处改以 `kpti.rs:23-31` 现状清单 + [kpti-complete-project.md](kpti-complete-project.md) 为准。
     - **判据待补 32 项 ⇒ 补齐后定桶「完整性保留」**（G1-G8 八组，判据 + 三字段见 B-5.2）：G1 aarch64 门控诊断 2 / G2 feature 门控 4（`atomic_stats`）/ G3 机制·安全·TCB 3 / G4 驱动·统计·诊断 API 面 4 / G5 FS mount-unmount 面 + Plan B FD 表 9 / G6 族残缺 6 / G7 无等价入口 3 / G8 无等价格式化入口 1。**两条新事实**：① `pci_scan`（`driver/bus/pci.rs:75-90`）唯一实现体调用在用 `pci::scan_all_buses`（`pci/mod.rs:518`）但**差异能力＝逐设备 `klog_info!`** ⇒ 「能力重叠 ≠ 能力等价」，同 A-6 `format_duration` 判据；② `umount_devpts`（`devpts.rs:237-243`）**实现体误调 `mount_devpts`**（注释自述恒返回 `Ok(())`）⇒ 已登记为**已知缺陷**（缺陷档形态，无调用链且非安全面 ⇒ 不删），修正随 VFS mount 集成。
-    - **安全面待 T3 2 项 ⇒ 留待裁**（B-5.3）：`services/fs/ramfs.rs::split_path`/`validate_path`——裁定七证据链（commit `3173b5b9`）已判**非安全缺陷**、倾向「冗余」，**剩余唯一阻塞＝删除涉安全面须 reviewer 授权**（裁定六）。
+    - **安全面待 T3 2 项 ⇒ 已裁决删除（七次修订）**（B-5.3 / B-10.8）：`services/fs/ramfs.rs::split_path`/`validate_path`——裁定七证据链（commit `3173b5b9`）已判**非安全缺陷**、定型「**冗余**」；**唯一剩余阻塞（裁定六：删除涉安全面须 reviewer 授权）已解除** ⇒ 本轮删除，`VFS_MAX_PATH` / `alloc::string::String` 去接线，host-tests `td18` 源文本下界 10 → 8。
     - **桶效应（六次修订）**：完整性保留 43 → **75**（+32）；待裁 47 → **2**；未来功能 339 → **352**（+13）；**T5 内合计 90 → 77**；合计 **437**（0 + 75 + 2 + 8 + 352，算术闭合）。**裁定四.2 / 四.3 达成**；**四.1 已于五次修订达成**；**四.4（审计噪音治理）未达成** ⇒ T5 关闭挂起（见 T5-C）。**已按裁定六上报、未自主处置的潜在新增删候选**：`pci_scan`、aarch64 诊断 2 项、`format_duration`（若 reviewer 认定 `core::fmt` 等价成立）。
 
 14. **甲批 C-1 接线批次（reviewer 甲批开工单，8 项；最新口径）**：核心约束＝**每项须指明具体调用点**，「仅缺此半」是待验证断言，**找不到调用点即退「未来功能」，禁止为接线造无意义调用**。逐项核定结果（明细见 **B-8**）：

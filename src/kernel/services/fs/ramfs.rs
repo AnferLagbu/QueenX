@@ -23,7 +23,6 @@
 //! 评估日期: 2026-06-04
 //! Phase 2.2.1 任务: 文件系统迁移
 
-use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::framework::fs::ramfs::RamFsData;
@@ -33,7 +32,7 @@ pub const RAMFS_BLOCK_SIZE: usize = crate::framework::mm::PAGE_SIZE as usize;
 pub const RAMFS_MAX_NODES: usize = 256;
 pub const RAMFS_MAX_BLOCKS: usize = 2048;
 pub use crate::framework::fs::{
-    VFS_MAX_NAME, VFS_MAX_PATH, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence, VfsStat,
+    VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
 
 // ============================================================================
@@ -518,45 +517,4 @@ pub fn resolve(path: &str) -> Option<u32> {
 /// 块大小 (常量透传)
 pub const fn block_size() -> usize {
     RAMFS_BLOCK_SIZE
-}
-
-/// 辅助: 路径分割为父路径 + 文件名
-pub fn split_path(path: &str) -> Option<(&str, &str)> {
-    let path = path.trim_end_matches('/');
-    if path.is_empty() {
-        return None;
-    }
-    path.rfind('/').map_or(Some((".", path)), |pos| {
-        let parent = if pos == 0 { "/" } else { &path[..pos] };
-        let name = &path[pos + 1..];
-        if name.is_empty() {
-            None
-        } else {
-            Some((parent, name))
-        }
-    })
-}
-
-/// 辅助: 检查路径是否合法 (长度、字符)
-///
-/// # Errors
-/// 当路径为空或包含 NUL 字节时返回 `InvalidArgument`; 当路径超过 `VFS_MAX_PATH` 时返回 `NameTooLong`.
-pub fn validate_path(path: &str) -> FsResult<String> {
-    if path.is_empty() {
-        return Err(FsError::Kernel(
-            crate::services::error::KernelError::InvalidArgument,
-        ));
-    }
-    if path.len() > VFS_MAX_PATH {
-        return Err(FsError::Kernel(
-            crate::services::error::KernelError::NameTooLong,
-        ));
-    }
-    // 简化校验: 不允许 NUL 字节
-    if path.as_bytes().contains(&0) {
-        return Err(FsError::Kernel(
-            crate::services::error::KernelError::InvalidArgument,
-        ));
-    }
-    Ok(String::from(path))
 }
