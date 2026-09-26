@@ -374,7 +374,7 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
 fn parse_madt_entries(madt_ptr: u64) {
     // SAFETY: `madt_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(MadtHeader)); 只读访问
     let madt = unsafe { &*(madt_ptr as *const MadtHeader) };
-    let _lapic_base = u64::from(madt.local_apic_addr);
+    let lapic_base = u64::from(madt.local_apic_addr);
 
     let entries_start = madt_ptr as usize + core::mem::size_of::<MadtHeader>();
     let entries_end = madt_ptr as usize + madt.header.length as usize;
@@ -429,13 +429,13 @@ fn parse_madt_entries(madt_ptr: u64) {
         offset += entry.length as usize;
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        let _count = AP_COUNT.load(Ordering::Acquire);
-        crate::framework::klog::klog_info(
-            c"[ACPI] MADT: LAPIC base=0xXXXXXXXX, AP count=N".as_ptr(),
-        );
-    }
+    // 输出真实 LAPIC base 与 AP 计数 (原为占位串, 日志失真)
+    crate::klog_info!(
+        Acpi,
+        "[ACPI] MADT: LAPIC base=0x{:X}, AP count={}",
+        lapic_base,
+        AP_COUNT.load(Ordering::Acquire)
+    );
 }
 
 // ============================================================================
