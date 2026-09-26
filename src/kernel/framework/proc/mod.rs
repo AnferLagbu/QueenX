@@ -46,6 +46,8 @@ pub mod cfs;
 pub mod cgroup;
 pub mod coredump;
 pub mod cpu_queue;
+/// Credo 域级行为门控 (`DomainFlags`) 机制 + 状态读写
+pub mod domain;
 pub mod elf;
 /// D2: cgroup 资源控制器
 /// TD-02: 全局统一 FD 分配器与基址规划
@@ -126,6 +128,9 @@ pub use seccomp::{
     DEFAULT_ACTION, MAX_FILTERS, SeccompAction, SeccompFilter, SeccompMode, SeccompRule,
     SeccompState, seccomp_check,
 };
+
+// domain 公共接口 re-export — 避免跨子系统直接访问 proc::domain 内部
+pub use domain::{domain_flags_get, domain_flags_set, domain_gate_check};
 
 // namespace 公共接口 re-export — 避免跨子系统直接访问 proc::namespace 内部
 // sys_setns/sys_unshare 已随 T2 批 4 迁至 services (syscall-followup);

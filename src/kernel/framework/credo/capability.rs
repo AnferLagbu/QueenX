@@ -33,6 +33,14 @@ pub const CAP_DOMAIN_RESERVED: u16 = 15;
 /// 自行设置自身 PWM (防任意提权).
 pub const SYSTEM_CAP_SET_PWM: u64 = 1 << 1;
 
+/// SYSTEM 域 bit2 — 设置本进程域级行为门控标志 (`domain_flags_set`)
+///
+/// 分册 9 批次 4: 域标志可放宽既有 `SANDBOX`/`READONLY` 约束 (清位即解除限制),
+/// 属身份安全关键操作, 仿 `SYSTEM_CAP_SET_PWM` (B07-05) 新增专用位。
+/// 无此位 (且非 bootstrap PWM 0) 的身份不可修改自身标志, 防止被监管进程自行
+/// 解除域限制。
+pub const SYSTEM_CAP_SET_DOMAIN_FLAGS: u64 = 1 << 2;
+
 /// SYSTEM 域 bit9 — 设置 UTS 主机名/域名 (`sethostname` / `setdomainname`)
 ///
 /// T1 G7: 补命名常量以消除 `sethostname_syscall` 中的字面量 `9`, 并供同级

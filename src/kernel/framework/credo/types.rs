@@ -97,6 +97,29 @@ impl Default for DomainId {
     }
 }
 
+// 域级行为门控标志 — 按进程生效, 在 syscall 咽喉点裁决
+//
+// ## 归属记录
+//
+// 分册 9 批次 4 实装: 原为零引用纯声明, 现由 `framework/proc/domain.rs`
+// 消费 (门控判定 + 状态读写), `services/credo/domain.rs` 提供用户态入口.
+//
+// ## 位语义表
+//
+// | 位 | 名称 | 门控语义 |
+// |---|---|---|
+// | bit0 | `NO_FORK` | 拒 `clone`/`fork`/`clone3` |
+// | bit1 | `NO_EXEC` | 拒 `execve`/`execveat` |
+// | bit2 | `NO_NET` | 拒 `socket`/`socketpair`/`connect`/`bind`/`listen`/`accept`/`accept4`/`sendto`/`recvfrom`/`sendmsg`/`recvmsg` |
+// | bit3 | `NO_DEVICE` | 拒 `ioctl`/`mount`/`umount2` |
+// | bit4 | `SANDBOX` | 复合位: 严格白名单, 仅放行 `read`/`write`/`exit`/`exit_group`/`rt_sigreturn` |
+// | bit5 | `READONLY` | 拒写类调用, 及带写意图 (`O_WRONLY`/`O_RDWR`/`O_CREAT`/`O_TRUNC`/`O_APPEND`) 的 `open`/`openat` |
+// | bit6 | `TEMP` | 元数据位: 不参与门控 (审计/生命周期标记) |
+// | bit7 | `SYSTEM` | 元数据位: 不参与门控 (特权标记) |
+//
+// 拒绝以 `EPERM` 返回. 默认值 `NONE` (无门控, 不改变任何调用行为).
+// fork 继承全部标志; `execve` 保留. 修改标志需 SYSTEM 域能力位
+// `SYSTEM_CAP_SET_DOMAIN_FLAGS`.
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct DomainFlags: u32 {

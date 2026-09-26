@@ -25,6 +25,8 @@ pub mod auth;
 /// T6-8: PWM 能力常量定义 (原 framework/credo/capability.rs)
 pub mod capability;
 pub mod crypto;
+/// 分册 9 批次 4: 域级行为门控 (`DomainFlags`) 查询/设置 syscall 策略
+pub mod domain;
 pub mod grants;
 pub mod identity;
 pub mod policy;

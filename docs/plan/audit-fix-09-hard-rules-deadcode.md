@@ -52,7 +52,7 @@
 - **B09-04. 死代码零容忍（§9.3）**
   - 描述：第 6.5 章对死代码分类标注：R1 pub fn 死代码 362 项、R2 未接线 syscall 161 项、R3 零引用 pub mod 36 项、R4 核心 pub struct/enum 零引用 1 项。
   - 方案：按处置工作流（阶段 1 高确定删除 → 阶段 2 中确定 → 阶段 3 决策类）推进。
-  - 状态：[X]（2026-09-26 总纲收敛：**无独立施工面**，由 B09-05/06/07/08 + 工程计划 D 承接。四类清单实测终态——**R1 = 437（433 已分类 + 4 未分类 HIGH 待裁）/ R2 = 2（功能缺口，归 D-2）/ R3 = 0 / R4 = 1（DomainFlags 待裁）**；F9 形式残留 = `unused` 族 5 处（其中 2 处 B09-20 已定性保留、3 处 F9 适用边界待裁，见 D-7 表）〔2026-09-26 批次 3 订正：R1 439→437 / R2 7→2，见 B09-05 / B09-18〕）
+  - 状态：[X]（2026-09-26 总纲收敛：**无独立施工面**，由 B09-05/06/07/08 + 工程计划 D 承接。四类清单实测终态——**R1 = 437（433 已分类 + 4 未分类 HIGH 待裁）/ R2 = 2（功能缺口，归 D-2）/ R3 = 0 / R4 = 0**；F9 形式残留 = `unused` 族 5 处（其中 2 处 B09-20 已定性保留、3 处 F9 适用边界待裁，见 D-7 表）〔2026-09-26 批次 3 订正：R1 439→437 / R2 7→2，见 B09-05 / B09-18；批次 4 订正：R4 1→0，见 B09-08〕）
 
 ### 待办
 
@@ -78,7 +78,15 @@
 - **B09-08. R4 核心 pub struct/enum 零引用（1 项）**
   - 描述：核心 pub struct/enum 零引用 1 项。
   - 方案：核实后删除。
-  - 状态：[]（2026-09-26 实测：仍为 1 项——`framework/credo/types.rs:102 struct DomainFlags`，全仓**仅声明处 1 处命中**（`grep -rn DomainFlags src/kernel host-tests --include=*.rs`）。判据「内核需不需要」：credo domain 体系该位标志当前无使用者 ⇒ **待裁（删 or 转正式预留）**，属裁定六授权边界）
+  - 状态：[X]（2026-09-26 批次 4 裁决：用户裁定 **方案 2 — 存储式（相对完整，真·实装）**，非删除。原零引用事实：`framework/credo/types.rs:125 struct DomainFlags`，全仓仅声明处 1 处命中。裁定后已实装为**域级行为门控**机制 —— 见下方详情；复跑 `audit_unwired_pub_fn.py` 实测 **R4 = 0**）
+  - 详情（批次 4 施工，2026-09-26）：
+    - **机制层**（framework，TCB）：新建 [proc/domain.rs](../../src/kernel/framework/proc/domain.rs) —— 6 个门控位（`NO_FORK`/`NO_EXEC`/`NO_NET`/`NO_DEVICE`/`SANDBOX`/`READONLY`）的拒绝分类表 + 纯判定函数 `denied_by` + 门控入口 `domain_gate_check` + 状态读写 `domain_flags_get`/`domain_flags_set`；`TEMP`/`SYSTEM` 为元数据位，不参与门控。**归属依据**：状态挂 `Process`（进程机制状态），入口被 framework syscall 分发路径消费，与 `seccomp_check` 同构。
+    - **状态字段**：`Process` 新增 `pub domain_flags: AtomicU32`（[process.rs](../../src/kernel/framework/proc/process.rs)），默认 0；`sys_fork` 与 seccomp 同口径全量继承；`alloc_zeroed` 路径（`user_proc.rs`）零初始化天然为 0，无需改动。
+    - **咽喉点**：`syscall_dispatch_impl` 在 `seccomp_check` 之后、策略分发之前调用 `domain_gate_check`（[dispatch.rs](../../src/kernel/framework/syscall/dispatch.rs)）；标志为 0 时恒放行 ⇒ 对既有启动/测试**零行为影响**。
+    - **策略层**（services，100% safe）：新建 [credo/domain.rs](../../src/kernel/services/credo/domain.rs) —— `domain_flags_get_syscall` / `domain_flags_set_syscall`；set 需 `SYSTEM_CAP_SET_DOMAIN_FLAGS`（新增于 [credo/capability.rs](../../src/kernel/framework/credo/capability.rs)）鉴权 —— 否则被监管进程可自行清除监管者设置的 `SANDBOX`/`READONLY` 越狱。
+    - **接线**：新增 `SYS_CREDO_GET_DOMAIN_FLAGS(414)` / `SYS_CREDO_SET_DOMAIN_FLAGS(415)`（[syscall/types.rs](../../src/kernel/framework/syscall/types.rs)），services dispatch 增对应 match arm（[services/syscall/dispatch.rs](../../src/kernel/services/syscall/dispatch.rs)）。
+    - **负向验证**：9 个单测的「必须拒绝」断言一律使用**显式 syscall 常量**（不遍历被测表）；变异实验（删 `FORK_SYSCALLS` 中 `SYS_clone3`）⇒ `test_domain_gate_no_fork` 如期 FAILED，撤销变异后恢复 PASS，证明测试非空过。
+    - **门槛**：六门槛 6/6（build.sh all 5/5、clippy pedantic 0 warning、核心审计全绿、host-tests 0 failed、内核主机测试 817 passed / 0 failed、QEMU `kernel_test` exit 33）。
 
 - **B09-09. framework 78 处 pub use re-export 反向依赖（H.3.5 P2-B，2026-09-11 定性修正）**
   - 描述：原登记"services 策略上移违反 OSTD Minimalism"——**2026-09-11 依据 Asterinas framekernel 定义（APSys'24）定性为错误分类**：策略放 services（Service OS）是 framekernel 标准设计（Asterinas aster-kernel 承担 all OS policy），OSTD Minimalism 约束的是 Framework 层最小化而非 Services 策略量——**"策略上移 vs Minimalism"冲突不存在**。P2-B 实际内容 = framework 约 78 处 `pub use crate::kernel::services::*` re-export 壳（config/credo/driver/nestfs 等），属 **F2 反向依赖**（framework 引用 services 类型）。
@@ -117,6 +125,7 @@
   - **2026-09-26 批次 2（R1 8 项甄别：登记与上报分离）**：8 项已逐项三档定性，明细见 [syscall-followup.md](syscall-followup.md) **B-10**。**非 TCB 4 项已登记**（`fs/nestfs/txg.rs::add_free_to_open` / `add_io_to_open` ＝ 族残缺——同族 `add_dirty_to_open` 7 引用在用，free/io 累积器无送入口；`char/serial.rs::send_str` / `char/vga.rs::write_string_at` ＝ driver 公共 API 面，三合一判据第三项不成立）⇒ 追加进 B-6 区块；同时移除 6 项**已失效条目**（`switch_to_high_half` 已接线 / `test_recovery_status` 已删除 / `vfs_close_safe` 已被测试引用 / `get_syncing_txg` 已被 host-tests 引用 / `create_thread` 与 `services/driver/acpi.rs::lapic_base` 被同名串遮蔽）⇒ 区块 **436 → 434 项**。**TCB 4 项上报待裁**（`kpti_aarch64` ttbr0 族 2 项 ＝ 与已分类的 ttbr1 同族同形态；`kmalloc_slab` 2 项）。**甄别后实测**：`已分类清单 434 项` / `[HIGH] R1 未分类零引用 pub fn: 4 项` / 汇总 **`CRITICAL=7 / HIGH=4 / WARN=0 / INFO=435`**（R1 守恒：438 ＝ 434 + 4）。
   - **新增事实（TCB 上报依据）**：`mm/kmalloc_slab.rs` **整模块孤岛**——3 个 `pub fn`（`slab_init` / `slab_kmalloc` / `slab_kfree`）**全零调用者** ⇒ `SLAB_READY` 永为 `false`，Slab 路径永不生效。`slab_init` **未进 R1 报告**，系其在**文档注释**中出现同名串（`kmalloc_slab.rs:15`）被 `rg -c -w` 计入引用 ⇒ **R1 按名计数存在漏报偏差**（同类实例：`services/driver/acpi.rs::lapic_base` 被 `framework/arch/x86_64/acpi.rs` 的同名局部变量遮蔽）。与既有登记 [archive/audit-2026-08-14/subsystem-mm.md](archive/audit-2026-08-14/subsystem-mm.md)（「内部用 SLAB 但未注册到 kmalloc → 死代码」，P2）**同源**。
   - **2026-09-26 批次 3（R2 处置后复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 2（CRITICAL，余 `SYS_process_vm_readv` / `SYS_process_vm_writev`）/ R1 = 437（HIGH 4 + INFO 433）/ R3 = 0（WARN）/ R4 = 1（INFO，DomainFlags）**，汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`（`rc=1`，仅 CRITICAL 非零）。B-6 区块 **434 → 433 项**（`services/proc/signal.rs::sigaltstack_syscall` 接线后移出）。**HIGH 4 项仍为批次 2 上报的 TCB 待裁项**（`kpti_aarch64` ttbr0 ×2 + `kmalloc_slab` ×2），用户裁定「先不动，继续按序推进」⇒ 保持待裁。明细见 [syscall-followup.md](syscall-followup.md) **B-10.6**。
+  - **2026-09-26 批次 4（R4 处置后复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 2（CRITICAL，余 `SYS_process_vm_readv` / `SYS_process_vm_writev`）/ R1 = 437（HIGH 4 + INFO 433）/ R3 = 0（WARN）/ R4 = 0（INFO）**，汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`。**R4 1 → 0**：唯一项 `DomainFlags` 由批次 4 裁决实装为域级行为门控（非删除）⇒ 退出零引用清单；新增 `SYS_CREDO_GET_DOMAIN_FLAGS` / `SYS_CREDO_SET_DOMAIN_FLAGS` 已接线，故 R2 未新增。**HIGH 4 项仍为批次 2 上报的 TCB 待裁项**（`kpti_aarch64` ttbr0 ×2 + `kmalloc_slab` ×2），用户裁定「先不动，继续按序推进」⇒ 保持待裁。
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
   - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
@@ -357,7 +366,7 @@
 | 项 | 删除理由 | 状态 |
 |---|---|---|
 | **mremap TODO(TRACK-90BFB0)**（[syscall/types.rs:72](../../src/kernel/services/syscall/types.rs#L72)）| ✅ 已确认——dispatch 已实装 `mremap_syscall`（[dispatch.rs:228](../../src/kernel/framework/syscall/dispatch.rs#L228)），TODO 过期 | [X]（2026-09-26 实测：`grep -rn "TODO(TRACK-" src/ host-tests/` **0 命中**，注释已删）|
-| **R4 DomainFlags**（[credo/types.rs:101](../../src/kernel/services/credo/types.rs#L101)）| 零引用，仅定义一处——按"内核需不需要"判据核实：credo domain 体系需要 → 转 D-1/D-4；不需要 → 删 | []（2026-09-26 实测仍零引用，见 B09-08 待裁）|
+| **R4 DomainFlags**（[framework/credo/types.rs:125](../../src/kernel/framework/credo/types.rs#L125)）| 零引用，仅定义一处——按"内核需不需要"判据核实：credo domain 体系需要 → 转 D-1/D-4；不需要 → 删 | [X]（2026-09-26 批次 4 裁决：用户选 **方案 2 — 存储式实装**（非删除）⇒ 实装为域级行为门控，R4 实测 1 → 0；详见 B09-08 详情。**原链接 `services/credo/types.rs` 为错指**，已订正为 `framework/credo/types.rs`）|
 | **R3 trait 误报项**（D-3 核实为无用的）| 非架构预留接口，内核不需要 → 删 | [X]（D-3 / T4 已核实 7 项为纯预留抽象 ⇒ 直接删；实测 R3 = 0，见 B09-07）|
 | **R1 筛出的无用函数**（D-4 核实为无价值的）| 内核不需要 → 删（如部分 apic/xhci 只读操作）| []（批 1 完成 2026-09-18：删 9 项「重复能力/等价公共入口/废弃兼容壳」，R1 447 → 438；实测确认其余主体为 API 面预留，不再按"无价值"删——详见 [syscall-followup.md](syscall-followup.md) T5 实施记录）|
 | **F9 豁免残留**（已激活代码上的 allow）| 对应代码已接线 → 删豁免（limits.rs 等）| [X]（`limits.rs` 模块级 `#![allow(dead_code)]` 已删，见 B09-20；**2026-09-26 复核新增登记**：`unused` 族 allow 尚余 5 处——[lib.rs:97](../../src/kernel/lib.rs#L97) crate 级 `#![allow(unused_unsafe)]`（注「16个: 过度保守的 unsafe 块」）、lib.rs:278 `allow(unused_mut)`、lib.rs:306/308 `allow(unused_mut, unused_assignments)`（panic handler 跨架构未读变量）、[dma/engine.rs:513](../../src/kernel/framework/dma/engine.rs#L513) `cfg_attr(x86_64, allow(unused_variables))`、[ebpf_verifier.rs:29](../../src/kernel/services/debug/ebpf_verifier.rs#L29) `allow(unused_imports)`；后两者已由 B09-20 定性为"有使用者保留"，**前三者的 F9 适用边界（unused_unsafe 是否属"死代码注释"）待用户裁决**，未自主处置）|

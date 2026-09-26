@@ -913,6 +913,12 @@ pub extern "C" fn sys_fork() -> Pid {
             .store(u8::from(nnp), Ordering::SeqCst);
         *child.seccomp.filters.lock() = filters;
     }
+    // domain flags: 与 seccomp 同口径, 子进程继承父进程域级行为门控标志
+    if let Some(df) =
+        PROCESS_TABLE.with_process(parent_pid, |p| p.domain_flags.load(Ordering::SeqCst))
+    {
+        child.domain_flags.store(df, Ordering::SeqCst);
+    }
     // namespace: 从父进程继承 (fork_from 仅 7 个 Arc::clone, 无锁交互)
     // 先提取 NamespaceSet 到局部变量, 再赋值给 child, 避免在 with_process 闭包内操作 child
     if let Some(parent_ns) = PROCESS_TABLE.with_process(parent_pid, |p| {

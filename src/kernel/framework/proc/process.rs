@@ -233,6 +233,13 @@ pub struct Process {
     /// fork 继承全部过滤器; execve 保留.
     pub seccomp: crate::framework::proc::SeccompState,
 
+    /// Per-process Credo 域级行为门控标志 (分册 9 批次 4)
+    ///
+    /// `DomainFlags` 位掩码, 默认 0 (无门控). 在 syscall 咽喉点
+    /// (`syscall_dispatch_impl`) 于 seccomp 检查之后裁决; fork 继承全部标志;
+    /// execve 保留 (与 seccomp 同口径).
+    pub domain_flags: AtomicU32,
+
     /// Per-process Namespace 集合 (D1)
     ///
     /// 包含 UTS/IPC/PID/Mount/User/Net/Cgroup 七种 namespace.
@@ -371,6 +378,8 @@ impl Process {
             stack_canary: AtomicU64::new(crate::framework::proc::generate_canary()),
             // C7: Seccomp 默认 Disabled
             seccomp: crate::framework::proc::SeccompState::new(),
+            // 分册 9 批次 4: 域级行为门控默认无标志 (不改变任何调用行为)
+            domain_flags: AtomicU32::new(0),
             // D1: Namespace 默认 init namespace 集合
             namespaces: Mutex::new(crate::framework::proc::NamespaceSet::new_init()),
             // D2: cgroup 默认根 cgroup (id=0)

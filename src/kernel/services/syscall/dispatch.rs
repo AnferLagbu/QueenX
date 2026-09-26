@@ -745,13 +745,13 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_CREDO_BOOT_CHECK, SYS_CREDO_CHANGE_PASSWORD, SYS_CREDO_CHECK_CAP,
         SYS_CREDO_CREATE_FIRST, SYS_CREDO_CREATE_IDENTITY, SYS_CREDO_DELETE_IDENTITY,
         SYS_CREDO_DISK_FORMAT, SYS_CREDO_DISK_INFO, SYS_CREDO_DISK_LIST, SYS_CREDO_DISK_PARTITION,
-        SYS_CREDO_FAT_FORMAT, SYS_CREDO_GET_CAPS, SYS_CREDO_GET_PWM, SYS_CREDO_GETHOSTNAME,
-        SYS_CREDO_GRANT, SYS_CREDO_HOTPLUG_STATUS, SYS_CREDO_IDENTITY_INFO, SYS_CREDO_LOGIN,
-        SYS_CREDO_LOGOUT, SYS_CREDO_PROC_CPUTIME, SYS_CREDO_PROC_LIST, SYS_CREDO_PROC_SETPRI,
-        SYS_CREDO_PROC_SLEEP, SYS_CREDO_REBOOT, SYS_CREDO_REVOKE, SYS_CREDO_SET_PWM,
-        SYS_CREDO_SETHOSTNAME, SYS_CREDO_VERIFY_PASSWORD, SYS_capget, SYS_capset, SYS_getegid,
-        SYS_geteuid, SYS_getgid, SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid, SYS_setregid,
-        SYS_setreuid, SYS_setuid,
+        SYS_CREDO_FAT_FORMAT, SYS_CREDO_GET_CAPS, SYS_CREDO_GET_DOMAIN_FLAGS, SYS_CREDO_GET_PWM,
+        SYS_CREDO_GETHOSTNAME, SYS_CREDO_GRANT, SYS_CREDO_HOTPLUG_STATUS, SYS_CREDO_IDENTITY_INFO,
+        SYS_CREDO_LOGIN, SYS_CREDO_LOGOUT, SYS_CREDO_PROC_CPUTIME, SYS_CREDO_PROC_LIST,
+        SYS_CREDO_PROC_SETPRI, SYS_CREDO_PROC_SLEEP, SYS_CREDO_REBOOT, SYS_CREDO_REVOKE,
+        SYS_CREDO_SET_DOMAIN_FLAGS, SYS_CREDO_SET_PWM, SYS_CREDO_SETHOSTNAME,
+        SYS_CREDO_VERIFY_PASSWORD, SYS_capget, SYS_capset, SYS_getegid, SYS_geteuid, SYS_getgid,
+        SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid, SYS_setregid, SYS_setreuid, SYS_setuid,
     };
     // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
     // (aarch64 生产构建走 `_ =>` 兜底 ENOSYS, 与迁移前 framework cfg 语义一致)
@@ -797,6 +797,10 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_CREDO_GET_CAPS => crate::services::credo::auth::auth_get_caps_syscall(a0, a1 as u16),
         SYS_CREDO_GET_PWM => crate::services::credo::auth::pwm_get_syscall(),
         SYS_CREDO_SET_PWM => crate::services::credo::auth::pwm_set_syscall(a0),
+
+        // 分册 9 批次 4: 域级行为门控 (DomainFlags) — 查询/设置当前进程
+        SYS_CREDO_GET_DOMAIN_FLAGS => crate::services::credo::domain::domain_flags_get_syscall(),
+        SYS_CREDO_SET_DOMAIN_FLAGS => crate::services::credo::domain::domain_flags_set_syscall(a0),
 
         // Linux capability ABI 映射 (分册 9 批次 3): 导出/写回 SYSTEM 域能力
         SYS_capget => crate::services::credo::auth::capget_syscall(a0, a1),

@@ -1546,6 +1546,18 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 - **新增 pub fn 未进 R1**：本轮新增 `proc::clone::arch_prctl_syscall` / `credo::auth::{capget,capset}_syscall` 均**已被 dispatch 引用**，非零引用，无需登记 B-6。
 - **原裁定溯源**：`capget`/`capset`/`arch_prctl` 此前按「无凭证能力模型 / 无 arch 相关用户态需求」判 **ENOSYS 保留**（见本台账「实现路径裁定」段）；批次 3 经用户裁定改为实装，**原判定作废**，相关 ENOSYS 回退说明同步失效。
 
+**B-10.7 R4 实装（分册 9 批次 4；R4 1 → 0 / B-6 区块不变 ⇒ `433`）**
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-08**。R4 口径为「`mod.rs` / `api.rs` / `types.rs` 中 pub struct/enum 零跨文件引用且总引用 ≤ 1」⇒ 唯一项 `DomainFlags` 经用户裁定**实装**（非删除）消解。
+
+| 项 | 类别 | 处置 | 落点 |
+|---|---|---|---|
+| `DomainFlags`（`framework/credo/types.rs`） | R4 零引用核心类型 | **实装为域级行为门控** | framework 新建 `proc/domain.rs`（6 门控位判定表 + `domain_gate_check` 咽喉点 + `domain_flags_get`/`set` 状态读写）；`Process` 新增 `domain_flags: AtomicU32`（fork 全量继承）；`syscall_dispatch_impl` 在 seccomp 之后调用门控；services 新建 `credo/domain.rs` 策略（set 需新增 `SYSTEM_CAP_SET_DOMAIN_FLAGS` 鉴权）；新增 syscall `SYS_CREDO_GET_DOMAIN_FLAGS(414)` / `SYS_CREDO_SET_DOMAIN_FLAGS(415)` 并接线 |
+
+- **新增 syscall 编号记录**：`SYS_CREDO_GET_DOMAIN_FLAGS = 414` / `SYS_CREDO_SET_DOMAIN_FLAGS = 415`（**QX 独有功能** —— Linux 无对应 syscall，沿用 `SYS_CREDO_*` 族既有编号段；`416-419` 仍为保留号）。二者**均已 dispatch**，非 R2 范畴；编译期 `PRIVATE_NUMS` 断言同步追加。
+- **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=433`**。R4 **1 → 0**；`扫描 SYS_/QX_ 编号 231`（批次 3 为 229，+2 ＝ 本轮新增）且 `已 dispatch 229 → 231` 全部命中。
+- **B-6 区块同步**：**无需同步**（清单仍 `433` 项）——本轮新增的 `proc/domain.rs::{domain_gate_check,domain_flags_get,domain_flags_set}` 与 `services/credo/domain.rs::{domain_flags_get_syscall,domain_flags_set_syscall}` **均已被引用**（前者被 framework dispatch / services 策略消费），非零引用，不入 B-6。
+
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
 **C-1 接线（8 项；判据＝同族入口已在调用链中使用，仅缺此半 —— 可施工子清单）**

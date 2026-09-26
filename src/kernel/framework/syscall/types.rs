@@ -372,7 +372,10 @@ pub const SYS_CREDO_CHECK_CAP: u64 = 410;
 pub const SYS_CREDO_GET_CAPS: u64 = 411;
 pub const SYS_CREDO_GET_PWM: u64 = 412;
 pub const SYS_CREDO_SET_PWM: u64 = 413;
-// 414-419: 保留
+// 分册 9 批次 4: 域级行为门控 (DomainFlags) 查询 / 设置
+pub const SYS_CREDO_GET_DOMAIN_FLAGS: u64 = 414;
+pub const SYS_CREDO_SET_DOMAIN_FLAGS: u64 = 415;
+// 416-419: 保留
 
 // ---------- 420-423: 存储设备 ----------
 pub const SYS_CREDO_DISK_LIST: u64 = 420;
@@ -864,6 +867,8 @@ const _: () = {
         SYS_CREDO_GET_CAPS,
         SYS_CREDO_GET_PWM,
         SYS_CREDO_SET_PWM,
+        SYS_CREDO_GET_DOMAIN_FLAGS,
+        SYS_CREDO_SET_DOMAIN_FLAGS,
         SYS_CREDO_DISK_LIST,
         SYS_CREDO_DISK_INFO,
         SYS_CREDO_DISK_FORMAT,

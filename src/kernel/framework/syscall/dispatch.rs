@@ -203,6 +203,11 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         return ret;
     }
 
+    // 分册 9 批次 4: Credo 域级行为门控 (在 seccomp 之后, 策略分发之前)
+    if let Some(ret) = crate::framework::proc::domain_gate_check(num, &args) {
+        return ret;
+    }
+
     // L-01: 优先委托 services 层策略分发
     let svc_ret = super::dispatch_trait::current_syscall_dispatch().dispatch(num, args);
     if svc_ret != crate::framework::syscall::types::ENOSYS_RET {
