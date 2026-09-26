@@ -306,7 +306,7 @@ cargo test -p queenx-host-tests --test audit_comment_language_test
 1. 把过期测试的 `#[test]` 函数加 `#[ignore]` 并加注释"已退役, 保留以防回滚"——不推荐
 2. **推荐**: 直接删除, 在 commit message 写明废弃原因
 3. 如果有真实回归风险, 把测试函数改名为 `<feature>_regression_<bug_id>`, 持续验证
-4. 在 `docs/CHANGELOG.md` 加 1 行"退役 X 测试, 原因: ..."
+4. 退役原因写入 commit message (QueenX 不维护独立 `CHANGELOG.md`, 见 DECISION-038)
 
 ## 重复测试处理
 
@@ -314,7 +314,7 @@ cargo test -p queenx-host-tests --test audit_comment_language_test
 1. 选最新 (覆盖更全) 的那份保留
 2. 把旧版的独有用例合并到新版 (避免测试缺失)
 3. 删除旧版
-4. 在 `CHANGELOG.md` 加 1 行"合并 X 与 Y 测试, 原因: ..."
+4. 合并原因写入 commit message (QueenX 不维护独立 `CHANGELOG.md`, 见 DECISION-038)
 
 ## 测试架构原则
 
@@ -328,10 +328,9 @@ cargo test -p queenx-host-tests --test audit_comment_language_test
 
 ## 关联文档
 
-- [AGENTS.md](../AGENTS.md) §9 测试规范
-- [docs/explain/engineering-discipline-spec.md](../docs/explain/engineering-discipline-spec.md) §9 测试
-- [docs/CHANGELOG.md](../docs/CHANGELOG.md) 测试相关变更
-- [docs/plan/maintenance-cycle-2026-06-19.md](../docs/plan/maintenance-cycle-2026-06-19.md) 维护条目索引
+- [AGENTS.md](../AGENTS.md) §8 测试规范
+- [docs/plan/archive/engineering-discipline.md](../docs/plan/archive/engineering-discipline.md) 工程纪律 (已归档)
+- [docs/plan/archive/maintenance-cycle-2026-06-19.md](../docs/plan/archive/maintenance-cycle-2026-06-19.md) 维护条目索引 (已归档)
 
 ## 变更历史
 

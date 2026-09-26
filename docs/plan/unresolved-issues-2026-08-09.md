@@ -27,7 +27,7 @@
 |---|---|---|---|
 | 运行时已知问题 | 3 | P0×1 + P1×2 | ❌ 未修复 |
 | 源码未实现 (TODO) | ~43 | P1×16 + P2×22 + P3×5 | ❌ 未修复 |
-| 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | ❌ 用户授权"仅记录不修复" |
+| 跨文档矛盾 (code-review) | 8 | P1×3 + P2×3 + P3×2 | 🔄 已修复 (2026-09-26 复验; 归档快照冻结) |
 | 远期工程 | 6 | 远期 | ❌ 未启动 |
 | 本会话刻意维持 | 3 | 决策登记 | ⏸️ DECISION |
 | 构建/工具问题 | 3 | 工具 | ❌ 未提交 |
@@ -251,86 +251,88 @@
 
 ## 🟡 第 3 类：跨文档矛盾 (8 项)
 
-### 3.1 P1 跨文档战略矛盾 (3 项) — ❌ 未修复
+### 3.1 P1 跨文档战略矛盾 (3 项) — ✅ 已修复 (2026-09-26 源码复验)
 
 > **来源**: `docs/plan/archive/code-review-findings-2026-08-01.md`. 用户 2026-08-01 授权**仅记录不修复**, 状态 `[]`.
+>
+> **2026-09-26 复验结论**: 3 项 P1 的实现侧均已由 DECISION-037/038/039 于 2026-08-03 落地. 归档快照 `archive/code-review-findings-2026-08-01.md` 的 `[]` 按 AGENTS.md §6「archive/ 为历史快照不再修改」冻结, **不属于待修漂移**.
 
 #### REVIEW-FINDING-024: CHANGELOG.md 缺失但 README/AGENTS 多处引用
 
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P1 (违反 AGENTS.md 硬规则) |
-| **状态** | ❌ 未修复 (`[]`) |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | README.md:11/163/210 + AGENTS.md:48/363 引用不存在的 `docs/CHANGELOG.md` |
-| **方案** | (a) 创建 `docs/CHANGELOG.md` 补记历史; (b) 删除全部 10 处引用 (推荐) |
-| **冲突来源** | progress-active-tasks.md DECISION-038 [X] 标记完成 (删除引用), 但 archive/code-review-findings-2026-08-01.md 仍 `[]` 未同步 |
-| **建议** | 验证 README.md/AGENTS.md 实际是否已无 CHANGELOG.md 引用, 若已修复则同步 code-review 文档状态 |
+| **方案** | (b) 删除全部引用 (采纳). git commit 本身即变更日志 |
+| **落地** | DECISION-038 (2026-08-03). 2026-09-26 复验: README.md / AGENTS.md / scripts / ci 均已无引用; `host-tests/README.md` 实际残留 3 处 (原记载"2 处"不准), 本轮已归零 |
+| **归档快照** | `archive/code-review-findings-2026-08-01.md` 保持 `[]` (AGENTS.md §6 冻结) |
 
 #### REVIEW-FINDING-025: syscall 编号空间立场两份权威文档互相矛盾
 
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P1 |
-| **状态** | ❌ 未修复 (`[]`) |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | `framework/syscall/mod.rs:24-35` 称 "0-299 保留给未来 linuxulator" vs `ref-naming.md §三` 称 "直接使用 Linux syscall 编号" |
-| **方案** | DECISION-037 已选 A (直接 Linux ABI + QX_* 500+ 自由扩展), 但 archive/code-review-findings-2026-08-01.md 仍 `[]` 未同步 |
-| **建议** | 验证 `framework/syscall/mod.rs:24-35` 实际是否已更新为直接 Linux ABI 注释, 若已修复则同步 code-review 文档状态 |
+| **落地** | DECISION-037 (2026-08-03). 2026-09-26 复验: `framework/syscall/mod.rs:22-30` 注释已统一为 "0-299 直接 Linux ABI; 500+ 为 QX_* 自由扩展"; `vision-hope.md` 已整篇重写, 原 linuxulator"风险 2"节不复存在 |
+| **归档快照** | `archive/code-review-findings-2026-08-01.md` 保持 `[]` (AGENTS.md §6 冻结) |
 
 #### REVIEW-FINDING-026: framework 反向依赖 services 类型 (userctx.rs re-export)
 
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P1 (违反 framekernel 单向数据流) |
-| **状态** | ❌ 未修复 (`[]`) |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | `framework/userctx.rs:6-9` re-export services 类型, `framework/usermode.rs:38/58` 直接读取其字段 |
-| **方案** | 迁回 UserContext 到 framework 或加 `#[repr(C)]` 等价结构 + 编译期布局断言 |
-| **建议** | 此项**真正未修复**, 应纳入未来任务 |
+| **落地** | DECISION-039 (2026-08-03, A 方案). 2026-09-26 复验: `framework/userctx.rs:28/55` 为两处 `#[repr(C)] UserContext` (x86_64/aarch64 cfg 分支) 正规定义; `services/userctx.rs:11` 反向 `pub use crate::framework::userctx::*;`. 单向数据流已恢复 |
+| **归档快照** | `archive/code-review-findings-2026-08-01.md` 保持 `[]` (AGENTS.md §6 冻结) |
 
-### 3.2 P2 文档失实 (3 项) — 状态不一致
+### 3.2 P2 文档失实 (3 项) — ✅ 已修复 (2026-09-26 源码复验)
 
 #### REVIEW-FINDING-027: framework 顶层文档声明 "~3000+ LoC" 严重失实
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | progress B1 [X] 已声明完成, code-review `[]` 未同步 |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | `framework/mod.rs:10` 声明 `~3000+ LoC`, 实际 ~10 万行 |
-| **建议** | 验证 `framework/mod.rs:10` 实际是否已移除具体数字 |
+| **落地** | progress B1 (2026-08-04). 复验: `framework/mod.rs:10` 现为 `//! framework/ (TCB, unsafe 允许)`, 无 LoC 数字 |
 
 #### REVIEW-FINDING-028: services/net + services/fs 头注释过期
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | progress B2 [X] 已声明完成, code-review `[]` 未同步 |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | net/mod.rs:4-19 / fs/mod.rs:4-19 头注释过期 (v2.7/v2.5, 2026-06-04) |
-| **建议** | 验证头注释实际是否已更新 (本会话确认: net/fs/proc 头注释均已含"当前已远超当时范围"描述, 但 code-review 文档未同步) |
+| **落地** | progress B2 (2026-08-04). 复验: net/fs/proc 三文件头注释已替换为当前真实状态描述 + 指向 [progress-active-tasks.md](./progress-active-tasks.md), 仅保留一行"历史: 2026-06 之前 vN 状态评估已过时" |
 
 #### REVIEW-FINDING-029: README.md remote 命名与 kernel-roadmap 链接过期
 
 | 字段 | 数据 |
 |---|---|
-| **状态** | progress B3 [X] 已声明完成, code-review `[]` 未同步 |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | README.md:21 `git remote rename origin Gitee` 矛盾 + README.md:71 失效链接 `kernel-roadmap.md` |
-| **建议** | 验证 README.md 实际是否已修正 |
+| **落地** | progress B3 (2026-08-04); README.md 后续已整篇重写为 18 行 (无 `git remote` 指令、无 `kernel-roadmap.md` 链接), 原 :21/:71 不复存在 |
 
-### 3.3 P3 已知未完成 (2 项) — ❌ 未修复
+### 3.3 P3 已知未完成 (2 项) — ✅ 已修复 (2026-09-26 源码复验)
 
 #### REVIEW-FINDING-030: framework/sched task 抽象 Phase 1.4.2 未开工
 
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P3 |
-| **状态** | ❌ 未修复 (`[]`) |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **描述** | `framework/sched/mod.rs:8` 注释: "task 抽象在 Phase 1.4.2 计划中但尚未实现", 阻塞 services/proc 迁移 |
-| **建议** | 未来 task, 与 ISSUE-SRC-026 关联 |
+| **落地** | progress 阶段 5 (2026-08-04). 调研发现 `sched_trait.rs` 中 Task 抽象 (struct Task + 10 属性方法 + Scheduler trait + QueenXScheduler 委托) 早已完整实装, 仅 mod.rs 注释过期, 已修复 |
 
 #### REVIEW-FINDING-031: IoMem 边界 expect panic + 固定上限硬编码
 
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P3 |
-| **状态** | progress B6 [X] 已声明完成 (debug_assert! + limits.rs), code-review `[]` 未同步 |
+| **状态** | ✅ 已修复 (2026-09-26 复验) |
 | **冲突点** | `iomem.rs:194/200/206/212` expect panic + `MAX_MMIO_MAPPINGS = 64` 硬编码 |
-| **建议** | 验证 iomem.rs 实际是否已加 debug_assert!, 若已修复则同步 code-review 文档 |
+| **落地** | progress B6 (2026-08-04). 复验: `iomem.rs` 8 个 read_u*/write_u* 均带 `debug_assert!` 前置; 3 个 TCB 容量常量已集中至 `framework/constants/limits.rs` |
 
 ---
 
@@ -530,19 +532,22 @@
 
 ## 📋 文档状态不一致清单 (跨文档矛盾专项)
 
-> **本会话审计发现**: `progress-active-tasks.md` 中 B1-B6 标记 `[X]` 完成, 但 `archive/code-review-findings-2026-08-01.md` 中对应 REVIEW-FINDING 仍 `[]` 未同步. **文档漂移**.
+> **原审计发现 (2026-08-09)**: `progress-active-tasks.md` 中 B1-B6 标记 `[X]` 完成, 但 `archive/code-review-findings-2026-08-01.md` 中对应 REVIEW-FINDING 仍 `[]` 未同步. 记为**文档漂移**.
+>
+> **2026-09-26 处置结论**: 逐项回源码复验, 实现侧已全部落地 (见 §3.1-3.3). 归档快照 `archive/code-review-findings-2026-08-01.md` 的 `[]` 依 AGENTS.md §6「archive/ 为历史快照不再修改」**有意冻结**, 不属待修漂移 — 因此本清单**结案**, 无需再同步归档文档.
 
-| progress | code-review | 真实状态 | 修复责任 |
-|---|---|---|---|
-| B1 [X] | REVIEW-FINDING-027 `[]` | 需核实 framework/mod.rs:10 是否已修 | 验证并同步 |
-| B2 [X] | REVIEW-FINDING-028 `[]` | 已确认 net/fs/proc 头注释均已更新 | 同步 code-review 状态 |
-| B3 [X] | REVIEW-FINDING-029 `[]` | 需核实 README.md 是否已修 | 验证并同步 |
-| B5 [X] | (无对应) | credo/storage.rs + barrier/api.rs | (无矛盾) |
-| B6 [X] | REVIEW-FINDING-031 `[]` | 需核实 iomem.rs debug_assert! 是否已加 | 验证并同步 |
-| DECISION-037 [X] | REVIEW-FINDING-025 `[]` | 需核实 framework/syscall/mod.rs:24-35 是否已修 | 验证并同步 |
-| DECISION-038 [X] | REVIEW-FINDING-024 `[]` | 需核实 README/AGENTS 是否已无 CHANGELOG.md 引用 | 验证并同步 |
+| progress | code-review (归档快照) | 2026-09-26 复验结论 |
+|---|---|---|
+| B1 [X] | REVIEW-FINDING-027 `[]` | ✅ 落地 — `framework/mod.rs:10` 无 LoC 数字 |
+| B2 [X] | REVIEW-FINDING-028 `[]` | ✅ 落地 — net/fs/proc 头注释已更新 |
+| B3 [X] | REVIEW-FINDING-029 `[]` | ✅ 落地 — README.md 整篇重写, 原 :21/:71 moot |
+| B5 [X] | (无对应) | ✅ 落地 — credo/storage.rs + barrier/api.rs |
+| B6 [X] | REVIEW-FINDING-031 `[]` | ✅ 落地 — iomem.rs debug_assert! + constants/limits.rs |
+| DECISION-037 [X] | REVIEW-FINDING-025 `[]` | ✅ 落地 — framework/syscall/mod.rs:22-30 注释统一 |
+| DECISION-038 [X] | REVIEW-FINDING-024 `[]` | ✅ 落地 — 全仓 0 引用 (2026-09-26 补清 host-tests/README.md 3 处) |
+| DECISION-039 [X] | REVIEW-FINDING-026 `[]` | ✅ 落地 — UserContext 已迁回 framework, services 反向 re-export |
 
-**建议后续行动**: 用户授权"仅记录不修复"但 progress 已 [X], 需要**同步 code-review 文档状态**或将 progress 状态改为 `[X] (code-review 文档未同步)`.
+**结案说明**: 原"建议后续行动"(同步 code-review 文档状态) 经复验判定**不需执行** — 归档快照按规矩冻结, 实现侧无遗留.
 
 ---
 
