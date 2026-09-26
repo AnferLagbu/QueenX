@@ -882,9 +882,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**429 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**496 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝分册 9 批次 3/4 后续「七次修订裁定落地」**（移除 4 项已删除条目：`kpti_aarch64.rs::kpti_kernel_ttbr1` / `::kpti_trampoline_ttbr1`、`services/fs/ramfs.rs::split_path` / `::validate_path`；逐项依据见 **B-10.8**；上一轮为批次 3 R2 接线移除 `services/proc/signal.rs::sigaltstack_syscall`，见 **B-10.6**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝分册 9 项 5 批 B「豁免面收窄」**（豁免规则由「按文件名」改为「按路径」，连带暴露 67 项原先被静默豁免的零引用 pub fn，全部登记入本区块；逐项与依据见 **B-10.9**；上一轮为本批「七次修订裁定落地」移除 4 项已删除条目，见 **B-10.8**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -961,6 +961,9 @@ src/kernel/framework/barrier/snapshot.rs::test_registry_register
 src/kernel/framework/barrier/snapshot.rs::test_snapshot_basic
 src/kernel/framework/chitin/composite.rs::compatible_str
 src/kernel/framework/chitin/devtree.rs::as_bool
+src/kernel/framework/chitin/mod.rs::chitin_device_list
+src/kernel/framework/chitin/mod.rs::chitin_with_device_map
+src/kernel/framework/chitin/mod.rs::driver_as_mut
 src/kernel/framework/chitin/user_driver.rs::chitin_forward_irq
 src/kernel/framework/chitin/user_driver.rs::devtree_map_user_device
 src/kernel/framework/chitin/user_driver.rs::devtree_unmap_user_device
@@ -974,9 +977,13 @@ src/kernel/framework/cpu/feature.rs::supports_avx
 src/kernel/framework/cpu/feature.rs::supports_simd
 src/kernel/framework/cpu/feature.rs::supports_virtualization
 src/kernel/framework/cpu/tsc.rs::nanoseconds_to_cycles
+src/kernel/framework/credo/api.rs::umask_get
 src/kernel/framework/credo/audit.rs::get_entries
 src/kernel/framework/credo/identity.rs::find_mut
 src/kernel/framework/credo/secure_boot.rs::add_trust_entry
+src/kernel/framework/credo/types.rs::get_creator_pwm
+src/kernel/framework/credo/types.rs::to_uid
+src/kernel/framework/debug/api.rs::kgdb_break_now
 src/kernel/framework/debug/ebpf.rs::get_map
 src/kernel/framework/debug/ebpf.rs::get_prog
 src/kernel/framework/debug/ebpf.rs::prog_run
@@ -1004,6 +1011,7 @@ src/kernel/framework/driver/framework.rs::inw
 src/kernel/framework/driver/framework.rs::outw
 src/kernel/framework/driver/hotplug.rs::hotplug_poll
 src/kernel/framework/driver/input/keyboard.rs::get_modifiers
+src/kernel/framework/driver/mod.rs::list_devices
 src/kernel/framework/driver/net/e1000_io.rs::install_rings
 src/kernel/framework/driver/net/e1000_io.rs::set_ctrl
 src/kernel/framework/driver/net/e1000_io.rs::set_ipg
@@ -1015,6 +1023,7 @@ src/kernel/framework/driver/power.rs::pm_is_initialized
 src/kernel/framework/driver/power.rs::pm_subsystem
 src/kernel/framework/driver/power.rs::power_saving
 src/kernel/framework/driver/power.rs::register_notifier
+src/kernel/framework/driver/storage/mod.rs::xhci_read_trb
 src/kernel/framework/driver/uefi.rs::get_memory_map
 src/kernel/framework/driver/uefi.rs::set_gop_mode
 src/kernel/framework/driver/uefi.rs::set_memory_map
@@ -1028,7 +1037,13 @@ src/kernel/framework/driver/usb/usb_core.rs::find_device_by_vid_pid
 src/kernel/framework/driver/usb/usb_core.rs::register_controller
 src/kernel/framework/driver/usb/xhci.rs::init_command_ring
 src/kernel/framework/driver/usb/xhci.rs::recover_endpoint
+src/kernel/framework/driver/virtio/mod.rs::read_config64
+src/kernel/framework/driver/virtio/mod.rs::set_status
+src/kernel/framework/driver/virtio/mod.rs::setup_vq
+src/kernel/framework/driver/virtio/mod.rs::setup_vq_legacy
 src/kernel/framework/frame.rs::set_meta
+src/kernel/framework/fs/devfs/mod.rs::is_physical
+src/kernel/framework/fs/devfs/mod.rs::is_virtual
 src/kernel/framework/fs/vfs/dcache.rs::icache_get_ref_count
 src/kernel/framework/fs/vfs/flock.rs::flock_count
 src/kernel/framework/fs/vfs/flock.rs::flock_ops
@@ -1039,6 +1054,7 @@ src/kernel/framework/fs/vfs/handle.rs::vfs_readdir_safe
 src/kernel/framework/fs/vfs/handle.rs::vfs_seek_safe
 src/kernel/framework/fs/vfs/inotify.rs::inotify_fd_readable
 src/kernel/framework/fs/vfs/inotify.rs::inotify_stats
+src/kernel/framework/fs/vfs/types.rs::inode_arc
 src/kernel/framework/fs/vfs/vfs.rs::get_fs_name
 src/kernel/framework/idt/handlers.rs::category_count
 src/kernel/framework/idt/idt.rs::set_exception_handler
@@ -1048,14 +1064,30 @@ src/kernel/framework/idt/safety.rs::rdtsc_fence
 src/kernel/framework/idt/safety.rs::save_frame_pointer
 src/kernel/framework/idt/safety.rs::store_fence
 src/kernel/framework/idt/statistics.rs::get_recent_events
+src/kernel/framework/idt/types.rs::dump_registers
+src/kernel/framework/idt/types.rs::error_code_flags
+src/kernel/framework/idt/types.rs::set_handler
 src/kernel/framework/io/iouring.rs::io_uring_destroy
 src/kernel/framework/io/iouring.rs::io_uring_reap
 src/kernel/framework/ipc/dynamic.rs::pipe_exists
+src/kernel/framework/irq/mod.rs::register_tasklet
+src/kernel/framework/irq/mod.rs::schedule_tasklet
 src/kernel/framework/irqline.rs::is_registered
+src/kernel/framework/klog/mod.rs::klog_get_level
+src/kernel/framework/klog/mod.rs::klog_set_level
+src/kernel/framework/klog/mod.rs::log_crit
+src/kernel/framework/klog/mod.rs::log_debug
+src/kernel/framework/klog/mod.rs::log_warn
 src/kernel/framework/mm/kpti.rs::invpcid_flush_single
 src/kernel/framework/mm/kpti.rs::kpti_kernel_pml4
 src/kernel/framework/mm/kpti.rs::kpti_user_pml4_or_kernel
 src/kernel/framework/mm/kpti.rs::pcid_is_enabled
+src/kernel/framework/mm/mod.rs::is_accessed
+src/kernel/framework/mm/mod.rs::is_dirty
+src/kernel/framework/mm/mod.rs::is_nx
+src/kernel/framework/mm/mod.rs::set_accessed
+src/kernel/framework/mm/mod.rs::set_dirty
+src/kernel/framework/mm/mod.rs::set_nx
 src/kernel/framework/mm/numa.rs::all_nodes
 src/kernel/framework/mm/numa.rs::best_alloc_node
 src/kernel/framework/mm/numa.rs::contains_cpu
@@ -1072,11 +1104,19 @@ src/kernel/framework/mm/vmm_aarch64.rs::is_desc_device_memory
 src/kernel/framework/mm/vmm_aarch64.rs::is_desc_non_cacheable
 src/kernel/framework/mm/vmm_aarch64.rs::is_desc_page
 src/kernel/framework/mm/vmm_aarch64.rs::is_desc_table
+src/kernel/framework/net/api.rs::init_network_now
+src/kernel/framework/net/api.rs::status_snapshot
 src/kernel/framework/net/netfilter.rs::hook_count
 src/kernel/framework/net/netfilter.rs::list_rules
 src/kernel/framework/net/route.rs::default_route
 src/kernel/framework/net/route.rs::route_list
 src/kernel/framework/page_table.rs::verify_kernel_code_protection
+src/kernel/framework/pci/api.rs::register_scanner
+src/kernel/framework/pci/mod.rs::find_by_vendor
+src/kernel/framework/pci/mod.rs::find_device
+src/kernel/framework/pci/mod.rs::get_device_list
+src/kernel/framework/pci/mod.rs::get_ecam_base
+src/kernel/framework/pci/mod.rs::set_ecam_base
 src/kernel/framework/pci/msi.rs::msi_disable
 src/kernel/framework/pci/msi.rs::msi_enable
 src/kernel/framework/pci/msi.rs::msix_disable
@@ -1123,7 +1163,10 @@ src/kernel/framework/proc/session.rs::signal_foreground_pgid
 src/kernel/framework/proc/session.rs::sys_tiocsctty
 src/kernel/framework/proc/signal.rs::has_deliverable_signal
 src/kernel/framework/proc/thread.rs::get_thread
+src/kernel/framework/proc/types.rs::set_user_mode
+src/kernel/framework/proc/types.rs::thaw_target_state
 src/kernel/framework/proc/user_proc.rs::create_from_binary
+src/kernel/framework/smp/mod.rs::broadcast_reschedule
 src/kernel/framework/sync/atomic.rs::record_cmpxchg_fail
 src/kernel/framework/sync/atomic.rs::record_cmpxchg_success
 src/kernel/framework/sync/atomic.rs::record_dec
@@ -1152,6 +1195,16 @@ src/kernel/framework/timer/time_sync.rs::client_request
 src/kernel/framework/vmspace.rs::map_huge
 src/kernel/services/barrier/audit_export.rs::count_failure
 src/kernel/services/barrier/audit_export.rs::count_success
+src/kernel/services/chitin/mod.rs::blk_info
+src/kernel/services/chitin/mod.rs::blk_name
+src/kernel/services/chitin/mod.rs::char_read
+src/kernel/services/chitin/mod.rs::char_write
+src/kernel/services/chitin/mod.rs::count_by_proto
+src/kernel/services/chitin/mod.rs::find_by_id
+src/kernel/services/chitin/mod.rs::find_by_proto
+src/kernel/services/chitin/mod.rs::find_net_device
+src/kernel/services/chitin/mod.rs::input_has_data
+src/kernel/services/chitin/mod.rs::input_read
 src/kernel/services/config/sysctl.rs::write_to
 src/kernel/services/credo/crypto.rs::as_bytes_mut
 src/kernel/services/credo/crypto.rs::ct_eq_password
@@ -1174,6 +1227,7 @@ src/kernel/services/credo/secure_boot.rs::is_secure_boot_initialized
 src/kernel/services/credo/secure_boot.rs::is_tpm_initialized
 src/kernel/services/credo/secure_boot.rs::secure_boot_syscall
 src/kernel/services/credo/secure_boot.rs::tpm_syscall
+src/kernel/services/debug/mod.rs::kgdb_is_active
 src/kernel/services/driver/acpi.rs::hpet_info
 src/kernel/services/driver/acpi.rs::ioapic_addr
 src/kernel/services/driver/acpi.rs::ioapic_count
@@ -1307,17 +1361,30 @@ src/kernel/services/ipc/signal.rs::ipc_signal_unblock
 src/kernel/services/mm/memory_pressure.rs::is_pressure_critical
 src/kernel/services/mm/memory_pressure.rs::is_pressure_emergency
 src/kernel/services/mm/swap.rs::usage_ratio
+src/kernel/services/net/mod.rs::reset_state
+src/kernel/services/net/mod.rs::start_dhcp
+src/kernel/services/net/mod.rs::static_ip
 src/kernel/services/net/unix.rs::uds_parse_path
 src/kernel/services/net/unix.rs::uds_recv_with_creds
 src/kernel/services/proc/canary.rs::get_canary_u64
 src/kernel/services/proc/elf.rs::is_executable
+src/kernel/services/proc/mod.rs::init_per_cpu
+src/kernel/services/proc/mod.rs::pid_new
+src/kernel/services/proc/mod.rs::pid_raw
+src/kernel/services/proc/mod.rs::priority_from_u32
+src/kernel/services/proc/mod.rs::scheduler_ready
+src/kernel/services/proc/mod.rs::tid_new
+src/kernel/services/proc/mod.rs::tid_raw
 src/kernel/services/proc/shadow_stack.rs::cet_syscall
 src/kernel/services/proc/signal.rs::cont
+src/kernel/services/syscall/mod.rs::dispatch_from_ctx_typed
 src/kernel/services/timer/tickless.rs::tickless_syscall
 src/kernel/services/timer/time_sync.rs::timesync_syscall
 src/kernel/services/wasm/interpreter.rs::instantiate
 src/kernel/services/wasm/interpreter.rs::register_host_function
+src/kernel/services/wasm/types.rs::as_i64
 src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
+src/kernel/services/wasm/wasi/mod.rs::wasi_function_table
 <!-- audit-classified-end -->
 
 #### B-7. T5-C 关闭记录（裁定四「五条验收」核销）
@@ -1564,6 +1631,22 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 - **门槛**：双架构 0w0e / fmt / clippy pedantic（lib + `kernel_test` + `host-test` 三维）/ 核心审计（SAFETY 1937 → **1933**，覆盖仍 100%）/ host-tests 全绿 / kernel-host **817 passed 0 failed** / QEMU `kernel_test` exit 33 —— 全过。
 - **R1 实测（脚本正向复跑）**：`已分类清单 429 项` / 汇总 **`CRITICAL=2 / HIGH=2 / WARN=0 / INFO=429`**（`rc=1`，CRITICAL 2 为 R2 预存 `process_vm_*`，与本批无关；HIGH 4 → 2，余 2 项为 `kmalloc_slab.rs` 孤岛）。**零引用事实随删除同步核销**，非仅改分级。
 - 对 B-9.3 的时序说明：B-9.3 记录的「HIGH 0 / INFO 435 / 清单 436」为**甲批后基线**；其后 UT-07 收敛、批次 3/4 接线实装与本次 D-9-6 改动使若干条目接线 / 遮蔽 / 消失，故本期基线为「HIGH 2 / INFO 429 / 清单 429」。
+
+**B-10.9 项 5 批 B — B09-21 豁免面收窄（按文件名 → 按路径；+67 项）**
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-21**。原 `EXEMPT_FILENAMES` **按文件名**豁免 ⇒ 全仓**任意同名文件**（`mod.rs` / `api.rs` / `types.rs` / `lib.rs` / `prelude.rs` / `dispatch.rs`）内的一切 `pub fn` 均被静默豁免，构成**结构性漏报面**。
+
+| 阶段 | 动作 | 实测 |
+|---|---|---|
+| 收窄前 | 豁免面 = 108 文件（上述六种基名），内含 **902 个 `pub fn` 定义**，B-6 区块内该类条目数 **0**（从未甄别） | HIGH = 2 / INFO = 429 / 清单 429 |
+| 收窄 | `EXEMPT_FILENAMES`（按文件名）→ `EXEMPT_PATHS`（按**具体路径**，仅保留 `framework/prelude.rs` + 两个 `syscall/dispatch.rs`）；`is_exempt_function` 改按 `relative_to(ROOT)` 比对；脚本头部豁免清单同步改写 | HIGH = **69**（＝ 2 + 67） |
+| 登记 | 暴露的 67 项按排序并入 **B-6** 区块（429 → **496**，无重复、保持字典序） | HIGH = **2** / INFO = **496** / 清单 **496** |
+
+- **67 项分布**：`mod.rs` 53 / `types.rs` 9 / `api.rs` 5（`prelude.rs` 与 `dispatch.rs` 无命中；smoltcp 子树已排除）。
+- **口径更正（本次实测）**：首次度量误用 `cross_file == 0` 得 115 项 —— R1 真实口径为 `actual_callers == 0`（即 `total == 1`，仅声明自身）⇒ 正确值为 **67 项**。差值 48 项为「同文件内有多处引用但跨文件为 0」者（如 `framework/sync/mod.rs` 内 `pub(crate) mod raw` 的 helper，由同文件调用，非零引用）。
+- **代表性条目**：`framework/klog/mod.rs::{log_warn,log_debug,log_crit,klog_set_level,klog_get_level}`、`framework/mm/mod.rs::{is_dirty,set_dirty,is_accessed,set_accessed,is_nx,set_nx}`、`framework/pci/mod.rs::{set_ecam_base,get_ecam_base,get_device_list,find_by_vendor,find_device}`、`services/proc/mod.rs::{pid_new,pid_raw,tid_new,tid_raw,...}`、`services/chitin/mod.rs` 10 项、`framework/driver/virtio/mod.rs` 4 项、`framework/idt/types.rs::{error_code_flags,dump_registers,set_handler}`。
+- **失败关闭不变**：`load_classified_set()` 的 fail-closed 六条路径未改动；区块行格式校验（`^src/[^\s:]+\.rs::\w+$`）与唯一性校验保持。
+- **待办（批 C）**：67 项逐项收敛 —— 判定为**内部实现**者改 `pub` → `pub(crate)`（须同步核对该项是否落在 `pub(crate) mod` 内，避免收缩无效），确无价值者删除，属公共 API 面者保留登记。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 

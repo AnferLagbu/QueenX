@@ -24,8 +24,8 @@ audit_unwired_pub_fn.py — 检测「已实现但未接线」的 pub fn / pub co
 
 豁免列表 (避免误报, 严格):
   EXEMPT_NO_MANGLE: #[no_mangle] / #[unsafe(no_mangle)] 函数 (FFI 边界)
-  EXEMPT_API_FILE: prelude.rs / api.rs / mod.rs (顶层 re-export 区)
-  EXEMPT_DISPATCH: services/syscall/dispatch.rs (分发表)
+  EXEMPT_PATH:     framework/prelude.rs + 两个 syscall/dispatch.rs (按**具体路径**,
+                   非按文件名 —— 后者会连带豁免全仓同名文件, 见 EXEMPT_PATHS 注释)
   EXEMPT_CFG_ATTR:  cfg(...)/cfg_attr(...) 门控的引用 (条件编译)
   EXEMPT_TRAIT_IMPL: trait impl 中的 fn (继承自 trait)
   EXEMPT_VENDORED: smoltcp 子树 (锁定版本)
@@ -63,14 +63,16 @@ SERVICES_DIR = KERNEL_DIR / "services"
 # vendored 目录 (绝对排除)
 VENDORED_DIRS = {"smoltcp"}
 
-# 豁免文件名 (顶层 re-export 区与分发表)
-EXEMPT_FILENAMES = {
-    "prelude.rs",      # framework::prelude — pub use 集中区
-    "mod.rs",          # 各 mod 顶层 re-export
-    "api.rs",          # 显式 API 入口
-    "dispatch.rs",     # syscall 分发 (SYS_* 在此引用)
-    "types.rs",        # syscall 编号常量定义本身
-    "lib.rs",          # crate 入口
+# 豁免路径 (顶层 re-export 区与分发表)
+#
+# 分册 9 项 5 (2026-09-26): 原按**文件名**豁免 ⇒ 全仓任意同名文件 (mod.rs /
+# api.rs / types.rs / lib.rs) 内的一切 pub fn 均被静默豁免, 构成结构性漏报面
+# (实测 108 文件 / 902 个 pub fn 定义从未进入 R1)。现改为按**具体路径**豁免,
+# 仅保留真正的 re-export 集中区与 syscall 分发表。
+EXEMPT_PATHS = {
+    "src/kernel/framework/prelude.rs",           # framework::prelude — pub use 集中区
+    "src/kernel/framework/syscall/dispatch.rs",  # framework syscall 分发表 (SYS_* 在此引用)
+    "src/kernel/services/syscall/dispatch.rs",   # services syscall 分发表
 }
 
 # 「已分类清单」数据源 (裁定五 / B09-21): 台账内机器可读区块
@@ -432,8 +434,12 @@ def is_exempt_function(name: str, path: Path, in_trait_impl: bool,
     """判断 pub fn 是否豁免. 返回 (是否豁免, 豁免原因)"""
     if name in no_mangle_set:
         return True, "#[no_mangle] FFI"
-    if path.name in EXEMPT_FILENAMES:
-        return True, f"豁免文件 ({path.name})"
+    try:
+        rel = str(path.relative_to(ROOT))
+    except ValueError:
+        rel = str(path)
+    if rel in EXEMPT_PATHS:
+        return True, f"豁免路径 ({rel})"
     if in_trait_impl:
         return True, "trait impl (继承自 trait)"
     return False, ""
