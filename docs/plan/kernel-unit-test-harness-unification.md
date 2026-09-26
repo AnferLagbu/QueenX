@@ -250,7 +250,7 @@
 - **UT-07. 双轨收敛（消除双份断言）**
   - 描述：对已有等价注册组的约 72 文件逐例收敛为「一处一份」。
   - 方案：以 B09-19 的处置判据为输入 —— 纯逻辑断言以 `cfg(test)` 侧为准（删注册表副本或删源副本，取覆盖更强者）；硬件路径断言保留在 `kernel_test` 载体。
-  - 状态：[]
+  - 状态：[X]
   - 详情：**先出收敛清单再动手**（逐例标注保留侧与删除侧），避免历史那种「半成品」；本步可分批，且允许按用户裁定延期执行。
   - 详情（调研口径 —— 本清单的数据来源与判定方法）
     - 规模（实测，排除 vendored `services/net/smoltcp/`）：注册表侧 **108 命名空间组 / 459 条用例 / 25 个 `framework/tests/*.rs`**；源 `#[cfg(test)]` 侧 **104 文件 / 754 例**。
@@ -372,7 +372,12 @@
     - `pwm::audit`：计划栏写目标文件 `services/credo/audit.rs`，实际 3 条断言归入 **`framework/credo/types.rs`** —— 注册侧 `audit_entry` 的判据对象（`AuditAction`/`AuditResult`）定义在 `framework::credo::types`，归源侧对应文件即"就近原则"。
     - C8 连带扩面：计划栏原本只要求 `barrier::audit` 一组，经用户裁定扩为 reset 子树 4 组（`audit`/`bbr`/`bsr`/`parallel`），已在上条登记。
     - C8 占位型用例无断言登记：`bbr::compute_fingerprint`（形参为 `&PanicInfo`，stable 无法构造 ⇒ 保留"可调用性占位"语义，空体 + 注释）、`bsr::freeze_unfreeze`（仅簿记调用，原返回恒 `true`）、`parallel::compute_layers`（原判据 `count > 0 || true`）—— 三者本质为"可调用性占位"而非断言，未以 `assert!(true)` 伪装（会触发 clippy `assertions_on_constants`），属"注册侧断言数为 0"先例（类比 A 类 `rcu` / `kmalloc_slab`）。
-    - 待报告（预存，非本次改动引入）：`framework/tests/driver_test.rs`（255 行）与 `framework/barrier/reset/layered.rs` 的 `#[cfg(feature = "kernel_test")] pub mod tests` 块**全库无引用**（grep 确认），属孤儿文件 / 孤儿模块，是否清理待用户裁定（§12.5）。
+    - 待报告（预存，非本次改动引入）：`framework/tests/driver_test.rs`（255 行）与 `framework/barrier/reset/layered.rs` 的 `#[cfg(feature = "kernel_test")] pub mod tests` 块**全库无引用**（grep 确认），属孤儿文件 / 孤儿模块 —— 已经用户裁定清理，见下条。
+  - 详情（孤儿清理 —— UT-07 收尾）
+    - `framework/tests/driver_test.rs` **整文件删除**：其形态为独立裸机程序（`#![no_std]` / `#![no_main]` / `#[no_mangle] extern "C" fn _start` / `#[panic_handler]`），非 `framework/tests/` 模块树成员（`tests/mod.rs` 无 `mod driver_test;` 声明），Cargo 无 `[[bin]]` / `[[test]]` 指向，构建规则亦无 —— 自早期"驱动示例程序"演进后即成死件；且体内引用未定义符号（`Color` 等），若被纳入编译会与真实 `_start` / `panic_handler` 冲突。Makefile 的 `driver-test` 目标同名但**只跑主内核** `build/kernel.flat` 并落日志 `driver_test_*.log`，与该文件无关。
+    - `framework/barrier/reset/layered.rs` 的 `#[cfg(feature = "kernel_test")] pub mod tests` 块**删除**：`test_recovery_status()` 零断言（仅 `let _ = status.bbr_count;` 等，恒返回 `true`），全库无引用；其目标 API `get_recovery_status` 的行为断言由注册侧 `framework/tests/reset.rs` 的 `barrier::reset::status_api` 以**更强判据**覆盖（`reset_stats()` 后 bbr/bsr/bhr 计数归零），删除无覆盖损失。源文件留中文注记指向该覆盖点。
+    - 验证实测（六门槛复跑）：`./ci/build.sh all` **Passed 5 / Failed 0**；`fmt --check` **0 差异**；`make test-kernel-host` **808 passed / 0 failed**；clippy `kernel_test` 维 0 warning（本次删除直接影响该维）；`./ci/build.sh aarch64` + `./ci/audit.sh quick` exit 0；`make` + `make test-unit`（QEMU）**360/360 passed，0 skipped**（与清理前一致，佐证两处均未被注册）；`qemu_boot_test.sh x86_64|aarch64` 各 **1/1**。
+    - UT-07 至此收口：A 类 10 组 / A′ 类 5 组 / C 类 16 组均已收敛，B 类 4 组按裁定保留 `kernel_test` 载体，无残留待办 ⇒ 状态置 `[X]`。
 
 - **UT-08. §2.3 六门槛全跑 + CI 接入**
   - 描述：`./ci/build.sh all`、`./ci/audit.sh quick`、`make test-host`、`make test-unit`、`./scripts/qemu_boot_test.sh all` + 新第 6 条 host 内核单测。
