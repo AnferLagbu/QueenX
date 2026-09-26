@@ -117,18 +117,7 @@ pub struct RecoveryStatus {
     pub bhr_count: u32,
 }
 
-#[cfg(feature = "kernel_test")]
-pub mod tests {
-    // J-01 (2026-09-08): wildcard_imports 清理 — 显式列出本模块使用的 super 符号
-    use super::get_recovery_status;
-
-    pub fn test_recovery_status() -> bool {
-        let status = get_recovery_status();
-        // 计数字段应为有效值 (u32 范围, 不溢出)
-        // current_layer 是合法 enum 值即可
-        let _ = status.bbr_count;
-        let _ = status.bsr_count;
-        let _ = status.bhr_count;
-        true
-    }
-}
+// UT-07 (2026-09-26): 原 `#[cfg(feature = "kernel_test")] pub mod tests`
+// (test_recovery_status, 零断言且全库无引用) 已删 — get_recovery_status 的
+// 行为断言由 framework/tests/reset.rs::barrier::reset::status_api 以更强
+// 判据覆盖 (reset_stats 后 bbr/bsr/bhr 计数归零).
