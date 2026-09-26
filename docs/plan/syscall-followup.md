@@ -880,9 +880,11 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为 T5 甄别**已分类**的零引用 pub fn 全集（＝ R1 实测输出，**436 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**434 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝2026-09-26 分册 9 批次 2 R1 复查**（新增 4 项已甄别非 TCB 项 / 移除 6 项已失效条目；逐项依据见 **B-10**）。
+>
+> **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
 <!-- audit-classified-begin -->
 src/kernel/framework/arch/aarch64/gic.rs::configure_spi_edge
@@ -907,7 +909,6 @@ src/kernel/framework/arch/aarch64/psci.rs::system_reset
 src/kernel/framework/arch/aarch64/timer.rs::read_control
 src/kernel/framework/arch/aarch64/timer.rs::set_compare
 src/kernel/framework/arch/aarch64/timer.rs::set_timeout_ms
-src/kernel/framework/arch/aarch64/uart.rs::switch_to_high_half
 src/kernel/framework/arch/shadow_stack.rs::alloc_kernel_shadow_stack
 src/kernel/framework/arch/shadow_stack.rs::configure_interrupt_ssp_table
 src/kernel/framework/arch/shadow_stack.rs::configure_user_cet_msr
@@ -953,7 +954,6 @@ src/kernel/framework/barrier/recovery.rs::hard_reset_domain
 src/kernel/framework/barrier/recovery.rs::recovery_registry_init
 src/kernel/framework/barrier/recovery.rs::recovery_subdomain_save_checkpoint
 src/kernel/framework/barrier/reset/audit.rs::count_by_result
-src/kernel/framework/barrier/reset/layered.rs::test_recovery_status
 src/kernel/framework/barrier/snapshot.rs::test_registry_priority_order
 src/kernel/framework/barrier/snapshot.rs::test_registry_register
 src/kernel/framework/barrier/snapshot.rs::test_snapshot_basic
@@ -1032,7 +1032,6 @@ src/kernel/framework/fs/vfs/flock.rs::flock_count
 src/kernel/framework/fs/vfs/flock.rs::flock_ops
 src/kernel/framework/fs/vfs/flock.rs::posix_lock_count
 src/kernel/framework/fs/vfs/flock.rs::posix_lock_ops
-src/kernel/framework/fs/vfs/handle.rs::vfs_close_safe
 src/kernel/framework/fs/vfs/handle.rs::vfs_get_fd_handle
 src/kernel/framework/fs/vfs/handle.rs::vfs_readdir_safe
 src/kernel/framework/fs/vfs/handle.rs::vfs_seek_safe
@@ -1123,7 +1122,6 @@ src/kernel/framework/proc/session.rs::get_session
 src/kernel/framework/proc/session.rs::signal_foreground_pgid
 src/kernel/framework/proc/session.rs::sys_tiocsctty
 src/kernel/framework/proc/signal.rs::has_deliverable_signal
-src/kernel/framework/proc/thread.rs::create_thread
 src/kernel/framework/proc/thread.rs::get_thread
 src/kernel/framework/proc/user_proc.rs::create_from_binary
 src/kernel/framework/sync/atomic.rs::record_cmpxchg_fail
@@ -1181,15 +1179,16 @@ src/kernel/services/driver/acpi.rs::ioapic_addr
 src/kernel/services/driver/acpi.rs::ioapic_count
 src/kernel/services/driver/acpi.rs::ioapic_gsib
 src/kernel/services/driver/acpi.rs::ioapic_list
-src/kernel/services/driver/acpi.rs::lapic_base
 src/kernel/services/driver/char/serial.rs::available_bytes
 src/kernel/services/driver/char/serial.rs::clear_tx_buffer
 src/kernel/services/driver/char/serial.rs::enqueue_tx
 src/kernel/services/driver/char/serial.rs::read_from_buffer
+src/kernel/services/driver/char/serial.rs::send_str
 src/kernel/services/driver/char/serial.rs::tx_available
 src/kernel/services/driver/char/vga.rs::clear_row
 src/kernel/services/driver/char/vga.rs::read_cell
 src/kernel/services/driver/char/vga.rs::with_blink
+src/kernel/services/driver/char/vga.rs::write_string_at
 src/kernel/services/driver/display/dp.rs::from_iomem
 src/kernel/services/driver/display/dp.rs::read16
 src/kernel/services/driver/firmware.rs::firmware_name_hash
@@ -1266,10 +1265,11 @@ src/kernel/services/fs/nestfs/raidz.rs::scrub_block
 src/kernel/services/fs/nestfs/spa.rs::is_disk_present
 src/kernel/services/fs/nestfs/spa.rs::is_formatted
 src/kernel/services/fs/nestfs/spa.rs::sync_uberblock
+src/kernel/services/fs/nestfs/txg.rs::add_free_to_open
+src/kernel/services/fs/nestfs/txg.rs::add_io_to_open
 src/kernel/services/fs/nestfs/txg.rs::drain_free
 src/kernel/services/fs/nestfs/txg.rs::drain_io
 src/kernel/services/fs/nestfs/txg.rs::get_open_txg_mut
-src/kernel/services/fs/nestfs/txg.rs::get_syncing_txg
 src/kernel/services/fs/nestfs/zil.rs::new_dedup_unref
 src/kernel/services/fs/nestfs/zil.rs::new_setattr
 src/kernel/services/fs/nestfs/zil_persist.rs::as_static_str
@@ -1477,6 +1477,56 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 | 3 | `make test-host` | ✅ `RESULT: ALL 365 TESTS PASSED (8 skipped)` |
 | 4 | `make test-unit`（QEMU `kernel_test`） | ✅ `ALL TESTS PASSED (QEMU exit: 33)` |
 | 5 | `./scripts/qemu_boot_test.sh x86_64`（硬闸门） | ✅ `找到里程碑: 'VFS ready'` / `完整启动成功! 进入 Ring 3 启动 init 进程` / `QEMU 真实启动测试: 1/1 通过` |
+
+#### B-10. 分册 9 批次 2：R1 复查 8 项未分类甄别（4 项登记 + 4 项 TCB 上报）
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-18** 2026-09-26 全量实测列出的「新增未分类 HIGH 8 项」（B-6 区块外）。
+> 本批**只做甄别与登记，不删任何代码**；涉 TCB 的 4 项按**裁定六**上报待裁、不自主处置。
+
+**B-10.1 逐项三档定性（引用计数口径同 R1 ＝ `rg -c -w`）**
+
+| 项（文件::符号） | 面 | 实测 | 三档定性 | 本批处置 |
+|---|---|---|---|---|
+| `framework/mm/kpti_aarch64.rs::kpti_kernel_ttbr0`(118) | TCB（MMU / KPTI） | total=1（仅声明） | **族残缺**：同族 `kpti_kernel_ttbr1`(112) / `kpti_trampoline_ttbr1`(106) **已在 B-6 区块分类**（硬件原语完整性保留档）；异常入口/出口汇编**按固定字节偏移直读 `KPTI_GLOBALS`**（偏移由 `offset_of!` 静态断言锁定，见 `kpti_aarch64.rs:85-91`），不经 getter ⇒ 该族 getter 是「Rust 侧诊断 / 兜底」对称面 | **上报待裁** |
+| `::kpti_user_ttbr0`(130) | 同上 | total=1 | 同上：写侧 `kpti_set_user_ttbr0` 有 1 处调用点（`arch/aarch64/mod.rs:326` `enter_user`），**读侧 getter 零调用者** ⇒ 与 ttbr1 族同构 | **上报待裁** |
+| `framework/mm/kmalloc_slab.rs::slab_kmalloc`(76) | TCB（内存分配器） | total=1 | **未接线（整模块孤岛）**：本模块 3 个 `pub fn`（`slab_init` / `slab_kmalloc` / `slab_kfree`）**全部零调用者** ⇒ `SLAB_READY` 永为 `false`，Slab 路径永不生效（`slab_kmalloc` 恒走 `kmalloc` 回退）。**与既有登记同源**：[archive/audit-2026-08-14/subsystem-mm.md](archive/audit-2026-08-14/subsystem-mm.md) 记「内部用 SLAB 但未注册到 kmalloc → 死代码」（P2） | **上报待裁**（接线 / 删除二选一） |
+| `::slab_kfree`(90) | 同上 | total=1 | 同上 | **上报待裁** |
+| `services/fs/nestfs/txg.rs::add_free_to_open`(243) | services | total=1（底层 `add_free` 2 ＝ 声明 + 本项调用） | **族残缺**：同族 `add_dirty_to_open` **7 引用在用**（且额外递增 group 级 `total_dirty`）；free / io 两条并行路径（`add_free` / `add_io` / `drain_free` / `drain_io`）**只有本项与 `add_io_to_open` 作为唯一送入口** ⇒ 删则族残缺、且 `add_free` / `add_io` 一并沦为孤儿 | **完整性保留**（登记） |
+| `::add_io_to_open`(249) | services | total=1（底层 `add_io` 2） | 同上 | **完整性保留**（登记） |
+| `services/driver/char/serial.rs::send_str`(468) | services | total=1（同族 `send_all` 2 在用） | **能力等价复本**（实现体 ＝ `self.send_all(s.as_bytes())`）；但**三合一判据第三项不成立**——属 **driver 公共 API 面**（同文件已有 5 项同类 API 在 B-6 区块）⇒ 不构成删候选 | **完整性保留**（登记） |
+| `services/driver/char/vga.rs::write_string_at`(370) | services | total=1（同族 `write_char` 3 在用） | 同上（实现体 ＝ 逐格 `write_char` 的定位写串封装；同文件已有 3 项同类 API 在区块） | **完整性保留**（登记） |
+
+**B-10.2 新增登记的 4 项（附裁定二三字段）**
+
+| 项 | 等待原因（零引用的事实成因） | 解锁条件 | 责任方 |
+|---|---|---|---|
+| `txg.rs::add_free_to_open` / `add_io_to_open` | NestFS 写路径当前**只走 dirty 累积**（`add_dirty_to_open` 已在用）；free / io 累积器**无送入口**——本两项即其唯一入口，故 `free_bps` / `io_list` 在 live 路径**结构性为空**，`drain_free` / `drain_io` 恒得空集 | NestFS 写路径接入 free / io 累积（届时本两项即为自然接线点；一并核对 `total_dirty` 同类 group 计数是否需补 `total_free`） | 路线图（NestFS 写路径 / TXG 完整语义） |
+| `char/serial.rs::send_str` | driver 公共 API 面：同能力 `send_all` 已在用，字符串便捷入口无调用者 | 出现「按 `&str` 写串口」的上层需求（用户态串口服务 / 内核日志旁路） | 路线图（driver API 收敛） |
+| `char/vga.rs::write_string_at` | driver 公共 API 面：同能力 `write_char` 已在用，定位写串入口无调用者 | 出现屏幕**绝对定位**写串需求（状态栏 / 日志定区刷新） | 路线图（driver API 收敛） |
+
+**B-10.3 上报 TCB 4 项（裁定六：不自主处置）**
+
+- **`kpti_aarch64.rs` 2 项**：与**已在 B-6 区块分类**的 ttbr1 同族、同文件、同形态（`pub fn` getter 读 `KPTI_GLOBALS` 原子量、`#[inline(always)]`、供诊断 / 兜底）。**候选处置**：① 按同族先例登记为「硬件原语完整性保留」（与 ttbr1 对称，零代码改动）；② 删除（TCB 删除，须先证无诊断用途）。**属 TCB 核心（MMU / KPTI）⇒ 请裁定。**
+- **`kmalloc_slab.rs` 2 项（+ 整模块）**：**新发现（已含于事实陈述）**——该模块 **3 个 `pub fn` 全部零调用者**，即整模块为孤岛；`slab_init` 因本文件第 15 行**文档注释出现同名串** `\`slab_init()\``，被 `rg -c -w` 计入引用而**未进 R1 报告**（R1 的按名计数已知偏差，见 B-6 口径说明）。**候选处置**：① 接线（在 kmalloc 初始化点调用 `slab_init`，并把 `slab_kmalloc` / `slab_kfree` 接为 kmalloc 的 size≤2048 路径）；② 删模块（含 host-tests 源文本断言 `kmalloc_irq_save_test` 需同步）。**属 TCB 内存分配器面 ⇒ 请裁定。**
+- **附带发现（同源偏差，不在本批 8 项内，未处置）**：`services/driver/acpi.rs::lapic_base` 亦为真零引用，但因 `framework/arch/x86_64/acpi.rs` 存在**同名局部变量** `lapic_base`（本次 D-9-6 修复引入）而被计入引用 ⇒ **从 R1 报告消失**。本次仅在 B-6 区块同步中移除其失效行（B-10.4），**其零引用事实另需 reviewer 定夺是否单列**（services 层、非 TCB，可直接接线或登记）。
+
+**B-10.4 B-6 区块同步（新增 4 / 移除 6；`434` 项）**
+
+| 动作 | 项 | 依据 |
+|---|---|---|
+| 新增 | `char/serial.rs::send_str`、`char/vga.rs::write_string_at`、`fs/nestfs/txg.rs::add_free_to_open`、`::add_io_to_open` | B-10.1 / B-10.2（非 TCB，完整性保留） |
+| 移除 | `arch/aarch64/uart.rs::switch_to_high_half` | **已接线**：`arch/aarch64/mod.rs:323` 调用 |
+| 移除 | `barrier/reset/layered.rs::test_recovery_status` | **已删除**（UT-07 孤儿清理，`layered.rs:121` 注释残迹） |
+| 移除 | `fs/vfs/handle.rs::vfs_close_safe` | **已接线**：`framework/tests/test_vfs.rs:191` / `:239` 调用（UT-07 收敛后生效） |
+| 移除 | `proc/thread.rs::create_thread` | **被同名串遮蔽**：`proc/scheduler.rs:725` 注释出现 `ThreadManager::create_thread` ⇒ 不再计数为零引用（真零引用仍成立，另见 B-10.3 附带发现） |
+| 移除 | `services/driver/acpi.rs::lapic_base` | 同名局部变量遮蔽（见 B-10.3 附带发现） |
+| 移除 | `fs/nestfs/txg.rs::get_syncing_txg` | **已被引用**：`host-tests/src/framekernel_bench.rs:1759` 调用 |
+
+**B-10.5 实测计数（脚本正向复跑）**
+
+- 脚本：`python3 scripts/audit_unwired_pub_fn.py` ⇒ `已分类清单 434 项` / `[HIGH] R1 未分类零引用 pub fn: **4 项**`（＝ B-10.3 的 kpti ×2 + kmalloc_slab ×2）/ 汇总 **`CRITICAL=7 / HIGH=4 / WARN=0 / INFO=435`**（`rc=0`；CRITICAL 7 为 R2 预存未接线 syscall，与本批无关）。
+- R1 总数守恒：**438 ＝ 434（INFO）+ 4（HIGH）**（本批**未改变零引用事实**，仅调整分级与区块条目）。
+- 对 B-9.3 的时序说明：B-9.3 记录的「HIGH 0 / INFO 435 / 清单 436」为**甲批后基线**；其后 UT-07 收敛与本次 D-9-6 改动使若干条目接线 / 遮蔽 / 消失，故本期基线为「HIGH 4 / INFO 435 / 清单 434」。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 
