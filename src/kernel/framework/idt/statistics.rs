@@ -140,10 +140,8 @@ impl DetailedStatistics {
         self.record_history(vector, frame.rip, is_user);
 
         // 更新时间戳
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            let _ = crate::arch!(timestamp());
-        }
+
+        let _ = crate::arch!(timestamp());
     }
 
     /// 记录一次 IRQ
@@ -194,22 +192,19 @@ impl DetailedStatistics {
     fn record_history(&self, vector: u8, rip: u64, is_user: bool) {
         let mut history = self.history.lock();
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            let event = InterruptEvent {
-                timestamp: crate::arch!(timestamp()),
-                vector,
-                rip,
-                is_user,
-            };
+        let event = InterruptEvent {
+            timestamp: crate::arch!(timestamp()),
+            vector,
+            rip,
+            is_user,
+        };
 
-            let idx = (history.index % 64) as usize;
-            history.events[idx] = event;
-            history.index += 1;
+        let idx = (history.index % 64) as usize;
+        history.events[idx] = event;
+        history.index += 1;
 
-            if history.count < 64 {
-                history.count += 1;
-            }
+        if history.count < 64 {
+            history.count += 1;
         }
     }
 

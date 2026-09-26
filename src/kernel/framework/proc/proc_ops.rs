@@ -103,8 +103,7 @@ pub mod raw {
     /// # Safety (内部)
     /// - `cr3` 必须为 `vmm_clone_user_page_table_cow` 返回的非零物理地址。
     pub fn destroy_user_page_table(cr3: u64) {
-        // SAFETY: cr3 由 vmm_clone_user_page_table_cow 创建。
-        unsafe { vmm_destroy_page_table(cr3) }
+        vmm_destroy_page_table(cr3);
     }
 
     /// 调用 `vmm_switch_page_table` (特权级页表切换)。
@@ -112,8 +111,7 @@ pub mod raw {
     /// # Safety (内部)
     /// - `cr3` 必须为有效的已建立物理页表基址。
     pub fn switch_page_table(cr3: u64) {
-        // SAFETY: cr3 是从 vmm_clone_user_page_table_cow / kernel_pml4 获取的合法值。
-        unsafe { vmm_switch_page_table(cr3) }
+        vmm_switch_page_table(cr3);
     }
 
     /// 调用 `vmm_clone_user_page_table_cow` (fork 路径, COW 共享页表)。
@@ -122,8 +120,7 @@ pub mod raw {
     /// - `parent_cr3` 必须是有效的、已建立的用户页表基址 (由 process.cr3 提供)。
     /// - 调用方在子进程使用完毕后, 通过 `destroy_user_page_table` 释放。
     pub fn clone_user_page_table_cow(parent_cr3: u64) -> u64 {
-        // SAFETY: parent_cr3 来自 process.cr3, 已建立的页表。
-        unsafe { vmm_clone_user_page_table_cow(parent_cr3) }
+        vmm_clone_user_page_table_cow(parent_cr3)
     }
 
     /// 通过 FFI 输出 info 级别日志。

@@ -859,24 +859,21 @@ impl HostController for XhciController {
             .get_port_reg_mut(port)
             .ok_or(DriverError::InvalidParameter)?;
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            // 设置复位位
-            port_reg.portsc |= portsc::PORT_RESET;
+        // 设置复位位
+        port_reg.portsc |= portsc::PORT_RESET;
 
-            // 等待复位完成
-            let mut timeout = 1_000_000;
-            while timeout > 0 {
-                if port_reg.portsc & portsc::PORT_RESET == 0 {
-                    break;
-                }
-                timeout -= 1;
-                core::hint::spin_loop();
+        // 等待复位完成
+        let mut timeout = 1_000_000;
+        while timeout > 0 {
+            if port_reg.portsc & portsc::PORT_RESET == 0 {
+                break;
             }
+            timeout -= 1;
+            core::hint::spin_loop();
+        }
 
-            if timeout == 0 {
-                return Err(DriverError::Timeout);
-            }
+        if timeout == 0 {
+            return Err(DriverError::Timeout);
         }
 
         Ok(())

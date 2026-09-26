@@ -29,8 +29,7 @@ impl CharOps {
     /// # Safety (调用方)
     /// - `driver_data` 必须有效, `buf` 至少 `buf.len()` 字节。
     pub fn read(&self, driver_data: *mut u8, buf: &mut [u8]) -> usize {
-        // SAFETY: buf 在调用期间有效。
-        unsafe { (self.read)(driver_data, buf.as_mut_ptr(), buf.len()) }
+        (self.read)(driver_data, buf.as_mut_ptr(), buf.len())
     }
 
     /// 字符设备写 (Framekernel 安全接口)
@@ -38,7 +37,6 @@ impl CharOps {
     /// # Safety (调用方)
     /// - `driver_data` 必须有效, `buf` 在调用期间有效。
     pub fn write(&self, driver_data: *mut u8, buf: &[u8]) -> usize {
-        // SAFETY: buf 在调用期间有效。
-        unsafe { (self.write)(driver_data, buf.as_ptr(), buf.len()) }
+        (self.write)(driver_data, buf.as_ptr(), buf.len())
     }
 }

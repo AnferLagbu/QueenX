@@ -489,14 +489,9 @@ fn write_note_prstatus(fd: u32, pid: u32, sig: u8, frame_addr: u64, offset: &mut
 
     // 写入 PrStatus (对齐到 4 字节)
     let desc_aligned = (u64::from(prstatus_size) + 3) & !3;
-    // SAFETY: PrStatus 是 POD 结构体, 可以按字节写入
-    unsafe {
-        crate::framework::fs::vfs_write(
-            fd,
-            &prstatus as *const PrStatus as *const u8,
-            prstatus_size,
-        );
-    }
+
+    crate::framework::fs::vfs_write(fd, &prstatus as *const PrStatus as *const u8, prstatus_size);
+
     *offset += desc_aligned;
 }
 
@@ -530,10 +525,9 @@ fn write_note_siginfo(fd: u32, sig: u8, offset: &mut u64) {
     };
 
     let desc_aligned = (u64::from(siginfo_size) + 3) & !3;
-    // SAFETY: CoreSiginfo 是 POD 结构体
-    unsafe {
-        crate::framework::fs::vfs_write(fd, &si as *const CoreSiginfo as *const u8, siginfo_size);
-    }
+
+    crate::framework::fs::vfs_write(fd, &si as *const CoreSiginfo as *const u8, siginfo_size);
+
     *offset += desc_aligned;
 }
 
@@ -683,14 +677,9 @@ fn copy_from_user_safe(src: *const u8, len: usize, dst: &mut [u8]) -> usize {
 /// 写入字节到 fd
 fn write_bytes<T>(fd: u32, data: &T, offset: &mut u64) {
     let size = core::mem::size_of::<T>();
-    // SAFETY: T 是 POD 结构体, 可以按字节写入
-    unsafe {
-        crate::framework::fs::vfs_write(
-            fd,
-            core::ptr::from_ref::<T>(data).cast::<u8>(),
-            size as u32,
-        );
-    }
+
+    crate::framework::fs::vfs_write(fd, core::ptr::from_ref::<T>(data).cast::<u8>(), size as u32);
+
     *offset += size as u64;
 }
 

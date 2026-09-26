@@ -2031,6 +2031,10 @@ impl VirtualMemoryManager {
         clippy::inline_always,
         reason = "inline_always: #[inline(always)] 是性能优化 (关键路径/中断处理); 当前优先 expect"
     )]
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
+    )]
     pub fn release_lock(&self, flags: &IrqSaveFlags) {
         // 仍持锁时读取并清除"本临界区需远程失效"标志: VMM_LOCK 是全局锁, 此刻本核
         // 是唯一写者, 故读-清不会漏掉本临界区自身的置位.

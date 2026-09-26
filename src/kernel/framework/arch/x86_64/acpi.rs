@@ -612,10 +612,9 @@ pub fn acpi_shutdown() -> ! {
         crate::klog_warn!(Acpi, "[ACPI] FADT not found, cannot ACPI shutdown");
         // 回退: 通过 QEMU debug exit
         #[cfg(target_arch = "x86_64")]
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            crate::arch!(outl(0x604u16, 0x2000u32));
-        }
+
+        crate::arch!(outl(0x604u16, 0x2000u32));
+
         loop {}
     }
 
@@ -633,24 +632,20 @@ pub fn acpi_shutdown() -> ! {
     let value = slp_typ_s5 | slp_en;
 
     if pm1a_cnt != 0 {
-        // SAFETY: PM1a_CNT 是 ACPI 定义的 MMIO/IO 端口, 写入关机值
-        unsafe {
-            if pm1_cnt_len == 2 {
-                // 16-bit I/O 端口 — 使用 outl 写入 32 位 (低 16 位有效)
-                crate::arch!(outl(pm1a_cnt as u16, u32::from(value)));
-            } else if pm1_cnt_len == 4 {
-                // 32-bit I/O 端口
-                crate::arch!(outl(pm1a_cnt as u16, u32::from(value)));
-            }
+        if pm1_cnt_len == 2 {
+            // 16-bit I/O 端口 — 使用 outl 写入 32 位 (低 16 位有效)
+            crate::arch!(outl(pm1a_cnt as u16, u32::from(value)));
+        } else if pm1_cnt_len == 4 {
+            // 32-bit I/O 端口
+            crate::arch!(outl(pm1a_cnt as u16, u32::from(value)));
         }
     }
 
     // 如果关机失败, 回退到 QEMU debug exit
     #[cfg(target_arch = "x86_64")]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        crate::arch!(outl(0x604u16, 0x2000u32));
-    }
+
+    crate::arch!(outl(0x604u16, 0x2000u32));
+
     loop {}
 }
 
@@ -674,10 +669,8 @@ pub fn acpi_reboot() -> ! {
 
         if reset_reg_space == 1 {
             // I/O 端口空间
-            // SAFETY: Reset Register 写入
-            unsafe {
-                crate::arch!(outb(reset_reg_addr as u16, reset_val));
-            }
+
+            crate::arch!(outb(reset_reg_addr as u16, reset_val));
         }
         // 方式2: MMIO 空间 (reset_reg_space == 0)
         else if reset_reg_space == 0 && reset_reg_addr != 0 {
@@ -689,11 +682,10 @@ pub fn acpi_reboot() -> ! {
 
     // 回退: 键盘控制器重启
     #[cfg(target_arch = "x86_64")]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        // 通过键盘控制器脉冲 reset 线路 (端口 0x64, 命令 0xFE)
-        crate::arch!(outb(0x64u16, 0xFEu8));
-    }
+
+    // 通过键盘控制器脉冲 reset 线路 (端口 0x64, 命令 0xFE)
+    crate::arch!(outb(0x64u16, 0xFEu8));
+
     loop {}
 }
 

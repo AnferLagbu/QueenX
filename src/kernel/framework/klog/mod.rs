@@ -74,48 +74,47 @@ impl core::fmt::Write for CursorWriter<'_> {
     }
 }
 
+/// 按 C ABI sink 符号写出日志的兼容宏 — 转发至安全入口 [`log`]。
+///
+/// 历史实现于宏内展开 `unsafe extern "C"` 声明 + `unsafe { ... }` 调用, 当宏在
+/// `unsafe fn` 体内 (如 GIC / GDT 初始化) 展开时, 该 unsafe 块会被判为「嵌套冗余」
+/// (`unused_unsafe`), 而整体删除又会破坏非嵌套展开点 —— 故改由安全入口统一落地。
+/// `klog_ffi_info` / `klog_ffi_warn` 自身仍作为 C ABI 入口保留 (供 FFI 调用方直接使用)。
 #[macro_export]
 macro_rules! klog_ffi {
-    ($ffi_fn:ident, $($arg:tt)*) => {{
-        // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
-        unsafe extern "C" { fn $ffi_fn(msg: *const u8); }
-        let mut buf: [u8; 256] = [0u8; 256];
-        let mut cursor = 0;
-        let _ = core::fmt::write(
-            &mut $crate::framework::klog::CursorWriter::new(&mut buf, &mut cursor),
+    (klog_ffi_info, $($arg:tt)*) => {
+        $crate::framework::klog::log(
+            $crate::framework::klog::LogLevel::Info,
+            $crate::framework::klog::LogCategory::Kernel,
             format_args!($($arg)*),
-        );
-        if cursor > 0 {
-            // B03-13: 显式 NUL 终止 + 长度封顶, 防止 C ABI 读越界。
-            // 之前仅 `if cursor > 0` 调 ffi, 无 NUL 终止; 若 cursor == 255
-            // (格式化恰好填满 buf), ffi_fn 读 buf[255] 后继续读栈残留 (UB)。
-            // 修复: 写入 buf[cursor] = 0; 同时 cursor 封顶 255 留 1 字节给 NUL。
-            let len = if cursor >= 255 { 255 } else { cursor };
-            // SAFETY: len < 256, buf[len] 索引在 [0, 255] 范围内
-            unsafe { buf[len] = 0; }
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe { $ffi_fn(buf.as_ptr()); }
-        }
-    }};
+        )
+    };
+    (klog_ffi_warn, $($arg:tt)*) => {
+        $crate::framework::klog::log(
+            $crate::framework::klog::LogLevel::Warn,
+            $crate::framework::klog::LogCategory::Kernel,
+            format_args!($($arg)*),
+        )
+    };
+    (klog_ffi_error, $($arg:tt)*) => {
+        $crate::framework::klog::log(
+            $crate::framework::klog::LogLevel::Error,
+            $crate::framework::klog::LogCategory::Kernel,
+            format_args!($($arg)*),
+        )
+    };
 }
 
 /// 通用格式化日志宏 — 单入口，所有模块共用
 #[macro_export]
 macro_rules! klog_fmt {
-    ($lvl:ident, $cat:ident, $($arg:tt)*) => {{
-        let mut w = $crate::framework::klog::KlogWriter::new();
-        let _ = core::fmt::Write::write_fmt(&mut w, format_args!($($arg)*));
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        // cast 已知安全: LogLevel/LogCategory 枚举值 < 256; ptr 改用 .cast() 根治 ptr_as_ptr
-        unsafe {
-            $crate::framework::klog::klog_write(
-                $crate::framework::klog::LogLevel::$lvl as u8,
-                $crate::framework::klog::LogCategory::$cat as u8,
-                core::ptr::null(), core::ptr::null(), 0,
-                w.as_slice().as_ptr().cast::<u8>(),
-            );
-        }
-    }};
+    ($lvl:ident, $cat:ident, $($arg:tt)*) => {
+        $crate::framework::klog::log_filtered(
+            $crate::framework::klog::LogLevel::$lvl,
+            $crate::framework::klog::LogCategory::$cat,
+            format_args!($($arg)*),
+        )
+    };
 }
 
 /// 便捷宏: 按级别
@@ -677,6 +676,17 @@ pub fn log(level: LogLevel, cat: LogCategory, args: core::fmt::Arguments<'_>) {
     let mut w = KlogWriter::new();
     let _ = core::fmt::Write::write_fmt(&mut w, args);
     klog_output(level, cat, w.as_slice());
+}
+
+/// 带级别过滤的 Safe 日志入口 — 供 `klog_fmt!` 宏 (即 `klog_info!` 等) 使用。
+///
+/// 与 [`log`] 的差异是保留 `MIN_LEVEL` 级别过滤 (与 C ABI 入口 `klog_write` 同口径),
+/// 使 `klog_debug!` 等低级别宏在默认级别下静默; 过滤发生在格式化之前。
+pub fn log_filtered(level: LogLevel, cat: LogCategory, args: core::fmt::Arguments<'_>) {
+    if (level as u8) < MIN_LEVEL.load(Ordering::Relaxed) {
+        return;
+    }
+    log(level, cat, args);
 }
 
 /// Safe 便捷函数: Info 级别

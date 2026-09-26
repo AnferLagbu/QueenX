@@ -94,11 +94,9 @@ impl VmSpace {
             return Err("vaddr outside user address space");
         }
         let vmm = get_vmm();
-        // SAFETY: 内部 vmm 调用, pt_root 在此 VmSpace 生命周期内有效。
-        // map_page_in_table 操作指定 PML4 (用户页表), services 层安全。
-        unsafe {
-            vmm.map_page_in_table(self.pt_root.as_u64(), vaddr, frame.phys(), flags);
-        }
+
+        vmm.map_page_in_table(self.pt_root.as_u64(), vaddr, frame.phys(), flags);
+
         frame.inc_ref();
         Ok(())
     }
@@ -141,10 +139,9 @@ impl VmSpace {
             return Err("vaddr outside user address space");
         }
         let vmm = get_vmm();
-        // SAFETY: pt_root is valid. unmap_page_in_table is safe for user page tables.
-        unsafe {
-            vmm.unmap_page_in_table(self.pt_root.as_u64(), vaddr);
-        }
+
+        vmm.unmap_page_in_table(self.pt_root.as_u64(), vaddr);
+
         Ok(())
     }
 
@@ -173,12 +170,8 @@ impl VmSpace {
     /// 调用方确保当前 CPU 不在中断上下文中。
     pub unsafe fn activate(&self) {
         let vmm = get_vmm();
-        // SAFETY: `vmm.switch_page_table()` 内部用 cli 串行化, 无并发;
-        // pt_root 由本 VmSpace 持有且未释放, 指向已建立的页表基址。
-        // 外层 `unsafe fn` 已声明 SAFETY 契约 (见 docstring).
-        unsafe {
-            vmm.switch_page_table(self.pt_root.as_u64());
-        }
+
+        vmm.switch_page_table(self.pt_root.as_u64());
     }
 
     /// 销毁地址空间（释放页表页）。
@@ -187,11 +180,8 @@ impl VmSpace {
     /// 调用前确保无 CPU 运行在此地址空间上。
     pub unsafe fn destroy(&self) {
         let vmm = get_vmm();
-        // SAFETY: `vmm.destroy_page_table()` 仅释放本 VmSpace 持有的 pt_root,
-        // 调用方已通过外层 `unsafe fn` 契约保证无 CPU 在此地址空间上运行.
-        unsafe {
-            vmm.destroy_page_table(self.pt_root.as_u64());
-        }
+
+        vmm.destroy_page_table(self.pt_root.as_u64());
     }
 }
 

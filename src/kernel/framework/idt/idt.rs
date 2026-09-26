@@ -398,6 +398,10 @@ impl IdtManager {
     /// 两个 IPI 向量使用与传统 IRQ 相同的 `irq_common` 入口, DPL0 且不占用 IST.
     /// 分发由 `handle_irq` 的向量前置分支承担, 不进入 `irq_descriptors` 表.
     // 有意窄化: 硬件字段宽度, 寄存器/MMIO 定义保证
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "trivially_copy_pass_by_ref: 小类型传引用而非值是既有 API 约定 (改传值会波及调用点); 当前优先 expect"
+    )]
     #[expect(clippy::cast_possible_truncation)]
     pub fn init_ipi_idt(&self, ipi_table: &[u64; 2]) {
         let mut state = self.state.lock();
@@ -825,10 +829,7 @@ impl IdtManager {
             };
 
             if let Some(handler) = handler_opt {
-                // SAFETY: 调用方保证指针/类型有效
-                unsafe {
-                    handler(frame);
-                }
+                handler(frame);
             }
 
             // MSI EOI: LAPIC 路径 (send_eoi 内已检查 APIC init)
@@ -885,10 +886,7 @@ impl IdtManager {
             };
 
             if let Some(handler) = handler_opt {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe {
-                    handler(frame);
-                }
+                handler(frame);
             }
 
             self.send_eoi(irq);

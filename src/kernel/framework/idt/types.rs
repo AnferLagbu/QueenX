@@ -401,11 +401,9 @@ impl InterruptStatistics {
             self.exception_counts[vector as usize].fetch_add(1, Ordering::Relaxed);
         }
         // 更新时间戳 (使用 rdtsc)
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-        unsafe {
-            self.last_exception_tsc
-                .store(crate::arch!(timestamp()), Ordering::Relaxed);
-        }
+
+        self.last_exception_tsc
+            .store(crate::arch!(timestamp()), Ordering::Relaxed);
     }
 
     /// 记录一次 IRQ

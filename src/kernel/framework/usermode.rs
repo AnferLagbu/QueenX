@@ -36,18 +36,13 @@ use super::vmspace::VmSpace;
 // 内存. 汇编入口 (iretq/eret) 不会返回.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
-    // SAFETY: 调用方契约已通过 VmSpace::activate() 切换页表, ctx 字段由
-    // `userctx::UserContext` 强制类型化保证布局正确. `X8664::enter_user`
-    // 内部执行 CR3 切换 + swapgs + 装载数据段 + iretq, 不会返回.
-    unsafe {
-        <crate::framework::arch::X8664 as Arch>::enter_user(
-            ctx.rip as usize,    // ELR/rip
-            ctx.rsp as usize,    // stack pointer
-            ctx.rdi as usize,    // arg0 (x86_64 calling convention)
-            vmspace.pt_root().0, // user_cr3
-            0,                   // kstack: 由 user_proc 直接调用 enter_user 时传入
-        )
-    }
+    <crate::framework::arch::X8664 as Arch>::enter_user(
+        ctx.rip as usize,    // ELR/rip
+        ctx.rsp as usize,    // stack pointer
+        ctx.rdi as usize,    // arg0 (x86_64 calling convention)
+        vmspace.pt_root().0, // user_cr3
+        0,                   // kstack: 由 user_proc 直接调用 enter_user 时传入
+    )
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -56,17 +51,13 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
 /// # SAFETY
 /// 契约同 x86_64 版本; `Arch::enter_user` 内部执行 msr sp_el0/elr_el1/spsr_el1 + eret.
 pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
-    // SAFETY: 同 x86_64 契约; aarch64 Aarch64::enter_user 设置 sp_el0 = sp,
-    // elr_el1 = entry, spsr_el1 = EL0 模式位后 eret, 不会返回.
-    unsafe {
-        <crate::framework::arch::Aarch64 as Arch>::enter_user(
-            ctx.elr_el1 as usize, // ELR_EL1
-            ctx.sp_el0 as usize,  // SP_EL0
-            ctx.x0 as usize,      // arg0 (aarch64 calling convention)
-            vmspace.pt_root().0,  // user_cr3 (TTBR0)
-            0,                    // kstack: aarch64 不需要
-        )
-    }
+    <crate::framework::arch::Aarch64 as Arch>::enter_user(
+        ctx.elr_el1 as usize, // ELR_EL1
+        ctx.sp_el0 as usize,  // SP_EL0
+        ctx.x0 as usize,      // arg0 (aarch64 calling convention)
+        vmspace.pt_root().0,  // user_cr3 (TTBR0)
+        0,                    // kstack: aarch64 不需要
+    )
 }
 
 /// 安全分发系统调用 (services 层入口)。

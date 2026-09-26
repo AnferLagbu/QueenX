@@ -36,48 +36,44 @@ static E1000_NET_OPS_STATIC: crate::framework::chitin::NetOps = crate::framework
 // SAFETY: 仅由 qx_net_init 在启动临界区调用一次 (单线程), 无并发探测;
 // 返回的 ChitinNetDevice 所有权转移给调用方, 内部裸指针由驱动生命周期保证.
 pub(super) unsafe fn nic_probe_all() -> Option<ChitinNetDevice> {
-    // SAFETY: 调用方保证单线程进入初始化临界区 (与 qx_net_init 同一调用栈);
-    // 各驱动 probe/take_device/init 内部保证设备独占访问, 无并发裸指针共享.
-    unsafe {
-        // I-53 修复: 去除编译时架构互斥, 双架构二进制按运行时探测顺序
-        // 尝试 e1000 (PCI 设备) 与 virtio-net (MMIO 设备). 两者驱动代码
-        // 均架构无关, 仅依赖 IoMem / PCI 抽象. QEMU 配置决定哪一个会成功.
-        //
-        // 探测顺序固定: e1000 -> virtio-net. 真实硬件 (e.g. PC 上) e1000
-        // 优先; QEMU virt 上 e1000 探测返回非 0 走 fallthrough 到 virtio.
-        //
-        // 失败: 全部探测返回非 0 / Box::into_raw 失败 / Driver::init 失败.
+    // I-53 修复: 去除编译时架构互斥, 双架构二进制按运行时探测顺序
+    // 尝试 e1000 (PCI 设备) 与 virtio-net (MMIO 设备). 两者驱动代码
+    // 均架构无关, 仅依赖 IoMem / PCI 抽象. QEMU 配置决定哪一个会成功.
+    //
+    // 探测顺序固定: e1000 -> virtio-net. 真实硬件 (e.g. PC 上) e1000
+    // 优先; QEMU virt 上 e1000 探测返回非 0 走 fallthrough 到 virtio.
+    //
+    // 失败: 全部探测返回非 0 / Box::into_raw 失败 / Driver::init 失败.
 
-        // 1) e1000 探测 (PCI 设备, 走 PCI 总线)
-        // aarch64: e1000_probe() 内部安全返回 -1 (无 PCI ECAM)
-        {
-            let probe_result = crate::framework::driver::e1000_probe();
-            if probe_result == 0 {
-                let mut dev = crate::framework::driver::e1000_take_device()?;
-                if Driver::init(&mut *dev).is_err() {
-                    raw::klog_err("e1000: hardware init failed");
-                    return None;
-                }
-                let mac = dev.mac();
-                let raw_ptr = Box::into_raw(dev) as *mut core::ffi::c_void;
-                let nic = ChitinNetDevice::new(&E1000_NET_OPS_STATIC, raw_ptr, mac);
-                raw::klog_msg("e1000: probed successfully");
-                return Some(nic);
+    // 1) e1000 探测 (PCI 设备, 走 PCI 总线)
+    // aarch64: e1000_probe() 内部安全返回 -1 (无 PCI ECAM)
+    {
+        let probe_result = crate::framework::driver::e1000_probe();
+        if probe_result == 0 {
+            let mut dev = crate::framework::driver::e1000_take_device()?;
+            if Driver::init(&mut *dev).is_err() {
+                raw::klog_err("e1000: hardware init failed");
+                return None;
             }
+            let mac = dev.mac();
+            let raw_ptr = Box::into_raw(dev) as *mut core::ffi::c_void;
+            let nic = ChitinNetDevice::new(&E1000_NET_OPS_STATIC, raw_ptr, mac);
+            raw::klog_msg("e1000: probed successfully");
+            return Some(nic);
         }
-
-        // 2) virtio-net (services 权威, 批次 Z ④ NetOps 安全桥)
-        // DECISION-K 单向注册契约: services net_init 已注册探测回调, 此处
-        // 经 framework 槽位单向拉取 (framework 不引用 services, F2 合规)。
-        // 未注册/探测失败返回 None → nic_probe_all 返回 None (与旧行为一致)。
-        {
-            if let Some(reg) = crate::framework::net::net_device_ops::net_services_driver() {
-                let nic = ChitinNetDevice::new(reg.ops, reg.driver_data, reg.mac);
-                raw::klog_msg("virtio-net: probed successfully (services bridge)");
-                return Some(nic);
-            }
-        }
-
-        None
     }
+
+    // 2) virtio-net (services 权威, 批次 Z ④ NetOps 安全桥)
+    // DECISION-K 单向注册契约: services net_init 已注册探测回调, 此处
+    // 经 framework 槽位单向拉取 (framework 不引用 services, F2 合规)。
+    // 未注册/探测失败返回 None → nic_probe_all 返回 None (与旧行为一致)。
+    {
+        if let Some(reg) = crate::framework::net::net_device_ops::net_services_driver() {
+            let nic = ChitinNetDevice::new(reg.ops, reg.driver_data, reg.mac);
+            raw::klog_msg("virtio-net: probed successfully (services bridge)");
+            return Some(nic);
+        }
+    }
+
+    None
 }

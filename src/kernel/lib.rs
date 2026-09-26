@@ -93,9 +93,7 @@
 #![allow(improper_ctypes)]
 // 3个: IrqSaveFlags, FFI 类型
 
-// 5. 安全相关 - 已通过代码审查确认安全
-#![allow(unused_unsafe)]
-// 16个: 过度保守的 unsafe 块
+// 5. 安全相关 - 已迁出 (2026-09-26 F9 裁决: 150+ 处冗余 unsafe 块全量清理, 移除 crate 级 allow(unused_unsafe))
 
 // 6. Clippy: 内核代码中原始指针解引用是固有操作，由调用者保证安全性
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -274,8 +272,8 @@ fn panic(info: &PanicInfo) -> ! {
         panic_msg[len] = 0;
     }
 
-    // 先捕获寄存器状态 — 在所有架构都需要
-    #[allow(unused_mut)]
+    // 先捕获寄存器状态 — 仅 x86_64 可从 asm 读取, 其余架构保持零值
+    #[cfg(target_arch = "x86_64")]
     let mut regs: [u64; 16] = [0; 16];
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -299,19 +297,23 @@ fn panic(info: &PanicInfo) -> ! {
             options(nostack, preserves_flags)
         );
     }
+    #[cfg(not(target_arch = "x86_64"))]
+    let regs: [u64; 16] = [0; 16];
     let reg_names: [[u8; 4]; 16] = [
         *b"RAX ", *b"RBX ", *b"RCX ", *b"RDX ", *b"RSI ", *b"RDI ", *b"RBP ", *b"RSP ", *b"R8  ",
         *b"R9  ", *b"R10 ", *b"R11 ", *b"R12 ", *b"R13 ", *b"R14 ", *b"R15 ",
     ];
-    #[allow(unused_mut, unused_assignments)]
-    let mut cr2: u64 = 0;
-    #[allow(unused_mut, unused_assignments)]
-    let mut cr3_val: u64 = 0;
+    // cr2/cr3 仅 x86_64 有对应寄存器, 其余架构保持 0
     #[cfg(target_arch = "x86_64")]
-    unsafe {
+    let (cr2, cr3_val): (u64, u64) = unsafe {
+        let mut cr2: u64 = 0;
+        let mut cr3_val: u64 = 0;
         core::arch::asm!("mov {}, cr2", out(reg) cr2);
         core::arch::asm!("mov {}, cr3", out(reg) cr3_val);
-    }
+        (cr2, cr3_val)
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let (cr2, cr3_val): (u64, u64) = (0, 0);
 
     // 1. 串口输出崩溃信息
     if crate::framework::klog::KLOG_INIT.load(Ordering::Acquire) {
@@ -556,9 +558,9 @@ pub extern "C" fn kernel_init() {
         let heap_start = crate::framework::mm::VirtAddr(
             crate::framework::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
         );
-        unsafe {
-            crate::framework::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
-        }
+
+        crate::framework::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
+
         // 诊断: kmalloc init 后检查页表
         {
             let read_u64 = |phys: u64, idx: usize| -> u64 {
@@ -680,9 +682,9 @@ pub extern "C" fn kernel_init() {
         let heap_start = crate::framework::mm::VirtAddr(
             crate::framework::mm::KERNEL_BASE + boot_info.kernel_end + 0x200000,
         );
-        unsafe {
-            crate::framework::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
-        }
+
+        crate::framework::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
+
         crate::klog_boot_info!(
             "kmalloc initialized at 0x{:X}, size={} MB",
             heap_start.0,
@@ -793,13 +795,9 @@ pub extern "C" fn kernel_init() {
             // net_init 仅注册探测回调槽 (services→framework 单向), 实际设备
             // 探测在 qx_net_init → nic_probe_all e1000 失败后经槽位拉取。
             crate::services::driver::virtio::net_init();
-            // SAFETY: qx_net_init 签名是 `pub extern "C" fn`, 函数本身非 unsafe,
-            // 但 Rust 调用任何 extern "C" 函数必须包 unsafe 块 (FFI 调用约定: 调用方
-            // 负责确保跨边界 ABI 兼容性). 此处由启动流程串行调用 (BSP 单线程阶段),
-            // 满足 extern "C" 调用语义: 无 panic 跨边界传播、无不变量跨边界依赖.
-            unsafe {
-                crate::framework::net::init::qx_net_init();
-            }
+
+            crate::framework::net::init::qx_net_init();
+
             crate::klog_boot_info!("Network subsystem initialized");
         }
 
@@ -915,9 +913,9 @@ pub extern "C" fn kernel_init() {
         crate::klog_boot_info!("Boot stack canary verified (pre-Ring3)");
 
         // 12. Launch first user process
-        unsafe {
-            crate::framework::proc::api::launch_first_user_process();
-        }
+
+        crate::framework::proc::api::launch_first_user_process();
+
         // 不可达: launch_first_user_process 不会返回
     } // kernel_test 分支结束
 }

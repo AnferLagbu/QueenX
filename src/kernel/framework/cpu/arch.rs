@@ -92,11 +92,8 @@ pub fn broadcast_ipi(vector: u8) {
 pub fn set_kernel_stack(_stack: u64) {
     #[cfg(target_arch = "x86_64")]
     {
-        // SAFETY: 调用方保证 _stack 是当前任务内核栈顶 VA (高半区, phys+KERNEL_BASE);
-        // 当前处于调度器/进程上下文, 本 CPU 独占访问 per-CPU TSS 与 SyscallPerCpu.
-        unsafe {
-            crate::framework::arch::tss::tss_set_kernel_stack(_stack);
-        }
+        crate::framework::arch::tss::tss_set_kernel_stack(_stack);
+
         crate::framework::arch::gdt::gdt_set_kernel_rsp(_stack);
     }
     #[cfg(not(target_arch = "x86_64"))]

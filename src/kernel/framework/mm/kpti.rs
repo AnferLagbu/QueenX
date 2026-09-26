@@ -640,8 +640,7 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
     // 收窄不变式 (KPTI-07): 映射上界不得越过 `_kpti_trampoline_end`.
     // 越界说明某调用点重新放大了用户页表的代码映射面 ⇒ fail-closed 停机,
     // 而非静默扩大隔离缺口 (Meltdown 面随映射面增长).
-    // SAFETY: `_kpti_trampoline_end` 是链接脚本符号, 仅做地址取值 (不读内容).
-    let trampoline_end = unsafe { core::ptr::addr_of!(_kpti_trampoline_end) as u64 };
+    let trampoline_end = core::ptr::addr_of!(_kpti_trampoline_end) as u64;
     assert!(
         text_end_phys <= trampoline_end,
         "[KPTI] .text 映射越界: requested end={text_end_phys:#X} > _kpti_trampoline_end={trampoline_end:#X}"
@@ -867,9 +866,8 @@ pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     // 1. USER_CR3_SAVE 所在页
     //    USER_CR3_SAVE 位于 .bss 段, isr.asm 用绝对寻址 `mov [USER_CR3_SAVE], rax`,
     //    访问的虚拟地址是链接低地址 (LMA), 需恒等映射; 另映射两高半区别名.
-    // SAFETY: USER_CR3_SAVE 是链接器符号, 地址有效 (只读引用)
-    let user_cr3_page = unsafe { core::ptr::addr_of!(super::super::mm::USER_CR3_SAVE_ASM) as u64 }
-        & !(PAGE_SIZE as u64 - 1);
+    let user_cr3_page =
+        core::ptr::addr_of!(super::super::mm::USER_CR3_SAVE_ASM) as u64 & !(PAGE_SIZE as u64 - 1);
 
     // SAFETY: user_pml4 有效; 页地址来自链接器符号 / 静态布局, 合法;
     // boot 阶段单线程执行或持 VMM_LOCK, 无并发修改.

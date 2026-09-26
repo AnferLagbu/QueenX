@@ -32,9 +32,7 @@ impl InputOps {
     /// # Safety (调用方)
     /// - `driver_data` 必须有效。
     pub fn read_char(&self, driver_data: *mut u8) -> Option<u8> {
-        // SAFETY: driver_data 有效, extern "C" fn 调用本身安全。
-        // 返回值是栈上 u8 的临时地址, 借用直到调用结束。
-        let p = unsafe { (self.read_char)(driver_data) };
+        let p = (self.read_char)(driver_data);
         if p.is_null() {
             None
         } else {
@@ -48,8 +46,7 @@ impl InputOps {
     /// # Safety (调用方)
     /// - `driver_data` 必须有效。
     pub fn has_char(&self, driver_data: *mut u8) -> bool {
-        // SAFETY: 同上。
-        unsafe { (self.has_char)(driver_data) }
+        (self.has_char)(driver_data)
     }
 
     /// 输入设备中断处理
@@ -57,7 +54,6 @@ impl InputOps {
     /// # Safety (调用方)
     /// - `driver_data` 必须有效, 在中断上下文中调用。
     pub fn handle_irq(&self, driver_data: *mut u8) {
-        // SAFETY: driver_data 有效, 中断上下文。
-        unsafe { (self.handle_irq)(driver_data) };
+        (self.handle_irq)(driver_data);
     }
 }

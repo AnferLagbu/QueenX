@@ -25,8 +25,7 @@ use crate::framework::credo;
 ///
 /// `password` 必须为有效非空切片, 调用期间不释放; 内核读取其内容到 NUL 终止的 C 字符串。
 pub fn pwm_try_genesis(password: *const u8) -> i64 {
-    // SAFETY: password 由调用方保证有效, 切片通过 &[*] API 在 services 层做长度校验
-    unsafe { credo::api::pwm_try_genesis(password) }
+    credo::api::pwm_try_genesis(password)
 }
 
 /// 创世 + 创建 root 身份
@@ -35,8 +34,7 @@ pub fn pwm_try_genesis(password: *const u8) -> i64 {
 ///
 /// 同 `pwm_try_genesis`。
 pub fn pwm_create_first_identity(password: *const u8) -> i64 {
-    // SAFETY: password 由调用方保证有效
-    unsafe { credo::api::pwm_create_first_identity(password) }
+    credo::api::pwm_create_first_identity(password)
 }
 
 /// 创建新身份
@@ -45,8 +43,7 @@ pub fn pwm_create_first_identity(password: *const u8) -> i64 {
 ///
 /// `password` / `note` 必须为有效切片, 调用期间不释放; 内核会读取 NUL 终止的字节序列。
 pub fn pwm_create(password: *const u8, note: *const u8, creator: u64) -> i64 {
-    // SAFETY: password + note 由调用方保证有效
-    unsafe { credo::api::pwm_create(password, note, creator) }
+    credo::api::pwm_create(password, note, creator)
 }
 
 /// 验证密码
@@ -55,8 +52,7 @@ pub fn pwm_create(password: *const u8, note: *const u8, creator: u64) -> i64 {
 ///
 /// `password` 必须为有效非空切片, 调用期间不释放。
 pub fn pwm_verify_password(pwm: u64, password: *const u8) -> bool {
-    // SAFETY: password 由调用方保证有效, 由 services 层做 is_empty 检查
-    unsafe { credo::api::pwm_verify_password(pwm, password) }
+    credo::api::pwm_verify_password(pwm, password)
 }
 
 /// 改密
@@ -65,6 +61,5 @@ pub fn pwm_verify_password(pwm: u64, password: *const u8) -> bool {
 ///
 /// `old` / `new` 必须为有效非空切片, 调用期间不释放。
 pub fn pwm_change_password(pwm: u64, old: *const u8, new: *const u8) -> i32 {
-    // SAFETY: old + new 由调用方保证有效
-    unsafe { credo::api::pwm_change_password(pwm, old, new) }
+    credo::api::pwm_change_password(pwm, old, new)
 }

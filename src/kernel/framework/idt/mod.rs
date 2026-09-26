@@ -333,217 +333,214 @@ pub extern "C" fn idt_init() -> i32 {
         fn isr0x82();
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        // KPTI: x86_64 上 ISR stub 由链接器分配在低半部分地址,
-        // 但用户页表只映射了高半部分内核空间. 中断在用户态触发时,
-        // CPU 从 IDT 取 handler 地址并跳转, 必须是高半部分地址.
-        // aarch64 不需要此偏移 (KERNEL_BASE=0).
-        macro_rules! addr {
-            ($f:ident) => {{
-                let lo = ($f as *const ()) as usize as u64;
-                #[cfg(target_arch = "x86_64")]
-                {
-                    lo + crate::framework::mm::KERNEL_BASE
-                }
-                #[cfg(not(target_arch = "x86_64"))]
-                {
-                    lo
-                }
-            }};
-        }
-        let isr_table: [u64; 32] = [
-            addr!(isr0),
-            addr!(isr1),
-            addr!(isr2),
-            addr!(isr3),
-            addr!(isr4),
-            addr!(isr5),
-            addr!(isr6),
-            addr!(isr7),
-            addr!(isr8),
-            addr!(isr9),
-            addr!(isr10),
-            addr!(isr11),
-            addr!(isr12),
-            addr!(isr13),
-            addr!(isr14),
-            addr!(isr15),
-            addr!(isr16),
-            addr!(isr17),
-            addr!(isr18),
-            addr!(isr19),
-            addr!(isr20),
-            addr!(isr21),
-            addr!(isr22),
-            addr!(isr23),
-            addr!(isr24),
-            addr!(isr25),
-            addr!(isr26),
-            addr!(isr27),
-            addr!(isr28),
-            addr!(isr29),
-            addr!(isr30),
-            addr!(isr31),
-        ];
-
-        let irq_table: [u64; 16] = [
-            addr!(irq0),
-            addr!(irq1),
-            addr!(irq2),
-            addr!(irq3),
-            addr!(irq4),
-            addr!(irq5),
-            addr!(irq6),
-            addr!(irq7),
-            addr!(irq8),
-            addr!(irq9),
-            addr!(irq10),
-            addr!(irq11),
-            addr!(irq12),
-            addr!(irq13),
-            addr!(irq14),
-            addr!(irq15),
-        ];
-
-        // MSI 向量 stub 表 (0x40-0x9F → irq16-irq127, 112 个 stub)
-        let msi_table: [u64; 112] = [
-            addr!(irq16),
-            addr!(irq17),
-            addr!(irq18),
-            addr!(irq19),
-            addr!(irq20),
-            addr!(irq21),
-            addr!(irq22),
-            addr!(irq23),
-            addr!(irq24),
-            addr!(irq25),
-            addr!(irq26),
-            addr!(irq27),
-            addr!(irq28),
-            addr!(irq29),
-            addr!(irq30),
-            addr!(irq31),
-            addr!(irq32),
-            addr!(irq33),
-            addr!(irq34),
-            addr!(irq35),
-            addr!(irq36),
-            addr!(irq37),
-            addr!(irq38),
-            addr!(irq39),
-            addr!(irq40),
-            addr!(irq41),
-            addr!(irq42),
-            addr!(irq43),
-            addr!(irq44),
-            addr!(irq45),
-            addr!(irq46),
-            addr!(irq47),
-            addr!(irq48),
-            addr!(irq49),
-            addr!(irq50),
-            addr!(irq51),
-            addr!(irq52),
-            addr!(irq53),
-            addr!(irq54),
-            addr!(irq55),
-            addr!(irq56),
-            addr!(irq57),
-            addr!(irq58),
-            addr!(irq59),
-            addr!(irq60),
-            addr!(irq61),
-            addr!(irq62),
-            addr!(irq63),
-            addr!(irq64),
-            addr!(irq65),
-            addr!(irq66),
-            addr!(irq67),
-            addr!(irq68),
-            addr!(irq69),
-            addr!(irq70),
-            addr!(irq71),
-            addr!(irq72),
-            addr!(irq73),
-            addr!(irq74),
-            addr!(irq75),
-            addr!(irq76),
-            addr!(irq77),
-            addr!(irq78),
-            addr!(irq79),
-            addr!(irq80),
-            addr!(irq81),
-            addr!(irq82),
-            addr!(irq83),
-            addr!(irq84),
-            addr!(irq85),
-            addr!(irq86),
-            addr!(irq87),
-            addr!(irq88),
-            addr!(irq89),
-            addr!(irq90),
-            addr!(irq91),
-            addr!(irq92),
-            addr!(irq93),
-            addr!(irq94),
-            addr!(irq95),
-            addr!(irq96),
-            addr!(irq97),
-            addr!(irq98),
-            addr!(irq99),
-            addr!(irq100),
-            addr!(irq101),
-            addr!(irq102),
-            addr!(irq103),
-            addr!(irq104),
-            addr!(irq105),
-            addr!(irq106),
-            addr!(irq107),
-            addr!(irq108),
-            addr!(irq109),
-            addr!(irq110),
-            addr!(irq111),
-            addr!(irq112),
-            addr!(irq113),
-            addr!(irq114),
-            addr!(irq115),
-            addr!(irq116),
-            addr!(irq117),
-            addr!(irq118),
-            addr!(irq119),
-            addr!(irq120),
-            addr!(irq121),
-            addr!(irq122),
-            addr!(irq123),
-            addr!(irq124),
-            addr!(irq125),
-            addr!(irq126),
-            addr!(irq127),
-        ];
-
-        match manager.init(
-            &isr_table,
-            &irq_table,
-            addr!(syscall_handler),
-            addr!(isr0x82),
-        ) {
-            Ok(()) => {}
-            Err(msg) => {
-                klog_error!("IDT init failed: {}", msg);
-                return MODULE_INIT_FAILURE;
+    // KPTI: x86_64 上 ISR stub 由链接器分配在低半部分地址,
+    // 但用户页表只映射了高半部分内核空间. 中断在用户态触发时,
+    // CPU 从 IDT 取 handler 地址并跳转, 必须是高半部分地址.
+    // aarch64 不需要此偏移 (KERNEL_BASE=0).
+    macro_rules! addr {
+        ($f:ident) => {{
+            let lo = ($f as *const ()) as usize as u64;
+            #[cfg(target_arch = "x86_64")]
+            {
+                lo + crate::framework::mm::KERNEL_BASE
             }
-        }
-
-        // 编程 MSI 向量 IDT 条目 (0x40-0x7F)
-        manager.init_msi_idt(&msi_table);
-
-        // 编程 IPI 向量 IDT 门 (0xFD TLB 失效 / 0xFE reschedule)
-        let ipi_table: [u64; 2] = [addr!(irq253), addr!(irq254)];
-        manager.init_ipi_idt(&ipi_table);
-
-        MODULE_INIT_SUCCESS
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                lo
+            }
+        }};
     }
+    let isr_table: [u64; 32] = [
+        addr!(isr0),
+        addr!(isr1),
+        addr!(isr2),
+        addr!(isr3),
+        addr!(isr4),
+        addr!(isr5),
+        addr!(isr6),
+        addr!(isr7),
+        addr!(isr8),
+        addr!(isr9),
+        addr!(isr10),
+        addr!(isr11),
+        addr!(isr12),
+        addr!(isr13),
+        addr!(isr14),
+        addr!(isr15),
+        addr!(isr16),
+        addr!(isr17),
+        addr!(isr18),
+        addr!(isr19),
+        addr!(isr20),
+        addr!(isr21),
+        addr!(isr22),
+        addr!(isr23),
+        addr!(isr24),
+        addr!(isr25),
+        addr!(isr26),
+        addr!(isr27),
+        addr!(isr28),
+        addr!(isr29),
+        addr!(isr30),
+        addr!(isr31),
+    ];
+
+    let irq_table: [u64; 16] = [
+        addr!(irq0),
+        addr!(irq1),
+        addr!(irq2),
+        addr!(irq3),
+        addr!(irq4),
+        addr!(irq5),
+        addr!(irq6),
+        addr!(irq7),
+        addr!(irq8),
+        addr!(irq9),
+        addr!(irq10),
+        addr!(irq11),
+        addr!(irq12),
+        addr!(irq13),
+        addr!(irq14),
+        addr!(irq15),
+    ];
+
+    // MSI 向量 stub 表 (0x40-0x9F → irq16-irq127, 112 个 stub)
+    let msi_table: [u64; 112] = [
+        addr!(irq16),
+        addr!(irq17),
+        addr!(irq18),
+        addr!(irq19),
+        addr!(irq20),
+        addr!(irq21),
+        addr!(irq22),
+        addr!(irq23),
+        addr!(irq24),
+        addr!(irq25),
+        addr!(irq26),
+        addr!(irq27),
+        addr!(irq28),
+        addr!(irq29),
+        addr!(irq30),
+        addr!(irq31),
+        addr!(irq32),
+        addr!(irq33),
+        addr!(irq34),
+        addr!(irq35),
+        addr!(irq36),
+        addr!(irq37),
+        addr!(irq38),
+        addr!(irq39),
+        addr!(irq40),
+        addr!(irq41),
+        addr!(irq42),
+        addr!(irq43),
+        addr!(irq44),
+        addr!(irq45),
+        addr!(irq46),
+        addr!(irq47),
+        addr!(irq48),
+        addr!(irq49),
+        addr!(irq50),
+        addr!(irq51),
+        addr!(irq52),
+        addr!(irq53),
+        addr!(irq54),
+        addr!(irq55),
+        addr!(irq56),
+        addr!(irq57),
+        addr!(irq58),
+        addr!(irq59),
+        addr!(irq60),
+        addr!(irq61),
+        addr!(irq62),
+        addr!(irq63),
+        addr!(irq64),
+        addr!(irq65),
+        addr!(irq66),
+        addr!(irq67),
+        addr!(irq68),
+        addr!(irq69),
+        addr!(irq70),
+        addr!(irq71),
+        addr!(irq72),
+        addr!(irq73),
+        addr!(irq74),
+        addr!(irq75),
+        addr!(irq76),
+        addr!(irq77),
+        addr!(irq78),
+        addr!(irq79),
+        addr!(irq80),
+        addr!(irq81),
+        addr!(irq82),
+        addr!(irq83),
+        addr!(irq84),
+        addr!(irq85),
+        addr!(irq86),
+        addr!(irq87),
+        addr!(irq88),
+        addr!(irq89),
+        addr!(irq90),
+        addr!(irq91),
+        addr!(irq92),
+        addr!(irq93),
+        addr!(irq94),
+        addr!(irq95),
+        addr!(irq96),
+        addr!(irq97),
+        addr!(irq98),
+        addr!(irq99),
+        addr!(irq100),
+        addr!(irq101),
+        addr!(irq102),
+        addr!(irq103),
+        addr!(irq104),
+        addr!(irq105),
+        addr!(irq106),
+        addr!(irq107),
+        addr!(irq108),
+        addr!(irq109),
+        addr!(irq110),
+        addr!(irq111),
+        addr!(irq112),
+        addr!(irq113),
+        addr!(irq114),
+        addr!(irq115),
+        addr!(irq116),
+        addr!(irq117),
+        addr!(irq118),
+        addr!(irq119),
+        addr!(irq120),
+        addr!(irq121),
+        addr!(irq122),
+        addr!(irq123),
+        addr!(irq124),
+        addr!(irq125),
+        addr!(irq126),
+        addr!(irq127),
+    ];
+
+    match manager.init(
+        &isr_table,
+        &irq_table,
+        addr!(syscall_handler),
+        addr!(isr0x82),
+    ) {
+        Ok(()) => {}
+        Err(msg) => {
+            klog_error!("IDT init failed: {}", msg);
+            return MODULE_INIT_FAILURE;
+        }
+    }
+
+    // 编程 MSI 向量 IDT 条目 (0x40-0x7F)
+    manager.init_msi_idt(&msi_table);
+
+    // 编程 IPI 向量 IDT 门 (0xFD TLB 失效 / 0xFE reschedule)
+    let ipi_table: [u64; 2] = [addr!(irq253), addr!(irq254)];
+    manager.init_ipi_idt(&ipi_table);
+
+    MODULE_INIT_SUCCESS
 }
 
 /// 异常处理主入口 (从 isr.asm 调用)

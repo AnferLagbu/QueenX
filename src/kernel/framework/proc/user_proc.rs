@@ -603,11 +603,8 @@ pub(crate) mod raw {
         if kproc_ptr.is_null() {
             return;
         }
-        // SAFETY: kproc_ptr 来自 alloc_kernel_process (基于 alloc_zeroed -> kmalloc).
-        //         调用方保证此后不再访问该指针.
-        unsafe {
-            crate::framework::mm::kfree(kproc_ptr as *mut u8);
-        }
+
+        crate::framework::mm::kfree(kproc_ptr as *mut u8);
     }
 
     #[expect(
@@ -624,11 +621,8 @@ pub(crate) mod raw {
         if proc_ptr.is_null() {
             return;
         }
-        // SAFETY: proc_ptr 来自 alloc_user_process (基于 alloc_zeroed -> kmalloc).
-        //         调用方保证此后不再访问该指针.
-        unsafe {
-            crate::framework::mm::kfree(proc_ptr as *mut u8);
-        }
+
+        crate::framework::mm::kfree(proc_ptr as *mut u8);
     }
 
     /// 从 PID/CR3 构造 `UserProcRef` 用于新创建进程。
@@ -1162,11 +1156,13 @@ impl UserProcManager {
         // 从 [gs:USER_PML4_OFF] 读取到正确的进程用户页表.
         // SAFETY: cr3 是当前进程的有效用户页表 PML4 物理地址;
         // 当前在调度器上下文, 独占访问 per-CPU 数据.
+        #[cfg(target_arch = "x86_64")]
         unsafe {
-            #[cfg(target_arch = "x86_64")]
             crate::framework::arch::gdt::gdt_set_user_cr3(cr3);
-            let _ = cr3;
         }
+        // aarch64 无 per-CPU 用户页表 CR3 更新路径 (cr3 仅参与上方日志)
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = cr3;
 
         // 将本任务的内核栈顶页映射到其用户页表 (KPTI-08).
         // 用户态→内核态入口在切换 CR3 **之前**就要用 TSS.RSP0 压入 5 项 iretq 帧,
@@ -1581,17 +1577,13 @@ impl UserProcManager {
 
         crate::klog_boot_info!("[USER] SELF-CHECK: calling enter_user_asm...");
 
-        // SAFETY: enter_user 是平台特定的 arch 入口, 不会返回, 由调用方保证上下文有效。
-        // user_cr3 传入用户页表物理地址, 由 enter_user 汇编在 iretq 前切换.
-        unsafe {
-            crate::arch!(enter_user(
-                rip_val as usize,
-                rsp_val as usize,
-                0,
-                cr3,
-                kstack
-            ));
-        }
+        crate::arch!(enter_user(
+            rip_val as usize,
+            rsp_val as usize,
+            0,
+            cr3,
+            kstack
+        ));
     }
 
     #[expect(

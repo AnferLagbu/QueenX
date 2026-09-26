@@ -21,59 +21,100 @@
 #[cfg(not(feature = "kernel_test"))]
 use crate::framework::net::init;
 
-// kernel_test 桩: 签名与真实 `unsafe extern "C" fn` 对齐, 但 no-op.
-// 提供与 `init::*` 19 个函数同名的桩, 让 `init::xxx()` 路径在两种 build 下都有效.
+// kernel_test 桩: `unsafe` 性与真实实现对齐 (`qx_net_init` 为 safe `extern "C" fn`,
+// 其余真实实现为 `unsafe fn` / `unsafe extern "C" fn`), 函数体 no-op.
+// 提供与 `init::*` 同名的桩, 让 `init::xxx()` 路径在两种 build 下都有效,
+// 且上层包装器中的 `unsafe` 块在两种 build 下都不冗余 (F9 清理 crate 级
+// `allow(unused_unsafe)` 后, 桩若为 safe 会使包装器的 `unsafe` 块被判冗余).
 #[cfg(feature = "kernel_test")]
 mod init {
     pub fn qx_net_init() {}
-    pub fn poll_network() {}
-    pub fn qx_net_start_dhcp() -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn poll_network() {}
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn qx_net_start_dhcp() -> i32 {
         0
     }
-    pub fn qx_net_static_ip(_cidr: *const u8, _gw: *const u8) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn qx_net_static_ip(_cidr: *const u8, _gw: *const u8) -> i32 {
         0
     }
-    pub fn reset_network_state() {}
-    pub fn sm_socket(_d: i32, _t: i32, _p: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn reset_network_state() {}
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_socket(_d: i32, _t: i32, _p: i32) -> i32 {
         0
     }
-    pub fn sm_bind(_fd: i32, _a: *const u8, _l: u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_bind(_fd: i32, _a: *const u8, _l: u32) -> i32 {
         0
     }
-    pub fn sm_listen(_fd: i32, _b: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_listen(_fd: i32, _b: i32) -> i32 {
         0
     }
-    pub fn sm_accept(_fd: i32, _a: *mut u8, _l: *mut u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_accept(_fd: i32, _a: *mut u8, _l: *mut u32) -> i32 {
         0
     }
-    pub fn sm_connect(_fd: i32, _a: *const u8, _l: u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_connect(_fd: i32, _a: *const u8, _l: u32) -> i32 {
         0
     }
-    pub fn sm_send(_fd: i32, _b: *const u8, _l: u32, _f: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_send(_fd: i32, _b: *const u8, _l: u32, _f: i32) -> i32 {
         0
     }
-    pub fn sm_recv(_fd: i32, _b: *mut u8, _l: u32, _f: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_recv(_fd: i32, _b: *mut u8, _l: u32, _f: i32) -> i32 {
         0
     }
-    pub fn sm_sendto(_fd: i32, _b: *const u8, _l: u32, _f: i32, _d: *const u8, _a: u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_sendto(
+        _fd: i32,
+        _b: *const u8,
+        _l: u32,
+        _f: i32,
+        _d: *const u8,
+        _a: u32,
+    ) -> i32 {
         0
     }
-    pub fn sm_recvfrom(_fd: i32, _b: *mut u8, _l: u32, _f: i32, _s: *mut u8, _a: *mut u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_recvfrom(
+        _fd: i32,
+        _b: *mut u8,
+        _l: u32,
+        _f: i32,
+        _s: *mut u8,
+        _a: *mut u32,
+    ) -> i32 {
         0
     }
-    pub fn sm_close(_fd: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_close(_fd: i32) -> i32 {
         0
     }
-    pub fn sm_sendmsg(_fd: i32, _m: *const u8, _f: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_sendmsg(_fd: i32, _m: *const u8, _f: i32) -> i32 {
         0
     }
-    pub fn sm_recvmsg(_fd: i32, _m: *mut u8, _f: i32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_recvmsg(_fd: i32, _m: *mut u8, _f: i32) -> i32 {
         0
     }
-    pub fn sm_setsockopt(_fd: i32, _level: i32, _name: i32, _val: *const u8, _optlen: u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_setsockopt(
+        _fd: i32,
+        _level: i32,
+        _name: i32,
+        _val: *const u8,
+        _optlen: u32,
+    ) -> i32 {
         0
     }
-    pub fn sm_getsockopt(
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_getsockopt(
         _fd: i32,
         _level: i32,
         _name: i32,
@@ -82,13 +123,16 @@ mod init {
     ) -> i32 {
         0
     }
-    pub fn sm_getsockname(_fd: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_getsockname(_fd: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
         0
     }
-    pub fn sm_getpeername(_fd: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_getpeername(_fd: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
         0
     }
-    pub fn sm_poll_sockets() -> i32 {
+    // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
+    pub unsafe fn sm_poll_sockets() -> i32 {
         0
     }
 }
@@ -103,8 +147,7 @@ mod init {
 ///
 /// 调用方保证单线程上下文 (启动期) 调用一次, 内部全局状态串行化。
 pub fn qx_net_init() {
-    // SAFETY: 单线程启动期调用, 内部全局状态串行化
-    unsafe { init::qx_net_init() }
+    init::qx_net_init();
 }
 
 /// 轮询网络栈
@@ -426,8 +469,7 @@ pub fn sm_net_close(fd: i32) -> i32 {
 /// 由 `SmoltcpNetStack` 调用方保证.
 #[cfg(not(feature = "kernel_test"))]
 pub fn smoltcp_net_stack_socket_close(slot_idx: usize) -> bool {
-    // SAFETY: 内部持有 NET_LOCK, slot_idx 范围由调用方保证
-    unsafe { init::raw::smoltcp_net_stack_socket_close(slot_idx) }
+    init::raw::smoltcp_net_stack_socket_close(slot_idx)
 }
 
 // ============================================================================

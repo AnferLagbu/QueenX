@@ -165,20 +165,17 @@ static PER_CPU_SCHED: [OnceLock<PerCpuSched>; crate::framework::config::MAX_CPUS
 pub fn init_per_cpu_sched(cpu_id: u32) {
     let idx = (cpu_id as usize) % crate::framework::config::MAX_CPUS;
     PER_CPU_SCHED[idx].get_or_init(|slot| {
-        // SAFETY: OnceLock::get_or_init 保证闭包仅执行一次, slot 未初始化.
-        unsafe {
-            slot.write(PerCpuSched {
-                rt_queue: Mutex::new(VecDeque::new()),
-                cfs_rq: Mutex::new(CfsRunQueue::new()),
-                dl_rq: Mutex::new(DlRunQueue::new()),
-                current: AtomicU32::new(0),
-                idle: AtomicU32::new(0),
-                need_reschedule: AtomicBool::new(false),
-                rt_running: AtomicBool::new(false),
-                dl_running: AtomicBool::new(false),
-                fifo_watchdog: AtomicU64::new(0),
-            });
-        }
+        slot.write(PerCpuSched {
+            rt_queue: Mutex::new(VecDeque::new()),
+            cfs_rq: Mutex::new(CfsRunQueue::new()),
+            dl_rq: Mutex::new(DlRunQueue::new()),
+            current: AtomicU32::new(0),
+            idle: AtomicU32::new(0),
+            need_reschedule: AtomicBool::new(false),
+            rt_running: AtomicBool::new(false),
+            dl_running: AtomicBool::new(false),
+            fifo_watchdog: AtomicU64::new(0),
+        });
     });
 }
 

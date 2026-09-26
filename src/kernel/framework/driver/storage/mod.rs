@@ -52,10 +52,8 @@ use crate::framework::iomem::IoMem;
 pub fn storage_init() -> framework::Result<()> {
     // Step 1: 传统 ATA 检测 (回退路径, 不依赖 PCI)
     // ATA 驱动使用内部全局单例, 通过 C FFI 接口初始化
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        crate::framework::driver::storage::ata::ata_init();
-    }
+
+    crate::framework::driver::storage::ata::ata_init();
 
     crate::framework::chitin::chitin_register_driver(
         "ata_controller",

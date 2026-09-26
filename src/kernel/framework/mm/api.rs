@@ -202,10 +202,9 @@ pub fn slab_get_stats() -> SlabStats {
     let mut total_memory = 0u64;
     let mut used_memory = 0u64;
     let mut total_caches = 0u32;
-    // SAFETY: slab_get_system_stats 是 FFI 函数, 输出指针由本函数保证有效
-    unsafe {
-        super::slab::slab_get_system_stats(&mut total_memory, &mut used_memory, &mut total_caches);
-    }
+
+    super::slab::slab_get_system_stats(&mut total_memory, &mut used_memory, &mut total_caches);
+
     SlabStats {
         total_memory,
         used_memory,
@@ -501,10 +500,7 @@ pub extern "C" fn k_realloc(ptr: *mut u8, size: usize) -> *mut u8 {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn kmalloc_init(start: u64, initial_size: u64) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe {
-        get_kmalloc_mut().init(VirtAddr(start), initial_size);
-    }
+    get_kmalloc_mut().init(VirtAddr(start), initial_size);
 }
 
 /// 打印 kmalloc 统计

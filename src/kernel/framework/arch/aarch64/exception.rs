@@ -542,8 +542,7 @@ unsafe extern "C" {
 /// 内核恒等表、`TTBR1` 指向 tramp 表, 故该高半区地址经 `TTBR1` 可达, 保证切换
 /// `TTBR0` 后当前指令流不被 Prefetch Abort.
 pub fn kpti_enter_user_trampoline_high() -> u64 {
-    // SAFETY: 符号由 global_asm 定义, 取地址不读取内容
-    unsafe { &raw const kpti_enter_user_trampoline as u64 }
+    &raw const kpti_enter_user_trampoline as u64
 }
 
 // ============================================================================
