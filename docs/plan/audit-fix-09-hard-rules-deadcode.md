@@ -52,14 +52,15 @@
 - **B09-04. 死代码零容忍（§9.3）**
   - 描述：第 6.5 章对死代码分类标注：R1 pub fn 死代码 362 项、R2 未接线 syscall 161 项、R3 零引用 pub mod 36 项、R4 核心 pub struct/enum 零引用 1 项。
   - 方案：按处置工作流（阶段 1 高确定删除 → 阶段 2 中确定 → 阶段 3 决策类）推进。
-  - 状态：[X]（2026-09-26 总纲收敛：**无独立施工面**，由 B09-05/06/07/08 + 工程计划 D 承接。四类清单实测终态——**R1 = 439（431 已分类 + 8 未分类 HIGH 待甄别）/ R2 = 7（功能缺口，归 D-2）/ R3 = 0 / R4 = 1（DomainFlags 待裁）**；F9 形式残留 = `unused` 族 5 处（其中 2 处 B09-20 已定性保留、3 处 F9 适用边界待裁，见 D-7 表））
+  - 状态：[X]（2026-09-26 总纲收敛：**无独立施工面**，由 B09-05/06/07/08 + 工程计划 D 承接。四类清单实测终态——**R1 = 437（433 已分类 + 4 未分类 HIGH 待裁）/ R2 = 2（功能缺口，归 D-2）/ R3 = 0 / R4 = 1（DomainFlags 待裁）**；F9 形式残留 = `unused` 族 5 处（其中 2 处 B09-20 已定性保留、3 处 F9 适用边界待裁，见 D-7 表）〔2026-09-26 批次 3 订正：R1 439→437 / R2 7→2，见 B09-05 / B09-18〕）
 
 ### 待办
 
 - **B09-05. R2 未接线 syscall 处置（161 项）**
   - 描述：表 A `[A:激活]` 5 项（dispatch 缺项，函数已实装）→ 接线；表 R `[R:替代]` 119 项（QX_* 备用命名，禁用）→ 核实后删除或保留；表 D `[D:删除]` 37 项（真未实装）→ 删除。
   - 方案：用 `audit_unwired_pub_fn.py`（分册 01 修复后）生成清单，按表分类逐项处置。
-  - 状态：[]（2026-09-26 实测刷新：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 7 项**（非登记 161）——`SYS_fdatasync` / `SYS_process_vm_readv` / `SYS_process_vm_writev` / `SYS_arch_prctl` / `SYS_capget` / `SYS_capset` / `SYS_sigaltstack`，全部为 Linux 标准编号**未实装**功能缺口 ⇒ 属性已由编号治理（B09-17）剥离，**余项归 D-2 实现治理**（独立功能工程，非清理范畴）；表 A/R/D 三分类口径随 B09-17 归位与 T5 甄别失效）
+  - 状态：[X]（2026-09-26 实测刷新：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 7 项**（非登记 161）——`SYS_fdatasync` / `SYS_process_vm_readv` / `SYS_process_vm_writev` / `SYS_arch_prctl` / `SYS_capget` / `SYS_capset` / `SYS_sigaltstack`，全部为 Linux 标准编号**未实装**功能缺口 ⇒ 属性已由编号治理（B09-17）剥离，**余项归 D-2 实现治理**（独立功能工程，非清理范畴）；表 A/R/D 三分类口径随 B09-17 归位与 T5 甄别失效）
+    - **2026-09-26 批次 3（R2 处置完成，7 → 2）**：甄别**推翻**原「全部为未实装功能缺口」结论——`SYS_sigaltstack` ＝ **半实装未接线**（framework `sys_sigaltstack` 早已存在，仅缺 services 分发臂）；`SYS_arch_prctl` / `SYS_capget` / `SYS_capset` ＝ T1 期用户已裁定 ENOSYS 保留（属 R2 误报），**本轮经用户重新裁定改为「全部通过实现功能或修改代码解决」**；`SYS_fdatasync` ＝ 同族近似未接线（复用 `fsync` 语义）；仅 `SYS_process_vm_readv` / `SYS_process_vm_writev` 为真未实装（安全面）。**5 项已接线 / 实装**（sigaltstack 接线 / fdatasync 复用接线 / arch_prctl 最小实装 / capget+capset ABI 映射层实装，均不碰上下文切换路径）；`process_vm ×2` 属安全面（跨进程内存读写需 ptrace 级权限模型）⇒ 本批**不实装并按裁定六上报**，保持 R2 CRITICAL，**明文转 D-2**。实测 **R2 7 → 2** / 汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`；逐项明细与落点见 [syscall-followup.md](syscall-followup.md) **B-10.6**。
 
 - **B09-06. R1 pub fn 死代码（362 项）**
   - 描述：pub fn 死代码 362 项，高密度文件 Top 5 需优先（vfs/api.rs、syscall/types.rs 等）；已确认 `[X:CFG]` 跨架构项 3 项保留。
@@ -115,6 +116,7 @@
   - **2026-09-26 全量实测刷新（`python3 scripts/audit_unwired_pub_fn.py`）**：扫描 619 文件 / pub fn 5874（豁免 1165）⇒ **R2 = 7（CRITICAL，见 B09-05）/ R1 = 438（HIGH 8 未分类 + INFO 430 已分类）/ R3 = 0（WARN）/ R4 = 1（INFO，DomainFlags）**，汇总 `CRITICAL=7 / HIGH=8 / WARN=0 / INFO=431`。**新增未分类 HIGH 8 项**（B-6 区块外，待甄别）：`mm/kpti_aarch64.rs:118 kpti_kernel_ttbr0`、`:130 kpti_user_ttbr0`、`mm/kmalloc_slab.rs:76 slab_kmalloc`、`:90 slab_kfree`、`services/fs/nestfs/txg.rs:243 add_free_to_open`、`:249 add_io_to_open`、`services/driver/char/serial.rs:468 send_str`、`services/driver/char/vga.rs:370 write_string_at`（均实测 `total=1, decl=1, cross=0`，即全仓零调用）。其中 `kpti_aarch64` / `kmalloc_slab` 属 **TCB 核心（MMU / 内存分配器）** ⇒ 按裁定六**上报待裁，不自主处置**。
   - **2026-09-26 批次 2（R1 8 项甄别：登记与上报分离）**：8 项已逐项三档定性，明细见 [syscall-followup.md](syscall-followup.md) **B-10**。**非 TCB 4 项已登记**（`fs/nestfs/txg.rs::add_free_to_open` / `add_io_to_open` ＝ 族残缺——同族 `add_dirty_to_open` 7 引用在用，free/io 累积器无送入口；`char/serial.rs::send_str` / `char/vga.rs::write_string_at` ＝ driver 公共 API 面，三合一判据第三项不成立）⇒ 追加进 B-6 区块；同时移除 6 项**已失效条目**（`switch_to_high_half` 已接线 / `test_recovery_status` 已删除 / `vfs_close_safe` 已被测试引用 / `get_syncing_txg` 已被 host-tests 引用 / `create_thread` 与 `services/driver/acpi.rs::lapic_base` 被同名串遮蔽）⇒ 区块 **436 → 434 项**。**TCB 4 项上报待裁**（`kpti_aarch64` ttbr0 族 2 项 ＝ 与已分类的 ttbr1 同族同形态；`kmalloc_slab` 2 项）。**甄别后实测**：`已分类清单 434 项` / `[HIGH] R1 未分类零引用 pub fn: 4 项` / 汇总 **`CRITICAL=7 / HIGH=4 / WARN=0 / INFO=435`**（R1 守恒：438 ＝ 434 + 4）。
   - **新增事实（TCB 上报依据）**：`mm/kmalloc_slab.rs` **整模块孤岛**——3 个 `pub fn`（`slab_init` / `slab_kmalloc` / `slab_kfree`）**全零调用者** ⇒ `SLAB_READY` 永为 `false`，Slab 路径永不生效。`slab_init` **未进 R1 报告**，系其在**文档注释**中出现同名串（`kmalloc_slab.rs:15`）被 `rg -c -w` 计入引用 ⇒ **R1 按名计数存在漏报偏差**（同类实例：`services/driver/acpi.rs::lapic_base` 被 `framework/arch/x86_64/acpi.rs` 的同名局部变量遮蔽）。与既有登记 [archive/audit-2026-08-14/subsystem-mm.md](archive/audit-2026-08-14/subsystem-mm.md)（「内部用 SLAB 但未注册到 kmalloc → 死代码」，P2）**同源**。
+  - **2026-09-26 批次 3（R2 处置后复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ **R2 = 2（CRITICAL，余 `SYS_process_vm_readv` / `SYS_process_vm_writev`）/ R1 = 437（HIGH 4 + INFO 433）/ R3 = 0（WARN）/ R4 = 1（INFO，DomainFlags）**，汇总 `CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`（`rc=1`，仅 CRITICAL 非零）。B-6 区块 **434 → 433 项**（`services/proc/signal.rs::sigaltstack_syscall` 接线后移出）。**HIGH 4 项仍为批次 2 上报的 TCB 待裁项**（`kpti_aarch64` ttbr0 ×2 + `kmalloc_slab` ×2），用户裁定「先不动，继续按序推进」⇒ 保持待裁。明细见 [syscall-followup.md](syscall-followup.md) **B-10.6**。
 
 - **B09-19. 内核源码 `#[cfg(test)]` 内联单元测试迁移（孤儿测试治理，2026-09-11 登记）**
   - 描述：实测 2026-09-11 完整扫描（排除 vendored smoltcp ~14 处）——内核源码 **~81 处** `#[cfg(test)] mod tests` 内联单元测试（framework：sync 原语/mm/lib/idt/proc/driver/net/timer/ipc/chitin/cpu/arch + driver 深层 storage/display/usb/e1000 + net/save；services：credo/barrier/sync/net/mm/proc/config/debug/driver + fs/nestfs traits×9 + vfs_poll_policy/wait_queue/smoltcp_impl），因 `[lib] test = false`（Cargo.toml:19）+ 依赖 crate 不激活 `cfg(test)`，**从不编译、从不执行**（孤儿测试）。项目已确立演进方向：`cfg(test)` → register 模式（framework/tests/ 载体 + `check!`/`assert_eq_test!` + `register_tests_inner!`，经 `register_all_tests()` QEMU/host 双跑）；部分源文件 cfg(test) 为"迁移后未删旧副本"（如 string.rs 的 strlen/strcmp/strncmp 断言与 framework/tests/string.rs 内容一致）。
@@ -254,19 +256,18 @@
 
 > 注：编号归位争议项（RT_SIGRETURN/KEXEC/IO_URING_*）以 B09-17 应转 SYS_* 为准，不入本组。
 
-### D-2. R2 未实现 SYS_*（~33 项，Linux 标准编号功能缺口）
+### D-2. R2 未实现 SYS_*（**2 项**，Linux 标准编号功能缺口）
 
 > Linux 有标准编号但未实装，POSIX 兼容必需——转正式功能开发规划（独立工程，非清理范畴）。
 > 处置：**实现治理**（实装对应 syscall，独立功能工程）。
+>
+> **2026-09-26 批次 3 订正（原登记 ~33 项清单已失效）**：逐项核对 [dispatch.rs](../../src/kernel/services/syscall/dispatch.rs)，原清单**除下列 2 项外均已有分发臂且指向 services 真实实现模块**（非 ENOSYS 桩——全文件 `ENOSYS` 仅 5 处命中，其中实际桩仅 `SYS_CREDO_DISK_INSTALL`），即 T1/T2 及更早批次已陆续落地；R2 实测亦为 2 项（见 **B09-05** / **B09-18**）。
 
-- **文件 I/O**：preadv/pwritev/readv/writev/sendfile/fallocate/statx/fchownat/utimensat/close_range/process_vm_readv/process_vm_writev
-- **信号/进程**：waitid/prctl/arch_prctl/capget/capset/set_robust_list/get_robust_list
-- **网络**：recvmmsg/sendmmsg/socketpair
-- **内存**：mbind/userfaultfd
-- **inotify/epoll**：inotify_init/epoll_pwait/ppoll
-- **时间**：clock_nanosleep/settimeofday/adjtimex
-- **文件系统**：pivot_root/chroot/setdomainname
-- **exec**：execveat
+- **进程间内存读写**：`SYS_process_vm_readv` / `SYS_process_vm_writev`
+  - 状态：**未实装 · 待裁（裁定六安全面）**——跨进程读写需 ptrace 级权限模型（Linux 要求 `PTRACE_MODE_ATTACH_REALCREDS` + 目标进程可访问性判定），当前无 ptrace/uid 权限模型 ⇒ 需用户裁定后单开工程实装；本批**不实装**。
+  - 实测依据：`python3 scripts/audit_unwired_pub_fn.py` ⇒ `[CRITICAL] R2 未接线 syscall: 2 项`（仅此 2 项）。
+
+> **移出本组的原清单项**（均已接线/实装）：preadv / pwritev / readv / writev / sendfile / fallocate / statx / fchownat / utimensat / close_range / waitid / prctl / set_robust_list / get_robust_list / recvmmsg / sendmmsg / socketpair / mbind / userfaultfd / inotify_init / epoll_pwait / ppoll / clock_nanosleep / settimeofday / adjtimex / pivot_root / chroot / setdomainname / execveat（以上于 T1/T2 及更早批次落地）、**arch_prctl / capget / capset（本批 2026-09-26 落地，见 B09-05）**。
 
 > 已实装挂 QX 编号的 execve/tgkill/seccomp 属"接线层"（B09-17 应转组），不入本组。
 

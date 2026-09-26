@@ -101,11 +101,11 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_access, SYS_alarm, SYS_chdir, SYS_chmod, SYS_chown, SYS_chroot, SYS_clock_gettime,
         SYS_close, SYS_close_range, SYS_copy_file_range, SYS_creat, SYS_dup, SYS_dup2, SYS_dup3,
         SYS_faccessat, SYS_fallocate, SYS_fchmod, SYS_fchmodat, SYS_fchown, SYS_fchownat,
-        SYS_fcntl, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd, SYS_getdents,
-        SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init, SYS_inotify_init1,
-        SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr, SYS_lseek, SYS_lstat,
-        SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat, SYS_open,
-        SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_pivot_root, SYS_poll,
+        SYS_fcntl, SYS_fdatasync, SYS_flock, SYS_fstat, SYS_fsync, SYS_ftruncate, SYS_getcwd,
+        SYS_getdents, SYS_getitimer, SYS_getxattr, SYS_inotify_add_watch, SYS_inotify_init,
+        SYS_inotify_init1, SYS_inotify_rm_watch, SYS_ioctl, SYS_link, SYS_linkat, SYS_listxattr,
+        SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mount, SYS_name_to_handle_at, SYS_newfstatat,
+        SYS_open, SYS_open_by_handle_at, SYS_openat, SYS_pipe, SYS_pipe2, SYS_pivot_root, SYS_poll,
         SYS_ppoll, SYS_preadv, SYS_pwritev, SYS_read, SYS_readlink, SYS_readlinkat, SYS_readv,
         SYS_removexattr, SYS_rename, SYS_renameat, SYS_rmdir, SYS_select, SYS_sendfile,
         SYS_setitimer, SYS_setxattr, SYS_splice, SYS_stat, SYS_statx, SYS_symlink, SYS_symlinkat,
@@ -204,6 +204,8 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
         // 同步与挂载
         SYS_sync => as_ret(crate::services::fs::misc::sync_syscall()),
         SYS_fsync => as_ret(crate::services::fs::misc::fsync_syscall(a0 as i32)),
+        // fdatasync (分册 9 批次 3): 与 fsync 同语义复用 (VFS 整体同步, 无数据/元数据区分)
+        SYS_fdatasync => as_ret(crate::services::fs::misc::fsync_syscall(a0 as i32)),
         SYS_mount => as_ret(crate::services::fs::mount::mount_syscall(a0, a1, a2)),
         SYS_umount2 => as_ret(crate::services::fs::mount::umount2_syscall(a0, a1 as i32)),
 
@@ -348,15 +350,16 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程相关系统调用
 fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::services::syscall::types::{
-        SYS_adjtimex, SYS_clock_nanosleep, SYS_clone, SYS_clone3, SYS_execve, SYS_execveat,
-        SYS_exit, SYS_exit_group, SYS_fork, SYS_get_robust_list, SYS_getpgid, SYS_getpid,
-        SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid, SYS_gettid,
-        SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice, SYS_pidfd_getfd,
-        SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot, SYS_rt_sigaction,
-        SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity, SYS_sched_yield,
-        SYS_seccomp, SYS_set_robust_list, SYS_setdomainname, SYS_sethostname, SYS_setns,
-        SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday, SYS_sysinfo,
-        SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, SYS_uname, SYS_unshare, SYS_wait4, SYS_waitid,
+        SYS_adjtimex, SYS_arch_prctl, SYS_clock_nanosleep, SYS_clone, SYS_clone3, SYS_execve,
+        SYS_execveat, SYS_exit, SYS_exit_group, SYS_fork, SYS_get_robust_list, SYS_getpgid,
+        SYS_getpid, SYS_getppid, SYS_getpriority, SYS_getrlimit, SYS_getrusage, SYS_getsid,
+        SYS_gettid, SYS_gettimeofday, SYS_kill, SYS_memfd_create, SYS_nanosleep, SYS_nice,
+        SYS_pidfd_getfd, SYS_pidfd_open, SYS_pidfd_send_signal, SYS_prctl, SYS_reboot,
+        SYS_rt_sigaction, SYS_rt_sigprocmask, SYS_sched_getaffinity, SYS_sched_setaffinity,
+        SYS_sched_yield, SYS_seccomp, SYS_set_robust_list, SYS_setdomainname, SYS_sethostname,
+        SYS_setns, SYS_setpgid, SYS_setpriority, SYS_setrlimit, SYS_setsid, SYS_settimeofday,
+        SYS_sigaltstack, SYS_sysinfo, SYS_tcgetpgrp, SYS_tcsetpgrp, SYS_tgkill, SYS_uname,
+        SYS_unshare, SYS_wait4, SYS_waitid,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -393,6 +396,11 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_tgkill => as_ret(crate::services::proc::signal::tgkill_syscall(
             a0 as i32, a1 as i32, a2 as i32,
         )),
+        // sigaltstack (分册 9 批次 3): 替代栈注册/查询, 委托 framework TCB
+        SYS_sigaltstack => as_ret(crate::services::proc::signal::sigaltstack_syscall(a0, a1)),
+
+        // 线程本地存储 (分册 9 批次 3)
+        SYS_arch_prctl => as_ret(crate::services::proc::clone::arch_prctl_syscall(a0, a1)),
 
         // 进程优先级
         SYS_nice => crate::services::proc::priority::nice_syscall(a0 as i32),
@@ -741,8 +749,9 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_CREDO_GRANT, SYS_CREDO_HOTPLUG_STATUS, SYS_CREDO_IDENTITY_INFO, SYS_CREDO_LOGIN,
         SYS_CREDO_LOGOUT, SYS_CREDO_PROC_CPUTIME, SYS_CREDO_PROC_LIST, SYS_CREDO_PROC_SETPRI,
         SYS_CREDO_PROC_SLEEP, SYS_CREDO_REBOOT, SYS_CREDO_REVOKE, SYS_CREDO_SET_PWM,
-        SYS_CREDO_SETHOSTNAME, SYS_CREDO_VERIFY_PASSWORD, SYS_getegid, SYS_geteuid, SYS_getgid,
-        SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid, SYS_setregid, SYS_setreuid, SYS_setuid,
+        SYS_CREDO_SETHOSTNAME, SYS_CREDO_VERIFY_PASSWORD, SYS_capget, SYS_capset, SYS_getegid,
+        SYS_geteuid, SYS_getgid, SYS_getuid, SYS_setegid, SYS_seteuid, SYS_setgid, SYS_setregid,
+        SYS_setreuid, SYS_setuid,
     };
     // SYS_CREDO_DISK_INSTALL 仅 x86_64 (非 kernel_test) 或 kernel_test 模式使用
     // (aarch64 生产构建走 `_ =>` 兜底 ENOSYS, 与迁移前 framework cfg 语义一致)
@@ -788,6 +797,10 @@ fn dispatch_credo(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_CREDO_GET_CAPS => crate::services::credo::auth::auth_get_caps_syscall(a0, a1 as u16),
         SYS_CREDO_GET_PWM => crate::services::credo::auth::pwm_get_syscall(),
         SYS_CREDO_SET_PWM => crate::services::credo::auth::pwm_set_syscall(a0),
+
+        // Linux capability ABI 映射 (分册 9 批次 3): 导出/写回 SYSTEM 域能力
+        SYS_capget => crate::services::credo::auth::capget_syscall(a0, a1),
+        SYS_capset => crate::services::credo::auth::capset_syscall(a0, a1),
 
         // Credo 系统信息
         SYS_CREDO_GETHOSTNAME => crate::services::proc::sysinfo::gethostname_syscall(a0, a1),

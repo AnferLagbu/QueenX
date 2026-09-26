@@ -207,6 +207,36 @@ pub extern "C" fn pwm_get_capability_raw(pwm: u64, domain: u16) -> u64 {
     engine::get_caps(pwm, CapDomain(domain)).as_u64()
 }
 
+/// 原子设置**当前** PWM 在指定域的能力位 (`capset` 机制入口).
+///
+/// 安全约束 (无提权 + 不破下限):
+/// 1. 新值必须是当前值的**子集** — 出现当前值之外的位即视为提权尝试, 返回 -1;
+/// 2. 新值不得低于 `VIABLE_FLOOR` 域下限 (与 `identity::revoke` 同口径), 返回 -1.
+///
+/// 仅作用于当前会话 PWM (不接受 pwm 参数), 杜绝跨进程能力篡改.
+pub fn pwm_set_current_capability_raw(domain: u16, caps: u64) -> i32 {
+    if domain >= 16 {
+        return -1;
+    }
+    let d = CapDomain(domain);
+    let pwm = session::get_current_pwm();
+    let Some(entry) = identity::find(pwm) else {
+        return -1;
+    };
+    let current = entry.load_caps(d).as_u64();
+    // 禁止提权: 新值必须是当前值子集.
+    if caps & !current != 0 {
+        return -1;
+    }
+    // 不得破坏能力下限.
+    let floor = super::capability::VIABLE_FLOOR[domain as usize];
+    if caps & floor != floor {
+        return -1;
+    }
+    entry.store_caps(d, CapBits(caps));
+    0
+}
+
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn pwm_get_privilege_level(pwm: u64) -> u8 {

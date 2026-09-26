@@ -585,6 +585,65 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
     result.unwrap_or_else(|| Errno::ESRCH.as_ret())
 }
 
+/// `arch_prctl` 机制实现 (TCB: 用户态 TLS 基址读写).
+///
+/// SIMPLIFIED: 仅支持 `ARCH_SET_FS` / `ARCH_GET_FS` 两个子码 (用户态 TLS 基址);
+/// 其余子码 (`ARCH_SET_GS` / `ARCH_GET_GS` / `ARCH_SET_CPUID` 等) 返回 `EINVAL`.
+/// 影响面: 依赖 GS 基址或 CPUID 屏蔽语义的用户态程序不可用; 何时需扩展: 引入
+/// per-process `gs_base` 字段与上下文切换恢复后补齐.
+///
+/// aarch64 侧仅归档 `Process.tls_base` (对应 `tpidr_el0`), 当前不写系统寄存器
+/// (与 `clone(CLONE_SETTLS)` 的既有口径一致).
+pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
+    /// `ARCH_SET_FS` 子码 (Linux x86_64): 设置 FS 段基址.
+    const ARCH_SET_FS: u64 = 0x1002;
+    /// `ARCH_GET_FS` 子码 (Linux x86_64): 查询 FS 段基址.
+    const ARCH_GET_FS: u64 = 0x1003;
+    /// `IA32_FS_BASE` MSR 地址 (用户态 FS 段基址).
+    #[cfg(target_arch = "x86_64")]
+    const IA32_FS_BASE: u32 = 0xC000_0100;
+
+    let pid = match crate::framework::proc::process_get_current_pid() {
+        0 => return Errno::ESRCH.as_ret(),
+        p => p,
+    };
+
+    match code {
+        ARCH_SET_FS => {
+            if crate::framework::proc::process_with_mut(pid, |proc| {
+                proc.tls_base.store(addr, Ordering::Release);
+            })
+            .is_none()
+            {
+                return Errno::ESRCH.as_ret();
+            }
+            // 当前进程立即生效: 写本 CPU 的 FS 段基址 MSR.
+            #[cfg(target_arch = "x86_64")]
+            {
+                // SAFETY: 内核态执行, IA32_FS_BASE 为用户态 FS 段基址 MSR;
+                // 写入当前 CPU 仅影响当前进程的用户态 TLS 访问.
+                unsafe {
+                    crate::framework::cpu::msr::write_msr(IA32_FS_BASE, addr);
+                }
+            }
+            0
+        }
+        ARCH_GET_FS => {
+            let Some(base) = crate::framework::proc::process_with(pid, |proc| {
+                proc.tls_base.load(Ordering::Acquire)
+            }) else {
+                return Errno::ESRCH.as_ret();
+            };
+            // safe 包装: 内部先 check_user_buf 校验 8 字节可写后写入.
+            if !raw::write_u64_to_user(addr, base) {
+                return Errno::EFAULT.as_ret();
+            }
+            0
+        }
+        _ => Errno::EINVAL.as_ret(),
+    }
+}
+
 // ============================================================================
 // 热插拔 / 帧缓冲
 // ============================================================================

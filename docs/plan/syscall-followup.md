@@ -242,6 +242,7 @@ T7 (预存登记)
 ### T1 实施记录（G2 进程/信号）
 
 **实现路径裁定**（AskUserQuestion，用户授权）：tgkill / waitid / set+get_robust_list / prctl(PR_SET_NAME/PR_GET_NAME) = 相对完整设计实装；capget/capset / arch_prctl = **ENOSYS 保留**（无凭证能力模型 / 无 arch 相关用户态需求，登记不实装）。
+> **2026-09-26 改判（分册 9 批次 3，见 B-10.6）**：`capget` / `capset` / `arch_prctl` 三项经用户裁定改为**实装**（capset 走 framework 受约束子集 setter；arch_prctl 最小实装 `ARCH_SET_FS`/`ARCH_GET_FS`）⇒ 下段原「ENOSYS 保留」判定**作废**。
 
 **实装项**（5 项 + framework 退出路径机制，services 0 unsafe）：
 
@@ -263,6 +264,7 @@ T7 (预存登记)
 - **futex.rs**：`futex_wake` pub 化（robust 退出路径唤醒消费端）。
 
 **ENOSYS 保留登记**：capget/capset（无凭证能力模型）、arch_prctl（无 arch 相关用户态需求）——不实装，保留回退层 ENOSYS 哨兵。
+> **已于 2026-09-26 作废**（分册 9 批次 3，B-10.6）：三项均已实装并接线，不再走 ENOSYS 回退。
 
 **验证**：build.sh all 5/5、clippy 3 维 0 warning、核心审计通过、host-tests 全量、QEMU boot（Ring 3/init）通过、QEMU kernel_test 470/470（较前批 +2：robust 两测试）。
 
@@ -880,9 +882,9 @@ T7 (预存登记)
 
 #### B-6. R1 已分类清单（机器可读区块；B09-21 数据源）
 
-> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**434 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
+> 口径（裁定五）：下列 `<repo-relative path>::<pub fn 名>` 为**已分类**的零引用 pub fn 全集（**433 项**）。[audit_unwired_pub_fn.py](../../scripts/audit_unwired_pub_fn.py) 读本区块，**仅对未分类的零引用 pub fn 报 HIGH**；**fail-closed**＝区块缺失 / 解析失败 ⇒ **视同未分类（仍报）**；**只降噪不豁免**＝**不改变「零引用」这一事实判定**，仅将其报告分级降为 INFO。
 >
-> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝2026-09-26 分册 9 批次 2 R1 复查**（新增 4 项已甄别非 TCB 项 / 移除 6 项已失效条目；逐项依据见 **B-10**）。
+> 维护：清单随台账桶数修订同步（新增 / 删除零引用 pub fn 时更新本区块）。**最近一次同步＝2026-09-26 分册 9 批次 3 R2 接线**（移除 1 项已接线条目 `services/proc/signal.rs::sigaltstack_syscall`；逐项依据见 **B-10.6**）。
 >
 > **口径说明（2026-09-26 订正）**：本区块与 `audit_unwired_pub_fn.py` 的「零引用」判定均为**按名计数**（`rg -c -w`），因而存在两类已知偏差，本区块**不承诺**与脚本输出逐项等同：① **同名遮蔽**（文档注释 / 局部变量出现同名字符串即计入引用 ⇒ 真零引用项可能**漏报**，实例见 **B-10.3** 的 `slab_init` / `services/driver/acpi.rs::lapic_base`）；② **已失效条目**（被接线或删除后不再零引用，需人工同步移除，本期移除 6 项见 B-10.4）。
 
@@ -1315,7 +1317,6 @@ src/kernel/services/proc/canary.rs::get_canary_u64
 src/kernel/services/proc/elf.rs::is_executable
 src/kernel/services/proc/shadow_stack.rs::cet_syscall
 src/kernel/services/proc/signal.rs::cont
-src/kernel/services/proc/signal.rs::sigaltstack_syscall
 src/kernel/services/timer/tickless.rs::tickless_syscall
 src/kernel/services/timer/time_sync.rs::timesync_syscall
 src/kernel/services/wasm/interpreter.rs::instantiate
@@ -1527,6 +1528,23 @@ src/kernel/services/wasm/wasi/errno.rs::from_kernel_error
 - 脚本：`python3 scripts/audit_unwired_pub_fn.py` ⇒ `已分类清单 434 项` / `[HIGH] R1 未分类零引用 pub fn: **4 项**`（＝ B-10.3 的 kpti ×2 + kmalloc_slab ×2）/ 汇总 **`CRITICAL=7 / HIGH=4 / WARN=0 / INFO=435`**（`rc=0`；CRITICAL 7 为 R2 预存未接线 syscall，与本批无关）。
 - R1 总数守恒：**438 ＝ 434（INFO）+ 4（HIGH）**（本批**未改变零引用事实**，仅调整分级与区块条目）。
 - 对 B-9.3 的时序说明：B-9.3 记录的「HIGH 0 / INFO 435 / 清单 436」为**甲批后基线**；其后 UT-07 收敛与本次 D-9-6 改动使若干条目接线 / 遮蔽 / 消失，故本期基线为「HIGH 4 / INFO 435 / 清单 434」。
+
+**B-10.6 R2 接线（分册 9 批次 3；R2 7 → 2 / B-6 移除 1 项 ⇒ `433`）**
+
+> 来源：[audit-fix-09-hard-rules-deadcode.md](audit-fix-09-hard-rules-deadcode.md) **B09-05**。R2 口径为「`types.rs` 声明 `SYS_*` 但 `services/syscall/dispatch.rs` / `framework/syscall/dispatch.rs` 文本未出现该常量名」⇒ 本轮 5 项以**接线 / 实装**消解（用户裁定：全部通过实现功能或修改代码解决）。
+
+| 项 | 类别 | 处置 | 落点 |
+|---|---|---|---|
+| `SYS_sigaltstack` | 半实装未接线 | **接线** | `framework/syscall/dispatch.rs::sys_sigaltstack` 早已存在（含 `SS_DISABLE`/`SS_ONSTACK` 状态机），仅缺 services 分发臂 ⇒ `dispatch_proc` 加 `SYS_sigaltstack => signal::sigaltstack_syscall` |
+| `SYS_fdatasync` | 未实装（同族近似） | **接线（复用）** | 与 `fsync` 同语义复用 `fs::misc::fsync_syscall`（VFS 整体同步，无数据/元数据区分，与 `fsync` 的 SIMPLIFIED 口径一致） |
+| `SYS_arch_prctl` | **原裁定 ENOSYS 保留，本轮改判实装** | **最小实装** | framework 新增 `sys_arch_prctl`（`ARCH_SET_FS` 归档 `Process.tls_base` + 当前进程立即写 `MSR_FS_BASE`；`ARCH_GET_FS` 经 `raw::write_u64_to_user` 回读）；services `proc::clone::arch_prctl_syscall` 代理 |
+| `SYS_capget` / `SYS_capset` | **原裁定 ENOSYS 保留，本轮改判实装** | **ABI 映射层实装** | services `credo::auth::{capget,capset}_syscall` 建 credo↔Linux cap ABI 映射（`_LINUX_CAPABILITY_VERSION_3`，SYSTEM 域 64 位 ↔ 2×`cap_data`）；capset 经 framework 新增受约束 setter `credo::api::pwm_set_current_capability_raw`（**子集 + 不破 `VIABLE_FLOOR`**，不接受 pwm 参数 ⇒ 无法跨进程篡改） |
+| `SYS_process_vm_readv` / `SYS_process_vm_writev` | 真未实装（安全面） | **不实装 · 上报** | 跨进程内存读写需 ptrace 级权限模型，属裁定六安全面 ⇒ 保持 R2 CRITICAL，归 **D-2** |
+
+- **实测（脚本正向复跑）**：`python3 scripts/audit_unwired_pub_fn.py` ⇒ 汇总 **`CRITICAL=2 / HIGH=4 / WARN=0 / INFO=434`**（`rc=1`，仅 CRITICAL 非零）。R2 **7 → 2**（余 `process_vm_readv` / `process_vm_writev`）。
+- **B-6 区块同步**：`services/proc/signal.rs::sigaltstack_syscall` 接线后不再零引用 ⇒ 移除该行 ⇒ 清单 **434 → 433**（脚本 INFO 同期 435 → 433，差额 1 项为已接线移出 + 1 项为 HIGH/INFO 分级口径差）。
+- **新增 pub fn 未进 R1**：本轮新增 `proc::clone::arch_prctl_syscall` / `credo::auth::{capget,capset}_syscall` 均**已被 dispatch 引用**，非零引用，无需登记 B-6。
+- **原裁定溯源**：`capget`/`capset`/`arch_prctl` 此前按「无凭证能力模型 / 无 arch 相关用户态需求」判 **ENOSYS 保留**（见本台账「实现路径裁定」段）；批次 3 经用户裁定改为实装，**原判定作废**，相关 ENOSYS 回退说明同步失效。
 
 #### C. 原「接线」142 项（重划：仅 8 项留「接线」，其余 134 项入「未来功能」）
 

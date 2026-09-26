@@ -128,3 +128,24 @@ pub fn get_robust_list_syscall(pid: i32, head_ptr: u64, len_ptr: u64) -> Result<
     }
     Ok(0)
 }
+
+/// `arch_prctl(code, addr)` 安全代理 — 用户态 TLS 基址读写
+///
+/// 委托 framework `sys_arch_prctl` (TCB: x86_64 写 `MSR_FS_BASE` /
+/// aarch64 仅归档 `tls_base`, 二者均更新当前进程 TLS 基址).
+///
+/// SIMPLIFIED: 仅转发 `ARCH_SET_FS` / `ARCH_GET_FS` 两个码; 影响面:
+/// `ARCH_MAP_VDSO_*` / `ARCH_GET_CPUID` 等码返回 `EINVAL`; 何时需扩展:
+/// 用户态出现 vdso 地址协商或 cpuid 查询需求时补码表.
+///
+/// # Errors
+///
+/// - 底层返回负值 → 转换为对应 `Errno` (如 `ESRCH`/`EFAULT`/`EINVAL`)
+pub fn arch_prctl_syscall(code: u64, addr: u64) -> Result<usize, Errno> {
+    let ret = crate::framework::syscall::api::sys_arch_prctl(code, addr);
+    if ret < 0 {
+        Err(Errno::from_ret(ret))
+    } else {
+        Ok(ret as usize)
+    }
+}

@@ -114,6 +114,11 @@ pub fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
     super::sys_sigaltstack(ss, old_ss)
 }
 
+/// `arch_prctl` 系统调用实现 (TCB: 用户态 TLS 基址读写)
+pub fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
+    super::sys_arch_prctl(code, addr)
+}
+
 /// reboot 机制: cmd=0 停机, cmd=1 重启 (TCB: 操作 IDT/PSCI)
 pub fn reboot_mechanism(cmd: i32) -> i64 {
     match cmd {
